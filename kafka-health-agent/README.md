@@ -6,6 +6,10 @@ A specialized autonomous agent for monitoring and managing Kafka clusters, built
 
 The Kafka Health Agent provides a natural language interface to interact with your Kafka cluster. It can check cluster health, manage topics, and retrieve detailed metadata about brokers and partitions.
 
+## Visuals
+
+![Kafka Health Agent Interface](./assets/kafka_health_check_agent.png)
+
 ## Setup
 
 ### Prerequisites
@@ -61,6 +65,7 @@ The agent is equipped with the following tools to manage your cluster:
 
 ```text
 kafka-health-agent/
+├── assets/                  # Documentation assets (screenshots)
 ├── kafka_health_agent/      # Agent Python package
 │   ├── __init__.py          # Package entry point
 │   ├── agent.py             # Agent logic and tools
