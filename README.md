@@ -7,16 +7,18 @@ Agents can monitor infrastructure, diagnose issues, and take action with built-i
 ## Key Features
 
 - **Multi-agent orchestration** — a root agent delegates to specialized sub-agents based on user intent
+- **Structured workflows** — `SequentialAgent` and `ParallelAgent` for deterministic multi-step pipelines (e.g., incident triage checks Kafka, K8s, Docker in parallel, then summarizes)
 - **Safety guardrails** — destructive tools (`@destructive`) require explicit confirmation; mutating tools (`@confirm`) prompt before executing
+- **Graceful error handling** — tool and model failures are caught and returned as structured responses so the LLM can reason about them instead of crashing
 - **Audit logging** — every tool call is logged with timestamp, agent, arguments, and result
-- **Persistent memory** — session state, user-scoped notes, and app-wide shared data with SQLite backing
+- **Persistent sessions** — SQLite-backed session state, user-scoped notes, and app-wide shared data that survive restarts
 - **Composable architecture** — each agent is a standalone package that can run independently or plug into an orchestrator
 
 ## Agents
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| [**core**](core/) | Library | Agent factory, guardrails, audit logging, typed config |
+| [**core**](core/) | Library | Agent factory, guardrails, error handlers, audit logging, persistent runner, typed config |
 | [**kafka-health-agent**](agents/kafka-health/) | Single agent | Kafka cluster health, topics, consumer groups, lag |
 | [**k8s-health-agent**](agents/k8s-health/) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
 | [**devops-assistant**](agents/devops-assistant/) | Multi-agent | Orchestrator that delegates to kafka, k8s, docker, and journal sub-agents |
@@ -158,14 +160,14 @@ The devops-assistant container mounts the Docker socket (read-only) so it can in
 Tests live next to each package they cover:
 
 ```
-core/tests/                    # guardrails, audit, config
+core/tests/                    # guardrails, error handlers, audit, config
 agents/kafka-health/tests/     # Kafka tools
 agents/k8s-health/tests/       # Kubernetes tools
 agents/devops-assistant/tests/ # Docker tools
 agents/ops-journal/tests/      # journal & state tools
 ```
 
-Run the full suite (127 tests):
+Run the full suite (132 tests):
 
 ```bash
 make test
@@ -189,7 +191,13 @@ mkdir -p agents/my-agent/my_agent
 
 ```python
 # my_agent/agent.py
-from ai_agents_core import create_agent, load_agent_env, require_confirmation, audit_logger
+from ai_agents_core import (
+    audit_logger,
+    create_agent,
+    graceful_tool_error,
+    load_agent_env,
+    require_confirmation,
+)
 
 load_agent_env(__file__)
 
@@ -200,6 +208,7 @@ root_agent = create_agent(
     tools=[...],
     before_tool_callback=require_confirmation(),
     after_tool_callback=audit_logger(),
+    on_tool_error_callback=graceful_tool_error(),
 )
 ```
 

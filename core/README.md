@@ -33,11 +33,77 @@ root_agent = create_agent(
 | `sub_agents` | List of child agents for orchestrators |
 | `before_tool_callback` | Called before each tool — return a dict to block execution |
 | `after_tool_callback` | Called after each tool — return a dict to override the result |
+| `on_tool_error_callback` | Called when a tool raises an exception — return a dict for graceful recovery |
+| `on_model_error_callback` | Called when the model call fails — return an `LlmResponse` to recover |
 | `output_key` | Session state key to store this agent's output |
+
+### `create_sequential_agent()` / `create_parallel_agent()`
+
+Factory functions for structured multi-agent workflows that don't rely on LLM delegation.
+
+```python
+from ai_agents_core import create_agent, create_sequential_agent, create_parallel_agent
+
+# Run health checks in parallel
+health_checks = create_parallel_agent(
+    name="health_checks",
+    description="Runs all health checks concurrently.",
+    sub_agents=[kafka_checker, k8s_checker, docker_checker],
+)
+
+# Sequential pipeline: check → summarize → save
+triage = create_sequential_agent(
+    name="incident_triage",
+    description="Full incident triage pipeline.",
+    sub_agents=[health_checks, summarizer, journal_writer],
+)
+```
+
+Sub-agents pass data via `output_key`, which writes to session state for downstream agents to read.
 
 ### `load_agent_env(__file__)`
 
 Loads the `.env` file located next to the calling module.
+
+---
+
+## Error Handling
+
+Error callbacks prevent agents from crashing when tools or model calls fail. Instead, the error is logged and returned as a structured response so the LLM can reason about it.
+
+### `graceful_tool_error()`
+
+An `on_tool_error_callback` that catches tool exceptions and returns a dict:
+
+```python
+from ai_agents_core import create_agent, graceful_tool_error
+
+root_agent = create_agent(
+    ...,
+    on_tool_error_callback=graceful_tool_error(),
+)
+```
+
+When a tool raises (e.g., Kafka timeout, K8s API error), the LLM receives:
+
+```json
+{"status": "error", "error_type": "KafkaException", "message": "Tool 'get_kafka_cluster_health' failed: broker down"}
+```
+
+The LLM can then inform the user or try an alternative approach.
+
+### `graceful_model_error()`
+
+An `on_model_error_callback` that returns a friendly message when the Gemini API call fails:
+
+```python
+from ai_agents_core import create_agent, graceful_model_error
+
+root_agent = create_agent(
+    ...,
+    on_model_error_callback=graceful_model_error(),
+)
+```
 
 ---
 
@@ -153,6 +219,37 @@ Base fields (inherited by all configs):
 ### `load_config(ConfigClass, __file__)`
 
 Loads configuration from the `.env` file next to the calling module, with environment variable overrides.
+
+---
+
+## Persistent Runner
+
+### `run_persistent()`
+
+An async helper that runs an agent in a CLI loop with SQLite-backed sessions. Replaces the boilerplate of setting up `DatabaseSessionService`, `Runner`, and the input loop.
+
+```python
+import asyncio
+from ai_agents_core import run_persistent
+from my_agent.agent import root_agent
+
+asyncio.run(run_persistent(root_agent, app_name="my_agent"))
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `agent` | — | The root agent to run |
+| `app_name` | — | Application name for session scoping |
+| `db_url` | `sqlite:///{app_name}.db` | SQLAlchemy database URL |
+| `user_id` | `"default_user"` | User ID for session scoping |
+
+Session state (notes, preferences, bookmarks) survives across restarts. Type `new` for a fresh session or `quit` to exit.
+
+For the web UI, use ADK's built-in persistence flag instead:
+
+```bash
+adk web --session_service_uri=sqlite:///my_agent.db agents/my-agent
+```
 
 ---
 

@@ -1,7 +1,27 @@
-from ai_agents_core import create_agent, load_agent_env
+from ai_agents_core import (
+    create_agent,
+    create_parallel_agent,
+    create_sequential_agent,
+    graceful_model_error,
+    graceful_tool_error,
+    load_agent_env,
+)
 from k8s_health_agent.agent import root_agent as k8s_agent
+from k8s_health_agent.tools import (
+    get_cluster_info,
+    get_events,
+    get_nodes,
+    list_pods,
+)
 from kafka_health_agent.agent import root_agent as kafka_agent
+from kafka_health_agent.tools import (
+    get_consumer_lag,
+    get_kafka_cluster_health,
+    list_consumer_groups,
+    list_kafka_topics,
+)
 from ops_journal_agent.agent import root_agent as journal_agent
+from ops_journal_agent.tools import log_operation, save_note
 
 from .docker_tools import (
     docker_compose_status,
@@ -13,7 +33,8 @@ from .docker_tools import (
 
 load_agent_env(__file__)
 
-# Sub-agent: Docker operations
+# ── Sub-agent: Docker operations ──────────────────────────────────────
+
 docker_agent = create_agent(
     name="docker_agent",
     description=(
@@ -33,30 +54,122 @@ docker_agent = create_agent(
         get_container_stats,
         docker_compose_status,
     ],
+    on_tool_error_callback=graceful_tool_error(),
 )
 
-# Root orchestrator: delegates to the right sub-agent
+# ── Incident triage: structured parallel health checks ────────────────
+
+kafka_health_checker = create_agent(
+    name="kafka_health_checker",
+    description="Checks Kafka cluster health and reports status.",
+    instruction=(
+        "Check the Kafka cluster health, list topics, and check consumer group lag. "
+        "Provide a brief status summary of your findings."
+    ),
+    tools=[get_kafka_cluster_health, list_kafka_topics, list_consumer_groups, get_consumer_lag],
+    on_tool_error_callback=graceful_tool_error(),
+    output_key="kafka_status",
+)
+
+k8s_health_checker = create_agent(
+    name="k8s_health_checker",
+    description="Checks Kubernetes cluster health and reports status.",
+    instruction=(
+        "Check Kubernetes cluster health: cluster info, node status, recent events, "
+        "and any failing pods. Provide a brief status summary of your findings."
+    ),
+    tools=[get_cluster_info, get_nodes, get_events, list_pods],
+    on_tool_error_callback=graceful_tool_error(),
+    output_key="k8s_status",
+)
+
+docker_health_checker = create_agent(
+    name="docker_health_checker",
+    description="Checks Docker container status and reports findings.",
+    instruction=(
+        "List running containers and check their stats. "
+        "Report any unhealthy or stopped containers. Provide a brief status summary."
+    ),
+    tools=[list_containers, get_container_stats, docker_compose_status],
+    on_tool_error_callback=graceful_tool_error(),
+    output_key="docker_status",
+)
+
+# Run all three health checks in parallel
+health_check_agent = create_parallel_agent(
+    name="health_check_agent",
+    description="Runs Kafka, K8s, and Docker health checks in parallel.",
+    sub_agents=[kafka_health_checker, k8s_health_checker, docker_health_checker],
+)
+
+# Synthesize results into a triage report
+triage_summarizer = create_agent(
+    name="triage_summarizer",
+    description="Synthesizes health check results into an incident triage report.",
+    instruction=(
+        "You receive health check results from three systems stored in session state: "
+        "kafka_status, k8s_status, and docker_status.\n\n"
+        "Synthesize these into a single incident triage report with:\n"
+        "1. Overall system status (healthy / degraded / critical)\n"
+        "2. Issues found per system\n"
+        "3. Recommended next actions\n\n"
+        "Be concise and actionable."
+    ),
+    tools=[],
+    output_key="triage_report",
+)
+
+# Save the triage report to the journal
+journal_writer = create_agent(
+    name="journal_writer",
+    description="Saves the triage report as a journal note.",
+    instruction=(
+        "Read the triage report from session state (triage_report). "
+        "Save it as a note using save_note with the tag 'incident-triage'. "
+        "Also log this operation using log_operation."
+    ),
+    tools=[save_note, log_operation],
+)
+
+# Sequential pipeline: parallel checks → summarize → save
+incident_triage_agent = create_sequential_agent(
+    name="incident_triage_agent",
+    description=(
+        "Structured incident triage: checks Kafka, K8s, and Docker in parallel, "
+        "then summarizes findings and saves to journal."
+    ),
+    sub_agents=[health_check_agent, triage_summarizer, journal_writer],
+)
+
+# ── Root orchestrator ─────────────────────────────────────────────────
+
 root_agent = create_agent(
     name="devops_assistant",
     description="DevOps orchestrator that delegates to specialized sub-agents.",
     instruction=(
         "You are a DevOps assistant that coordinates specialized agents. "
-        "You do NOT have tools of your own — instead, delegate to the right sub-agent:\n\n"
-        "- **kafka_health_agent**: For anything Kafka-related — cluster health, topics, "
+        "You can delegate to individual agents for targeted queries, or trigger "
+        "structured workflows for broader operations:\n\n"
+        "## Structured Workflows\n"
+        "- **incident_triage_agent**: Runs a comprehensive health check across "
+        "Kafka, Kubernetes, and Docker in parallel, then summarizes findings and "
+        "saves a report to the journal. Use when the user asks 'is everything healthy?', "
+        "'run a triage', or 'check all systems'.\n\n"
+        "## Individual Agents\n"
+        "- **kafka_health_agent**: For specific Kafka queries — cluster health, topics, "
         "consumer groups, lag monitoring.\n"
-        "- **k8s_health_agent**: For anything Kubernetes-related — cluster info, nodes, "
+        "- **k8s_health_agent**: For specific Kubernetes queries — cluster info, nodes, "
         "pods, deployments, logs, events, scaling, and restarts.\n"
-        "- **docker_agent**: For anything Docker-related — containers, logs, stats, "
-        "compose status, resource usage.\n"
+        "- **docker_agent**: For specific Docker queries — containers, logs, stats, "
+        "compose status.\n"
         "- **ops_journal_agent**: For saving notes, recalling past findings, tracking "
-        "session activity, managing preferences, and team bookmarks. Delegate here when "
-        "the user wants to remember something, look up past incidents, or set preferences.\n\n"
-        "When a user asks a broad question (e.g., 'is everything healthy?'), "
-        "delegate to multiple agents to gather a complete picture. "
-        "Synthesize the results into a clear summary for the user.\n\n"
+        "session activity, managing preferences, and team bookmarks.\n\n"
+        "Prefer incident_triage_agent for broad health checks. "
+        "Use individual agents for targeted investigations.\n\n"
         "After completing a significant investigation, proactively suggest saving "
         "the findings as a note via the journal agent."
     ),
     tools=[],
-    sub_agents=[kafka_agent, k8s_agent, docker_agent, journal_agent],
+    sub_agents=[incident_triage_agent, kafka_agent, k8s_agent, docker_agent, journal_agent],
+    on_model_error_callback=graceful_model_error(),
 )

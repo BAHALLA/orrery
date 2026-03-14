@@ -6,10 +6,17 @@ A multi-agent orchestrator that delegates to specialized sub-agents. It has no t
 
 ```text
 devops_assistant (orchestrator)
-├── kafka_health_agent   — Kafka cluster operations
-├── k8s_health_agent     — Kubernetes cluster operations
-├── docker_agent         — Docker container operations
-└── ops_journal_agent    — Notes, preferences, and session tracking
+├── incident_triage_agent (SequentialAgent)
+│   ├── health_check_agent (ParallelAgent)
+│   │   ├── kafka_health_checker   — Kafka cluster health + lag
+│   │   ├── k8s_health_checker     — K8s nodes, events, pods
+│   │   └── docker_health_checker  — Container status + stats
+│   ├── triage_summarizer          — Synthesizes parallel results
+│   └── journal_writer             — Saves report to journal
+├── kafka_health_agent             — Ad-hoc Kafka queries
+├── k8s_health_agent               — Ad-hoc Kubernetes queries
+├── docker_agent                   — Ad-hoc Docker queries
+└── ops_journal_agent              — Notes, preferences, session tracking
 ```
 
 ![DevOps Assistant — agent graph and container inspection](assets/devops-assistant-graph.png)
@@ -44,13 +51,27 @@ After a significant investigation, the orchestrator will proactively suggest sav
 
 ## How Delegation Works
 
-The root `devops_assistant` agent has no tools. When a user sends a message, the LLM reads the sub-agent descriptions and decides which specialist to hand off to:
+The orchestrator supports two modes of delegation:
+
+### Structured workflows
+
+For broad operations, the orchestrator uses deterministic pipelines built with `SequentialAgent` and `ParallelAgent`:
+
+- *"is everything healthy?"* / *"run a triage"* / *"check all systems"* → `incident_triage_agent`
+
+The incident triage pipeline:
+1. **Parallel**: checks Kafka, K8s, and Docker concurrently (each writes to session state via `output_key`)
+2. **Sequential**: summarizer reads the parallel results and produces a triage report
+3. **Sequential**: journal writer saves the report as a note tagged `incident-triage`
+
+### Ad-hoc delegation
+
+For targeted queries, the LLM reads the sub-agent descriptions and delegates to the right specialist:
 
 - *"what's the consumer lag?"* → `kafka_health_agent`
 - *"list all pods in staging"* → `k8s_health_agent`
 - *"show me kafka container logs"* → `docker_agent`
 - *"save a note about this incident"* → `ops_journal_agent`
-- *"is everything healthy?"* → delegates to multiple agents, then synthesizes
 
 ## Running
 
