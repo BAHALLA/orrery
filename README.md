@@ -101,3 +101,11 @@ GOOGLE_API_KEY=your-api-key
 5. Register in the root `pyproject.toml` and add Makefile targets.
 
 6. Run `make install`.
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on adding new agents, improving existing ones, and submitting pull requests.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
