@@ -8,12 +8,14 @@ dependencies = [
     "ai-agents-core",
     "kafka-health-agent",
     "devops-assistant",
+    "ops-journal",
 ]
 
 [tool.uv.sources]
 ai-agents-core = { workspace = true }
 kafka-health-agent = { workspace = true }
 devops-assistant = { workspace = true }
+ops-journal = { workspace = true }
 
 [tool.uv.workspace]
 members = ["core", "agents/*"]

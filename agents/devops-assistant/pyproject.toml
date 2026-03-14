@@ -6,8 +6,11 @@ requires-python = ">=3.11"
 dependencies = [
     "ai-agents-core",
     "kafka-health-agent",
+    "ops-journal",
+    "aiosqlite>=0.20.0",
 ]
 
 [tool.uv.sources]
 ai-agents-core = { workspace = true }
 kafka-health-agent = { workspace = true }
+ops-journal = { workspace = true }

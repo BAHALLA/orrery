@@ -7,12 +7,13 @@ A multi-agent orchestrator that delegates to specialized sub-agents. It has no t
 ```text
 devops_assistant (orchestrator)
 ├── kafka_health_agent   — Kafka cluster operations
-└── docker_agent         — Docker container operations
+├── docker_agent         — Docker container operations
+└── ops_journal_agent    — Notes, preferences, and session tracking
 ```
 
 ![DevOps Assistant — agent graph and container inspection](assets/devops-assistant-graph.png)
 
-*The ADK Dev UI showing the agent graph: `devops_assistant` delegates to `kafka_health_agent` and `docker_agent`, each with their own tools. Here the docker agent inspects the Kafka container's configuration.*
+*The ADK Dev UI showing the agent graph: `devops_assistant` delegates to sub-agents, each with their own tools.*
 
 ## Sub-agents
 
@@ -30,13 +31,20 @@ Reused from the standalone [kafka-health-agent](kafka-health-agent.md). Handles 
 | `get_container_stats` | CPU, memory, network, and block I/O stats |
 | `docker_compose_status` | Status of services in a Compose project |
 
+### ops_journal_agent
+
+Reused from the standalone [ops-journal](ops-journal.md). Handles notes, preferences, session tracking, and team bookmarks. See that doc for details on state scopes (`session`, `user:`, `app:`, `temp:`).
+
+After a significant investigation, the orchestrator will proactively suggest saving findings as a note via this agent.
+
 ## How Delegation Works
 
 The root `devops_assistant` agent has no tools. When a user sends a message, the LLM reads the sub-agent descriptions and decides which specialist to hand off to:
 
 - *"what's the consumer lag?"* → `kafka_health_agent`
 - *"show me kafka container logs"* → `docker_agent`
-- *"is everything healthy?"* → delegates to both, then synthesizes
+- *"save a note about this incident"* → `ops_journal_agent`
+- *"is everything healthy?"* → delegates to multiple agents, then synthesizes
 
 ## Running
 
@@ -49,6 +57,17 @@ uv run adk run devops_assistant   # Terminal mode
 Or from the repo root:
 
 ```bash
-make run-devops          # ADK Dev UI
-make run-devops-cli      # Terminal mode
+make run-devops              # ADK Dev UI (in-memory state)
+make run-devops-cli          # Terminal mode (in-memory state)
+make run-devops-persistent   # Terminal with SQLite persistence
 ```
+
+### Persistent Mode
+
+By default (`adk web`), state resets on restart. Use persistent mode to keep `user:*` and `app:*` state across sessions:
+
+```bash
+make run-devops-persistent
+```
+
+This uses `DatabaseSessionService` with a local SQLite file, so notes and preferences survive restarts. Type `new` to start a fresh session while keeping long-term state.

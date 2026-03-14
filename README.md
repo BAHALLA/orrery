@@ -14,7 +14,8 @@ ai-agents/
 │       └── base.py             # create_agent(), load_agent_env()
 ├── agents/
 │   ├── kafka-health/           # Kafka monitoring agent
-│   └── devops-assistant/       # Multi-agent orchestrator
+│   ├── devops-assistant/       # Multi-agent orchestrator
+│   └── ops-journal/            # Memory and state patterns
 └── docs/                       # per-agent documentation
 ```
 
@@ -24,6 +25,7 @@ ai-agents/
 |-------|------|-------------|------|
 | **kafka-health-agent** | Single agent | Kafka cluster health, topics, consumer groups, lag | [docs/kafka-health-agent.md](docs/kafka-health-agent.md) |
 | **devops-assistant** | Multi-agent | Orchestrator that delegates to kafka + docker sub-agents | [docs/devops-assistant.md](docs/devops-assistant.md) |
+| **ops-journal** | Memory/state | Notes, preferences, and session tracking with persistent storage | [docs/ops-journal.md](docs/ops-journal.md) |
 
 ## Quick Start
 
