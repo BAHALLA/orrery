@@ -6,8 +6,6 @@ All subprocess calls are mocked — no real Docker needed.
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from devops_assistant.docker_tools import (
     docker_compose_status,
     get_container_logs,
@@ -15,7 +13,6 @@ from devops_assistant.docker_tools import (
     inspect_container,
     list_containers,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -38,9 +35,7 @@ def test_list_containers_success(mock_run):
         {"ID": "abc123", "Names": "web", "State": "running"},
         {"ID": "def456", "Names": "db", "State": "running"},
     ]
-    mock_run.return_value = _mock_run(
-        stdout="\n".join(json.dumps(c) for c in containers)
-    )
+    mock_run.return_value = _mock_run(stdout="\n".join(json.dumps(c) for c in containers))
 
     result = list_containers()
     assert result["status"] == "success"
@@ -90,13 +85,13 @@ def test_inspect_container_success(mock_run):
     inspect_data = [
         {
             "Name": "/web",
-            "State": {"Status": "running", "StartedAt": "2025-01-01T00:00:00Z", "Health": {"Status": "healthy"}},
-            "Config": {"Image": "nginx:latest", "Env": ["PORT=80"]},
-            "NetworkSettings": {
-                "Ports": {
-                    "80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]
-                }
+            "State": {
+                "Status": "running",
+                "StartedAt": "2025-01-01T00:00:00Z",
+                "Health": {"Status": "healthy"},
             },
+            "Config": {"Image": "nginx:latest", "Env": ["PORT=80"]},
+            "NetworkSettings": {"Ports": {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}},
             "RestartCount": 0,
         }
     ]
@@ -113,9 +108,7 @@ def test_inspect_container_success(mock_run):
 
 @patch("devops_assistant.docker_tools.subprocess.run")
 def test_inspect_container_not_found(mock_run):
-    mock_run.return_value = _mock_run(
-        stderr="Error: No such container: ghost", returncode=1
-    )
+    mock_run.return_value = _mock_run(stderr="Error: No such container: ghost", returncode=1)
 
     result = inspect_container("ghost")
     assert result["status"] == "error"
@@ -185,6 +178,7 @@ def test_get_container_logs_error(mock_run):
 @patch("devops_assistant.docker_tools.subprocess.run")
 def test_get_container_logs_timeout(mock_run):
     import subprocess
+
     mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=10)
 
     result = get_container_logs("stuck")
@@ -231,9 +225,7 @@ def test_compose_status_success(mock_run):
         {"Name": "kafka", "State": "running", "Health": "healthy"},
         {"Name": "zookeeper", "State": "running", "Health": ""},
     ]
-    mock_run.return_value = _mock_run(
-        stdout="\n".join(json.dumps(s) for s in services)
-    )
+    mock_run.return_value = _mock_run(stdout="\n".join(json.dumps(s) for s in services))
 
     result = docker_compose_status()
     assert result["status"] == "success"
@@ -252,9 +244,7 @@ def test_compose_status_with_project_dir(mock_run):
 
 @patch("devops_assistant.docker_tools.subprocess.run")
 def test_compose_status_error(mock_run):
-    mock_run.return_value = _mock_run(
-        stderr="no configuration file provided", returncode=1
-    )
+    mock_run.return_value = _mock_run(stderr="no configuration file provided", returncode=1)
 
     result = docker_compose_status()
     assert result["status"] == "error"

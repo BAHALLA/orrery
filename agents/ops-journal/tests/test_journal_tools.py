@@ -16,7 +16,6 @@ from ops_journal_agent.tools import (
     set_preference,
 )
 
-
 # ── Session State: log_operation / get_session_summary ────────────────
 
 
@@ -73,7 +72,7 @@ def test_save_note_basic(fake_ctx):
 
 def test_save_note_with_tags(fake_ctx):
     ctx = fake_ctx()
-    result = save_note(ctx, "Note", "content", tags="kafka, incident, resolved")
+    save_note(ctx, "Note", "content", tags="kafka, incident, resolved")
 
     note = ctx.state["user:notes"][0]
     assert note["tags"] == ["kafka", "incident", "resolved"]

@@ -2,7 +2,7 @@
 
 import json
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
@@ -23,7 +23,7 @@ def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
         return False, f"Command timed out after {timeout}s"
 
 
-def list_containers(all: bool = False) -> Dict[str, Any]:
+def list_containers(all: bool = False) -> dict[str, Any]:
     """Lists Docker containers.
 
     Args:
@@ -48,7 +48,7 @@ def list_containers(all: bool = False) -> Dict[str, Any]:
     return {"status": "success", "containers": containers, "count": len(containers)}
 
 
-def inspect_container(container_name: str) -> Dict[str, Any]:
+def inspect_container(container_name: str) -> dict[str, Any]:
     """Gets detailed information about a specific container.
 
     Args:
@@ -73,9 +73,7 @@ def inspect_container(container_name: str) -> Dict[str, Any]:
     ports = {}
     for container_port, host_bindings in (network.get("Ports") or {}).items():
         if host_bindings:
-            ports[container_port] = [
-                f"{b['HostIp']}:{b['HostPort']}" for b in host_bindings
-            ]
+            ports[container_port] = [f"{b['HostIp']}:{b['HostPort']}" for b in host_bindings]
 
     return {
         "status": "success",
@@ -91,8 +89,8 @@ def inspect_container(container_name: str) -> Dict[str, Any]:
 
 
 def get_container_logs(
-    container_name: str, tail: int = 50, since: Optional[str] = None
-) -> Dict[str, Any]:
+    container_name: str, tail: int = 50, since: str | None = None
+) -> dict[str, Any]:
     """Gets recent logs from a container.
 
     Args:
@@ -121,7 +119,7 @@ def get_container_logs(
     }
 
 
-def get_container_stats(container_name: str) -> Dict[str, Any]:
+def get_container_stats(container_name: str) -> dict[str, Any]:
     """Gets CPU, memory, and network stats for a container.
 
     Args:
@@ -130,9 +128,7 @@ def get_container_stats(container_name: str) -> Dict[str, Any]:
     Returns:
         A dictionary with the container resource usage stats.
     """
-    ok, output = _run_docker(
-        ["stats", "--no-stream", "--format", "json", container_name]
-    )
+    ok, output = _run_docker(["stats", "--no-stream", "--format", "json", container_name])
     if not ok:
         return {"status": "error", "message": output}
 
@@ -149,7 +145,7 @@ def get_container_stats(container_name: str) -> Dict[str, Any]:
     }
 
 
-def docker_compose_status(project_dir: Optional[str] = None) -> Dict[str, Any]:
+def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
     """Gets the status of services in a Docker Compose project.
 
     Args:

@@ -24,10 +24,38 @@ ops-journal = { workspace = true }
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
+    "ruff>=0.11.0",
 ]
 
 [tool.uv.workspace]
 members = ["core", "agents/*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501", # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "ai_agents_core",
+    "kafka_health_agent",
+    "k8s_health_agent",
+    "devops_assistant",
+    "ops_journal_agent",
+]
 
 [tool.pytest.ini_options]
 testpaths = [

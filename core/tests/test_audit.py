@@ -14,9 +14,7 @@ def test_audit_logger_writes_jsonl(tmp_path: Path, fake_tool, fake_ctx):
     ctx = fake_ctx()
     response = {"status": "success", "topics": ["test"]}
 
-    result = callback(
-        tool=tool, args={"timeout": 10}, tool_context=ctx, tool_response=response
-    )
+    result = callback(tool=tool, args={"timeout": 10}, tool_context=ctx, tool_response=response)
 
     # Should not modify the response
     assert result is None

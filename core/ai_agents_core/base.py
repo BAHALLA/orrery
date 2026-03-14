@@ -1,6 +1,7 @@
 import os
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from dotenv import load_dotenv
 from google.adk.agents import Agent

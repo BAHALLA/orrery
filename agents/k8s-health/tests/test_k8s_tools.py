@@ -3,10 +3,9 @@
 All Kubernetes API calls are mocked — no real cluster needed.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
 from kubernetes.client.rest import ApiException
 
 from k8s_health_agent.tools import (
@@ -22,7 +21,6 @@ from k8s_health_agent.tools import (
     restart_deployment,
     scale_deployment,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -54,7 +52,7 @@ def _make_pod(
     pod = MagicMock()
     pod.metadata.name = name
     pod.metadata.namespace = namespace
-    pod.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    pod.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     pod.status.phase = phase
     pod.status.pod_ip = "10.0.0.1"
     pod.spec.node_name = node_name
@@ -99,7 +97,7 @@ def _make_deployment(
     d = MagicMock()
     d.metadata.name = name
     d.metadata.namespace = namespace
-    d.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    d.metadata.creation_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     d.spec.replicas = replicas
     d.spec.strategy.type = "RollingUpdate"
     d.status.ready_replicas = ready
@@ -136,8 +134,8 @@ def _make_event(
     e.involved_object.name = obj_name
     e.message = message
     e.count = 1
-    e.first_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    e.last_timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    e.first_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
+    e.last_timestamp = datetime(2025, 1, 1, tzinfo=UTC)
     return e
 
 
@@ -405,7 +403,7 @@ def test_scale_deployment_api_error(mock_api):
 
 
 def test_scale_deployment_has_confirm_guardrail():
-    assert getattr(scale_deployment, "_guardrail_level") == "confirm"
+    assert scale_deployment._guardrail_level == "confirm"
     assert hasattr(scale_deployment, "_guardrail_reason")
 
 
@@ -422,15 +420,13 @@ def test_restart_deployment_success(mock_api):
 
 @patch("k8s_health_agent.tools._apps_api")
 def test_restart_deployment_api_error(mock_api):
-    mock_api.return_value.patch_namespaced_deployment.side_effect = _api_exception(
-        "Not Found"
-    )
+    mock_api.return_value.patch_namespaced_deployment.side_effect = _api_exception("Not Found")
     result = restart_deployment("gone")
     assert result["status"] == "error"
 
 
 def test_restart_deployment_has_destructive_guardrail():
-    assert getattr(restart_deployment, "_guardrail_level") == "destructive"
+    assert restart_deployment._guardrail_level == "destructive"
     assert hasattr(restart_deployment, "_guardrail_reason")
 
 
@@ -456,7 +452,7 @@ def test_get_events_all_namespaces(mock_api):
     events.items = []
     mock_api.return_value.list_event_for_all_namespaces.return_value = events
 
-    result = get_events(namespace="all")
+    get_events(namespace="all")
     mock_api.return_value.list_event_for_all_namespaces.assert_called_once()
 
 

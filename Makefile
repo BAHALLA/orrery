@@ -1,4 +1,4 @@
-.PHONY: help install test infra-up infra-down infra-reset \
+.PHONY: help install test lint format infra-up infra-down infra-reset \
        run-kafka-health run-kafka-health-cli \
        run-k8s run-k8s-cli \
        run-devops run-devops-cli run-devops-persistent \
@@ -14,6 +14,14 @@ install: ## Install all workspace packages
 
 test: ## Run all tests
 	uv run pytest -v
+
+lint: ## Run linter checks (ruff check + format check)
+	uv run ruff check .
+	uv run ruff format --check .
+
+format: ## Auto-fix lint and format issues
+	uv run ruff check --fix .
+	uv run ruff format .
 
 infra-up: ## Start shared infrastructure (Kafka, Zookeeper, Kafka UI)
 	docker compose up -d

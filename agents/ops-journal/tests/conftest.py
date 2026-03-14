@@ -9,6 +9,7 @@ import pytest
 
 class FakeState(dict):
     """A plain dict that behaves like ADK's State object."""
+
     pass
 
 

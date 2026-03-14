@@ -13,11 +13,11 @@ ADK calls before_tool_callback with keyword args:
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
-
 
 # ── Tool classification markers ────────────────────────────────────────
 
@@ -41,10 +41,12 @@ def confirm(reason: str = "") -> Callable:
         def create_kafka_topic(topic_name: str) -> dict:
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         setattr(func, _GUARD_LEVEL_ATTR, LEVEL_CONFIRM)
         setattr(func, _GUARD_REASON_ATTR, reason)
         return func
+
     return decorator
 
 
@@ -62,10 +64,12 @@ def destructive(reason: str = "") -> Callable:
         def delete_kafka_topic(topic_name: str) -> dict:
             ...
     """
+
     def decorator(func: Callable) -> Callable:
         setattr(func, _GUARD_LEVEL_ATTR, LEVEL_DESTRUCTIVE)
         setattr(func, _GUARD_REASON_ATTR, reason)
         return func
+
     return decorator
 
 
@@ -114,9 +118,7 @@ def require_confirmation() -> Callable:
         )
     """
 
-    def callback(
-        *, tool: BaseTool, args: dict[str, Any], tool_context: Context
-    ) -> Optional[dict]:
+    def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
         func = getattr(tool, "func", None)
         if func is None:
             return None
@@ -169,9 +171,7 @@ def dry_run() -> Callable:
         create_agent(..., before_tool_callback=dry_run())
     """
 
-    def callback(
-        *, tool: BaseTool, args: dict[str, Any], tool_context: Context
-    ) -> Optional[dict]:
+    def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
         func = getattr(tool, "func", None)
         if func is None or not is_guarded(func):
             return None

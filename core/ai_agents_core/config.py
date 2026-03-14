@@ -7,7 +7,6 @@ Config values are loaded from environment variables and .env files.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,9 +30,9 @@ class AgentConfig(BaseSettings):
 
     # Google AI / Vertex AI settings
     google_genai_use_vertexai: bool = True
-    google_cloud_project: Optional[str] = None
-    google_cloud_location: Optional[str] = None
-    google_api_key: Optional[str] = None
+    google_cloud_project: str | None = None
+    google_cloud_location: str | None = None
+    google_api_key: str | None = None
     gemini_model_version: str = "gemini-2.0-flash"
 
 

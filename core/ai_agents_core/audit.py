@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
@@ -46,15 +47,19 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
         args: dict[str, Any],
         tool_context: Context,
         tool_response: dict,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "agent": tool_context.agent_name if hasattr(tool_context, "agent_name") else "unknown",
             "tool": tool.name,
             "args": _sanitize_args(args),
-            "status": tool_response.get("status", "unknown") if isinstance(tool_response, dict) else "ok",
+            "status": tool_response.get("status", "unknown")
+            if isinstance(tool_response, dict)
+            else "ok",
             "user_id": tool_context.user_id if hasattr(tool_context, "user_id") else "unknown",
-            "session_id": tool_context.session.id if hasattr(tool_context, "session") and tool_context.session else "unknown",
+            "session_id": tool_context.session.id
+            if hasattr(tool_context, "session") and tool_context.session
+            else "unknown",
         }
 
         try:
@@ -71,7 +76,4 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
 def _sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
     """Remove potentially sensitive values from tool arguments."""
     sensitive_keys = {"password", "secret", "token", "api_key", "credential"}
-    return {
-        k: "***" if any(s in k.lower() for s in sensitive_keys) else v
-        for k, v in args.items()
-    }
+    return {k: "***" if any(s in k.lower() for s in sensitive_keys) else v for k, v in args.items()}

@@ -1,14 +1,16 @@
 """Kafka admin tools exposed to the agent."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicPartition
+from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
 
 from ai_agents_core import AgentConfig, confirm, destructive
-from confluent_kafka import KafkaException, TopicPartition, ConsumerGroupTopicPartitions
-from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
 
 
 class KafkaConfig(AgentConfig):
     """Kafka-specific configuration."""
+
     kafka_bootstrap_servers: str = "localhost:9092"
 
 
@@ -20,7 +22,7 @@ def _get_admin_client() -> AdminClient:
     return AdminClient({"bootstrap.servers": _config.kafka_bootstrap_servers})
 
 
-def get_kafka_cluster_health() -> Dict[str, Any]:
+def get_kafka_cluster_health() -> dict[str, Any]:
     """Checks the health of the Kafka cluster.
 
     Returns:
@@ -36,16 +38,14 @@ def get_kafka_cluster_health() -> Dict[str, Any]:
             "status": "success",
             "health": health_status,
             "brokers_online": num_brokers,
-            "brokers": [
-                {"id": b.id, "host": b.host, "port": b.port} for b in brokers.values()
-            ],
+            "brokers": [{"id": b.id, "host": b.host, "port": b.port} for b in brokers.values()],
             "message": f"Cluster is {health_status} with {num_brokers} brokers online.",
         }
     except KafkaException as e:
         return {"status": "error", "message": f"Failed to connect to Kafka: {str(e)}"}
 
 
-def list_kafka_topics() -> Dict[str, Any]:
+def list_kafka_topics() -> dict[str, Any]:
     """Lists all available topics in the Kafka cluster.
 
     Returns:
@@ -63,7 +63,7 @@ def list_kafka_topics() -> Dict[str, Any]:
 @confirm("creates a new topic on the cluster")
 def create_kafka_topic(
     topic_name: str, num_partitions: int = 1, replication_factor: int = 1
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Creates a new Kafka topic.
 
     Args:
@@ -80,7 +80,7 @@ def create_kafka_topic(
     )
     try:
         futures = admin.create_topics([new_topic])
-        for topic, future in futures.items():
+        for _topic, future in futures.items():
             try:
                 future.result()
                 return {
@@ -100,7 +100,7 @@ def create_kafka_topic(
 
 
 @destructive("permanently deletes the topic and all its data")
-def delete_kafka_topic(topic_name: str) -> Dict[str, Any]:
+def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
     """Deletes an existing Kafka topic.
 
     Args:
@@ -112,7 +112,7 @@ def delete_kafka_topic(topic_name: str) -> Dict[str, Any]:
     admin = _get_admin_client()
     try:
         futures = admin.delete_topics([topic_name])
-        for topic, future in futures.items():
+        for _topic, future in futures.items():
             try:
                 future.result()
                 return {
@@ -131,7 +131,7 @@ def delete_kafka_topic(topic_name: str) -> Dict[str, Any]:
         }
 
 
-def get_topic_metadata(topic_name: str) -> Dict[str, Any]:
+def get_topic_metadata(topic_name: str) -> dict[str, Any]:
     """Gets detailed metadata for a specific topic.
 
     Args:
@@ -171,7 +171,7 @@ def get_topic_metadata(topic_name: str) -> Dict[str, Any]:
         }
 
 
-def list_consumer_groups() -> Dict[str, Any]:
+def list_consumer_groups() -> dict[str, Any]:
     """Lists all available consumer groups in the Kafka cluster.
 
     Returns:
@@ -186,7 +186,7 @@ def list_consumer_groups() -> Dict[str, Any]:
         return {"status": "error", "message": f"Failed to list consumer groups: {str(e)}"}
 
 
-def describe_consumer_groups(group_ids: List[str]) -> Dict[str, Any]:
+def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
     """Provides detailed information about specific consumer groups.
 
     Args:
@@ -204,22 +204,28 @@ def describe_consumer_groups(group_ids: List[str]) -> Dict[str, Any]:
                 desc = future.result()
                 members = []
                 for m in desc.members:
-                    members.append({
-                        "member_id": m.member_id,
-                        "client_id": m.client_id,
-                        "host": m.host,
-                        "assignment": [
-                            f"{tp.topic} [{tp.partition}]"
-                            for tp in m.assignment.topic_partitions
-                        ] if m.assignment else [],
-                    })
-                results.append({
-                    "group_id": desc.group_id,
-                    "state": str(desc.state),
-                    "protocol_type": desc.protocol_type,
-                    "is_simple_consumer_group": desc.is_simple_consumer_group,
-                    "members": members,
-                })
+                    members.append(
+                        {
+                            "member_id": m.member_id,
+                            "client_id": m.client_id,
+                            "host": m.host,
+                            "assignment": [
+                                f"{tp.topic} [{tp.partition}]"
+                                for tp in m.assignment.topic_partitions
+                            ]
+                            if m.assignment
+                            else [],
+                        }
+                    )
+                results.append(
+                    {
+                        "group_id": desc.group_id,
+                        "state": str(desc.state),
+                        "protocol_type": desc.protocol_type,
+                        "is_simple_consumer_group": desc.is_simple_consumer_group,
+                        "members": members,
+                    }
+                )
             except Exception as e:
                 results.append({"group_id": group_id, "error": str(e)})
 
@@ -228,7 +234,7 @@ def describe_consumer_groups(group_ids: List[str]) -> Dict[str, Any]:
         return {"status": "error", "message": f"Failed to describe consumer groups: {str(e)}"}
 
 
-def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[str, Any]:
+def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict[str, Any]:
     """Calculates consumer lag for a given group and optionally a specific topic.
 
     Args:
@@ -240,9 +246,7 @@ def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[st
     """
     admin = _get_admin_client()
     try:
-        offsets_future = admin.list_consumer_group_offsets(
-            [ConsumerGroupTopicPartitions(group_id)]
-        )
+        offsets_future = admin.list_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id)])
         committed_offsets = offsets_future[group_id].result().topic_partitions
 
         if topic_name:
@@ -259,8 +263,7 @@ def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[st
             }
 
         latest_offsets_request = {
-            TopicPartition(tp.topic, tp.partition): OffsetSpec.latest()
-            for tp in committed_offsets
+            TopicPartition(tp.topic, tp.partition): OffsetSpec.latest() for tp in committed_offsets
         }
         latest_offsets_future = admin.list_offsets(latest_offsets_request)
 
@@ -273,35 +276,44 @@ def get_consumer_lag(group_id: str, topic_name: Optional[str] = None) -> Dict[st
                 latest_offset = latest_offset_res.offset
 
                 committed_offset_tp = next(
-                    (c for c in committed_offsets
-                     if c.topic == tp.topic and c.partition == tp.partition),
+                    (
+                        c
+                        for c in committed_offsets
+                        if c.topic == tp.topic and c.partition == tp.partition
+                    ),
                     None,
                 )
 
                 if committed_offset_tp and committed_offset_tp.offset >= 0:
                     lag = latest_offset - committed_offset_tp.offset
                     total_lag += lag
-                    lag_info.append({
-                        "topic": tp.topic,
-                        "partition": tp.partition,
-                        "committed_offset": committed_offset_tp.offset,
-                        "latest_offset": latest_offset,
-                        "lag": lag,
-                    })
+                    lag_info.append(
+                        {
+                            "topic": tp.topic,
+                            "partition": tp.partition,
+                            "committed_offset": committed_offset_tp.offset,
+                            "latest_offset": latest_offset,
+                            "lag": lag,
+                        }
+                    )
                 else:
-                    lag_info.append({
+                    lag_info.append(
+                        {
+                            "topic": tp.topic,
+                            "partition": tp.partition,
+                            "committed_offset": "N/A",
+                            "latest_offset": latest_offset,
+                            "lag": "unknown",
+                        }
+                    )
+            except Exception as e:
+                lag_info.append(
+                    {
                         "topic": tp.topic,
                         "partition": tp.partition,
-                        "committed_offset": "N/A",
-                        "latest_offset": latest_offset,
-                        "lag": "unknown",
-                    })
-            except Exception as e:
-                lag_info.append({
-                    "topic": tp.topic,
-                    "partition": tp.partition,
-                    "error": str(e),
-                })
+                        "error": str(e),
+                    }
+                )
 
         return {
             "status": "success",

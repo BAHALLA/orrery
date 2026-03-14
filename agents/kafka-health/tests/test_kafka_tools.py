@@ -5,7 +5,6 @@ All Kafka API calls are mocked — no real broker needed.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 from confluent_kafka import KafkaException
 
 from kafka_health_agent.tools import (
@@ -18,7 +17,6 @@ from kafka_health_agent.tools import (
     list_consumer_groups,
     list_kafka_topics,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -149,7 +147,7 @@ def test_create_topic_admin_error(mock_admin):
 
 
 def test_create_topic_has_confirm_guardrail():
-    assert getattr(create_kafka_topic, "_guardrail_level") == "confirm"
+    assert create_kafka_topic._guardrail_level == "confirm"
     assert "creates" in getattr(create_kafka_topic, "_guardrail_reason", "")
 
 
@@ -178,7 +176,7 @@ def test_delete_topic_not_found(mock_admin):
 
 
 def test_delete_topic_has_destructive_guardrail():
-    assert getattr(delete_kafka_topic, "_guardrail_level") == "destructive"
+    assert delete_kafka_topic._guardrail_level == "destructive"
     assert "permanently" in getattr(delete_kafka_topic, "_guardrail_reason", "")
 
 
@@ -306,9 +304,7 @@ def test_get_consumer_lag_success(mock_admin):
     offsets_result.topic_partitions = [tp]
     offsets_future = MagicMock()
     offsets_future.result.return_value = offsets_result
-    mock_admin.return_value.list_consumer_group_offsets.return_value = {
-        "my-group": offsets_future
-    }
+    mock_admin.return_value.list_consumer_group_offsets.return_value = {"my-group": offsets_future}
 
     # latest offsets
     latest_tp = MagicMock()
@@ -334,9 +330,7 @@ def test_get_consumer_lag_no_offsets(mock_admin):
     offsets_result.topic_partitions = []
     offsets_future = MagicMock()
     offsets_future.result.return_value = offsets_result
-    mock_admin.return_value.list_consumer_group_offsets.return_value = {
-        "my-group": offsets_future
-    }
+    mock_admin.return_value.list_consumer_group_offsets.return_value = {"my-group": offsets_future}
 
     result = get_consumer_lag("my-group")
     assert result["status"] == "success"
@@ -359,9 +353,7 @@ def test_get_consumer_lag_with_topic_filter(mock_admin):
     offsets_result.topic_partitions = [tp1, tp2]
     offsets_future = MagicMock()
     offsets_future.result.return_value = offsets_result
-    mock_admin.return_value.list_consumer_group_offsets.return_value = {
-        "my-group": offsets_future
-    }
+    mock_admin.return_value.list_consumer_group_offsets.return_value = {"my-group": offsets_future}
 
     latest_tp = MagicMock()
     latest_tp.topic = "orders"

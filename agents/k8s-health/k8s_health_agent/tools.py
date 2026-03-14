@@ -1,15 +1,18 @@
 """Kubernetes tools exposed to the k8s health agent."""
 
-from typing import Any, Dict, Optional
+from datetime import UTC
+from typing import Any
 
-from ai_agents_core import AgentConfig, confirm, destructive
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+
+from ai_agents_core import AgentConfig, confirm, destructive
 
 
 class K8sConfig(AgentConfig):
     """Kubernetes-specific configuration."""
-    kubeconfig_path: Optional[str] = None
+
+    kubeconfig_path: str | None = None
 
 
 _config = K8sConfig()
@@ -39,7 +42,7 @@ def _apps_api() -> client.AppsV1Api:
 # ── Cluster Info ───────────────────────────────────────────────────────
 
 
-def get_cluster_info() -> Dict[str, Any]:
+def get_cluster_info() -> dict[str, Any]:
     """Gets basic Kubernetes cluster information.
 
     Returns:
@@ -69,7 +72,7 @@ def get_cluster_info() -> Dict[str, Any]:
 # ── Nodes ──────────────────────────────────────────────────────────────
 
 
-def get_nodes() -> Dict[str, Any]:
+def get_nodes() -> dict[str, Any]:
     """Lists all nodes in the cluster with their status and resource capacity.
 
     Returns:
@@ -81,24 +84,29 @@ def get_nodes() -> Dict[str, Any]:
 
         node_list = []
         for node in nodes.items:
-            conditions = {
-                c.type: c.status for c in (node.status.conditions or [])
-            }
+            conditions = {c.type: c.status for c in (node.status.conditions or [])}
             capacity = node.status.capacity or {}
-            node_list.append({
-                "name": node.metadata.name,
-                "status": "Ready" if conditions.get("Ready") == "True" else "NotReady",
-                "roles": [
-                    k.replace("node-role.kubernetes.io/", "")
-                    for k in (node.metadata.labels or {})
-                    if k.startswith("node-role.kubernetes.io/")
-                ] or ["<none>"],
-                "cpu": capacity.get("cpu"),
-                "memory": capacity.get("memory"),
-                "pods_capacity": capacity.get("pods"),
-                "os_image": node.status.node_info.os_image if node.status.node_info else "unknown",
-                "kubelet_version": node.status.node_info.kubelet_version if node.status.node_info else "unknown",
-            })
+            node_list.append(
+                {
+                    "name": node.metadata.name,
+                    "status": "Ready" if conditions.get("Ready") == "True" else "NotReady",
+                    "roles": [
+                        k.replace("node-role.kubernetes.io/", "")
+                        for k in (node.metadata.labels or {})
+                        if k.startswith("node-role.kubernetes.io/")
+                    ]
+                    or ["<none>"],
+                    "cpu": capacity.get("cpu"),
+                    "memory": capacity.get("memory"),
+                    "pods_capacity": capacity.get("pods"),
+                    "os_image": node.status.node_info.os_image
+                    if node.status.node_info
+                    else "unknown",
+                    "kubelet_version": node.status.node_info.kubelet_version
+                    if node.status.node_info
+                    else "unknown",
+                }
+            )
 
         return {"status": "success", "nodes": node_list, "count": len(node_list)}
     except ApiException as e:
@@ -108,9 +116,7 @@ def get_nodes() -> Dict[str, Any]:
 # ── Pods ───────────────────────────────────────────────────────────────
 
 
-def list_pods(
-    namespace: str = "default", label_selector: Optional[str] = None
-) -> Dict[str, Any]:
+def list_pods(namespace: str = "default", label_selector: str | None = None) -> dict[str, Any]:
     """Lists pods in a namespace with their status.
 
     Args:
@@ -138,22 +144,26 @@ def list_pods(
             ready = sum(1 for cs in container_statuses if cs.ready)
             total = len(container_statuses)
 
-            pod_list.append({
-                "name": pod.metadata.name,
-                "namespace": pod.metadata.namespace,
-                "status": pod.status.phase,
-                "ready": f"{ready}/{total}",
-                "restarts": restarts,
-                "node": pod.spec.node_name,
-                "age": pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else "unknown",
-            })
+            pod_list.append(
+                {
+                    "name": pod.metadata.name,
+                    "namespace": pod.metadata.namespace,
+                    "status": pod.status.phase,
+                    "ready": f"{ready}/{total}",
+                    "restarts": restarts,
+                    "node": pod.spec.node_name,
+                    "age": pod.metadata.creation_timestamp.isoformat()
+                    if pod.metadata.creation_timestamp
+                    else "unknown",
+                }
+            )
 
         return {"status": "success", "pods": pod_list, "count": len(pod_list)}
     except ApiException as e:
         return {"status": "error", "message": f"Failed to list pods: {e.reason}"}
 
 
-def describe_pod(pod_name: str, namespace: str = "default") -> Dict[str, Any]:
+def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, Any]:
     """Gets detailed information about a specific pod.
 
     Args:
@@ -169,21 +179,26 @@ def describe_pod(pod_name: str, namespace: str = "default") -> Dict[str, Any]:
 
         containers = []
         for c in pod.spec.containers:
-            containers.append({
-                "name": c.name,
-                "image": c.image,
-                "ports": [
-                    {"port": p.container_port, "protocol": p.protocol}
-                    for p in (c.ports or [])
-                ],
-                "resources": {
-                    "requests": dict(c.resources.requests) if c.resources and c.resources.requests else {},
-                    "limits": dict(c.resources.limits) if c.resources and c.resources.limits else {},
-                },
-            })
+            containers.append(
+                {
+                    "name": c.name,
+                    "image": c.image,
+                    "ports": [
+                        {"port": p.container_port, "protocol": p.protocol} for p in (c.ports or [])
+                    ],
+                    "resources": {
+                        "requests": dict(c.resources.requests)
+                        if c.resources and c.resources.requests
+                        else {},
+                        "limits": dict(c.resources.limits)
+                        if c.resources and c.resources.limits
+                        else {},
+                    },
+                }
+            )
 
         container_statuses = []
-        for cs in (pod.status.container_statuses or []):
+        for cs in pod.status.container_statuses or []:
             state = "unknown"
             if cs.state:
                 if cs.state.running:
@@ -192,12 +207,14 @@ def describe_pod(pod_name: str, namespace: str = "default") -> Dict[str, Any]:
                     state = f"waiting: {cs.state.waiting.reason}"
                 elif cs.state.terminated:
                     state = f"terminated: {cs.state.terminated.reason}"
-            container_statuses.append({
-                "name": cs.name,
-                "ready": cs.ready,
-                "state": state,
-                "restart_count": cs.restart_count,
-            })
+            container_statuses.append(
+                {
+                    "name": cs.name,
+                    "ready": cs.ready,
+                    "state": state,
+                    "restart_count": cs.restart_count,
+                }
+            )
 
         conditions = [
             {"type": c.type, "status": c.status, "reason": c.reason}
@@ -223,10 +240,10 @@ def describe_pod(pod_name: str, namespace: str = "default") -> Dict[str, Any]:
 def get_pod_logs(
     pod_name: str,
     namespace: str = "default",
-    container: Optional[str] = None,
+    container: str | None = None,
     tail_lines: int = 100,
-    since_seconds: Optional[int] = None,
-) -> Dict[str, Any]:
+    since_seconds: int | None = None,
+) -> dict[str, Any]:
     """Gets logs from a pod.
 
     Args:
@@ -264,7 +281,7 @@ def get_pod_logs(
 # ── Deployments ────────────────────────────────────────────────────────
 
 
-def list_deployments(namespace: str = "default") -> Dict[str, Any]:
+def list_deployments(namespace: str = "default") -> dict[str, Any]:
     """Lists deployments in a namespace with their status.
 
     Args:
@@ -283,22 +300,28 @@ def list_deployments(namespace: str = "default") -> Dict[str, Any]:
 
         deploy_list = []
         for d in deploys.items:
-            deploy_list.append({
-                "name": d.metadata.name,
-                "namespace": d.metadata.namespace,
-                "replicas": f"{d.status.ready_replicas or 0}/{d.spec.replicas or 0}",
-                "up_to_date": d.status.updated_replicas or 0,
-                "available": d.status.available_replicas or 0,
-                "image": d.spec.template.spec.containers[0].image if d.spec.template.spec.containers else "unknown",
-                "age": d.metadata.creation_timestamp.isoformat() if d.metadata.creation_timestamp else "unknown",
-            })
+            deploy_list.append(
+                {
+                    "name": d.metadata.name,
+                    "namespace": d.metadata.namespace,
+                    "replicas": f"{d.status.ready_replicas or 0}/{d.spec.replicas or 0}",
+                    "up_to_date": d.status.updated_replicas or 0,
+                    "available": d.status.available_replicas or 0,
+                    "image": d.spec.template.spec.containers[0].image
+                    if d.spec.template.spec.containers
+                    else "unknown",
+                    "age": d.metadata.creation_timestamp.isoformat()
+                    if d.metadata.creation_timestamp
+                    else "unknown",
+                }
+            )
 
         return {"status": "success", "deployments": deploy_list, "count": len(deploy_list)}
     except ApiException as e:
         return {"status": "error", "message": f"Failed to list deployments: {e.reason}"}
 
 
-def get_deployment_status(name: str, namespace: str = "default") -> Dict[str, Any]:
+def get_deployment_status(name: str, namespace: str = "default") -> dict[str, Any]:
     """Gets detailed rollout status for a deployment.
 
     Args:
@@ -336,7 +359,7 @@ def get_deployment_status(name: str, namespace: str = "default") -> Dict[str, An
 
 
 @confirm("scales the number of replicas for a deployment")
-def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -> Dict[str, Any]:
+def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -> dict[str, Any]:
     """Scales a deployment to a specified number of replicas.
 
     Args:
@@ -360,7 +383,7 @@ def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -
 
 
 @destructive("triggers a rolling restart which temporarily reduces availability")
-def restart_deployment(name: str, namespace: str = "default") -> Dict[str, Any]:
+def restart_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
     """Triggers a rolling restart of a deployment.
 
     Args:
@@ -370,7 +393,7 @@ def restart_deployment(name: str, namespace: str = "default") -> Dict[str, Any]:
     Returns:
         A dictionary with the operation result.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
         apps = _apps_api()
@@ -380,7 +403,7 @@ def restart_deployment(name: str, namespace: str = "default") -> Dict[str, Any]:
                 "template": {
                     "metadata": {
                         "annotations": {
-                            "kubectl.kubernetes.io/restartedAt": datetime.now(timezone.utc).isoformat()
+                            "kubectl.kubernetes.io/restartedAt": datetime.now(UTC).isoformat()
                         }
                     }
                 }
@@ -399,8 +422,8 @@ def restart_deployment(name: str, namespace: str = "default") -> Dict[str, Any]:
 
 
 def get_events(
-    namespace: str = "default", field_selector: Optional[str] = None, limit: int = 20
-) -> Dict[str, Any]:
+    namespace: str = "default", field_selector: str | None = None, limit: int = 20
+) -> dict[str, Any]:
     """Gets recent events in a namespace.
 
     Args:
@@ -424,15 +447,17 @@ def get_events(
 
         event_list = []
         for e in events.items:
-            event_list.append({
-                "type": e.type,
-                "reason": e.reason,
-                "object": f"{e.involved_object.kind}/{e.involved_object.name}",
-                "message": e.message,
-                "count": e.count,
-                "first_seen": e.first_timestamp.isoformat() if e.first_timestamp else None,
-                "last_seen": e.last_timestamp.isoformat() if e.last_timestamp else None,
-            })
+            event_list.append(
+                {
+                    "type": e.type,
+                    "reason": e.reason,
+                    "object": f"{e.involved_object.kind}/{e.involved_object.name}",
+                    "message": e.message,
+                    "count": e.count,
+                    "first_seen": e.first_timestamp.isoformat() if e.first_timestamp else None,
+                    "last_seen": e.last_timestamp.isoformat() if e.last_timestamp else None,
+                }
+            )
 
         return {"status": "success", "events": event_list, "count": len(event_list)}
     except ApiException as e:
@@ -442,7 +467,7 @@ def get_events(
 # ── Namespaces ─────────────────────────────────────────────────────────
 
 
-def list_namespaces() -> Dict[str, Any]:
+def list_namespaces() -> dict[str, Any]:
     """Lists all namespaces in the cluster.
 
     Returns:

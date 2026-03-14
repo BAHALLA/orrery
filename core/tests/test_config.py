@@ -48,10 +48,7 @@ def test_load_config_from_env_file(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
 
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        "GEMINI_MODEL_VERSION=gemini-1.5-pro\n"
-        "GOOGLE_CLOUD_PROJECT=test-project\n"
-    )
+    env_file.write_text("GEMINI_MODEL_VERSION=gemini-1.5-pro\nGOOGLE_CLOUD_PROJECT=test-project\n")
 
     # Simulate agent_file being next to the .env
     fake_agent_file = tmp_path / "agent.py"

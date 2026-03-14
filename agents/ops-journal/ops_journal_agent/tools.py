@@ -7,16 +7,15 @@ State prefix reference:
   ctx.state["temp:key"]    → temporary (not persisted at all, current invocation only)
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from google.adk.tools import ToolContext
-
 
 # ── Session State: tracks what happened in this conversation ───────────
 
 
-def log_operation(ctx: ToolContext, operation: str, details: str) -> Dict[str, Any]:
+def log_operation(ctx: ToolContext, operation: str, details: str) -> dict[str, Any]:
     """Logs an operation to the current session's activity log.
 
     Use this to track what actions have been performed in this session.
@@ -33,7 +32,7 @@ def log_operation(ctx: ToolContext, operation: str, details: str) -> Dict[str, A
     entry = {
         "operation": operation,
         "details": details,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
     log.append(entry)
     ctx.state["session_log"] = log
@@ -45,7 +44,7 @@ def log_operation(ctx: ToolContext, operation: str, details: str) -> Dict[str, A
     }
 
 
-def get_session_summary(ctx: ToolContext) -> Dict[str, Any]:
+def get_session_summary(ctx: ToolContext) -> dict[str, Any]:
     """Returns a summary of all operations performed in this session.
 
     Args:
@@ -65,7 +64,9 @@ def get_session_summary(ctx: ToolContext) -> Dict[str, Any]:
 # ── User State: persists across sessions for the same user ─────────────
 
 
-def save_note(ctx: ToolContext, title: str, content: str, tags: Optional[str] = None) -> Dict[str, Any]:
+def save_note(
+    ctx: ToolContext, title: str, content: str, tags: str | None = None
+) -> dict[str, Any]:
     """Saves a note that persists across sessions for this user.
 
     Use this to record findings, incidents, or anything worth remembering.
@@ -86,18 +87,20 @@ def save_note(ctx: ToolContext, title: str, content: str, tags: Optional[str] = 
         "title": title,
         "content": content,
         "tags": [t.strip() for t in tags.split(",")] if tags else [],
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     notes.append(note)
     ctx.state["user:notes"] = notes
 
     # Also log this as a session operation
     log = ctx.state.get("session_log", [])
-    log.append({
-        "operation": "save_note",
-        "details": f"Saved note #{note_id}: {title}",
-        "timestamp": note["created_at"],
-    })
+    log.append(
+        {
+            "operation": "save_note",
+            "details": f"Saved note #{note_id}: {title}",
+            "timestamp": note["created_at"],
+        }
+    )
     ctx.state["session_log"] = log
 
     return {
@@ -107,7 +110,7 @@ def save_note(ctx: ToolContext, title: str, content: str, tags: Optional[str] = 
     }
 
 
-def list_notes(ctx: ToolContext, tag: Optional[str] = None) -> Dict[str, Any]:
+def list_notes(ctx: ToolContext, tag: str | None = None) -> dict[str, Any]:
     """Lists all saved notes for this user, optionally filtered by tag.
 
     Args:
@@ -128,7 +131,7 @@ def list_notes(ctx: ToolContext, tag: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
-def search_notes(ctx: ToolContext, query: str) -> Dict[str, Any]:
+def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
     """Searches saved notes by keyword in title or content.
 
     Args:
@@ -141,8 +144,7 @@ def search_notes(ctx: ToolContext, query: str) -> Dict[str, Any]:
     notes = ctx.state.get("user:notes", [])
     query_lower = query.lower()
     matches = [
-        n for n in notes
-        if query_lower in n["title"].lower() or query_lower in n["content"].lower()
+        n for n in notes if query_lower in n["title"].lower() or query_lower in n["content"].lower()
     ]
 
     return {
@@ -153,7 +155,7 @@ def search_notes(ctx: ToolContext, query: str) -> Dict[str, Any]:
     }
 
 
-def delete_note(ctx: ToolContext, note_id: int) -> Dict[str, Any]:
+def delete_note(ctx: ToolContext, note_id: int) -> dict[str, Any]:
     """Deletes a saved note by ID.
 
     Args:
@@ -176,7 +178,7 @@ def delete_note(ctx: ToolContext, note_id: int) -> Dict[str, Any]:
 # ── User Preferences: user-scoped settings ─────────────────────────────
 
 
-def set_preference(ctx: ToolContext, key: str, value: str) -> Dict[str, Any]:
+def set_preference(ctx: ToolContext, key: str, value: str) -> dict[str, Any]:
     """Sets a user preference that persists across sessions.
 
     Args:
@@ -197,7 +199,7 @@ def set_preference(ctx: ToolContext, key: str, value: str) -> Dict[str, Any]:
     }
 
 
-def get_preferences(ctx: ToolContext) -> Dict[str, Any]:
+def get_preferences(ctx: ToolContext) -> dict[str, Any]:
     """Gets all user preferences.
 
     Args:
@@ -213,7 +215,7 @@ def get_preferences(ctx: ToolContext) -> Dict[str, Any]:
 # ── App State: shared across all users ─────────────────────────────────
 
 
-def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> Dict[str, Any]:
+def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, Any]:
     """Adds a shared bookmark visible to all users.
 
     Args:
@@ -234,7 +236,7 @@ def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> Dict[str, Any]:
     }
 
 
-def list_team_bookmarks(ctx: ToolContext) -> Dict[str, Any]:
+def list_team_bookmarks(ctx: ToolContext) -> dict[str, Any]:
     """Lists all shared team bookmarks.
 
     Args:

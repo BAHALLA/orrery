@@ -10,7 +10,6 @@ from ai_agents_core.guardrails import (
     require_confirmation,
 )
 
-
 # ── @destructive decorator ─────────────────────────────────────────────
 
 
@@ -43,6 +42,7 @@ def test_destructive_with_empty_reason():
 
 def test_is_destructive_checks_func_attr(fake_tool):
     """ADK wraps functions in BaseTool objects with a .func attribute."""
+
     @destructive("reason")
     def my_func():
         pass
