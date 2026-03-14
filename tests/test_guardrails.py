@@ -1,10 +1,12 @@
 """Tests for ai_agents_core.guardrails."""
 
 from ai_agents_core.guardrails import (
+    confirm,
     destructive,
     dry_run,
     get_destructive_reason,
     is_destructive,
+    is_guarded,
     require_confirmation,
 )
 from conftest import FakeTool, FakeToolContext
@@ -19,6 +21,7 @@ def test_destructive_marks_function():
         pass
 
     assert is_destructive(my_tool) is True
+    assert is_guarded(my_tool) is True
     assert get_destructive_reason(my_tool) == "deletes everything"
 
 
@@ -27,7 +30,7 @@ def test_unmarked_function_is_not_destructive():
         pass
 
     assert is_destructive(safe_tool) is False
-    assert get_destructive_reason(safe_tool) == ""
+    assert is_guarded(safe_tool) is False
 
 
 def test_destructive_with_empty_reason():
@@ -45,9 +48,28 @@ def test_is_destructive_checks_func_attr():
     def my_func():
         pass
 
-    # Simulate ADK wrapping: tool.func = my_func
     tool = FakeTool(name="my_func", func=my_func)
     assert is_destructive(tool) is True
+
+
+# ── @confirm decorator ─────────────────────────────────────────────────
+
+
+def test_confirm_marks_function():
+    @confirm("creates a resource")
+    def my_tool():
+        pass
+
+    assert is_guarded(my_tool) is True
+    assert is_destructive(my_tool) is False
+
+
+def test_confirm_stores_reason():
+    @confirm("creates a new topic")
+    def my_tool():
+        pass
+
+    assert get_destructive_reason(my_tool) == "creates a new topic"
 
 
 # ── require_confirmation() ─────────────────────────────────────────────
@@ -77,8 +99,25 @@ def test_require_confirmation_blocks_destructive_tool():
     result = callback(tool=tool, args={"name": "test"}, tool_context=ctx)
     assert result is not None
     assert result["status"] == "confirmation_required"
-    assert "danger_tool" in result["message"]
+    assert "destructive" in result["message"]
     assert "destroys data" in result["message"]
+
+
+def test_require_confirmation_blocks_confirm_tool_with_neutral_message():
+    @confirm("creates a new topic on the cluster")
+    def create_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = FakeTool(name="create_tool", func=create_tool)
+    ctx = FakeToolContext()
+
+    result = callback(tool=tool, args={"name": "test"}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+    assert "requires confirmation" in result["message"]
+    assert "destructive" not in result["message"]
+    assert "creates a new topic" in result["message"]
 
 
 def test_require_confirmation_allows_after_pending():
@@ -100,6 +139,24 @@ def test_require_confirmation_allows_after_pending():
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is None  # proceed
     assert ctx.state["_guardrail_pending_danger_tool"] is False
+
+
+def test_require_confirmation_allows_confirm_tool_after_pending():
+    @confirm("creates a resource")
+    def create_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = FakeTool(name="create_tool", func=create_tool)
+    ctx = FakeToolContext()
+
+    # First call: blocked
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+
+    # Second call: allowed
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is None
 
 
 def test_require_confirmation_blocks_when_no_func():
@@ -140,7 +197,20 @@ def test_dry_run_blocks_destructive_tool():
     assert result is not None
     assert result["status"] == "dry_run"
     assert "DRY RUN" in result["message"]
-    assert "danger_tool" in result["message"]
+
+
+def test_dry_run_blocks_confirm_tool():
+    @confirm("creates a resource")
+    def create_tool():
+        pass
+
+    callback = dry_run()
+    tool = FakeTool(name="create_tool", func=create_tool)
+    ctx = FakeToolContext()
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "dry_run"
 
 
 def test_dry_run_always_blocks_even_on_retry():
@@ -152,7 +222,6 @@ def test_dry_run_always_blocks_even_on_retry():
     tool = FakeTool(name="danger_tool", func=danger_tool)
     ctx = FakeToolContext()
 
-    # Always blocked, no confirmation mechanism
     result1 = callback(tool=tool, args={}, tool_context=ctx)
     result2 = callback(tool=tool, args={}, tool_context=ctx)
     assert result1["status"] == "dry_run"

@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from ai_agents_core import AgentConfig, destructive
+from ai_agents_core import AgentConfig, confirm, destructive
 from confluent_kafka import KafkaException, TopicPartition, ConsumerGroupTopicPartitions
 from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
 
@@ -60,7 +60,7 @@ def list_kafka_topics() -> Dict[str, Any]:
         return {"status": "error", "message": f"Failed to list topics: {str(e)}"}
 
 
-@destructive("creates a new topic that consumes cluster resources")
+@confirm("creates a new topic on the cluster")
 def create_kafka_topic(
     topic_name: str, num_partitions: int = 1, replication_factor: int = 1
 ) -> Dict[str, Any]:
