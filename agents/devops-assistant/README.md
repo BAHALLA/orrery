@@ -20,11 +20,11 @@ devops_assistant (orchestrator)
 
 ### kafka_health_agent
 
-Reused from the standalone [kafka-health-agent](kafka-health-agent.md). Handles all Kafka cluster operations.
+Reused from the standalone [kafka-health-agent](../kafka-health/). Handles all Kafka cluster operations.
 
 ### k8s_health_agent
 
-Reused from the standalone [k8s-health-agent](k8s-health-agent.md). Handles Kubernetes cluster health, nodes, pods, deployments, logs, events, scaling, and restarts. Includes guardrails for destructive operations (scale, restart).
+Reused from the standalone [k8s-health-agent](../k8s-health/). Handles Kubernetes cluster health, nodes, pods, deployments, logs, events, scaling, and restarts. Includes guardrails for destructive operations (scale, restart).
 
 ### docker_agent
 
@@ -38,7 +38,7 @@ Reused from the standalone [k8s-health-agent](k8s-health-agent.md). Handles Kube
 
 ### ops_journal_agent
 
-Reused from the standalone [ops-journal](ops-journal.md). Handles notes, preferences, session tracking, and team bookmarks. See that doc for details on state scopes (`session`, `user:`, `app:`, `temp:`).
+Reused from the standalone [ops-journal](../ops-journal/). Handles notes, preferences, session tracking, and team bookmarks. See that doc for details on state scopes (`session`, `user:`, `app:`, `temp:`).
 
 After a significant investigation, the orchestrator will proactively suggest saving findings as a note via this agent.
 

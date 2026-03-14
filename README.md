@@ -14,13 +14,13 @@ Agents can monitor infrastructure, diagnose issues, and take action with built-i
 
 ## Agents
 
-| Agent | Type | Description | Docs |
-|-------|------|-------------|------|
-| **core** | Library | Agent factory, guardrails, audit logging, typed config | [docs/core.md](docs/core.md) |
-| **kafka-health-agent** | Single agent | Kafka cluster health, topics, consumer groups, lag | [docs/kafka-health-agent.md](docs/kafka-health-agent.md) |
-| **k8s-health-agent** | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events | [docs/k8s-health-agent.md](docs/k8s-health-agent.md) |
-| **devops-assistant** | Multi-agent | Orchestrator that delegates to kafka, k8s, docker, and journal sub-agents | [docs/devops-assistant.md](docs/devops-assistant.md) |
-| **ops-journal** | Memory/state | Notes, preferences, and session tracking with persistent storage | [docs/ops-journal.md](docs/ops-journal.md) |
+| Agent | Type | Description |
+|-------|------|-------------|
+| [**core**](core/) | Library | Agent factory, guardrails, audit logging, typed config |
+| [**kafka-health-agent**](agents/kafka-health/) | Single agent | Kafka cluster health, topics, consumer groups, lag |
+| [**k8s-health-agent**](agents/k8s-health/) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
+| [**devops-assistant**](agents/devops-assistant/) | Multi-agent | Orchestrator that delegates to kafka, k8s, docker, and journal sub-agents |
+| [**ops-journal**](agents/ops-journal/) | Memory/state | Notes, preferences, and session tracking with persistent storage |
 
 ## Quick Start
 

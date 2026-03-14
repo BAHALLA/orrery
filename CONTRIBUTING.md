@@ -36,7 +36,7 @@ ai-agents/
 └── docs/                  # Per-agent and core documentation
 ```
 
-See [docs/core.md](docs/core.md) for the shared library API (agent factory, guardrails, audit, config).
+See [core/README.md](core/README.md) for the shared library API (agent factory, guardrails, audit, config).
 
 ## How to Contribute
 
@@ -49,7 +49,7 @@ This is the most impactful way to contribute. See the [Adding a New Agent](READM
 - Mark destructive tools with `@destructive("reason")`
 - Separate tools (`tools.py`) from agent wiring (`agent.py`)
 - Add tests in `agents/your-agent/tests/`
-- Add documentation in `docs/`
+- Add a `README.md` in your agent package
 - Add Makefile targets for running the agent
 
 ### Improving Existing Agents
