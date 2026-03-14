@@ -1,23 +1,17 @@
 # AI Agents
 
-A monorepo of autonomous AI agents built with [Google ADK](https://google.github.io/adk-docs/), managed as a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/).
+An open-source platform for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/).
 
-## Repository Structure
+Agents can monitor infrastructure, diagnose issues, and take action — with built-in safety guardrails that require human confirmation before any destructive operation.
 
-```text
-ai-agents/
-├── Makefile                    # shortcuts for common commands
-├── pyproject.toml              # workspace root
-├── docker-compose.yml          # shared infrastructure (Kafka, etc.)
-├── core/                       # shared utilities (ai-agents-core)
-│   └── ai_agents_core/
-│       └── base.py             # create_agent(), load_agent_env()
-├── agents/
-│   ├── kafka-health/           # Kafka monitoring agent
-│   ├── devops-assistant/       # Multi-agent orchestrator
-│   └── ops-journal/            # Memory and state patterns
-└── docs/                       # per-agent documentation
-```
+## Key Features
+
+- **Multi-agent orchestration** — a root agent delegates to specialized sub-agents based on user intent
+- **Safety guardrails** — destructive tools (`@destructive`) require explicit confirmation; mutating tools (`@confirm`) prompt before executing
+- **Audit logging** — every tool call is logged with timestamp, agent, arguments, and result
+- **Typed configuration** — pydantic-settings base class replaces raw `os.getenv()` calls
+- **Persistent memory** — session state, user-scoped notes, and app-wide shared data with SQLite backing
+- **Composable architecture** — each agent is a standalone package that can run independently or plug into an orchestrator
 
 ## Agents
 
@@ -25,7 +19,7 @@ ai-agents/
 |-------|------|-------------|------|
 | **core** | Library | Agent factory, guardrails, audit logging, typed config | [docs/core.md](docs/core.md) |
 | **kafka-health-agent** | Single agent | Kafka cluster health, topics, consumer groups, lag | [docs/kafka-health-agent.md](docs/kafka-health-agent.md) |
-| **devops-assistant** | Multi-agent | Orchestrator that delegates to kafka + docker sub-agents | [docs/devops-assistant.md](docs/devops-assistant.md) |
+| **devops-assistant** | Multi-agent | Orchestrator that delegates to kafka, docker, and journal sub-agents | [docs/devops-assistant.md](docs/devops-assistant.md) |
 | **ops-journal** | Memory/state | Notes, preferences, and session tracking with persistent storage | [docs/ops-journal.md](docs/ops-journal.md) |
 
 ## Quick Start
@@ -37,6 +31,12 @@ make run-devops   # launch the devops-assistant in ADK Dev UI
 ```
 
 Run `make help` to see all available commands.
+
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) for Python package management
+- [Docker](https://docs.docker.com/get-docker/) for infrastructure and the docker agent
+- A Google Cloud Project with Vertex AI API enabled (or an AI Studio API key)
 
 ## Environment Configuration
 
@@ -54,53 +54,31 @@ GOOGLE_GENAI_USE_VERTEXAI=FALSE
 GOOGLE_API_KEY=your-api-key
 ```
 
-## Prerequisites
-
-- [uv](https://docs.astral.sh/uv/) for Python package management
-- [Docker](https://docs.docker.com/get-docker/) for infrastructure and the docker agent
-- A Google Cloud Project with Vertex AI API enabled (or an AI Studio API key)
-
 ## Adding a New Agent
 
-1. Create a directory under `agents/`:
-   ```bash
-   mkdir -p agents/my-agent/my_agent
-   ```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The short version:
 
-2. Add a `pyproject.toml` that depends on `ai-agents-core`:
-   ```toml
-   [project]
-   name = "my-agent"
-   version = "0.1.0"
-   requires-python = ">=3.11"
-   dependencies = ["ai-agents-core"]
+```bash
+mkdir -p agents/my-agent/my_agent
+```
 
-   [tool.uv.sources]
-   ai-agents-core = { workspace = true }
-   ```
+```python
+# my_agent/agent.py
+from ai_agents_core import create_agent, load_agent_env, require_confirmation, audit_logger
 
-3. Create `my_agent/__init__.py`:
-   ```python
-   from . import agent
-   ```
+load_agent_env(__file__)
 
-4. Create `my_agent/agent.py`:
-   ```python
-   from ai_agents_core import create_agent, load_agent_env
+root_agent = create_agent(
+    name="my_agent",
+    description="What this agent does.",
+    instruction="How the agent should behave.",
+    tools=[...],
+    before_tool_callback=require_confirmation(),
+    after_tool_callback=audit_logger(),
+)
+```
 
-   load_agent_env(__file__)
-
-   root_agent = create_agent(
-       name="my_agent",
-       description="What this agent does.",
-       instruction="How the agent should behave.",
-       tools=[...],
-   )
-   ```
-
-5. Register in the root `pyproject.toml` and add Makefile targets.
-
-6. Run `make install`.
+Register in the root `pyproject.toml` and run `make install`.
 
 ## Contributing
 
