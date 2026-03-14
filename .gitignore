@@ -18,3 +18,7 @@ wheels/
 
 # uv
 uv.lock
+
+# Audit and persistence
+*.jsonl
+*.db

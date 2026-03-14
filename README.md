@@ -23,6 +23,7 @@ ai-agents/
 
 | Agent | Type | Description | Docs |
 |-------|------|-------------|------|
+| **core** | Library | Agent factory, guardrails, audit logging, typed config | [docs/core.md](docs/core.md) |
 | **kafka-health-agent** | Single agent | Kafka cluster health, topics, consumer groups, lag | [docs/kafka-health-agent.md](docs/kafka-health-agent.md) |
 | **devops-assistant** | Multi-agent | Orchestrator that delegates to kafka + docker sub-agents | [docs/devops-assistant.md](docs/devops-assistant.md) |
 | **ops-journal** | Memory/state | Notes, preferences, and session tracking with persistent storage | [docs/ops-journal.md](docs/ops-journal.md) |

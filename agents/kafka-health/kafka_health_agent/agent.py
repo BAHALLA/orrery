@@ -1,4 +1,9 @@
-from ai_agents_core import create_agent, load_agent_env
+from ai_agents_core import (
+    audit_logger,
+    create_agent,
+    load_agent_env,
+    require_confirmation,
+)
 
 from .tools import (
     create_kafka_topic,
@@ -19,7 +24,9 @@ root_agent = create_agent(
     instruction=(
         "You are a specialized agent for Kafka monitoring. You can check cluster health, "
         "manage topics, and inspect consumer groups and lag. Use the provided tools to "
-        "retrieve cluster information and troubleshoot performance or connectivity issues."
+        "retrieve cluster information and troubleshoot performance or connectivity issues.\n\n"
+        "When a tool returns a 'confirmation_required' status, you MUST ask the user "
+        "to confirm before calling the tool again."
     ),
     tools=[
         get_kafka_cluster_health,
@@ -31,4 +38,6 @@ root_agent = create_agent(
         describe_consumer_groups,
         get_consumer_lag,
     ],
+    before_tool_callback=require_confirmation(),
+    after_tool_callback=audit_logger(),
 )
