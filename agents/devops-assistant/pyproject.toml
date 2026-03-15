@@ -7,6 +7,7 @@ dependencies = [
     "ai-agents-core",
     "kafka-health-agent",
     "k8s-health-agent",
+    "observability-agent",
     "ops-journal",
     "aiosqlite>=0.20.0",
 ]
@@ -18,4 +19,5 @@ include = ["devops_assistant*"]
 ai-agents-core = { workspace = true }
 kafka-health-agent = { workspace = true }
 k8s-health-agent = { workspace = true }
+observability-agent = { workspace = true }
 ops-journal = { workspace = true }

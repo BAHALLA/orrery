@@ -1,0 +1,13 @@
+[project]
+name = "observability-agent"
+version = "0.1.0"
+description = "Agent for monitoring Prometheus, Loki, and Alertmanager"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "ai-agents-core",
+    "requests>=2.31.0",
+]
+
+[tool.uv.sources]
+ai-agents-core = { workspace = true }

@@ -2,6 +2,7 @@
        docker-build docker-demo docker-down \
        run-kafka-health run-kafka-health-cli \
        run-k8s run-k8s-cli \
+       run-observability run-observability-cli \
        run-devops run-devops-cli run-devops-persistent \
        run-journal run-journal-cli run-journal-persistent
 
@@ -24,13 +25,13 @@ fmt: ## Auto-fix lint and format issues
 	uv run ruff check --fix .
 	uv run ruff format .
 
-infra-up: ## Start shared infrastructure (Kafka, Zookeeper, Kafka UI)
+infra-up: ## Start shared infrastructure (Kafka, Prometheus, Loki, Alertmanager)
 	docker compose up -d
 
 infra-down: ## Stop shared infrastructure
 	docker compose down
 
-infra-reset: ## Stop infrastructure and wipe volumes (fixes cluster.id mismatch)
+infra-reset: ## Stop infrastructure and wipe volumes
 	docker compose down -v
 
 # ── Docker ────────────────────────────────────────────
@@ -59,6 +60,14 @@ run-k8s: ## Launch k8s-health-agent in ADK Dev UI
 
 run-k8s-cli: ## Run k8s-health-agent in terminal
 	cd agents/k8s-health && uv run adk run k8s_health_agent
+
+# ── observability-agent ────────────────────────────────
+
+run-observability: ## Launch observability-agent in ADK Dev UI
+	cd agents/observability && uv run adk web
+
+run-observability-cli: ## Run observability-agent in terminal
+	cd agents/observability && uv run adk run observability_agent
 
 # ── devops-assistant ───────────────────────────────────
 

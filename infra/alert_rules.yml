@@ -1,0 +1,40 @@
+groups:
+  - name: demo_alerts
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target {{ $labels.instance }} is down"
+          description: "{{ $labels.job }}/{{ $labels.instance }} has been down for more than 1 minute."
+
+      - alert: HighPrometheusScrapeLatency
+        expr: scrape_duration_seconds > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High scrape latency on {{ $labels.instance }}"
+          description: "Scrape duration is {{ $value }}s on {{ $labels.instance }}."
+
+  - name: kafka_alerts
+    rules:
+      - alert: KafkaConsumerGroupLag
+        expr: kafka_consumergroup_lag_sum > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer group {{ $labels.consumergroup }} has high lag"
+          description: "Lag is {{ $value }} on topic {{ $labels.topic }}."
+
+      - alert: KafkaUnderReplicatedPartitions
+        expr: kafka_topic_partition_under_replicated_partition > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Under-replicated partitions on {{ $labels.topic }}"
+          description: "Partition {{ $labels.partition }} of topic {{ $labels.topic }} is under-replicated."

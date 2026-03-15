@@ -20,6 +20,13 @@ from kafka_health_agent.tools import (
     list_consumer_groups,
     list_kafka_topics,
 )
+from observability_agent.agent import root_agent as observability_agent
+from observability_agent.tools import (
+    get_active_alerts,
+    get_prometheus_alerts,
+    get_prometheus_targets,
+    query_prometheus,
+)
 from ops_journal_agent.agent import root_agent as journal_agent
 from ops_journal_agent.tools import log_operation, save_note
 
@@ -95,11 +102,28 @@ docker_health_checker = create_agent(
     output_key="docker_status",
 )
 
-# Run all three health checks in parallel
+observability_health_checker = create_agent(
+    name="observability_health_checker",
+    description="Checks Prometheus targets, firing alerts, and Alertmanager status.",
+    instruction=(
+        "Check Prometheus target health, list firing alerts from Prometheus rules, "
+        "and check active Alertmanager alerts. Provide a brief status summary."
+    ),
+    tools=[get_prometheus_targets, get_prometheus_alerts, get_active_alerts, query_prometheus],
+    on_tool_error_callback=graceful_tool_error(),
+    output_key="observability_status",
+)
+
+# Run all four health checks in parallel
 health_check_agent = create_parallel_agent(
     name="health_check_agent",
-    description="Runs Kafka, K8s, and Docker health checks in parallel.",
-    sub_agents=[kafka_health_checker, k8s_health_checker, docker_health_checker],
+    description="Runs Kafka, K8s, Docker, and Observability health checks in parallel.",
+    sub_agents=[
+        kafka_health_checker,
+        k8s_health_checker,
+        docker_health_checker,
+        observability_health_checker,
+    ],
 )
 
 # Synthesize results into a triage report
@@ -107,8 +131,8 @@ triage_summarizer = create_agent(
     name="triage_summarizer",
     description="Synthesizes health check results into an incident triage report.",
     instruction=(
-        "You receive health check results from three systems stored in session state: "
-        "kafka_status, k8s_status, and docker_status.\n\n"
+        "You receive health check results from four systems stored in session state: "
+        "kafka_status, k8s_status, docker_status, and observability_status.\n\n"
         "Synthesize these into a single incident triage report with:\n"
         "1. Overall system status (healthy / degraded / critical)\n"
         "2. Issues found per system\n"
@@ -160,6 +184,8 @@ root_agent = create_agent(
         "consumer groups, lag monitoring.\n"
         "- **k8s_health_agent**: For specific Kubernetes queries — cluster info, nodes, "
         "pods, deployments, logs, events, scaling, and restarts.\n"
+        "- **observability_agent**: For Prometheus metrics/alerts, Loki log queries, "
+        "and Alertmanager silence management.\n"
         "- **docker_agent**: For specific Docker queries — containers, logs, stats, "
         "compose status.\n"
         "- **ops_journal_agent**: For saving notes, recalling past findings, tracking "
@@ -170,6 +196,13 @@ root_agent = create_agent(
         "the findings as a note via the journal agent."
     ),
     tools=[],
-    sub_agents=[incident_triage_agent, kafka_agent, k8s_agent, docker_agent, journal_agent],
+    sub_agents=[
+        incident_triage_agent,
+        kafka_agent,
+        k8s_agent,
+        observability_agent,
+        docker_agent,
+        journal_agent,
+    ],
     on_model_error_callback=graceful_model_error(),
 )

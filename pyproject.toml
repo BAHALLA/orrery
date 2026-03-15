@@ -9,6 +9,7 @@ dependencies = [
     "ai-agents-core",
     "kafka-health-agent",
     "k8s-health-agent",
+    "observability-agent",
     "devops-assistant",
     "ops-journal",
 ]
@@ -17,6 +18,7 @@ dependencies = [
 ai-agents-core = { workspace = true }
 kafka-health-agent = { workspace = true }
 k8s-health-agent = { workspace = true }
+observability-agent = { workspace = true }
 devops-assistant = { workspace = true }
 ops-journal = { workspace = true }
 
@@ -53,6 +55,7 @@ known-first-party = [
     "ai_agents_core",
     "kafka_health_agent",
     "k8s_health_agent",
+    "observability_agent",
     "devops_assistant",
     "ops_journal_agent",
 ]
@@ -62,6 +65,7 @@ testpaths = [
     "core/tests",
     "agents/kafka-health/tests",
     "agents/k8s-health/tests",
+    "agents/observability/tests",
     "agents/devops-assistant/tests",
     "agents/ops-journal/tests",
 ]
