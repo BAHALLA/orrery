@@ -7,15 +7,20 @@ from dotenv import load_dotenv
 from google.adk.agents import Agent, ParallelAgent, SequentialAgent
 from google.adk.agents.base_agent import BaseAgent
 
+from .log import setup_logging
+
 
 def load_agent_env(agent_file: str) -> None:
     """Load the .env file located next to the given agent module file.
+
+    Also configures structured JSON logging to stdout on first call.
 
     Usage in an agent's agent.py:
         load_agent_env(__file__)
     """
     env_path = Path(agent_file).parent / ".env"
     load_dotenv(dotenv_path=env_path)
+    setup_logging()
 
 
 def create_agent(

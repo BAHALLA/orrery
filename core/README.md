@@ -158,34 +158,99 @@ root_agent = create_agent(
 
 ---
 
+## Structured Logging
+
+### `setup_logging()`
+
+Configures the root Python logger with a JSON formatter that outputs structured log lines to stdout — container-friendly and ready for Loki, ELK, Splunk, or Cloud Logging.
+
+```python
+from ai_agents_core import setup_logging
+
+setup_logging()  # call once at startup
+```
+
+Called automatically by `load_agent_env()`, so all agents get structured logging by default. Every log line is a single JSON object:
+
+```json
+{"timestamp": "2026-03-17T21:33:25+00:00", "level": "INFO", "logger": "ai_agents.audit", "message": "tool_call: k8s_health_checker.get_cluster_info", "agent": "k8s_health_checker", "tool": "get_cluster_info", "tool_args": {}, "status": "success", "user_id": "user", "session_id": "abc-123"}
+```
+
+Exception stack traces are included as an `"exception"` field when present.
+
+### `JSONFormatter`
+
+The underlying `logging.Formatter` that produces JSON output. Can be used standalone if you need custom handler configuration.
+
+---
+
 ## Audit Logging
 
 ### `audit_logger()`
 
-An `after_tool_callback` that writes a JSON Lines log entry for every tool invocation.
+An `after_tool_callback` that emits a structured audit entry for every tool invocation via Python's logging system.
 
 ```python
 root_agent = create_agent(
     ...,
-    after_tool_callback=audit_logger("logs/audit.jsonl"),
+    after_tool_callback=audit_logger(),        # stdout only (recommended)
+    # after_tool_callback=audit_logger("audit.jsonl"),  # stdout + local file fallback
 )
 ```
 
-If no path is given, defaults to `./audit.jsonl`. Each line is a JSON object:
+Each audit entry includes:
 
 ```json
 {
-  "timestamp": "2026-03-14T19:30:00+00:00",
-  "agent": "kafka_health_agent",
-  "tool": "delete_kafka_topic",
-  "args": {"topic_name": "my-topic"},
+  "timestamp": "2026-03-17T21:33:25+00:00",
+  "level": "INFO",
+  "logger": "ai_agents.audit",
+  "message": "tool_call: observability_agent.query_prometheus",
+  "agent": "observability_agent",
+  "tool": "query_prometheus",
+  "tool_args": {"query": "kafka_broker_info"},
   "status": "success",
+  "response": {"status": "success", "result_type": "vector", "results": [...]},
   "user_id": "user",
-  "session_id": "abc-123"
+  "session_id": "f3a68524-eefb-400d-95c1-5f89a2a97aef"
 }
 ```
 
+When `setup_logging()` is active (the default), audit entries go to stdout as structured JSON. An optional `log_path` argument writes a local `.jsonl` file in addition to stdout — useful for local development.
+
 Sensitive arguments (containing `password`, `secret`, `token`, `api_key`, `credential`) are automatically redacted to `***`.
+
+---
+
+## Activity Tracking
+
+### `activity_tracker()`
+
+An `after_tool_callback` that records every tool call to `session_log` in session state. This makes all agent activity visible to `get_session_summary()` in the journal agent, regardless of which sub-agent performed the work.
+
+```python
+from ai_agents_core import activity_tracker, audit_logger
+
+_track = activity_tracker()
+_audit = audit_logger()
+
+root_agent = create_agent(
+    ...,
+    after_tool_callback=[_track, _audit],  # both activity tracking + audit logging
+)
+```
+
+Each entry in `session_log` follows the same format as `log_operation()`:
+
+```json
+{
+  "operation": "get_cluster_info",
+  "details": "[k8s_health_checker] namespace=default → success",
+  "timestamp": "2026-03-17T21:33:25+00:00"
+}
+```
+
+Without `activity_tracker`, `get_session_summary()` only shows operations that explicitly called `log_operation()` — missing all the tool calls from other sub-agents.
 
 ---
 

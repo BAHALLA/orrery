@@ -1,7 +1,9 @@
 """Structured audit logging for tool calls.
 
-Provides an after_tool_callback that logs every tool invocation to a
-JSON Lines file for traceability and debugging.
+Provides an after_tool_callback that logs every tool invocation as
+structured JSON via Python's logging module. In containerised environments
+this goes to stdout (when ``setup_logging()`` is configured); for local
+dev an optional file fallback is available.
 
 ADK calls after_tool_callback with keyword args:
     callback(tool=..., args=..., tool_context=..., tool_response=...)
@@ -25,21 +27,29 @@ logger = logging.getLogger("ai_agents.audit")
 def audit_logger(log_path: str | Path | None = None) -> Callable:
     """Create an after_tool_callback that logs every tool invocation.
 
-    Each log entry is a JSON object written to a .jsonl file with:
-    - timestamp, agent, tool name, arguments, result status, user/session IDs.
+    Each log entry includes timestamp, agent, tool name, arguments,
+    result status, and user/session IDs.
+
+    The entry is always emitted via ``logging.getLogger("ai_agents.audit")``.
+    When ``setup_logging()`` is active this produces structured JSON on
+    stdout — ready for Loki, ELK, or Cloud Logging.
 
     Args:
-        log_path: Path to the audit log file. Defaults to ./audit.jsonl
-                  in the current working directory.
+        log_path: Optional path to *also* write a local .jsonl file.
+                  Useful for local development. Set to ``None`` (default)
+                  to rely solely on the logging system.
 
     Usage:
         create_agent(
             ...,
-            after_tool_callback=audit_logger("logs/audit.jsonl"),
+            after_tool_callback=audit_logger(),           # stdout only
+            # after_tool_callback=audit_logger("audit.jsonl"),  # stdout + file
         )
     """
-    resolved_path = Path(log_path) if log_path else Path("audit.jsonl")
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_path: Path | None = None
+    if log_path is not None:
+        resolved_path = Path(log_path)
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
     def callback(
         *,
@@ -65,11 +75,29 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
             else "unknown",
         }
 
-        try:
-            with open(resolved_path, "a") as f:
-                f.write(json.dumps(entry, default=str) + "\n")
-        except OSError as e:
-            logger.warning("Failed to write audit log: %s", e)
+        # Emit via the logging system (structured JSON when setup_logging() is active)
+        logger.info(
+            "tool_call: %s.%s",
+            entry["agent"],
+            entry["tool"],
+            extra={
+                "agent": entry["agent"],
+                "tool": entry["tool"],
+                "tool_args": entry["args"],
+                "status": entry["status"],
+                "response": entry["response"],
+                "user_id": entry["user_id"],
+                "session_id": entry["session_id"],
+            },
+        )
+
+        # Optional file fallback for local dev
+        if resolved_path is not None:
+            try:
+                with open(resolved_path, "a") as f:
+                    f.write(json.dumps(entry, default=str) + "\n")
+            except OSError as e:
+                logger.warning("Failed to write audit log file: %s", e)
 
         return None  # don't modify the result
 

@@ -12,7 +12,7 @@ Agents can monitor infrastructure, diagnose issues, and take action — with bui
 - **Structured workflows** — `SequentialAgent` and `ParallelAgent` for deterministic multi-step pipelines (e.g., incident triage checks Kafka, K8s, Docker, and observability in parallel, then summarizes)
 - **Slack integration** — chat with the agent from Slack, with interactive Approve/Deny buttons for guarded operations
 - **Safety guardrails** — destructive tools (`@destructive`) require explicit confirmation; mutating tools (`@confirm`) prompt before executing
-- **Audit logging** — every tool call is logged with timestamp, agent, arguments, and result
+- **Structured logging** — JSON-formatted logs to stdout, ready for Loki/ELK/Cloud Logging; every tool call is audited with timestamp, agent, arguments, and result
 - **Persistent sessions** — SQLite-backed session state, user-scoped notes, and app-wide shared data that survive restarts
 - **Composable architecture** — each agent is a standalone package that can run independently or plug into an orchestrator
 
@@ -20,7 +20,7 @@ Agents can monitor infrastructure, diagnose issues, and take action — with bui
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| [**core**](core/) | Library | Agent factory, guardrails, error handlers, audit logging, persistent runner, typed config |
+| [**core**](core/) | Library | Agent factory, guardrails, error handlers, structured logging, audit trail, activity tracking, persistent runner, typed config |
 | [**kafka-health-agent**](agents/kafka-health/) | Single agent | Kafka cluster health, topics, consumer groups, lag |
 | [**k8s-health-agent**](agents/k8s-health/) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
 | [**observability-agent**](agents/observability/) | Single agent | Prometheus metrics/alerts, Loki log queries, Alertmanager silence management |
@@ -166,7 +166,7 @@ make infra-reset  # stop and wipe volumes
 
 ## Testing
 
-Run the full suite (197 tests):
+Run the full suite (211 tests):
 
 ```bash
 make test

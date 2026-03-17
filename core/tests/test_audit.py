@@ -1,6 +1,7 @@
 """Tests for ai_agents_core.audit."""
 
 import json
+import logging
 from pathlib import Path
 
 from ai_agents_core.audit import _sanitize, _sanitize_args, audit_logger
@@ -132,3 +133,40 @@ def test_sanitize_preserves_non_dict_values():
     assert _sanitize("hello") == "hello"
     assert _sanitize(42) == 42
     assert _sanitize([1, 2, 3]) == [1, 2, 3]
+
+
+def test_audit_logger_emits_to_logging(fake_tool, fake_ctx, caplog):
+    """audit_logger() without a file path emits via the logging module."""
+    callback = audit_logger()
+
+    tool = fake_tool(name="get_nodes")
+    ctx = fake_ctx()
+
+    with caplog.at_level(logging.INFO, logger="ai_agents.audit"):
+        callback(
+            tool=tool,
+            args={"namespace": "default"},
+            tool_context=ctx,
+            tool_response={"status": "success", "count": 3},
+        )
+
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.tool == "get_nodes"
+    assert record.agent == "test_agent"
+    assert record.status == "success"
+    assert record.tool_args == {"namespace": "default"}
+
+
+def test_audit_logger_no_file_when_path_is_none(tmp_path, fake_tool, fake_ctx, caplog):
+    """When log_path is None, no file should be created."""
+    callback = audit_logger()
+
+    tool = fake_tool(name="my_tool")
+    ctx = fake_ctx()
+
+    with caplog.at_level(logging.INFO, logger="ai_agents.audit"):
+        callback(tool=tool, args={}, tool_context=ctx, tool_response={"status": "ok"})
+
+    # No .jsonl file should exist anywhere in tmp_path
+    assert not list(tmp_path.glob("**/*.jsonl"))

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 make install          # Install all workspace packages (uv sync)
-make test             # Run all 197 tests across all packages
+make test             # Run all 211 tests across all packages
 make lint             # ruff check + format check
 make fmt              # Auto-fix linting and formatting
 ```
@@ -40,7 +40,7 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 
 ### Workspace Layout
 
-- **`core/`** — Shared library (`ai-agents-core`): agent factory, config, guardrails, audit logging, error handlers, persistent runner
+- **`core/`** — Shared library (`ai-agents-core`): agent factory, config, guardrails, structured logging, audit trail, activity tracking, error handlers, persistent runner
 - **`agents/`** — Independent agent packages, each runnable standalone or composable:
   - `kafka-health/` — Kafka cluster monitoring (8 tools, uses confluent-kafka)
   - `k8s-health/` — Kubernetes cluster management (11 tools, uses kubernetes client)
@@ -49,12 +49,14 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 
 ### Key Design Patterns
 
-- **Callbacks over inheritance**: Safety (guardrails), logging (audit), and error handling are plugged in via callbacks passed to `create_agent()`, not through subclassing.
+- **Callbacks over inheritance**: Safety (guardrails), logging (audit), activity tracking, and error handling are plugged in via callbacks passed to `create_agent()`, not through subclassing.
 - **Agent factory functions** in `core/ai_agents_core/base.py`: `create_agent()`, `create_sequential_agent()`, `create_parallel_agent()`.
 - **Output keys for data flow**: In multi-agent workflows (like `devops-assistant`), sub-agents write results to session state via `output_key`; downstream agents read them.
 - **Guardrails as decorators**: `@destructive(reason)` and `@confirm(reason)` attach metadata to tool functions. `require_confirmation()` / `dry_run()` callbacks read this metadata at runtime.
+- **Structured JSON logging**: `setup_logging()` configures JSON output to stdout (called automatically by `load_agent_env()`). `audit_logger()` emits tool-call audit entries via the logging system. `activity_tracker()` records tool calls to session state for cross-agent visibility.
+- **Connection pooling**: Kafka `AdminClient`, K8s API clients, and HTTP sessions are cached as module-level singletons to avoid per-call connection overhead.
 - **Pydantic-settings config**: Each agent subclasses `AgentConfig` for typed env var loading from `.env` files colocated with the agent module.
-- **All tests use mocks**: `@patch` on internal client getters (e.g., `_get_admin_client`). No running Kafka/K8s/Docker required.
+- **All tests use mocks**: `@patch` on internal client getters (e.g., `_get_admin_client`). No running Kafka/K8s/Docker required. Autouse fixtures reset cached clients between tests.
 
 ### devops-assistant Agent Hierarchy
 
@@ -64,11 +66,13 @@ devops_assistant (root orchestrator)
 │   ├── health_check_agent (ParallelAgent)
 │   │   ├── kafka_health_checker
 │   │   ├── k8s_health_checker
-│   │   └── docker_health_checker
+│   │   ├── docker_health_checker
+│   │   └── observability_health_checker
 │   ├── triage_summarizer
 │   └── journal_writer
 ├── kafka_health_agent
 ├── k8s_health_agent
+├── observability_agent
 ├── docker_agent (5 tools using subprocess Docker CLI)
 └── ops_journal_agent
 ```
