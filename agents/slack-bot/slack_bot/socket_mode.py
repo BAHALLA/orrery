@@ -20,6 +20,8 @@ from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
+from ai_agents_core import authorize
+
 from .config import SlackBotConfig
 from .confirmation import ConfirmationStore, slack_confirmation
 from .handler import APP_NAME, SlackAgentHandler
@@ -165,11 +167,14 @@ async def main() -> None:
 
     session_service = DatabaseSessionService(db_url=config.slack_db_url)
 
-    root_agent.before_tool_callback = slack_confirmation(
-        store=store,
-        slack_client=bolt_app.client,
-        channel_ref=channel_ref,
-    )
+    root_agent.before_tool_callback = [
+        authorize(),
+        slack_confirmation(
+            store=store,
+            slack_client=bolt_app.client,
+            channel_ref=channel_ref,
+        ),
+    ]
 
     runner = Runner(
         agent=root_agent,
@@ -182,6 +187,7 @@ async def main() -> None:
         session_service=session_service,
         session_map=session_map,
         channel_ref=channel_ref,
+        config=config,
     )
 
     logger.info("Starting Slack bot in Socket Mode...")

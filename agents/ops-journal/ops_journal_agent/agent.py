@@ -1,4 +1,4 @@
-from ai_agents_core import create_agent, load_agent_env
+from ai_agents_core import authorize, create_agent, load_agent_env
 
 from .tools import (
     add_team_bookmark,
@@ -52,4 +52,5 @@ root_agent = create_agent(
         add_team_bookmark,
         list_team_bookmarks,
     ],
+    before_tool_callback=authorize(),
 )

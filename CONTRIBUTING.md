@@ -42,7 +42,7 @@ See [core/README.md](core/README.md) for the shared library API (agent factory, 
 
 ### Adding a New Agent
 
-This is the most impactful way to contribute. See the [Adding a New Agent](README.md#adding-a-new-agent) section in the README for the step-by-step guide. Key points:
+This is the most impactful way to contribute. See the [Adding a New Agent](docs/adding-an-agent.md) guide for the step-by-step walkthrough. Key points:
 
 - Create a new directory under `agents/`
 - Use `create_agent()` from `ai_agents_core` — don't reinvent the factory

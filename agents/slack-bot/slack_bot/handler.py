@@ -9,6 +9,7 @@ from google.adk.runners import Runner
 from google.adk.sessions.base_session_service import BaseSessionService
 from google.genai import types
 
+from .config import SlackBotConfig
 from .formatting import chunk_message, md_to_mrkdwn
 from .session_map import SessionMap
 
@@ -26,11 +27,13 @@ class SlackAgentHandler:
         session_service: BaseSessionService,
         session_map: SessionMap,
         channel_ref: dict[str, str],
+        config: SlackBotConfig | None = None,
     ) -> None:
         self.runner = runner
         self.session_service = session_service
         self.session_map = session_map
         self.channel_ref = channel_ref
+        self._config = config or SlackBotConfig()
 
     async def handle_message(
         self,
@@ -57,12 +60,15 @@ class SlackAgentHandler:
         # Resolve or create ADK session for this thread
         session_id = self.session_map.get(channel, thread_ts)
         if session_id is None:
+            role = self._config.resolve_role(user_id)
             session = await self.session_service.create_session(
                 app_name=APP_NAME,
                 user_id=user_id,
+                state={"user_role": role},
             )
             session_id = session.id
             self.session_map.set(channel, thread_ts, session_id)
+            logger.info("New session for user=%s role=%s", user_id, role)
 
         message = types.Content(
             role="user",

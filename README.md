@@ -11,16 +11,75 @@ Agents can monitor infrastructure, diagnose issues, and take action — with bui
 - **Multi-agent orchestration** — a root agent delegates to specialized sub-agents based on user intent
 - **Structured workflows** — `SequentialAgent` and `ParallelAgent` for deterministic multi-step pipelines (e.g., incident triage checks Kafka, K8s, Docker, and observability in parallel, then summarizes)
 - **Slack integration** — chat with the agent from Slack, with interactive Approve/Deny buttons for guarded operations
+- **Role-based access control** — three-role hierarchy (viewer/operator/admin) inferred from guardrail decorators; enforced via `authorize()` callback ([ADR-001](docs/adr/001-rbac.md))
 - **Safety guardrails** — destructive tools (`@destructive`) require explicit confirmation; mutating tools (`@confirm`) prompt before executing
 - **Structured logging** — JSON-formatted logs to stdout, ready for Loki/ELK/Cloud Logging; every tool call is audited with timestamp, agent, arguments, and result
 - **Persistent sessions** — SQLite-backed session state, user-scoped notes, and app-wide shared data that survive restarts
 - **Composable architecture** — each agent is a standalone package that can run independently or plug into an orchestrator
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph Frontends
+        WEB[ADK Web UI / CLI]
+        SLACK[Slack Bot]
+    end
+
+    subgraph "devops-assistant (orchestrator)"
+        ROOT[Root Agent]
+        TRIAGE[Incident Triage]
+
+        ROOT --> KAFKA[Kafka Agent]
+        ROOT --> K8S[K8s Agent]
+        ROOT --> OBS[Observability Agent]
+        ROOT --> DOCKER[Docker Agent]
+        ROOT --> JOURNAL[Ops Journal]
+        ROOT --> TRIAGE
+
+        TRIAGE -->|parallel| KAFKA
+        TRIAGE -->|parallel| K8S
+        TRIAGE -->|parallel| DOCKER
+        TRIAGE -->|parallel| OBS
+        TRIAGE -->|then| SUMMARIZE[Triage Summary]
+        TRIAGE -->|then| SAVE[Save to Journal]
+    end
+
+    subgraph Safety
+        RBAC[RBAC · authorize]
+        GUARD[Guardrails · confirm / destructive]
+        AUDIT[Audit Logger]
+    end
+
+    subgraph Infrastructure
+        KF[Kafka]
+        KU[Kubernetes]
+        PR[Prometheus]
+        LO[Loki]
+        AM[Alertmanager]
+        DK[Docker]
+    end
+
+    WEB --> ROOT
+    SLACK --> ROOT
+
+    KAFKA --> KF
+    K8S --> KU
+    OBS --> PR
+    OBS --> LO
+    OBS --> AM
+    DOCKER --> DK
+
+    ROOT -.-> RBAC
+    ROOT -.-> GUARD
+    ROOT -.-> AUDIT
+```
+
 ## Agents
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| [**core**](core/) | Library | Agent factory, guardrails, error handlers, structured logging, audit trail, activity tracking, persistent runner, typed config |
+| [**core**](core/) | Library | Agent factory, RBAC, guardrails, error handlers, structured logging, audit trail, activity tracking, persistent runner, typed config |
 | [**kafka-health-agent**](agents/kafka-health/) | Single agent | Kafka cluster health, topics, consumer groups, lag |
 | [**k8s-health-agent**](agents/k8s-health/) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
 | [**observability-agent**](agents/observability/) | Single agent | Prometheus metrics/alerts, Loki log queries, Alertmanager silence management |
@@ -61,112 +120,19 @@ Run `make help` to see all available commands.
 
 ## Slack Bot
 
-The platform includes a Slack bot that lets you interact with the DevOps agent directly from Slack. Each thread becomes a separate conversation, and guarded tools post interactive Approve/Deny buttons.
+Chat with the agent directly from Slack — each thread is a separate conversation, with interactive Approve/Deny buttons for guarded operations.
 
-### Setup
-
-1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From manifest** and paste:
-
-```json
-{
-  "display_information": { "name": "DevOps Agent" },
-  "features": { "bot_user": { "display_name": "DevOps Agent", "always_online": true } },
-  "oauth_config": {
-    "scopes": {
-      "bot": ["chat:write", "channels:history", "groups:history", "im:history", "app_mentions:read"]
-    }
-  },
-  "settings": {
-    "event_subscriptions": {
-      "bot_events": ["message.channels", "message.groups", "message.im", "app_mention"]
-    },
-    "interactivity": { "is_enabled": true },
-    "socket_mode_enabled": true,
-    "token_rotation_enabled": false
-  }
-}
-```
-
-2. Generate an **App-Level Token** (Basic Information → App-Level Tokens, scope: `connections:write`)
-3. **Install to Workspace** and copy the Bot Token
-4. Configure `agents/slack-bot/.env`:
-
-```bash
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_SIGNING_SECRET=your-signing-secret
-SLACK_APP_TOKEN=xapp-your-app-token
-GOOGLE_API_KEY=your-google-api-key
-```
-
-5. Run:
-
-```bash
-make infra-up              # start infrastructure
-make run-slack-bot-socket  # start the bot (Socket Mode, no public URL needed)
-```
-
-6. Invite the bot to a channel (`/invite @DevOps Agent`) and start chatting.
-
-See the full [Slack Bot README](agents/slack-bot/README.md) for webhook mode, Docker deployment, and configuration reference.
+→ **[Full setup guide](docs/slack-setup.md)** (app manifest, env vars, run commands)
 
 ## Configuration
 
-Each agent defines its own config class that inherits from `AgentConfig`. Values are loaded from `.env` files and environment variables.
+Each agent loads typed settings from `.env` files via Pydantic. Shared variables (GCP project, model version) plus per-agent settings (broker addresses, API tokens, etc.) are documented in the configuration reference.
 
-### Shared settings (all agents)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GOOGLE_GENAI_USE_VERTEXAI` | `TRUE` | Use Vertex AI (`TRUE`) or AI Studio (`FALSE`) |
-| `GOOGLE_CLOUD_PROJECT` | — | GCP project ID (required for Vertex AI) |
-| `GOOGLE_CLOUD_LOCATION` | — | GCP region, e.g. `us-central1` (required for Vertex AI) |
-| `GOOGLE_API_KEY` | — | API key (required for AI Studio) |
-| `GEMINI_MODEL_VERSION` | `gemini-2.0-flash` | Gemini model to use |
-
-### Agent-specific settings
-
-| Agent | Variable | Default | Description |
-|-------|----------|---------|-------------|
-| kafka-health | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker address(es) |
-| k8s-health | `KUBECONFIG_PATH` | — | Path to kubeconfig file |
-| observability | `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus server URL |
-| observability | `LOKI_URL` | `http://localhost:3100` | Loki server URL |
-| observability | `ALERTMANAGER_URL` | `http://localhost:9093` | Alertmanager server URL |
-| slack-bot | `SLACK_BOT_TOKEN` | — | Slack bot token (`xoxb-...`) |
-| slack-bot | `SLACK_APP_TOKEN` | — | App-level token for Socket Mode (`xapp-...`) |
-| slack-bot | `SLACK_SIGNING_SECRET` | — | Request signing secret |
-
-### Infrastructure
-
-The included `docker-compose.yml` starts the local infrastructure:
-
-| Service | Port | Description |
-|---------|------|-------------|
-| Kafka | `9092` | Kafka broker |
-| Zookeeper | `2181` | Zookeeper for Kafka |
-| Kafka UI | `8080` | Web UI for browsing topics and consumer groups |
-| Kafka Exporter | `9308` | Prometheus exporter for Kafka metrics |
-| Prometheus | `9090` | Metrics collection and alerting rules |
-| Loki | `3100` | Log aggregation |
-| Alertmanager | `9093` | Alert routing and silence management |
-
-```bash
-make infra-up     # start all services
-make infra-down   # stop all services
-make infra-reset  # stop and wipe volumes
-```
-
-### Docker
-
-| Command | What it starts |
-|---------|---------------|
-| `docker compose up -d` | Infrastructure only |
-| `docker compose --profile demo up -d` | Infrastructure + devops-assistant web UI on `:8000` |
-| `docker compose --profile slack up -d` | Infrastructure + Slack bot on `:3000` |
+→ **[Configuration reference](docs/configuration.md)** (env vars, infrastructure ports, Docker Compose profiles)
 
 ## Testing
 
-Run the full suite (211 tests):
+Run the full suite (237 tests):
 
 ```bash
 make test
@@ -182,36 +148,7 @@ All external dependencies (Kafka, Kubernetes, Docker, Slack) are mocked — no r
 
 ## Adding a New Agent
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. The short version:
-
-```bash
-mkdir -p agents/my-agent/my_agent
-```
-
-```python
-# my_agent/agent.py
-from ai_agents_core import (
-    audit_logger,
-    create_agent,
-    graceful_tool_error,
-    load_agent_env,
-    require_confirmation,
-)
-
-load_agent_env(__file__)
-
-root_agent = create_agent(
-    name="my_agent",
-    description="What this agent does.",
-    instruction="How the agent should behave.",
-    tools=[...],
-    before_tool_callback=require_confirmation(),
-    after_tool_callback=audit_logger(),
-    on_tool_error_callback=graceful_tool_error(),
-)
-```
-
-Register in the root `pyproject.toml` and run `make install`.
+→ **[Step-by-step guide](docs/adding-an-agent.md)** with boilerplate, RBAC setup, and testing tips.
 
 ## Contributing
 

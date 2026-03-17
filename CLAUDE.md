@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 make install          # Install all workspace packages (uv sync)
-make test             # Run all 211 tests across all packages
+make test             # Run all 237 tests across all packages
 make lint             # ruff check + format check
 make fmt              # Auto-fix linting and formatting
 ```
@@ -40,7 +40,7 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 
 ### Workspace Layout
 
-- **`core/`** — Shared library (`ai-agents-core`): agent factory, config, guardrails, structured logging, audit trail, activity tracking, error handlers, persistent runner
+- **`core/`** — Shared library (`ai-agents-core`): agent factory, RBAC, config, guardrails, structured logging, audit trail, activity tracking, error handlers, persistent runner
 - **`agents/`** — Independent agent packages, each runnable standalone or composable:
   - `kafka-health/` — Kafka cluster monitoring (8 tools, uses confluent-kafka)
   - `k8s-health/` — Kubernetes cluster management (11 tools, uses kubernetes client)
@@ -52,6 +52,7 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 - **Callbacks over inheritance**: Safety (guardrails), logging (audit), activity tracking, and error handling are plugged in via callbacks passed to `create_agent()`, not through subclassing.
 - **Agent factory functions** in `core/ai_agents_core/base.py`: `create_agent()`, `create_sequential_agent()`, `create_parallel_agent()`.
 - **Output keys for data flow**: In multi-agent workflows (like `devops-assistant`), sub-agents write results to session state via `output_key`; downstream agents read them.
+- **RBAC via guardrail metadata**: `authorize()` in `core/ai_agents_core/rbac.py` infers minimum roles from `@destructive`/`@confirm` decorators (admin/operator/viewer). User role is read from `session.state["user_role"]`. Composes with guardrails: `before_tool_callback=[authorize(), require_confirmation()]`. See `docs/adr/001-rbac.md`.
 - **Guardrails as decorators**: `@destructive(reason)` and `@confirm(reason)` attach metadata to tool functions. `require_confirmation()` / `dry_run()` callbacks read this metadata at runtime.
 - **Structured JSON logging**: `setup_logging()` configures JSON output to stdout (called automatically by `load_agent_env()`). `audit_logger()` emits tool-call audit entries via the logging system. `activity_tracker()` records tool calls to session state for cross-agent visibility.
 - **Connection pooling**: Kafka `AdminClient`, K8s API clients, and HTTP sessions are cached as module-level singletons to avoid per-call connection overhead.

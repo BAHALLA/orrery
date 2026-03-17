@@ -1,6 +1,6 @@
 # ai-agents-core
 
-Shared library providing the foundation for all agents: agent factory, guardrails, audit logging, and typed configuration.
+Shared library providing the foundation for all agents: agent factory, RBAC, guardrails, audit logging, and typed configuration.
 
 ## Agent Factory
 
@@ -155,6 +155,90 @@ root_agent = create_agent(
     before_tool_callback=dry_run(),
 )
 ```
+
+---
+
+## Role-Based Access Control (RBAC)
+
+Three-role hierarchy that reuses existing guardrail metadata to control who can call which tools. See [ADR-001](../docs/adr/001-rbac.md) for the full design rationale.
+
+```
+VIEWER (0)   → read-only tools (unguarded)
+OPERATOR (1) → + mutating tools (@confirm)
+ADMIN (2)    → + destructive tools (@destructive)
+```
+
+### `authorize()`
+
+A `before_tool_callback` that checks the user's role from `session.state["user_role"]` and blocks tools that exceed their permission level.
+
+```python
+from ai_agents_core import authorize, require_confirmation
+
+root_agent = create_agent(
+    ...,
+    before_tool_callback=[authorize(), require_confirmation()],
+)
+```
+
+RBAC runs first (blocks unauthorized users), then guardrails run (prompts authorized users for confirmation). Compose them as a list — the first callback that returns a dict short-circuits.
+
+### `Role` enum
+
+```python
+from ai_agents_core import Role
+
+Role.VIEWER    # can call unguarded tools
+Role.OPERATOR  # can also call @confirm tools
+Role.ADMIN     # can call everything
+```
+
+### `RolePolicy`
+
+Maps tools to their minimum required role. By default, roles are inferred from `@destructive`/`@confirm` decorators. Use overrides for exceptions:
+
+```python
+from ai_agents_core import RolePolicy, Role, authorize
+
+policy = RolePolicy(overrides={"sensitive_read": Role.OPERATOR})
+root_agent = create_agent(
+    ...,
+    before_tool_callback=authorize(policy),
+)
+```
+
+### `@requires_role()`
+
+Decorator for explicit role annotation on tools that don't use `@destructive`/`@confirm`:
+
+```python
+from ai_agents_core import requires_role, Role
+
+@requires_role(Role.ADMIN)
+def manage_users() -> dict:
+    ...
+```
+
+### `infer_minimum_role()`
+
+Derives the minimum role from guardrail metadata:
+
+```python
+from ai_agents_core import infer_minimum_role
+
+infer_minimum_role(tool)  # → Role.ADMIN if @destructive, Role.OPERATOR if @confirm, Role.VIEWER otherwise
+```
+
+### Setting the user role
+
+The integration layer sets `user_role` in session state at session creation. For the Slack bot, this is configured via environment variables:
+
+```bash
+SLACK_ADMIN_USERS=U12345,U67890
+SLACK_OPERATOR_USERS=U11111,U22222
+```
+
+Users not listed default to `viewer` (least privilege).
 
 ---
 
@@ -325,9 +409,9 @@ You can pass a list of callbacks to chain multiple behaviors:
 ```python
 root_agent = create_agent(
     ...,
-    before_tool_callback=require_confirmation(),
-    after_tool_callback=[audit_logger(), my_custom_callback],
+    before_tool_callback=[authorize(), require_confirmation()],
+    after_tool_callback=[activity_tracker(), audit_logger()],
 )
 ```
 
-Callbacks are called in order. For `before_tool_callback`, the first one that returns a dict short-circuits (the tool is skipped). For `after_tool_callback`, the last one that returns a dict wins.
+Callbacks are called in order. For `before_tool_callback`, the first one that returns a dict short-circuits (the tool is skipped) — so `authorize()` blocks unauthorized users before `require_confirmation()` even runs. For `after_tool_callback`, the last one that returns a dict wins.

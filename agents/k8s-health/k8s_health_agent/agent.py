@@ -1,5 +1,6 @@
 from ai_agents_core import (
     audit_logger,
+    authorize,
     create_agent,
     graceful_tool_error,
     load_agent_env,
@@ -54,7 +55,7 @@ root_agent = create_agent(
         restart_deployment,
         get_events,
     ],
-    before_tool_callback=require_confirmation(),
+    before_tool_callback=[authorize(), require_confirmation()],
     after_tool_callback=audit_logger(),
     on_tool_error_callback=graceful_tool_error(),
 )
