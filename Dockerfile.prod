@@ -9,6 +9,7 @@ COPY core/pyproject.toml core/pyproject.toml
 COPY agents/kafka-health/pyproject.toml agents/kafka-health/pyproject.toml
 COPY agents/k8s-health/pyproject.toml agents/k8s-health/pyproject.toml
 COPY agents/devops-assistant/pyproject.toml agents/devops-assistant/pyproject.toml
+COPY agents/observability/pyproject.toml agents/observability/pyproject.toml
 COPY agents/ops-journal/pyproject.toml agents/ops-journal/pyproject.toml
 COPY agents/slack-bot/pyproject.toml agents/slack-bot/pyproject.toml
 
@@ -17,6 +18,7 @@ RUN mkdir -p core/ai_agents_core && touch core/ai_agents_core/__init__.py && \
     mkdir -p agents/kafka-health/kafka_health_agent && touch agents/kafka-health/kafka_health_agent/__init__.py && \
     mkdir -p agents/k8s-health/k8s_health_agent && touch agents/k8s-health/k8s_health_agent/__init__.py && \
     mkdir -p agents/devops-assistant/devops_assistant && touch agents/devops-assistant/devops_assistant/__init__.py && \
+    mkdir -p agents/observability/observability_agent && touch agents/observability/observability_agent/__init__.py && \
     mkdir -p agents/ops-journal/ops_journal_agent && touch agents/ops-journal/ops_journal_agent/__init__.py && \
     mkdir -p agents/slack-bot/slack_bot && touch agents/slack-bot/slack_bot/__init__.py
 
