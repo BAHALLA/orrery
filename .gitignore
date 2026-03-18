@@ -21,7 +21,7 @@ wheels/
 **/.adk/
 
 # uv
-uv.lock
+# uv.lock is tracked — required for reproducible Docker builds
 
 # Audit and persistence
 *.jsonl
