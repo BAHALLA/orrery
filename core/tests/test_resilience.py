@@ -1,5 +1,6 @@
 """Unit tests for resilience utilities (circuit breaker + retry)."""
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -256,3 +257,85 @@ class TestWithRetry:
             return a + b + extra
 
         assert add(1, 2, extra=3) == 6
+
+
+# ── Async with_retry ────────────────────────────────────────────────
+
+
+class TestWithRetryAsync:
+    def test_async_succeeds_first_try(self):
+        @with_retry(max_retries=3)
+        async def good():
+            return "ok"
+
+        assert asyncio.run(good()) == "ok"
+
+    def test_async_retries_on_transient_error(self):
+        call_count = 0
+
+        @with_retry(max_retries=3, base_delay=0.01)
+        async def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("transient")
+            return "recovered"
+
+        assert asyncio.run(flaky()) == "recovered"
+        assert call_count == 3
+
+    def test_async_raises_after_max_retries(self):
+        @with_retry(max_retries=2, base_delay=0.01)
+        async def always_fail():
+            raise ConnectionError("persistent")
+
+        with pytest.raises(ConnectionError, match="persistent"):
+            asyncio.run(always_fail())
+
+    def test_async_no_retry_on_non_retryable(self):
+        call_count = 0
+
+        @with_retry(max_retries=3, retryable=(ConnectionError,))
+        async def bad():
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("not retryable")
+
+        with pytest.raises(ValueError, match="not retryable"):
+            asyncio.run(bad())
+        assert call_count == 1
+
+    def test_async_preserves_function_metadata(self):
+        @with_retry(max_retries=2)
+        async def my_async_tool():
+            """My async docstring."""
+            return 42
+
+        assert my_async_tool.__name__ == "my_async_tool"
+        assert my_async_tool.__doc__ == "My async docstring."
+
+    def test_async_uses_asyncio_sleep(self):
+        call_count = 0
+
+        @with_retry(max_retries=2, base_delay=0.01)
+        async def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise ConnectionError("transient")
+            return "ok"
+
+        async def run_with_mock():
+            with patch("ai_agents_core.resilience.asyncio.sleep") as mock_sleep:
+                mock_sleep.return_value = None
+                await flaky()
+                assert mock_sleep.called
+
+        asyncio.run(run_with_mock())
+
+    def test_async_passes_arguments_through(self):
+        @with_retry(max_retries=1)
+        async def add(a, b, extra=0):
+            return a + b + extra
+
+        assert asyncio.run(add(1, 2, extra=3)) == 6

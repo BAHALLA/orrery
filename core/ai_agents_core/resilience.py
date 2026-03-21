@@ -31,7 +31,9 @@ Tool-level retry:
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import inspect
 import logging
 import random
 import threading
@@ -233,7 +235,39 @@ def with_retry(
             ...
     """
 
+    def _compute_delay(attempt: int) -> float:
+        delay = min(base_delay * (2**attempt), max_delay)
+        return delay * (0.5 + random.random() * 0.5)  # noqa: S311
+
+    def _log_retry(func_name: str, attempt: int, exc: Exception, jittered: float) -> None:
+        logger.warning(
+            "Retry %d/%d for '%s' after %s (%.1fs backoff)",
+            attempt + 1,
+            max_retries,
+            func_name,
+            type(exc).__name__,
+            jittered,
+        )
+
     def decorator(func: Callable) -> Callable:
+        if inspect.iscoroutinefunction(func):
+
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                last_error: Exception | None = None
+                for attempt in range(max_retries + 1):
+                    try:
+                        return await func(*args, **kwargs)
+                    except retryable as exc:
+                        last_error = exc
+                        if attempt < max_retries:
+                            jittered = _compute_delay(attempt)
+                            _log_retry(func.__name__, attempt, exc, jittered)
+                            await asyncio.sleep(jittered)
+                raise last_error  # type: ignore[misc]
+
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             last_error: Exception | None = None
@@ -243,16 +277,8 @@ def with_retry(
                 except retryable as exc:
                     last_error = exc
                     if attempt < max_retries:
-                        delay = min(base_delay * (2**attempt), max_delay)
-                        jittered = delay * (0.5 + random.random() * 0.5)  # noqa: S311
-                        logger.warning(
-                            "Retry %d/%d for '%s' after %s (%.1fs backoff)",
-                            attempt + 1,
-                            max_retries,
-                            func.__name__,
-                            type(exc).__name__,
-                            jittered,
-                        )
+                        jittered = _compute_delay(attempt)
+                        _log_retry(func.__name__, attempt, exc, jittered)
                         time.sleep(jittered)
             raise last_error  # type: ignore[misc]
 

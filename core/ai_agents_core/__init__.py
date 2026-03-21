@@ -19,6 +19,7 @@ from .guardrails import get_guard_reason as get_guard_reason
 from .guardrails import is_destructive as is_destructive
 from .guardrails import is_guarded as is_guarded
 from .guardrails import require_confirmation as require_confirmation
+from .health import HealthServer as HealthServer
 from .log import JSONFormatter as JSONFormatter
 from .log import setup_logging as setup_logging
 from .metrics import MetricsCollector as MetricsCollector

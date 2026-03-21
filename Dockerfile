@@ -34,12 +34,19 @@ RUN uv sync --no-dev --frozen
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
 
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --create-home appuser
+
 WORKDIR /app
 
 # Copy the virtual environment and source from builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/core/ /app/core/
 COPY --from=builder /app/agents/ /app/agents/
+
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 
