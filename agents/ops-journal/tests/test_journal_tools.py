@@ -255,3 +255,44 @@ def test_list_team_bookmarks_returns_all(fake_ctx):
 
     result = list_team_bookmarks(ctx)
     assert result["count"] == 2
+
+
+# ── Input validation ─────────────────────────────────────────────────
+
+
+def test_add_bookmark_rejects_javascript_url(fake_ctx):
+    ctx = fake_ctx()
+    result = add_team_bookmark(ctx, "XSS", "javascript:alert(1)")
+    assert result["status"] == "error"
+    assert "url" in result["message"]
+
+
+def test_add_bookmark_rejects_data_url(fake_ctx):
+    ctx = fake_ctx()
+    result = add_team_bookmark(ctx, "Data", "data:text/html,<h1>hi</h1>")
+    assert result["status"] == "error"
+
+
+def test_save_note_rejects_overlong_content(fake_ctx):
+    ctx = fake_ctx()
+    result = save_note(ctx, "title", "x" * 10_001)
+    assert result["status"] == "error"
+    assert "content" in result["message"]
+
+
+def test_save_note_rejects_empty_title(fake_ctx):
+    ctx = fake_ctx()
+    result = save_note(ctx, "", "content")
+    assert result["status"] == "error"
+
+
+def test_log_operation_rejects_empty_operation(fake_ctx):
+    ctx = fake_ctx()
+    result = log_operation(ctx, "", "details")
+    assert result["status"] == "error"
+
+
+def test_search_notes_rejects_empty_query(fake_ctx):
+    ctx = fake_ctx()
+    result = search_notes(ctx, "")
+    assert result["status"] == "error"

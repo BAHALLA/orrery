@@ -387,3 +387,40 @@ def test_get_consumer_lag_error(mock_admin):
     mock_admin.return_value.list_consumer_group_offsets.side_effect = Exception("fail")
     result = get_consumer_lag("bad-group")
     assert result["status"] == "error"
+
+
+# ── Input validation ─────────────────────────────────────────────────
+
+
+def test_create_topic_rejects_empty_name():
+    result = create_kafka_topic("")
+    assert result["status"] == "error"
+    assert "topic_name" in result["message"]
+
+
+def test_create_topic_rejects_invalid_chars():
+    result = create_kafka_topic("bad topic name!")
+    assert result["status"] == "error"
+    assert "format" in result["message"]
+
+
+def test_create_topic_rejects_negative_partitions():
+    result = create_kafka_topic("valid-topic", num_partitions=-1)
+    assert result["status"] == "error"
+    assert "num_partitions" in result["message"]
+
+
+def test_delete_topic_rejects_empty_name():
+    result = delete_kafka_topic("")
+    assert result["status"] == "error"
+
+
+def test_describe_consumer_groups_rejects_empty_list():
+    result = describe_consumer_groups([])
+    assert result["status"] == "error"
+    assert "group_ids" in result["message"]
+
+
+def test_get_consumer_lag_rejects_empty_group_id():
+    result = get_consumer_lag("")
+    assert result["status"] == "error"

@@ -419,3 +419,40 @@ def test_delete_silence_connection_error(mock_delete):
 def test_delete_silence_has_destructive_guardrail():
     assert delete_silence._guardrail_level == "destructive"
     assert "silence" in getattr(delete_silence, "_guardrail_reason", "")
+
+
+# ── Input validation ─────────────────────────────────────────────────
+
+
+def test_query_prometheus_rejects_overlong_query():
+    result = query_prometheus("x" * 6000)
+    assert result["status"] == "error"
+    assert "query" in result["message"]
+
+
+def test_query_loki_logs_rejects_huge_limit():
+    result = query_loki_logs("{job='x'}", limit=999_999)
+    assert result["status"] == "error"
+    assert "limit" in result["message"]
+
+
+def test_query_loki_logs_rejects_empty_query():
+    result = query_loki_logs("")
+    assert result["status"] == "error"
+
+
+def test_create_silence_rejects_empty_matchers():
+    result = create_silence([])
+    assert result["status"] == "error"
+    assert "matchers" in result["message"]
+
+
+def test_create_silence_rejects_huge_duration():
+    result = create_silence([{"name": "a", "value": "b"}], duration_hours=9999)
+    assert result["status"] == "error"
+    assert "duration_hours" in result["message"]
+
+
+def test_delete_silence_rejects_empty_id():
+    result = delete_silence("")
+    assert result["status"] == "error"

@@ -7,6 +7,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from devops_assistant.docker_tools import (
+    _redact_env_vars,
     docker_compose_status,
     get_container_logs,
     get_container_stats,
@@ -257,3 +258,78 @@ def test_compose_status_empty(mock_run):
     result = docker_compose_status()
     assert result["status"] == "success"
     assert result["count"] == 0
+
+
+# ── Environment variable redaction ───────────────────────────────────
+
+
+def test_redact_env_vars_redacts_sensitive():
+    env = ["PORT=80", "DB_PASSWORD=s3cret", "API_KEY=abc123", "APP_SECRET=x"]
+    result = _redact_env_vars(env)
+    assert "PORT=80" in result
+    assert "DB_PASSWORD=***" in result
+    assert "API_KEY=***" in result
+    assert "APP_SECRET=***" in result
+
+
+def test_redact_env_vars_case_insensitive():
+    env = ["My_Token=xyz", "AUTH_HEADER=bearer"]
+    result = _redact_env_vars(env)
+    assert "My_Token=***" in result
+    assert "AUTH_HEADER=***" in result
+
+
+def test_redact_env_vars_no_equals():
+    assert _redact_env_vars(["NOVALUE"]) == ["NOVALUE"]
+
+
+def test_redact_env_vars_empty():
+    assert _redact_env_vars([]) == []
+
+
+@patch("devops_assistant.docker_tools.subprocess.run")
+def test_inspect_container_redacts_secrets(mock_run):
+    inspect_data = [
+        {
+            "Name": "/web",
+            "State": {"Status": "running", "StartedAt": "2025-01-01T00:00:00Z"},
+            "Config": {
+                "Image": "app:1.0",
+                "Env": ["PORT=80", "DB_PASSWORD=s3cret", "API_KEY=abc123"],
+            },
+            "NetworkSettings": {"Ports": None},
+            "RestartCount": 0,
+        }
+    ]
+    mock_run.return_value = _mock_run(stdout=json.dumps(inspect_data))
+
+    result = inspect_container("web")
+    assert result["status"] == "success"
+    assert "DB_PASSWORD=***" in result["env_vars"]
+    assert "API_KEY=***" in result["env_vars"]
+    assert "PORT=80" in result["env_vars"]
+
+
+# ── Input validation ─────────────────────────────────────────────────
+
+
+def test_inspect_container_rejects_empty_name():
+    result = inspect_container("")
+    assert result["status"] == "error"
+
+
+def test_get_container_logs_rejects_huge_tail():
+    result = get_container_logs("web", tail=999_999)
+    assert result["status"] == "error"
+    assert "tail" in result["message"]
+
+
+def test_get_container_stats_rejects_empty_name():
+    result = get_container_stats("")
+    assert result["status"] == "error"
+
+
+def test_compose_status_rejects_path_traversal():
+    result = docker_compose_status(project_dir="../../etc")
+    assert result["status"] == "error"
+    assert "traversal" in result["message"]

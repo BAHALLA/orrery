@@ -181,3 +181,48 @@ def authorize(policy: RolePolicy | None = None) -> Callable:
         }
 
     return callback
+
+
+# ── Role management ─────────────────────────────────────────────────
+
+_ROLE_LOCKED_KEY = "_role_set_by_server"
+_VALID_ROLES = frozenset({"viewer", "operator", "admin"})
+
+
+def set_user_role(state: dict[str, Any], role: str) -> None:
+    """Set user role from a trusted entry point.
+
+    Marks the role as server-set so ``ensure_default_role()`` won't
+    override it.  Call this from Slack bot, persistent runner, or other
+    trusted entry points — never from client-supplied input.
+    """
+    normalised = role.lower()
+    if normalised not in _VALID_ROLES:
+        logger.warning("Invalid role '%s', defaulting to viewer", role)
+        normalised = "viewer"
+    state[USER_ROLE_STATE_KEY] = normalised
+    state[_ROLE_LOCKED_KEY] = True
+
+
+def ensure_default_role(default: str = "viewer") -> Callable:
+    """Create a ``before_agent_callback`` that guarantees ``user_role`` is set.
+
+    If the role was not set via ``set_user_role()`` (i.e. not marked as
+    server-set), it is forced to *default* to prevent privilege escalation
+    from untrusted sources.
+
+    Usage::
+
+        create_agent(
+            ...,
+            before_agent_callback=ensure_default_role(),
+        )
+    """
+
+    def callback(callback_context: Any) -> None:
+        state = callback_context.state
+        if not state.get(_ROLE_LOCKED_KEY):
+            state[USER_ROLE_STATE_KEY] = default
+        return None
+
+    return callback

@@ -7,6 +7,13 @@ from typing import Any
 import requests
 
 from ai_agents_core import AgentConfig, confirm, destructive
+from ai_agents_core.validation import (
+    MAX_LOG_LINES,
+    MAX_QUERY_LENGTH,
+    validate_list,
+    validate_positive_int,
+    validate_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,9 @@ def query_prometheus(query: str, time: str | None = None) -> dict[str, Any]:
     Returns:
         A dictionary with the query results or an error message.
     """
+    if err := validate_string(query, "query", max_len=MAX_QUERY_LENGTH):
+        return err
+
     try:
         params: dict[str, str] = {"query": query}
         if time:
@@ -95,6 +105,9 @@ def query_prometheus_range(query: str, start: str, end: str, step: str = "60s") 
     Returns:
         A dictionary with the range query results or an error message.
     """
+    if err := validate_string(query, "query", max_len=MAX_QUERY_LENGTH):
+        return err
+
     try:
         params = {"query": query, "start": start, "end": end, "step": step}
         resp = _http_get(_config.prometheus_url, "/api/v1/query_range", params)
@@ -216,6 +229,11 @@ def query_loki_logs(
     Returns:
         A dictionary with matching log entries or an error message.
     """
+    if err := validate_string(query, "query", max_len=MAX_QUERY_LENGTH):
+        return err
+    if err := validate_positive_int(limit, "limit", max_value=MAX_LOG_LINES):
+        return err
+
     try:
         params: dict[str, Any] = {"query": query, "limit": limit}
         if start:
@@ -273,6 +291,9 @@ def get_loki_label_values(label: str) -> dict[str, Any]:
     Returns:
         A dictionary with the label's values.
     """
+    if err := validate_string(label, "label", max_len=256):
+        return err
+
     try:
         resp = _http_get(_config.loki_url, f"/loki/api/v1/label/{label}/values")
         data = resp.json()
@@ -387,6 +408,11 @@ def create_silence(
     Returns:
         A dictionary with the created silence ID or an error message.
     """
+    if err := validate_list(matchers, "matchers", max_len=20):
+        return err
+    if err := validate_positive_int(duration_hours, "duration_hours", max_value=720):
+        return err
+
     try:
         now = datetime.now(UTC)
         ends_at = now + timedelta(hours=duration_hours)
@@ -422,6 +448,9 @@ def delete_silence(silence_id: str) -> dict[str, Any]:
     Returns:
         A dictionary with the operation result.
     """
+    if err := validate_string(silence_id, "silence_id", max_len=256):
+        return err
+
     try:
         resp = _http_delete(_config.alertmanager_url, f"/api/v2/silence/{silence_id}")
         if resp.status_code == 200:

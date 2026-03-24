@@ -9,6 +9,8 @@ from google.adk.runners import Runner
 from google.adk.sessions.base_session_service import BaseSessionService
 from google.genai import types
 
+from ai_agents_core import set_user_role
+
 from .config import SlackBotConfig
 from .formatting import chunk_message, md_to_mrkdwn
 from .session_map import SessionMap
@@ -61,10 +63,12 @@ class SlackAgentHandler:
         session_id = self.session_map.get(channel, thread_ts)
         if session_id is None:
             role = self._config.resolve_role(user_id)
+            initial_state: dict[str, object] = {}
+            set_user_role(initial_state, role)
             session = await self.session_service.create_session(
                 app_name=APP_NAME,
                 user_id=user_id,
-                state={"user_role": role},
+                state=initial_state,
             )
             session_id = session.id
             self.session_map.set(channel, thread_ts, session_id)

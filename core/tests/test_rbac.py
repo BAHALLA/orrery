@@ -10,10 +10,12 @@ from ai_agents_core.rbac import (
     Role,
     RolePolicy,
     authorize,
+    ensure_default_role,
     get_required_role,
     get_user_role,
     infer_minimum_role,
     requires_role,
+    set_user_role,
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -216,3 +218,60 @@ class TestAuthorize:
             ctx = fake_ctx(state={USER_ROLE_STATE_KEY: "admin"})
             result = callback(tool=tool, args={}, tool_context=ctx)
             assert result is None
+
+
+# ── set_user_role ────────────────────────────────────────────────────
+
+
+class TestSetUserRole:
+    def test_sets_role_and_lock(self):
+        state: dict = {}
+        set_user_role(state, "admin")
+        assert state["user_role"] == "admin"
+        assert state["_role_set_by_server"] is True
+
+    def test_invalid_role_defaults_to_viewer(self):
+        state: dict = {}
+        set_user_role(state, "superadmin")
+        assert state["user_role"] == "viewer"
+
+    def test_case_insensitive(self):
+        state: dict = {}
+        set_user_role(state, "OPERATOR")
+        assert state["user_role"] == "operator"
+
+
+# ── ensure_default_role ──────────────────────────────────────────────
+
+
+class _FakeCallbackContext:
+    def __init__(self, state: dict | None = None):
+        self.state = state if state is not None else {}
+
+
+class TestEnsureDefaultRole:
+    def test_sets_viewer_when_no_role(self):
+        ctx = _FakeCallbackContext()
+        callback = ensure_default_role()
+        callback(ctx)
+        assert ctx.state["user_role"] == "viewer"
+
+    def test_preserves_trusted_role(self):
+        state: dict = {}
+        set_user_role(state, "admin")
+        ctx = _FakeCallbackContext(state)
+        callback = ensure_default_role()
+        callback(ctx)
+        assert ctx.state["user_role"] == "admin"
+
+    def test_overrides_untrusted_role(self):
+        ctx = _FakeCallbackContext({"user_role": "admin"})
+        callback = ensure_default_role()
+        callback(ctx)
+        assert ctx.state["user_role"] == "viewer"
+
+    def test_custom_default(self):
+        ctx = _FakeCallbackContext()
+        callback = ensure_default_role(default="operator")
+        callback(ctx)
+        assert ctx.state["user_role"] == "operator"

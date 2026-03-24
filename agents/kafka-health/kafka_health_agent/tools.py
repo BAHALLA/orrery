@@ -7,6 +7,14 @@ from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicP
 from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
 
 from ai_agents_core import AgentConfig, confirm, destructive, with_retry
+from ai_agents_core.validation import (
+    KAFKA_TOPIC_PATTERN,
+    MAX_PARTITIONS,
+    MAX_REPLICATION_FACTOR,
+    validate_list,
+    validate_positive_int,
+    validate_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +94,15 @@ def create_kafka_topic(
     Returns:
         A dictionary with the operation result.
     """
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+    if err := validate_positive_int(num_partitions, "num_partitions", max_value=MAX_PARTITIONS):
+        return err
+    if err := validate_positive_int(
+        replication_factor, "replication_factor", max_value=MAX_REPLICATION_FACTOR
+    ):
+        return err
+
     admin = _get_admin_client()
     new_topic = NewTopic(
         topic_name, num_partitions=num_partitions, replication_factor=replication_factor
@@ -123,6 +140,9 @@ def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
     Returns:
         A dictionary with the operation result.
     """
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+
     admin = _get_admin_client()
     try:
         futures = admin.delete_topics([topic_name])
@@ -157,6 +177,9 @@ def get_topic_metadata(topic_name: str) -> dict[str, Any]:
     Returns:
         A dictionary with detailed topic metadata.
     """
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+
     admin = _get_admin_client()
     try:
         metadata = admin.list_topics(topic=topic_name, timeout=10)
@@ -216,6 +239,9 @@ def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
     Returns:
         A dictionary with the details of the consumer groups.
     """
+    if err := validate_list(group_ids, "group_ids"):
+        return err
+
     admin = _get_admin_client()
     try:
         future_dict = admin.describe_consumer_groups(group_ids)
@@ -268,6 +294,13 @@ def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict[str, 
     Returns:
         A dictionary with partition-level lag information.
     """
+    if err := validate_string(group_id, "group_id"):
+        return err
+    if topic_name is not None and (
+        err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN)
+    ):
+        return err
+
     admin = _get_admin_client()
     try:
         offsets_future = admin.list_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id)])

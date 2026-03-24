@@ -5,7 +5,33 @@ import logging
 import subprocess
 from typing import Any
 
+from ai_agents_core.validation import (
+    MAX_LOG_LINES,
+    validate_path,
+    validate_positive_int,
+    validate_string,
+)
+
 logger = logging.getLogger(__name__)
+
+_ENV_SENSITIVE_PATTERNS = frozenset(
+    {"password", "secret", "token", "api_key", "credential", "key", "auth"}
+)
+
+
+def _redact_env_vars(env_list: list[str]) -> list[str]:
+    """Redact values of sensitive environment variables."""
+    redacted = []
+    for entry in env_list:
+        if "=" in entry:
+            var_name, _, _value = entry.partition("=")
+            if any(s in var_name.lower() for s in _ENV_SENSITIVE_PATTERNS):
+                redacted.append(f"{var_name}=***")
+            else:
+                redacted.append(entry)
+        else:
+            redacted.append(entry)
+    return redacted
 
 
 def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
@@ -62,6 +88,9 @@ def inspect_container(container_name: str) -> dict[str, Any]:
     Returns:
         A dictionary with detailed container information.
     """
+    if err := validate_string(container_name, "container_name", max_len=128):
+        return err
+
     ok, output = _run_docker(["inspect", container_name])
     if not ok:
         return {"status": "error", "message": output}
@@ -88,7 +117,7 @@ def inspect_container(container_name: str) -> dict[str, Any]:
         "started_at": state.get("StartedAt"),
         "restart_count": info.get("RestartCount"),
         "ports": ports,
-        "env_vars": config.get("Env", []),
+        "env_vars": _redact_env_vars(config.get("Env", [])),
         "health": state.get("Health", {}).get("Status", "N/A"),
     }
 
@@ -106,6 +135,13 @@ def get_container_logs(
     Returns:
         A dictionary with the container logs.
     """
+    if err := validate_string(container_name, "container_name", max_len=128):
+        return err
+    if err := validate_positive_int(tail, "tail", max_value=MAX_LOG_LINES):
+        return err
+    if since and (err := validate_string(since, "since", max_len=50)):
+        return err
+
     args = ["logs", "--tail", str(tail)]
     if since:
         args.extend(["--since", since])
@@ -133,6 +169,9 @@ def get_container_stats(container_name: str) -> dict[str, Any]:
     Returns:
         A dictionary with the container resource usage stats.
     """
+    if err := validate_string(container_name, "container_name", max_len=128):
+        return err
+
     ok, output = _run_docker(["stats", "--no-stream", "--format", "json", container_name])
     if not ok:
         return {"status": "error", "message": output}
@@ -160,6 +199,9 @@ def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
     Returns:
         A dictionary with the status of all compose services.
     """
+    if project_dir and (err := validate_path(project_dir, "project_dir")):
+        return err
+
     args = ["compose"]
     if project_dir:
         args.extend(["-f", f"{project_dir}/docker-compose.yml"])

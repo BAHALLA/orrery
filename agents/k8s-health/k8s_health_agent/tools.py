@@ -8,6 +8,13 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from ai_agents_core import AgentConfig, confirm, destructive
+from ai_agents_core.validation import (
+    K8S_NAME_PATTERN,
+    MAX_LOG_LINES,
+    MAX_REPLICAS,
+    validate_positive_int,
+    validate_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,13 @@ def _load_kube_config() -> None:
     except config.ConfigException:
         config.load_incluster_config()
     _kube_config_loaded = True
+
+
+def _validate_namespace(namespace: str) -> dict[str, Any] | None:
+    """Validate namespace, allowing the special value 'all'."""
+    if namespace == "all":
+        return None
+    return validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN)
 
 
 def _core_api() -> client.CoreV1Api:
@@ -146,6 +160,9 @@ def list_pods(namespace: str = "default", label_selector: str | None = None) -> 
     Returns:
         A dictionary with pod details.
     """
+    if err := _validate_namespace(namespace):
+        return err
+
     try:
         v1 = _core_api()
         kwargs = {}
@@ -194,6 +211,11 @@ def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, Any]:
     Returns:
         A dictionary with pod details, conditions, and container info.
     """
+    if err := validate_string(pod_name, "pod_name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := _validate_namespace(namespace):
+        return err
+
     try:
         v1 = _core_api()
         pod = v1.read_namespaced_pod(pod_name, namespace)
@@ -278,6 +300,13 @@ def get_pod_logs(
     Returns:
         A dictionary with the pod logs.
     """
+    if err := validate_string(pod_name, "pod_name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := _validate_namespace(namespace):
+        return err
+    if err := validate_positive_int(tail_lines, "tail_lines", max_value=MAX_LOG_LINES):
+        return err
+
     try:
         v1 = _core_api()
         kwargs = {"tail_lines": tail_lines}
@@ -313,6 +342,9 @@ def list_deployments(namespace: str = "default") -> dict[str, Any]:
     Returns:
         A dictionary with deployment details.
     """
+    if err := _validate_namespace(namespace):
+        return err
+
     try:
         apps = _apps_api()
 
@@ -355,6 +387,11 @@ def get_deployment_status(name: str, namespace: str = "default") -> dict[str, An
     Returns:
         A dictionary with deployment rollout status.
     """
+    if err := validate_string(name, "name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := _validate_namespace(namespace):
+        return err
+
     try:
         apps = _apps_api()
         d = apps.read_namespaced_deployment(name, namespace)
@@ -395,6 +432,13 @@ def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -
     Returns:
         A dictionary with the operation result.
     """
+    if err := validate_string(name, "name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := _validate_namespace(namespace):
+        return err
+    if err := validate_positive_int(replicas, "replicas", min_value=0, max_value=MAX_REPLICAS):
+        return err
+
     try:
         apps = _apps_api()
         body = {"spec": {"replicas": replicas}}
@@ -419,6 +463,11 @@ def restart_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
     Returns:
         A dictionary with the operation result.
     """
+    if err := validate_string(name, "name", pattern=K8S_NAME_PATTERN):
+        return err
+    if err := _validate_namespace(namespace):
+        return err
+
     from datetime import datetime
 
     try:
@@ -461,6 +510,11 @@ def get_events(
     Returns:
         A dictionary with recent events.
     """
+    if err := _validate_namespace(namespace):
+        return err
+    if err := validate_positive_int(limit, "limit", max_value=1000):
+        return err
+
     try:
         v1 = _core_api()
         kwargs = {"limit": limit}

@@ -1,6 +1,10 @@
 """Tests for ai_agents_core.guardrails."""
 
+import time
+
 from ai_agents_core.guardrails import (
+    _CONFIRMATION_TTL,
+    _hash_args,
     confirm,
     destructive,
     dry_run,
@@ -132,12 +136,15 @@ def test_require_confirmation_allows_after_pending(fake_tool, fake_ctx):
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is not None
     assert result["status"] == "confirmation_required"
-    assert ctx.state["_guardrail_pending_danger_tool"] is True
+    pending = ctx.state["_guardrail_pending_danger_tool"]
+    assert isinstance(pending, dict)
+    assert "args_hash" in pending
+    assert "timestamp" in pending
 
-    # Second call: allowed (user confirmed)
+    # Second call with same args: allowed (user confirmed)
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is None  # proceed
-    assert ctx.state["_guardrail_pending_danger_tool"] is False
+    assert ctx.state["_guardrail_pending_danger_tool"] is None
 
 
 def test_require_confirmation_allows_confirm_tool_after_pending(fake_tool, fake_ctx):
@@ -225,3 +232,92 @@ def test_dry_run_always_blocks_even_on_retry(fake_tool, fake_ctx):
     result2 = callback(tool=tool, args={}, tool_context=ctx)
     assert result1["status"] == "dry_run"
     assert result2["status"] == "dry_run"
+
+
+# ── Confirmation bypass prevention ────────────────────────────────────
+
+
+def test_require_confirmation_rejects_different_args(fake_tool, fake_ctx):
+    """Changing args on retry must re-prompt, not silently pass through."""
+
+    @destructive("destroys data")
+    def danger_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = fake_tool(name="danger_tool", func=danger_tool)
+    ctx = fake_ctx()
+
+    # First call with args_a: blocked
+    result = callback(tool=tool, args={"name": "topic-a"}, tool_context=ctx)
+    assert result["status"] == "confirmation_required"
+
+    # Second call with different args: must block again
+    result = callback(tool=tool, args={"name": "topic-b"}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+
+
+def test_require_confirmation_expired_pending(fake_tool, fake_ctx):
+    """An expired pending confirmation must re-prompt."""
+
+    @destructive("destroys data")
+    def danger_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = fake_tool(name="danger_tool", func=danger_tool)
+    ctx = fake_ctx()
+
+    # First call: blocked
+    callback(tool=tool, args={"id": 1}, tool_context=ctx)
+
+    # Manually expire the pending state
+    pending_key = "_guardrail_pending_danger_tool"
+    ctx.state[pending_key]["timestamp"] = time.time() - _CONFIRMATION_TTL - 10
+
+    # Retry with same args: should block again (expired)
+    result = callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
+
+
+def test_require_confirmation_clears_stale_on_mismatch(fake_tool, fake_ctx):
+    """On args mismatch the old pending is replaced with new pending."""
+
+    @confirm("creates resource")
+    def create_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = fake_tool(name="create_tool", func=create_tool)
+    ctx = fake_ctx()
+
+    # Block with args_a
+    callback(tool=tool, args={"name": "a"}, tool_context=ctx)
+    pending_key = "_guardrail_pending_create_tool"
+    old_hash = ctx.state[pending_key]["args_hash"]
+
+    # Call with args_b — should block again with new hash
+    callback(tool=tool, args={"name": "b"}, tool_context=ctx)
+    new_hash = ctx.state[pending_key]["args_hash"]
+    assert old_hash != new_hash
+    assert new_hash == _hash_args({"name": "b"})
+
+
+def test_require_confirmation_handles_legacy_boolean_pending(fake_tool, fake_ctx):
+    """Old boolean pending state is treated as invalid and re-prompts."""
+
+    @destructive("destroys data")
+    def danger_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = fake_tool(name="danger_tool", func=danger_tool)
+    ctx = fake_ctx()
+
+    # Simulate legacy boolean state from older code
+    ctx.state["_guardrail_pending_danger_tool"] = True
+
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result["status"] == "confirmation_required"

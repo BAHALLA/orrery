@@ -12,6 +12,8 @@ from typing import Any
 
 from google.adk.tools import ToolContext
 
+from ai_agents_core.validation import validate_string, validate_url
+
 # ── Session State: tracks what happened in this conversation ───────────
 
 
@@ -28,6 +30,11 @@ def log_operation(ctx: ToolContext, operation: str, details: str) -> dict[str, A
     Returns:
         Confirmation of the logged operation.
     """
+    if err := validate_string(operation, "operation", max_len=100):
+        return err
+    if err := validate_string(details, "details", max_len=5000):
+        return err
+
     log = ctx.state.get("session_log", [])
     entry = {
         "operation": operation,
@@ -80,6 +87,13 @@ def save_note(
     Returns:
         Confirmation with the note ID.
     """
+    if err := validate_string(title, "title", max_len=200):
+        return err
+    if err := validate_string(content, "content", max_len=10_000):
+        return err
+    if tags is not None and (err := validate_string(tags, "tags", max_len=500)):
+        return err
+
     notes = ctx.state.get("user:notes", [])
     note_id = len(notes) + 1
     note = {
@@ -141,6 +155,9 @@ def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
     Returns:
         Matching notes.
     """
+    if err := validate_string(query, "query", max_len=500):
+        return err
+
     notes = ctx.state.get("user:notes", [])
     query_lower = query.lower()
     matches = [
@@ -226,6 +243,11 @@ def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, Any]:
     Returns:
         Confirmation.
     """
+    if err := validate_string(name, "name", max_len=200):
+        return err
+    if err := validate_url(url, "url"):
+        return err
+
     bookmarks = ctx.state.get("app:bookmarks", [])
     bookmarks.append({"name": name, "url": url})
     ctx.state["app:bookmarks"] = bookmarks

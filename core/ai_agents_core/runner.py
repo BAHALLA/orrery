@@ -11,6 +11,8 @@ from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.genai import types
 
+from .rbac import set_user_role
+
 
 async def run_persistent(
     agent: Agent,
@@ -37,9 +39,12 @@ async def run_persistent(
         session_service=session_service,
     )
 
+    initial_state: dict[str, object] = {}
+    set_user_role(initial_state, "admin")  # CLI user gets admin (local dev)
     session = await session_service.create_session(
         app_name=app_name,
         user_id=user_id,
+        state=initial_state,
     )
 
     print(f"{agent.name} (persistent mode)")
@@ -58,9 +63,12 @@ async def run_persistent(
         if user_input.lower() == "quit":
             break
         if user_input.lower() == "new":
+            new_state: dict[str, object] = {}
+            set_user_role(new_state, "admin")
             session = await session_service.create_session(
                 app_name=app_name,
                 user_id=user_id,
+                state=new_state,
             )
             print(f"\n--- New session: {session.id} ---\n")
             continue

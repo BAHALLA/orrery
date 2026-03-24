@@ -13,11 +13,16 @@ ADK calls before_tool_callback with keyword args:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import time
 from collections.abc import Callable
 from typing import Any
 
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
+
+_CONFIRMATION_TTL = 300  # 5 minutes
 
 # ── Tool classification markers ────────────────────────────────────────
 
@@ -101,6 +106,15 @@ def get_destructive_reason(tool_or_func: Any) -> str:
     return get_guard_reason(tool_or_func)
 
 
+# ── Helpers ────────────────────────────────────────────────────────────
+
+
+def _hash_args(args: dict[str, Any]) -> str:
+    """Deterministic hash of tool arguments for confirmation matching."""
+    canonical = json.dumps(args, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
 # ── Callback factories ─────────────────────────────────────────────────
 
 
@@ -110,6 +124,10 @@ def require_confirmation() -> Callable:
     - @destructive tools get a warning: "This is a destructive operation..."
     - @confirm tools get a neutral prompt: "This operation will..."
     - Unmarked tools execute immediately.
+
+    The confirmation state tracks the exact arguments and expires after
+    ``_CONFIRMATION_TTL`` seconds.  A retry with different arguments or
+    an expired confirmation will re-prompt.
 
     Usage in create_agent():
         create_agent(
@@ -127,15 +145,25 @@ def require_confirmation() -> Callable:
         if level is None:
             return None  # not guarded, proceed
 
-        # Check if this tool was already blocked — if so, the user has
-        # confirmed by responding, so allow it through this time.
         pending_key = f"_guardrail_pending_{tool.name}"
-        if tool_context.state.get(pending_key):
-            tool_context.state[pending_key] = False
-            return None  # user confirmed, proceed
+        pending = tool_context.state.get(pending_key)
+        args_hash = _hash_args(args)
 
-        # Block and mark as pending confirmation
-        tool_context.state[pending_key] = True
+        # Check for a valid pending confirmation that matches these args.
+        if isinstance(pending, dict):
+            same_args = pending.get("args_hash") == args_hash
+            not_expired = (time.time() - pending.get("timestamp", 0)) < _CONFIRMATION_TTL
+            if same_args and not_expired:
+                tool_context.state[pending_key] = None  # consume confirmation
+                return None  # user confirmed, proceed
+            # Mismatch or expired — clear stale state and re-prompt below.
+            tool_context.state[pending_key] = None
+
+        # Block and store pending with args fingerprint + timestamp.
+        tool_context.state[pending_key] = {
+            "args_hash": args_hash,
+            "timestamp": time.time(),
+        }
 
         reason = get_guard_reason(func)
 

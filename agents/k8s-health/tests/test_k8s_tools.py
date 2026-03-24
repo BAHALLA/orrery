@@ -512,3 +512,48 @@ def test_list_namespaces_api_error(mock_api):
     mock_api.return_value.list_namespace.side_effect = _api_exception("Forbidden", 403)
     result = list_namespaces()
     assert result["status"] == "error"
+
+
+# ── Input validation ─────────────────────────────────────────────────
+
+
+def test_scale_deployment_rejects_negative_replicas():
+    result = scale_deployment("my-deploy", replicas=-1)
+    assert result["status"] == "error"
+    assert "replicas" in result["message"]
+
+
+@patch("k8s_health_agent.tools._apps_api")
+def test_scale_deployment_allows_zero_replicas(mock_api):
+    # replicas=0 is valid (scale to zero), validation should pass.
+    mock_api.return_value.patch_namespaced_deployment_scale.return_value = None
+    result = scale_deployment("my-deploy", replicas=0)
+    assert result["status"] == "success"
+
+
+def test_get_pod_logs_rejects_huge_tail():
+    result = get_pod_logs("my-pod", tail_lines=999_999)
+    assert result["status"] == "error"
+    assert "tail_lines" in result["message"]
+
+
+def test_describe_pod_rejects_invalid_name():
+    result = describe_pod("INVALID_NAME!")
+    assert result["status"] == "error"
+    assert "pod_name" in result["message"]
+
+
+@patch("k8s_health_agent.tools._core_api")
+def test_list_pods_allows_all_namespace(mock_api):
+    # "all" is a special value, should not be rejected by validation
+    mock_pods = MagicMock()
+    mock_pods.items = []
+    mock_api.return_value.list_pod_for_all_namespaces.return_value = mock_pods
+    result = list_pods(namespace="all")
+    assert result["status"] == "success"
+
+
+def test_get_events_rejects_huge_limit():
+    result = get_events(limit=99_999)
+    assert result["status"] == "error"
+    assert "limit" in result["message"]
