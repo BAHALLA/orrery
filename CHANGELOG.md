@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] - 2026-03-31
+
+### Changed
+
+- **ADK Plugins** — cross-cutting concerns (RBAC, guardrails, metrics, audit, activity tracking, resilience, error handling) are now packaged as ADK `BasePlugin` subclasses in `core/ai_agents_core/plugins.py` and registered once on the `Runner` via `default_plugins()`. Per-agent callback wiring has been removed from all agents.
+  - `GuardrailsPlugin` — combines `authorize()`, `require_confirmation()`/`dry_run()`, and `ensure_default_role()` into a single plugin
+  - `ResiliencePlugin` — wraps `CircuitBreaker` for global per-tool circuit breaking
+  - `MetricsPlugin` — wraps `MetricsCollector` for global Prometheus metrics collection
+  - `AuditPlugin` — wraps `audit_logger()` for global structured audit logging
+  - `ActivityPlugin` — wraps `activity_tracker()` for global session activity tracking
+  - `ErrorHandlerPlugin` — wraps `graceful_tool_error()` and `graceful_model_error()` for global error recovery
+
+- **Async tools** — all tool functions across all agents converted from sync to async:
+  - Kafka tools use `_run_sync()` (thread pool executor) for confluent-kafka blocking calls
+  - K8s tools use `asyncio.to_thread()` for kubernetes client calls
+  - Docker tools use `asyncio.create_subprocess_exec()` instead of `subprocess.run()`
+  - Observability tools use `asyncio.to_thread()` for `requests` HTTP calls
+  - Ops journal tools converted to `async def` (no blocking I/O)
+  - `@with_retry` decorator automatically detects async functions and uses `await asyncio.sleep()`
+
+- **Runner updated** — `run_persistent()` accepts an optional `plugins` parameter for ADK plugin registration
+
+- **Slack bot updated** — uses `default_plugins(guardrail_mode="none")` for global cross-cutting concerns while keeping Slack-specific confirmation buttons as agent-level callbacks
+
+- **All tests updated** — 404 tests (up from 395), all tool tests now use `@pytest.mark.asyncio` and `async def`/`await`. Docker tests mock `_run_docker` instead of `subprocess.run`
+
 ## [Unreleased] - 2026-03-24
 
 ### Added

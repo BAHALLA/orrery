@@ -59,101 +59,110 @@ def _make_partition(id=0, leader=1, replicas=None, isrs=None):
 # ── Cluster Health ────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_cluster_health_success(mock_admin):
+async def test_cluster_health_success(mock_admin):
     brokers = [_make_broker(1, "broker-1", 9092), _make_broker(2, "broker-2", 9092)]
     mock_admin.return_value.list_topics.return_value = _make_metadata(brokers)
 
-    result = get_kafka_cluster_health()
+    result = await get_kafka_cluster_health()
     assert result["status"] == "success"
     assert result["health"] == "healthy"
     assert result["brokers_online"] == 2
     assert len(result["brokers"]) == 2
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_cluster_health_no_brokers(mock_admin):
+async def test_cluster_health_no_brokers(mock_admin):
     md = MagicMock()
     md.brokers = {}
     mock_admin.return_value.list_topics.return_value = md
 
-    result = get_kafka_cluster_health()
+    result = await get_kafka_cluster_health()
     assert result["health"] == "unhealthy"
     assert result["brokers_online"] == 0
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_cluster_health_error(mock_admin):
+async def test_cluster_health_error(mock_admin):
     mock_admin.return_value.list_topics.side_effect = KafkaException(
         MagicMock(str=lambda self: "Connection refused")
     )
-    result = get_kafka_cluster_health()
+    result = await get_kafka_cluster_health()
     assert result["status"] == "error"
 
 
 # ── List Topics ───────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_list_topics_success(mock_admin):
+async def test_list_topics_success(mock_admin):
     md = _make_metadata()
     md.topics = {"topic-a": MagicMock(), "topic-b": MagicMock()}
     mock_admin.return_value.list_topics.return_value = md
 
-    result = list_kafka_topics()
+    result = await list_kafka_topics()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert set(result["topics"]) == {"topic-a", "topic-b"}
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_list_topics_empty(mock_admin):
+async def test_list_topics_empty(mock_admin):
     mock_admin.return_value.list_topics.return_value = _make_metadata(topics={})
 
-    result = list_kafka_topics()
+    result = await list_kafka_topics()
     assert result["status"] == "success"
     assert result["count"] == 0
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_list_topics_error(mock_admin):
+async def test_list_topics_error(mock_admin):
     mock_admin.return_value.list_topics.side_effect = KafkaException(
         MagicMock(str=lambda self: "timeout")
     )
-    result = list_kafka_topics()
+    result = await list_kafka_topics()
     assert result["status"] == "error"
 
 
 # ── Create Topic ──────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_create_topic_success(mock_admin):
+async def test_create_topic_success(mock_admin):
     future = MagicMock()
     future.result.return_value = None  # no error
     mock_admin.return_value.create_topics.return_value = {"my-topic": future}
 
-    result = create_kafka_topic("my-topic", num_partitions=3, replication_factor=1)
+    result = await create_kafka_topic("my-topic", num_partitions=3, replication_factor=1)
     assert result["status"] == "success"
     assert "my-topic" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_create_topic_already_exists(mock_admin):
+async def test_create_topic_already_exists(mock_admin):
     future = MagicMock()
     future.result.side_effect = Exception("Topic already exists")
     mock_admin.return_value.create_topics.return_value = {"my-topic": future}
 
-    result = create_kafka_topic("my-topic")
+    result = await create_kafka_topic("my-topic")
     assert result["status"] == "error"
     assert "already exists" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_create_topic_admin_error(mock_admin):
+async def test_create_topic_admin_error(mock_admin):
     mock_admin.return_value.create_topics.side_effect = Exception("Connection lost")
 
-    result = create_kafka_topic("my-topic")
+    result = await create_kafka_topic("my-topic")
     assert result["status"] == "error"
 
 
@@ -165,24 +174,26 @@ def test_create_topic_has_confirm_guardrail():
 # ── Delete Topic ──────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_delete_topic_success(mock_admin):
+async def test_delete_topic_success(mock_admin):
     future = MagicMock()
     future.result.return_value = None
     mock_admin.return_value.delete_topics.return_value = {"old-topic": future}
 
-    result = delete_kafka_topic("old-topic")
+    result = await delete_kafka_topic("old-topic")
     assert result["status"] == "success"
     assert "old-topic" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_delete_topic_not_found(mock_admin):
+async def test_delete_topic_not_found(mock_admin):
     future = MagicMock()
     future.result.side_effect = Exception("Unknown topic")
     mock_admin.return_value.delete_topics.return_value = {"no-topic": future}
 
-    result = delete_kafka_topic("no-topic")
+    result = await delete_kafka_topic("no-topic")
     assert result["status"] == "error"
 
 
@@ -194,8 +205,9 @@ def test_delete_topic_has_destructive_guardrail():
 # ── Topic Metadata ────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_topic_metadata_success(mock_admin):
+async def test_get_topic_metadata_success(mock_admin):
     partitions = {0: _make_partition(0), 1: _make_partition(1)}
     topic_data = MagicMock()
     topic_data.partitions = partitions
@@ -203,35 +215,38 @@ def test_get_topic_metadata_success(mock_admin):
     md = _make_metadata(topics={"my-topic": topic_data})
     mock_admin.return_value.list_topics.return_value = md
 
-    result = get_topic_metadata("my-topic")
+    result = await get_topic_metadata("my-topic")
     assert result["status"] == "success"
     assert result["topic"] == "my-topic"
     assert result["num_partitions"] == 2
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_topic_metadata_not_found(mock_admin):
+async def test_get_topic_metadata_not_found(mock_admin):
     mock_admin.return_value.list_topics.return_value = _make_metadata(topics={})
 
-    result = get_topic_metadata("missing")
+    result = await get_topic_metadata("missing")
     assert result["status"] == "error"
     assert "not found" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_topic_metadata_error(mock_admin):
+async def test_get_topic_metadata_error(mock_admin):
     mock_admin.return_value.list_topics.side_effect = KafkaException(
         MagicMock(str=lambda self: "timeout")
     )
-    result = get_topic_metadata("t")
+    result = await get_topic_metadata("t")
     assert result["status"] == "error"
 
 
 # ── List Consumer Groups ─────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_list_consumer_groups_success(mock_admin):
+async def test_list_consumer_groups_success(mock_admin):
     g1 = MagicMock()
     g1.group_id = "group-a"
     g2 = MagicMock()
@@ -243,24 +258,26 @@ def test_list_consumer_groups_success(mock_admin):
     future.result.return_value = inner
     mock_admin.return_value.list_consumer_groups.return_value = future
 
-    result = list_consumer_groups()
+    result = await list_consumer_groups()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert "group-a" in result["groups"]
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_list_consumer_groups_error(mock_admin):
+async def test_list_consumer_groups_error(mock_admin):
     mock_admin.return_value.list_consumer_groups.side_effect = Exception("fail")
-    result = list_consumer_groups()
+    result = await list_consumer_groups()
     assert result["status"] == "error"
 
 
 # ── Describe Consumer Groups ─────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_describe_consumer_groups_success(mock_admin):
+async def test_describe_consumer_groups_success(mock_admin):
     tp = MagicMock()
     tp.topic = "orders"
     tp.partition = 0
@@ -282,20 +299,21 @@ def test_describe_consumer_groups_success(mock_admin):
     future.result.return_value = desc
     mock_admin.return_value.describe_consumer_groups.return_value = {"group-a": future}
 
-    result = describe_consumer_groups(["group-a"])
+    result = await describe_consumer_groups(["group-a"])
     assert result["status"] == "success"
     assert len(result["groups"]) == 1
     assert result["groups"][0]["group_id"] == "group-a"
     assert len(result["groups"][0]["members"]) == 1
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_describe_consumer_groups_partial_error(mock_admin):
+async def test_describe_consumer_groups_partial_error(mock_admin):
     future = MagicMock()
     future.result.side_effect = Exception("not found")
     mock_admin.return_value.describe_consumer_groups.return_value = {"bad": future}
 
-    result = describe_consumer_groups(["bad"])
+    result = await describe_consumer_groups(["bad"])
     assert result["status"] == "success"
     assert "error" in result["groups"][0]
 
@@ -303,8 +321,9 @@ def test_describe_consumer_groups_partial_error(mock_admin):
 # ── Consumer Lag ──────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_consumer_lag_success(mock_admin):
+async def test_get_consumer_lag_success(mock_admin):
     # committed offsets
     tp = MagicMock()
     tp.topic = "orders"
@@ -328,28 +347,30 @@ def test_get_consumer_lag_success(mock_admin):
     latest_future.result.return_value = latest_result
     mock_admin.return_value.list_offsets.return_value = {latest_tp: latest_future}
 
-    result = get_consumer_lag("my-group")
+    result = await get_consumer_lag("my-group")
     assert result["status"] == "success"
     assert result["total_lag"] == 50
     assert len(result["lag_details"]) == 1
     assert result["lag_details"][0]["lag"] == 50
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_consumer_lag_no_offsets(mock_admin):
+async def test_get_consumer_lag_no_offsets(mock_admin):
     offsets_result = MagicMock()
     offsets_result.topic_partitions = []
     offsets_future = MagicMock()
     offsets_future.result.return_value = offsets_result
     mock_admin.return_value.list_consumer_group_offsets.return_value = {"my-group": offsets_future}
 
-    result = get_consumer_lag("my-group")
+    result = await get_consumer_lag("my-group")
     assert result["status"] == "success"
     assert result["lag_info"] == []
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_consumer_lag_with_topic_filter(mock_admin):
+async def test_get_consumer_lag_with_topic_filter(mock_admin):
     tp1 = MagicMock()
     tp1.topic = "orders"
     tp1.partition = 0
@@ -376,51 +397,58 @@ def test_get_consumer_lag_with_topic_filter(mock_admin):
     latest_future.result.return_value = latest_result
     mock_admin.return_value.list_offsets.return_value = {latest_tp: latest_future}
 
-    result = get_consumer_lag("my-group", topic_name="orders")
+    result = await get_consumer_lag("my-group", topic_name="orders")
     assert result["status"] == "success"
     # should only have "orders" partition, not "events"
     assert all(d["topic"] == "orders" for d in result["lag_details"])
 
 
+@pytest.mark.asyncio
 @patch("kafka_health_agent.tools._get_admin_client")
-def test_get_consumer_lag_error(mock_admin):
+async def test_get_consumer_lag_error(mock_admin):
     mock_admin.return_value.list_consumer_group_offsets.side_effect = Exception("fail")
-    result = get_consumer_lag("bad-group")
+    result = await get_consumer_lag("bad-group")
     assert result["status"] == "error"
 
 
 # ── Input validation ─────────────────────────────────────────────────
 
 
-def test_create_topic_rejects_empty_name():
-    result = create_kafka_topic("")
+@pytest.mark.asyncio
+async def test_create_topic_rejects_empty_name():
+    result = await create_kafka_topic("")
     assert result["status"] == "error"
     assert "topic_name" in result["message"]
 
 
-def test_create_topic_rejects_invalid_chars():
-    result = create_kafka_topic("bad topic name!")
+@pytest.mark.asyncio
+async def test_create_topic_rejects_invalid_chars():
+    result = await create_kafka_topic("bad topic name!")
     assert result["status"] == "error"
     assert "format" in result["message"]
 
 
-def test_create_topic_rejects_negative_partitions():
-    result = create_kafka_topic("valid-topic", num_partitions=-1)
+@pytest.mark.asyncio
+async def test_create_topic_rejects_negative_partitions():
+    result = await create_kafka_topic("valid-topic", num_partitions=-1)
     assert result["status"] == "error"
     assert "num_partitions" in result["message"]
 
 
-def test_delete_topic_rejects_empty_name():
-    result = delete_kafka_topic("")
+@pytest.mark.asyncio
+async def test_delete_topic_rejects_empty_name():
+    result = await delete_kafka_topic("")
     assert result["status"] == "error"
 
 
-def test_describe_consumer_groups_rejects_empty_list():
-    result = describe_consumer_groups([])
+@pytest.mark.asyncio
+async def test_describe_consumer_groups_rejects_empty_list():
+    result = await describe_consumer_groups([])
     assert result["status"] == "error"
     assert "group_ids" in result["message"]
 
 
-def test_get_consumer_lag_rejects_empty_group_id():
-    result = get_consumer_lag("")
+@pytest.mark.asyncio
+async def test_get_consumer_lag_rejects_empty_group_id():
+    result = await get_consumer_lag("")
     assert result["status"] == "error"

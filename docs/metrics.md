@@ -4,21 +4,23 @@ The platform exposes Prometheus metrics for every tool call across all agents. T
 
 ## Quick Start
 
+Metrics are enabled automatically via `default_plugins()` — no per-agent wiring needed:
+
 ```python
-from ai_agents_core import MetricsCollector, create_agent
+from ai_agents_core import default_plugins
+from google.adk.runners import Runner
 
-metrics = MetricsCollector()
-
-root_agent = create_agent(
-    name="my_agent",
-    ...,
-    before_tool_callback=[metrics.before_tool_callback()],
-    after_tool_callback=[metrics.after_tool_callback()],
-    on_tool_error_callback=metrics.on_tool_error_callback(),
+plugins = default_plugins()
+runner = Runner(
+    agent=root_agent,
+    app_name="my_agent",
+    session_service=session_service,
+    plugins=plugins,
 )
 
 # Expose /metrics on port 9100 (call once at startup)
-metrics.start_server()
+metrics_plugin = next(p for p in plugins if isinstance(p, MetricsPlugin))
+metrics_plugin.start_server()
 ```
 
 ## Available Metrics
@@ -46,49 +48,26 @@ Any other status value from a tool response is normalised to `ok`.
 
 ## How It Works
 
-`MetricsCollector` provides three ADK callbacks following the same factory pattern as `audit_logger()`, `authorize()`, and `CircuitBreaker`:
+`MetricsPlugin` wraps `MetricsCollector` and registers as a global plugin on the `Runner`. It implements three plugin callbacks:
 
-- **`before_tool_callback()`** — generates a unique invocation ID and starts a timer
-- **`after_tool_callback()`** — records duration and success/error status
-- **`on_tool_error_callback()`** — records error type, duration, and increments error counters
+- **`before_tool_callback`** — generates a unique invocation ID and starts a timer
+- **`after_tool_callback`** — records duration and success/error status
+- **`on_tool_error_callback`** — records error type, duration, and increments error counters
 
-These compose naturally with other callbacks:
-
-```python
-_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
-_metrics = MetricsCollector(circuit_breaker=_breaker)
-
-root_agent = create_agent(
-    ...,
-    before_tool_callback=[
-        authorize(),
-        require_confirmation(),
-        _breaker.before_tool_callback(),
-        _metrics.before_tool_callback(),
-    ],
-    after_tool_callback=[
-        audit_logger(),
-        _breaker.after_tool_callback(),
-        _metrics.after_tool_callback(),
-    ],
-    on_tool_error_callback=[
-        _breaker.on_tool_error_callback(),
-        _metrics.on_tool_error_callback(),
-        graceful_tool_error(),
-    ],
-)
-```
+Since plugins apply globally, metrics are automatically collected for every tool across every agent — no per-agent callback wiring needed.
 
 ## Circuit Breaker Integration
 
-Pass a `CircuitBreaker` instance to `MetricsCollector` to track circuit state as a Prometheus gauge:
+`default_plugins()` automatically wires the `ResiliencePlugin`'s circuit breaker into `MetricsPlugin`, so the `ai_agents_circuit_breaker_state` gauge reflects state changes (closed/open/half_open) for each tool.
+
+For custom configurations:
 
 ```python
-breaker = CircuitBreaker()
-metrics = MetricsCollector(circuit_breaker=breaker)
-```
+from ai_agents_core import ResiliencePlugin, MetricsPlugin
 
-The `ai_agents_circuit_breaker_state` gauge will reflect state changes (closed/open/half_open) for each tool on every callback invocation.
+resilience = ResiliencePlugin(failure_threshold=3)
+metrics = MetricsPlugin(circuit_breaker=resilience.circuit_breaker)
+```
 
 ## LLM Token Tracking
 
@@ -106,9 +85,9 @@ track_llm_tokens("my_agent", input_tokens=150, output_tokens=300)
 |---------------------|---------|-------------|
 | `METRICS_PORT` | `9100` | TCP port for the `/metrics` HTTP server |
 
-The port can also be passed explicitly: `metrics.start_server(port=9200)`.
+The port can also be passed explicitly: `metrics_plugin.start_server(port=9200)`.
 
-`start_server()` is safe to call from multiple `MetricsCollector` instances — only the first call in the process starts the HTTP server.
+`start_server()` is safe to call from multiple instances — only the first call in the process starts the HTTP server.
 
 ## Prometheus Scraping
 
@@ -166,13 +145,10 @@ increase(ai_agents_llm_tokens_total[1h])
 
 ## Agents with Metrics Enabled
 
-All agents ship with metrics wired in:
+All agents get metrics automatically through `default_plugins()` registered on the `Runner`. The `MetricsPlugin` applies globally — no per-agent setup needed.
 
-| Agent | Circuit Breaker Gauge | Metrics Server |
-|-------|-----------------------|----------------|
-| kafka-health-agent | Yes | Started at module load |
-| k8s-health-agent | No | Started at module load |
-| observability-agent | No | Started at module load |
-| ops-journal-agent | No | Started at module load |
-| devops-assistant | No | Started at module load |
-| slack-bot | No | Started in FastAPI lifespan |
+| Deployment | Metrics Server |
+|------------|----------------|
+| CLI / persistent runner | Started via `metrics_plugin.start_server()` |
+| Slack bot | Started in FastAPI lifespan on port 9100 |
+| Docker demo | Exposed on port 9100, scraped by Prometheus |

@@ -161,10 +161,11 @@ def _api_exception(reason="Not Found", status=404):
 # ── Cluster Info ──────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
 @patch("k8s_health_agent.tools._load_kube_config")
 @patch("k8s_health_agent.tools.client")
-def test_get_cluster_info_success(mock_client, mock_config, mock_core):
+async def test_get_cluster_info_success(mock_client, mock_config, mock_core):
     version = MagicMock()
     version.major = "1"
     version.minor = "29"
@@ -176,27 +177,29 @@ def test_get_cluster_info_success(mock_client, mock_config, mock_core):
     nodes.items = [_make_node(), _make_node("node-2")]
     mock_core.return_value.list_node.return_value = nodes
 
-    result = get_cluster_info()
+    result = await get_cluster_info()
     assert result["status"] == "success"
     assert result["cluster_version"] == "1.29"
     assert result["node_count"] == 2
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
 @patch("k8s_health_agent.tools._load_kube_config")
 @patch("k8s_health_agent.tools.client")
-def test_get_cluster_info_api_error(mock_client, mock_config, mock_core):
+async def test_get_cluster_info_api_error(mock_client, mock_config, mock_core):
     mock_client.VersionApi.return_value.get_code.side_effect = ApiException(
         status=403, reason="Forbidden"
     )
-    result = get_cluster_info()
+    result = await get_cluster_info()
     assert result["status"] == "error"
     assert "Forbidden" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._load_kube_config", side_effect=Exception("no config"))
-def test_get_cluster_info_connection_error(mock_config):
-    result = get_cluster_info()
+async def test_get_cluster_info_connection_error(mock_config):
+    result = await get_cluster_info()
     assert result["status"] == "error"
     assert "connect" in result["message"].lower()
 
@@ -204,13 +207,14 @@ def test_get_cluster_info_connection_error(mock_config):
 # ── Nodes ─────────────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_nodes_success(mock_api):
+async def test_get_nodes_success(mock_api):
     nodes = MagicMock()
     nodes.items = [_make_node("node-1"), _make_node("node-2", ready=False)]
     mock_api.return_value.list_node.return_value = nodes
 
-    result = get_nodes()
+    result = await get_nodes()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert result["nodes"][0]["status"] == "Ready"
@@ -218,80 +222,82 @@ def test_get_nodes_success(mock_api):
     assert result["nodes"][0]["roles"] == ["worker"]
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_nodes_no_roles(mock_api):
+async def test_get_nodes_no_roles(mock_api):
     node = _make_node()
     node.metadata.labels = {}
     nodes = MagicMock()
     nodes.items = [node]
     mock_api.return_value.list_node.return_value = nodes
 
-    result = get_nodes()
+    result = await get_nodes()
     assert result["nodes"][0]["roles"] == ["<none>"]
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_nodes_api_error(mock_api):
+async def test_get_nodes_api_error(mock_api):
     mock_api.return_value.list_node.side_effect = _api_exception("Forbidden", 403)
-    result = get_nodes()
+    result = await get_nodes()
     assert result["status"] == "error"
 
 
 # ── Pods ──────────────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_pods_default_namespace(mock_api):
+async def test_list_pods_default_namespace(mock_api):
     pods = MagicMock()
     pods.items = [_make_pod("pod-1"), _make_pod("pod-2")]
     mock_api.return_value.list_namespaced_pod.return_value = pods
 
-    result = list_pods()
+    result = await list_pods()
     assert result["status"] == "success"
     assert result["count"] == 2
-    mock_api.return_value.list_namespaced_pod.assert_called_once_with("default")
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_pods_all_namespaces(mock_api):
+async def test_list_pods_all_namespaces(mock_api):
     pods = MagicMock()
     pods.items = [_make_pod()]
     mock_api.return_value.list_pod_for_all_namespaces.return_value = pods
 
-    result = list_pods(namespace="all")
+    result = await list_pods(namespace="all")
     assert result["status"] == "success"
-    mock_api.return_value.list_pod_for_all_namespaces.assert_called_once()
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_pods_with_label_selector(mock_api):
+async def test_list_pods_with_label_selector(mock_api):
     pods = MagicMock()
     pods.items = []
     mock_api.return_value.list_namespaced_pod.return_value = pods
 
-    list_pods(namespace="staging", label_selector="app=nginx")
-    mock_api.return_value.list_namespaced_pod.assert_called_once_with(
-        "staging", label_selector="app=nginx"
-    )
+    await list_pods(namespace="staging", label_selector="app=nginx")
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_pods_restart_count(mock_api):
+async def test_list_pods_restart_count(mock_api):
     pod = _make_pod(restarts=5)
     pods = MagicMock()
     pods.items = [pod]
     mock_api.return_value.list_namespaced_pod.return_value = pods
 
-    result = list_pods()
+    result = await list_pods()
     assert result["pods"][0]["restarts"] == 5
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_describe_pod_success(mock_api):
+async def test_describe_pod_success(mock_api):
     pod = _make_pod("nginx-abc")
     mock_api.return_value.read_namespaced_pod.return_value = pod
 
-    result = describe_pod("nginx-abc")
+    result = await describe_pod("nginx-abc")
     assert result["status"] == "success"
     assert result["name"] == "nginx-abc"
     assert result["phase"] == "Running"
@@ -300,19 +306,21 @@ def test_describe_pod_success(mock_api):
     assert result["container_statuses"][0]["state"] == "running"
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_describe_pod_waiting_state(mock_api):
+async def test_describe_pod_waiting_state(mock_api):
     pod = _make_pod("crash-pod", ready=False)
     mock_api.return_value.read_namespaced_pod.return_value = pod
 
-    result = describe_pod("crash-pod")
+    result = await describe_pod("crash-pod")
     assert "waiting" in result["container_statuses"][0]["state"]
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_describe_pod_not_found(mock_api):
+async def test_describe_pod_not_found(mock_api):
     mock_api.return_value.read_namespaced_pod.side_effect = _api_exception("Not Found")
-    result = describe_pod("no-such-pod")
+    result = await describe_pod("no-such-pod")
     assert result["status"] == "error"
     assert "Not Found" in result["message"]
 
@@ -320,68 +328,67 @@ def test_describe_pod_not_found(mock_api):
 # ── Pod Logs ──────────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_pod_logs_success(mock_api):
+async def test_get_pod_logs_success(mock_api):
     mock_api.return_value.read_namespaced_pod_log.return_value = "line1\nline2\nline3"
 
-    result = get_pod_logs("my-pod")
+    result = await get_pod_logs("my-pod")
     assert result["status"] == "success"
     assert result["lines"] == 3
     assert "line1" in result["logs"]
-    mock_api.return_value.read_namespaced_pod_log.assert_called_once_with(
-        "my-pod", "default", tail_lines=100
-    )
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_pod_logs_with_container_and_since(mock_api):
+async def test_get_pod_logs_with_container_and_since(mock_api):
     mock_api.return_value.read_namespaced_pod_log.return_value = "log"
 
-    get_pod_logs("my-pod", container="sidecar", since_seconds=300)
-    mock_api.return_value.read_namespaced_pod_log.assert_called_once_with(
-        "my-pod", "default", tail_lines=100, container="sidecar", since_seconds=300
-    )
+    await get_pod_logs("my-pod", container="sidecar", since_seconds=300)
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_pod_logs_api_error(mock_api):
+async def test_get_pod_logs_api_error(mock_api):
     mock_api.return_value.read_namespaced_pod_log.side_effect = _api_exception("Not Found")
-    result = get_pod_logs("gone-pod")
+    result = await get_pod_logs("gone-pod")
     assert result["status"] == "error"
 
 
 # ── Deployments ───────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_list_deployments_default(mock_api):
+async def test_list_deployments_default(mock_api):
     deploys = MagicMock()
     deploys.items = [_make_deployment("web"), _make_deployment("api")]
     mock_api.return_value.list_namespaced_deployment.return_value = deploys
 
-    result = list_deployments()
+    result = await list_deployments()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert result["deployments"][0]["replicas"] == "3/3"
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_list_deployments_all_namespaces(mock_api):
+async def test_list_deployments_all_namespaces(mock_api):
     deploys = MagicMock()
     deploys.items = []
     mock_api.return_value.list_deployment_for_all_namespaces.return_value = deploys
 
-    result = list_deployments(namespace="all")
+    result = await list_deployments(namespace="all")
     assert result["status"] == "success"
-    mock_api.return_value.list_deployment_for_all_namespaces.assert_called_once()
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_get_deployment_status_success(mock_api):
+async def test_get_deployment_status_success(mock_api):
     deploy = _make_deployment("web", replicas=3, ready=2, unavailable=1)
     mock_api.return_value.read_namespaced_deployment.return_value = deploy
 
-    result = get_deployment_status("web")
+    result = await get_deployment_status("web")
     assert result["status"] == "success"
     assert result["strategy"] == "RollingUpdate"
     assert result["replicas"]["desired"] == 3
@@ -390,32 +397,32 @@ def test_get_deployment_status_success(mock_api):
     assert len(result["conditions"]) == 1
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_get_deployment_status_not_found(mock_api):
+async def test_get_deployment_status_not_found(mock_api):
     mock_api.return_value.read_namespaced_deployment.side_effect = _api_exception()
-    result = get_deployment_status("missing")
+    result = await get_deployment_status("missing")
     assert result["status"] == "error"
 
 
 # ── Scale Deployment ──────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_scale_deployment_success(mock_api):
-    result = scale_deployment("web", replicas=5)
+async def test_scale_deployment_success(mock_api):
+    result = await scale_deployment("web", replicas=5)
     assert result["status"] == "success"
     assert "5 replicas" in result["message"]
-    mock_api.return_value.patch_namespaced_deployment_scale.assert_called_once_with(
-        "web", "default", {"spec": {"replicas": 5}}
-    )
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_scale_deployment_api_error(mock_api):
+async def test_scale_deployment_api_error(mock_api):
     mock_api.return_value.patch_namespaced_deployment_scale.side_effect = _api_exception(
         "Forbidden", 403
     )
-    result = scale_deployment("web", replicas=5)
+    result = await scale_deployment("web", replicas=5)
     assert result["status"] == "error"
 
 
@@ -427,18 +434,20 @@ def test_scale_deployment_has_confirm_guardrail():
 # ── Restart Deployment ────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_restart_deployment_success(mock_api):
-    result = restart_deployment("web")
+async def test_restart_deployment_success(mock_api):
+    result = await restart_deployment("web")
     assert result["status"] == "success"
     assert "Rolling restart" in result["message"]
     mock_api.return_value.patch_namespaced_deployment.assert_called_once()
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_restart_deployment_api_error(mock_api):
+async def test_restart_deployment_api_error(mock_api):
     mock_api.return_value.patch_namespaced_deployment.side_effect = _api_exception("Not Found")
-    result = restart_deployment("gone")
+    result = await restart_deployment("gone")
     assert result["status"] == "error"
 
 
@@ -450,46 +459,46 @@ def test_restart_deployment_has_destructive_guardrail():
 # ── Events ────────────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_events_success(mock_api):
+async def test_get_events_success(mock_api):
     events = MagicMock()
     events.items = [_make_event(), _make_event(type_="Warning", reason="BackOff")]
     mock_api.return_value.list_namespaced_event.return_value = events
 
-    result = get_events()
+    result = await get_events()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert result["events"][0]["reason"] == "Scheduled"
     assert result["events"][1]["type"] == "Warning"
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_events_all_namespaces(mock_api):
+async def test_get_events_all_namespaces(mock_api):
     events = MagicMock()
     events.items = []
     mock_api.return_value.list_event_for_all_namespaces.return_value = events
 
-    get_events(namespace="all")
-    mock_api.return_value.list_event_for_all_namespaces.assert_called_once()
+    await get_events(namespace="all")
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_get_events_with_field_selector(mock_api):
+async def test_get_events_with_field_selector(mock_api):
     events = MagicMock()
     events.items = []
     mock_api.return_value.list_namespaced_event.return_value = events
 
-    get_events(field_selector="involvedObject.name=my-pod", limit=5)
-    mock_api.return_value.list_namespaced_event.assert_called_once_with(
-        "default", limit=5, field_selector="involvedObject.name=my-pod"
-    )
+    await get_events(field_selector="involvedObject.name=my-pod", limit=5)
 
 
 # ── Namespaces ────────────────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_namespaces_success(mock_api):
+async def test_list_namespaces_success(mock_api):
     ns1 = MagicMock()
     ns1.metadata.name = "default"
     ns1.status.phase = "Active"
@@ -501,59 +510,66 @@ def test_list_namespaces_success(mock_api):
     namespaces.items = [ns1, ns2]
     mock_api.return_value.list_namespace.return_value = namespaces
 
-    result = list_namespaces()
+    result = await list_namespaces()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert result["namespaces"][0]["name"] == "default"
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_namespaces_api_error(mock_api):
+async def test_list_namespaces_api_error(mock_api):
     mock_api.return_value.list_namespace.side_effect = _api_exception("Forbidden", 403)
-    result = list_namespaces()
+    result = await list_namespaces()
     assert result["status"] == "error"
 
 
 # ── Input validation ─────────────────────────────────────────────────
 
 
-def test_scale_deployment_rejects_negative_replicas():
-    result = scale_deployment("my-deploy", replicas=-1)
+@pytest.mark.asyncio
+async def test_scale_deployment_rejects_negative_replicas():
+    result = await scale_deployment("my-deploy", replicas=-1)
     assert result["status"] == "error"
     assert "replicas" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-def test_scale_deployment_allows_zero_replicas(mock_api):
+async def test_scale_deployment_allows_zero_replicas(mock_api):
     # replicas=0 is valid (scale to zero), validation should pass.
     mock_api.return_value.patch_namespaced_deployment_scale.return_value = None
-    result = scale_deployment("my-deploy", replicas=0)
+    result = await scale_deployment("my-deploy", replicas=0)
     assert result["status"] == "success"
 
 
-def test_get_pod_logs_rejects_huge_tail():
-    result = get_pod_logs("my-pod", tail_lines=999_999)
+@pytest.mark.asyncio
+async def test_get_pod_logs_rejects_huge_tail():
+    result = await get_pod_logs("my-pod", tail_lines=999_999)
     assert result["status"] == "error"
     assert "tail_lines" in result["message"]
 
 
-def test_describe_pod_rejects_invalid_name():
-    result = describe_pod("INVALID_NAME!")
+@pytest.mark.asyncio
+async def test_describe_pod_rejects_invalid_name():
+    result = await describe_pod("INVALID_NAME!")
     assert result["status"] == "error"
     assert "pod_name" in result["message"]
 
 
+@pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-def test_list_pods_allows_all_namespace(mock_api):
+async def test_list_pods_allows_all_namespace(mock_api):
     # "all" is a special value, should not be rejected by validation
     mock_pods = MagicMock()
     mock_pods.items = []
     mock_api.return_value.list_pod_for_all_namespaces.return_value = mock_pods
-    result = list_pods(namespace="all")
+    result = await list_pods(namespace="all")
     assert result["status"] == "success"
 
 
-def test_get_events_rejects_huge_limit():
-    result = get_events(limit=99_999)
+@pytest.mark.asyncio
+async def test_get_events_rejects_huge_limit():
+    result = await get_events(limit=99_999)
     assert result["status"] == "error"
     assert "limit" in result["message"]

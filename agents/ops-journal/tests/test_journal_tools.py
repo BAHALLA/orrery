@@ -3,6 +3,8 @@
 Uses fake_ctx fixture from conftest to simulate ADK state.
 """
 
+import pytest
+
 from ops_journal_agent.tools import (
     add_team_bookmark,
     delete_note,
@@ -19,9 +21,10 @@ from ops_journal_agent.tools import (
 # ── Session State: log_operation / get_session_summary ────────────────
 
 
-def test_log_operation_creates_entry(fake_ctx):
+@pytest.mark.asyncio
+async def test_log_operation_creates_entry(fake_ctx):
     ctx = fake_ctx()
-    result = log_operation(ctx, "health_check", "Checked Kafka cluster")
+    result = await log_operation(ctx, "health_check", "Checked Kafka cluster")
 
     assert result["status"] == "success"
     assert result["total_operations"] == 1
@@ -29,29 +32,32 @@ def test_log_operation_creates_entry(fake_ctx):
     assert ctx.state["session_log"][0]["operation"] == "health_check"
 
 
-def test_log_operation_appends_to_existing(fake_ctx):
+@pytest.mark.asyncio
+async def test_log_operation_appends_to_existing(fake_ctx):
     ctx = fake_ctx()
-    log_operation(ctx, "check_1", "first")
-    log_operation(ctx, "check_2", "second")
+    await log_operation(ctx, "check_1", "first")
+    await log_operation(ctx, "check_2", "second")
 
     assert len(ctx.state["session_log"]) == 2
 
 
-def test_get_session_summary_empty(fake_ctx):
+@pytest.mark.asyncio
+async def test_get_session_summary_empty(fake_ctx):
     ctx = fake_ctx()
-    result = get_session_summary(ctx)
+    result = await get_session_summary(ctx)
 
     assert result["status"] == "success"
     assert result["total_operations"] == 0
     assert result["operations"] == []
 
 
-def test_get_session_summary_with_entries(fake_ctx):
+@pytest.mark.asyncio
+async def test_get_session_summary_with_entries(fake_ctx):
     ctx = fake_ctx()
-    log_operation(ctx, "deploy", "Deployed v2")
-    log_operation(ctx, "rollback", "Rolled back v2")
+    await log_operation(ctx, "deploy", "Deployed v2")
+    await log_operation(ctx, "rollback", "Rolled back v2")
 
-    result = get_session_summary(ctx)
+    result = await get_session_summary(ctx)
     assert result["total_operations"] == 2
     assert result["operations"][0]["operation"] == "deploy"
 
@@ -59,9 +65,10 @@ def test_get_session_summary_with_entries(fake_ctx):
 # ── User State: save_note / list_notes / search_notes / delete_note ──
 
 
-def test_save_note_basic(fake_ctx):
+@pytest.mark.asyncio
+async def test_save_note_basic(fake_ctx):
     ctx = fake_ctx()
-    result = save_note(ctx, "Incident #42", "Kafka broker-2 went down")
+    result = await save_note(ctx, "Incident #42", "Kafka broker-2 went down")
 
     assert result["status"] == "success"
     assert result["note_id"] == 1
@@ -70,115 +77,128 @@ def test_save_note_basic(fake_ctx):
     assert ctx.state["user:notes"][0]["tags"] == []
 
 
-def test_save_note_with_tags(fake_ctx):
+@pytest.mark.asyncio
+async def test_save_note_with_tags(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Note", "content", tags="kafka, incident, resolved")
+    await save_note(ctx, "Note", "content", tags="kafka, incident, resolved")
 
     note = ctx.state["user:notes"][0]
     assert note["tags"] == ["kafka", "incident", "resolved"]
 
 
-def test_save_note_also_logs_session(fake_ctx):
+@pytest.mark.asyncio
+async def test_save_note_also_logs_session(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Test", "content")
+    await save_note(ctx, "Test", "content")
 
     assert len(ctx.state.get("session_log", [])) == 1
     assert ctx.state["session_log"][0]["operation"] == "save_note"
 
 
-def test_save_multiple_notes_increments_id(fake_ctx):
+@pytest.mark.asyncio
+async def test_save_multiple_notes_increments_id(fake_ctx):
     ctx = fake_ctx()
-    r1 = save_note(ctx, "First", "a")
-    r2 = save_note(ctx, "Second", "b")
+    r1 = await save_note(ctx, "First", "a")
+    r2 = await save_note(ctx, "Second", "b")
 
     assert r1["note_id"] == 1
     assert r2["note_id"] == 2
 
 
-def test_list_notes_empty(fake_ctx):
+@pytest.mark.asyncio
+async def test_list_notes_empty(fake_ctx):
     ctx = fake_ctx()
-    result = list_notes(ctx)
+    result = await list_notes(ctx)
 
     assert result["status"] == "success"
     assert result["count"] == 0
 
 
-def test_list_notes_returns_all(fake_ctx):
+@pytest.mark.asyncio
+async def test_list_notes_returns_all(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "A", "a", tags="kafka")
-    save_note(ctx, "B", "b", tags="k8s")
+    await save_note(ctx, "A", "a", tags="kafka")
+    await save_note(ctx, "B", "b", tags="k8s")
 
-    result = list_notes(ctx)
+    result = await list_notes(ctx)
     assert result["count"] == 2
 
 
-def test_list_notes_filter_by_tag(fake_ctx):
+@pytest.mark.asyncio
+async def test_list_notes_filter_by_tag(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Kafka issue", "details", tags="kafka,incident")
-    save_note(ctx, "K8s issue", "details", tags="k8s,incident")
+    await save_note(ctx, "Kafka issue", "details", tags="kafka,incident")
+    await save_note(ctx, "K8s issue", "details", tags="k8s,incident")
 
-    result = list_notes(ctx, tag="kafka")
+    result = await list_notes(ctx, tag="kafka")
     assert result["count"] == 1
     assert result["notes"][0]["title"] == "Kafka issue"
 
 
-def test_search_notes_by_title(fake_ctx):
+@pytest.mark.asyncio
+async def test_search_notes_by_title(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Kafka broker down", "broker-2 crashed")
-    save_note(ctx, "Redis timeout", "connection pool exhausted")
+    await save_note(ctx, "Kafka broker down", "broker-2 crashed")
+    await save_note(ctx, "Redis timeout", "connection pool exhausted")
 
-    result = search_notes(ctx, "kafka")
+    result = await search_notes(ctx, "kafka")
     assert result["count"] == 1
     assert result["notes"][0]["title"] == "Kafka broker down"
 
 
-def test_search_notes_by_content(fake_ctx):
+@pytest.mark.asyncio
+async def test_search_notes_by_content(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Incident", "OOM kill on broker-2")
+    await save_note(ctx, "Incident", "OOM kill on broker-2")
 
-    result = search_notes(ctx, "OOM")
+    result = await search_notes(ctx, "OOM")
     assert result["count"] == 1
 
 
-def test_search_notes_case_insensitive(fake_ctx):
+@pytest.mark.asyncio
+async def test_search_notes_case_insensitive(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Alert", "CPU spike on node-1")
+    await save_note(ctx, "Alert", "CPU spike on node-1")
 
-    result = search_notes(ctx, "cpu")
+    result = await search_notes(ctx, "cpu")
     assert result["count"] == 1
 
 
-def test_search_notes_no_match(fake_ctx):
+@pytest.mark.asyncio
+async def test_search_notes_no_match(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Note", "content")
+    await save_note(ctx, "Note", "content")
 
-    result = search_notes(ctx, "nonexistent")
+    result = await search_notes(ctx, "nonexistent")
     assert result["count"] == 0
 
 
-def test_delete_note_success(fake_ctx):
+@pytest.mark.asyncio
+async def test_delete_note_success(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "To delete", "temp")
+    await save_note(ctx, "To delete", "temp")
 
-    result = delete_note(ctx, 1)
+    result = await delete_note(ctx, 1)
     assert result["status"] == "success"
     assert len(ctx.state["user:notes"]) == 0
 
 
-def test_delete_note_not_found(fake_ctx):
+@pytest.mark.asyncio
+async def test_delete_note_not_found(fake_ctx):
     ctx = fake_ctx()
-    result = delete_note(ctx, 999)
+    result = await delete_note(ctx, 999)
 
     assert result["status"] == "error"
     assert "not found" in result["message"]
 
 
-def test_delete_note_preserves_others(fake_ctx):
+@pytest.mark.asyncio
+async def test_delete_note_preserves_others(fake_ctx):
     ctx = fake_ctx()
-    save_note(ctx, "Keep", "a")
-    save_note(ctx, "Delete", "b")
+    await save_note(ctx, "Keep", "a")
+    await save_note(ctx, "Delete", "b")
 
-    delete_note(ctx, 2)
+    await delete_note(ctx, 2)
     assert len(ctx.state["user:notes"]) == 1
     assert ctx.state["user:notes"][0]["title"] == "Keep"
 
@@ -186,113 +206,127 @@ def test_delete_note_preserves_others(fake_ctx):
 # ── User Preferences ─────────────────────────────────────────────────
 
 
-def test_set_preference(fake_ctx):
+@pytest.mark.asyncio
+async def test_set_preference(fake_ctx):
     ctx = fake_ctx()
-    result = set_preference(ctx, "default_cluster", "prod-us-east")
+    result = await set_preference(ctx, "default_cluster", "prod-us-east")
 
     assert result["status"] == "success"
     assert ctx.state["user:preferences"]["default_cluster"] == "prod-us-east"
 
 
-def test_set_preference_overwrites(fake_ctx):
+@pytest.mark.asyncio
+async def test_set_preference_overwrites(fake_ctx):
     ctx = fake_ctx()
-    set_preference(ctx, "theme", "dark")
-    set_preference(ctx, "theme", "light")
+    await set_preference(ctx, "theme", "dark")
+    await set_preference(ctx, "theme", "light")
 
     assert ctx.state["user:preferences"]["theme"] == "light"
 
 
-def test_get_preferences_empty(fake_ctx):
+@pytest.mark.asyncio
+async def test_get_preferences_empty(fake_ctx):
     ctx = fake_ctx()
-    result = get_preferences(ctx)
+    result = await get_preferences(ctx)
 
     assert result["status"] == "success"
     assert result["preferences"] == {}
 
 
-def test_get_preferences_returns_all(fake_ctx):
+@pytest.mark.asyncio
+async def test_get_preferences_returns_all(fake_ctx):
     ctx = fake_ctx()
-    set_preference(ctx, "cluster", "prod")
-    set_preference(ctx, "region", "us-east")
+    await set_preference(ctx, "cluster", "prod")
+    await set_preference(ctx, "region", "us-east")
 
-    result = get_preferences(ctx)
+    result = await get_preferences(ctx)
     assert result["preferences"] == {"cluster": "prod", "region": "us-east"}
 
 
 # ── App State: team bookmarks ────────────────────────────────────────
 
 
-def test_add_team_bookmark(fake_ctx):
+@pytest.mark.asyncio
+async def test_add_team_bookmark(fake_ctx):
     ctx = fake_ctx()
-    result = add_team_bookmark(ctx, "Grafana", "https://grafana.internal")
+    result = await add_team_bookmark(ctx, "Grafana", "https://grafana.internal")
 
     assert result["status"] == "success"
     assert len(ctx.state["app:bookmarks"]) == 1
     assert ctx.state["app:bookmarks"][0]["name"] == "Grafana"
 
 
-def test_add_multiple_bookmarks(fake_ctx):
+@pytest.mark.asyncio
+async def test_add_multiple_bookmarks(fake_ctx):
     ctx = fake_ctx()
-    add_team_bookmark(ctx, "Grafana", "https://grafana.internal")
-    add_team_bookmark(ctx, "Kibana", "https://kibana.internal")
+    await add_team_bookmark(ctx, "Grafana", "https://grafana.internal")
+    await add_team_bookmark(ctx, "Kibana", "https://kibana.internal")
 
     assert len(ctx.state["app:bookmarks"]) == 2
 
 
-def test_list_team_bookmarks_empty(fake_ctx):
+@pytest.mark.asyncio
+async def test_list_team_bookmarks_empty(fake_ctx):
     ctx = fake_ctx()
-    result = list_team_bookmarks(ctx)
+    result = await list_team_bookmarks(ctx)
 
     assert result["status"] == "success"
     assert result["count"] == 0
     assert result["bookmarks"] == []
 
 
-def test_list_team_bookmarks_returns_all(fake_ctx):
+@pytest.mark.asyncio
+async def test_list_team_bookmarks_returns_all(fake_ctx):
     ctx = fake_ctx()
-    add_team_bookmark(ctx, "Grafana", "https://grafana.internal")
-    add_team_bookmark(ctx, "PagerDuty", "https://pagerduty.com")
+    await add_team_bookmark(ctx, "Grafana", "https://grafana.internal")
+    await add_team_bookmark(ctx, "PagerDuty", "https://pagerduty.com")
 
-    result = list_team_bookmarks(ctx)
+    result = await list_team_bookmarks(ctx)
     assert result["count"] == 2
 
 
 # ── Input validation ─────────────────────────────────────────────────
 
 
-def test_add_bookmark_rejects_javascript_url(fake_ctx):
+@pytest.mark.asyncio
+async def test_add_bookmark_rejects_javascript_url(fake_ctx):
     ctx = fake_ctx()
-    result = add_team_bookmark(ctx, "XSS", "javascript:alert(1)")
+    result = await add_team_bookmark(ctx, "XSS", "javascript:alert(1)")
     assert result["status"] == "error"
     assert "url" in result["message"]
 
 
-def test_add_bookmark_rejects_data_url(fake_ctx):
+@pytest.mark.asyncio
+async def test_add_bookmark_rejects_data_url(fake_ctx):
     ctx = fake_ctx()
-    result = add_team_bookmark(ctx, "Data", "data:text/html,<h1>hi</h1>")
+    result = await add_team_bookmark(ctx, "Data", "data:text/html,<h1>hi</h1>")
     assert result["status"] == "error"
 
 
-def test_save_note_rejects_overlong_content(fake_ctx):
+@pytest.mark.asyncio
+async def test_save_note_rejects_overlong_content(fake_ctx):
     ctx = fake_ctx()
-    result = save_note(ctx, "title", "x" * 10_001)
+    result = await save_note(ctx, "title", "x" * 10_001)
     assert result["status"] == "error"
     assert "content" in result["message"]
 
 
-def test_save_note_rejects_empty_title(fake_ctx):
+@pytest.mark.asyncio
+async def test_save_note_rejects_empty_title(fake_ctx):
     ctx = fake_ctx()
-    result = save_note(ctx, "", "content")
+    result = await save_note(ctx, "", "content")
     assert result["status"] == "error"
 
 
-def test_log_operation_rejects_empty_operation(fake_ctx):
+@pytest.mark.asyncio
+async def test_log_operation_rejects_empty_operation(fake_ctx):
     ctx = fake_ctx()
-    result = log_operation(ctx, "", "details")
+    result = await log_operation(ctx, "", "details")
     assert result["status"] == "error"
 
 
-def test_search_notes_rejects_empty_query(fake_ctx):
+@pytest.mark.asyncio
+async def test_search_notes_rejects_empty_query(fake_ctx):
     ctx = fake_ctx()
-    result = search_notes(ctx, "")
+    result = await search_notes(ctx, "")
     assert result["status"] == "error"

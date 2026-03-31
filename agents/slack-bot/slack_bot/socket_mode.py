@@ -20,7 +20,7 @@ from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
-from ai_agents_core import authorize
+from ai_agents_core import authorize, default_plugins
 
 from .config import SlackBotConfig
 from .confirmation import ConfirmationStore, slack_confirmation
@@ -180,6 +180,7 @@ async def main() -> None:
         agent=root_agent,
         app_name=APP_NAME,
         session_service=session_service,
+        plugins=default_plugins(guardrail_mode="none"),
     )
 
     handler_ref["handler"] = SlackAgentHandler(

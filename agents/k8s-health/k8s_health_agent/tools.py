@@ -1,5 +1,6 @@
 """Kubernetes tools exposed to the k8s health agent."""
 
+import asyncio
 import logging
 from datetime import UTC
 from typing import Any
@@ -73,19 +74,19 @@ def _apps_api() -> client.AppsV1Api:
 # ── Cluster Info ───────────────────────────────────────────────────────
 
 
-def get_cluster_info() -> dict[str, Any]:
+async def get_cluster_info() -> dict[str, Any]:
     """Gets basic Kubernetes cluster information.
 
     Returns:
         A dictionary with cluster version and node count.
     """
     try:
-        _load_kube_config()
+        await asyncio.to_thread(_load_kube_config)
         version_api = client.VersionApi()
-        version = version_api.get_code()
+        version = await asyncio.to_thread(version_api.get_code)
 
         v1 = _core_api()
-        nodes = v1.list_node()
+        nodes = await asyncio.to_thread(v1.list_node)
 
         return {
             "status": "success",
@@ -105,7 +106,7 @@ def get_cluster_info() -> dict[str, Any]:
 # ── Nodes ──────────────────────────────────────────────────────────────
 
 
-def get_nodes() -> dict[str, Any]:
+async def get_nodes() -> dict[str, Any]:
     """Lists all nodes in the cluster with their status and resource capacity.
 
     Returns:
@@ -113,7 +114,7 @@ def get_nodes() -> dict[str, Any]:
     """
     try:
         v1 = _core_api()
-        nodes = v1.list_node()
+        nodes = await asyncio.to_thread(v1.list_node)
 
         node_list = []
         for node in nodes.items:
@@ -150,7 +151,9 @@ def get_nodes() -> dict[str, Any]:
 # ── Pods ───────────────────────────────────────────────────────────────
 
 
-def list_pods(namespace: str = "default", label_selector: str | None = None) -> dict[str, Any]:
+async def list_pods(
+    namespace: str = "default", label_selector: str | None = None
+) -> dict[str, Any]:
     """Lists pods in a namespace with their status.
 
     Args:
@@ -170,9 +173,9 @@ def list_pods(namespace: str = "default", label_selector: str | None = None) -> 
             kwargs["label_selector"] = label_selector
 
         if namespace == "all":
-            pods = v1.list_pod_for_all_namespaces(**kwargs)
+            pods = await asyncio.to_thread(v1.list_pod_for_all_namespaces, **kwargs)
         else:
-            pods = v1.list_namespaced_pod(namespace, **kwargs)
+            pods = await asyncio.to_thread(v1.list_namespaced_pod, namespace, **kwargs)
 
         pod_list = []
         for pod in pods.items:
@@ -201,7 +204,7 @@ def list_pods(namespace: str = "default", label_selector: str | None = None) -> 
         return {"status": "error", "message": f"Failed to list pods: {e.reason}"}
 
 
-def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, Any]:
+async def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, Any]:
     """Gets detailed information about a specific pod.
 
     Args:
@@ -218,7 +221,7 @@ def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, Any]:
 
     try:
         v1 = _core_api()
-        pod = v1.read_namespaced_pod(pod_name, namespace)
+        pod = await asyncio.to_thread(v1.read_namespaced_pod, pod_name, namespace)
 
         containers = []
         for c in pod.spec.containers:
@@ -281,7 +284,7 @@ def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to describe pod '{pod_name}': {e.reason}"}
 
 
-def get_pod_logs(
+async def get_pod_logs(
     pod_name: str,
     namespace: str = "default",
     container: str | None = None,
@@ -315,7 +318,7 @@ def get_pod_logs(
         if since_seconds:
             kwargs["since_seconds"] = since_seconds
 
-        logs = v1.read_namespaced_pod_log(pod_name, namespace, **kwargs)
+        logs = await asyncio.to_thread(v1.read_namespaced_pod_log, pod_name, namespace, **kwargs)
 
         lines = logs.splitlines()
         return {
@@ -333,7 +336,7 @@ def get_pod_logs(
 # ── Deployments ────────────────────────────────────────────────────────
 
 
-def list_deployments(namespace: str = "default") -> dict[str, Any]:
+async def list_deployments(namespace: str = "default") -> dict[str, Any]:
     """Lists deployments in a namespace with their status.
 
     Args:
@@ -349,9 +352,9 @@ def list_deployments(namespace: str = "default") -> dict[str, Any]:
         apps = _apps_api()
 
         if namespace == "all":
-            deploys = apps.list_deployment_for_all_namespaces()
+            deploys = await asyncio.to_thread(apps.list_deployment_for_all_namespaces)
         else:
-            deploys = apps.list_namespaced_deployment(namespace)
+            deploys = await asyncio.to_thread(apps.list_namespaced_deployment, namespace)
 
         deploy_list = []
         for d in deploys.items:
@@ -377,7 +380,7 @@ def list_deployments(namespace: str = "default") -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to list deployments: {e.reason}"}
 
 
-def get_deployment_status(name: str, namespace: str = "default") -> dict[str, Any]:
+async def get_deployment_status(name: str, namespace: str = "default") -> dict[str, Any]:
     """Gets detailed rollout status for a deployment.
 
     Args:
@@ -394,7 +397,7 @@ def get_deployment_status(name: str, namespace: str = "default") -> dict[str, An
 
     try:
         apps = _apps_api()
-        d = apps.read_namespaced_deployment(name, namespace)
+        d = await asyncio.to_thread(apps.read_namespaced_deployment, name, namespace)
 
         conditions = [
             {"type": c.type, "status": c.status, "reason": c.reason, "message": c.message}
@@ -421,7 +424,9 @@ def get_deployment_status(name: str, namespace: str = "default") -> dict[str, An
 
 
 @confirm("scales the number of replicas for a deployment")
-def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -> dict[str, Any]:
+async def scale_deployment(
+    name: str, namespace: str = "default", replicas: int = 1
+) -> dict[str, Any]:
     """Scales a deployment to a specified number of replicas.
 
     Args:
@@ -442,7 +447,7 @@ def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -
     try:
         apps = _apps_api()
         body = {"spec": {"replicas": replicas}}
-        apps.patch_namespaced_deployment_scale(name, namespace, body)
+        await asyncio.to_thread(apps.patch_namespaced_deployment_scale, name, namespace, body)
         return {
             "status": "success",
             "message": f"Deployment '{name}' scaled to {replicas} replicas.",
@@ -453,7 +458,7 @@ def scale_deployment(name: str, namespace: str = "default", replicas: int = 1) -
 
 
 @destructive("triggers a rolling restart which temporarily reduces availability")
-def restart_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
+async def restart_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
     """Triggers a rolling restart of a deployment.
 
     Args:
@@ -484,7 +489,7 @@ def restart_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
                 }
             }
         }
-        apps.patch_namespaced_deployment(name, namespace, patch)
+        await asyncio.to_thread(apps.patch_namespaced_deployment, name, namespace, patch)
         return {
             "status": "success",
             "message": f"Rolling restart triggered for deployment '{name}'.",
@@ -497,7 +502,7 @@ def restart_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
 # ── Events ─────────────────────────────────────────────────────────────
 
 
-def get_events(
+async def get_events(
     namespace: str = "default", field_selector: str | None = None, limit: int = 20
 ) -> dict[str, Any]:
     """Gets recent events in a namespace.
@@ -522,9 +527,9 @@ def get_events(
             kwargs["field_selector"] = field_selector
 
         if namespace == "all":
-            events = v1.list_event_for_all_namespaces(**kwargs)
+            events = await asyncio.to_thread(v1.list_event_for_all_namespaces, **kwargs)
         else:
-            events = v1.list_namespaced_event(namespace, **kwargs)
+            events = await asyncio.to_thread(v1.list_namespaced_event, namespace, **kwargs)
 
         event_list = []
         for e in events.items:
@@ -549,7 +554,7 @@ def get_events(
 # ── Namespaces ─────────────────────────────────────────────────────────
 
 
-def list_namespaces() -> dict[str, Any]:
+async def list_namespaces() -> dict[str, Any]:
     """Lists all namespaces in the cluster.
 
     Returns:
@@ -557,7 +562,7 @@ def list_namespaces() -> dict[str, Any]:
     """
     try:
         v1 = _core_api()
-        namespaces = v1.list_namespace()
+        namespaces = await asyncio.to_thread(v1.list_namespace)
 
         ns_list = [
             {

@@ -6,7 +6,10 @@ user notes, and app-wide data survive across restarts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from google.adk.agents import Agent
+from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.genai import types
@@ -20,6 +23,7 @@ async def run_persistent(
     app_name: str,
     db_url: str | None = None,
     user_id: str = "default_user",
+    plugins: Sequence[BasePlugin] | None = None,
 ) -> None:
     """Run an agent in a persistent CLI loop with SQLite-backed sessions.
 
@@ -28,16 +32,22 @@ async def run_persistent(
         app_name: Application name for session scoping.
         db_url: SQLAlchemy database URL. Defaults to ``sqlite:///{app_name}.db``.
         user_id: User ID for session scoping.
+        plugins: Optional list of ADK plugins for cross-cutting concerns.
+            Use ``default_plugins()`` for the standard set.
     """
     resolved_db_url = db_url or f"sqlite:///{app_name}.db"
 
     session_service = DatabaseSessionService(db_url=resolved_db_url)
 
-    runner = Runner(
-        agent=agent,
-        app_name=app_name,
-        session_service=session_service,
-    )
+    runner_kwargs: dict = {
+        "agent": agent,
+        "app_name": app_name,
+        "session_service": session_service,
+    }
+    if plugins:
+        runner_kwargs["plugins"] = list(plugins)
+
+    runner = Runner(**runner_kwargs)
 
     initial_state: dict[str, object] = {}
     set_user_role(initial_state, "admin")  # CLI user gets admin (local dev)

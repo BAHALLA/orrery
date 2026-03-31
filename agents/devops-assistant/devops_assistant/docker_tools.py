@@ -1,8 +1,8 @@
 """Docker tools exposed to the docker sub-agent."""
 
+import asyncio
 import json
 import logging
-import subprocess
 from typing import Any
 
 from ai_agents_core.validation import (
@@ -34,27 +34,30 @@ def _redact_env_vars(env_list: list[str]) -> list[str]:
     return redacted
 
 
-def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
-    """Run a docker CLI command and return (success, output)."""
+async def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
+    """Run a docker CLI command asynchronously and return (success, output)."""
     try:
-        result = subprocess.run(
-            ["docker", *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if result.returncode != 0:
-            return False, result.stderr.strip()
-        return True, result.stdout.strip()
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode != 0:
+            return False, stderr.decode().strip()
+        return True, stdout.decode().strip()
     except FileNotFoundError:
         logger.exception("Docker CLI not found")
         return False, "Docker CLI not found. Is Docker installed?"
-    except subprocess.TimeoutExpired:
+    except TimeoutError:
         logger.exception("Docker command timed out after %ds", timeout)
+        if proc:
+            proc.kill()
         return False, f"Command timed out after {timeout}s"
 
 
-def list_containers(all: bool = False) -> dict[str, Any]:
+async def list_containers(all: bool = False) -> dict[str, Any]:
     """Lists Docker containers.
 
     Args:
@@ -67,7 +70,7 @@ def list_containers(all: bool = False) -> dict[str, Any]:
     if all:
         args.append("--all")
 
-    ok, output = _run_docker(args)
+    ok, output = await _run_docker(args)
     if not ok:
         return {"status": "error", "message": output}
 
@@ -79,7 +82,7 @@ def list_containers(all: bool = False) -> dict[str, Any]:
     return {"status": "success", "containers": containers, "count": len(containers)}
 
 
-def inspect_container(container_name: str) -> dict[str, Any]:
+async def inspect_container(container_name: str) -> dict[str, Any]:
     """Gets detailed information about a specific container.
 
     Args:
@@ -91,7 +94,7 @@ def inspect_container(container_name: str) -> dict[str, Any]:
     if err := validate_string(container_name, "container_name", max_len=128):
         return err
 
-    ok, output = _run_docker(["inspect", container_name])
+    ok, output = await _run_docker(["inspect", container_name])
     if not ok:
         return {"status": "error", "message": output}
 
@@ -122,7 +125,7 @@ def inspect_container(container_name: str) -> dict[str, Any]:
     }
 
 
-def get_container_logs(
+async def get_container_logs(
     container_name: str, tail: int = 50, since: str | None = None
 ) -> dict[str, Any]:
     """Gets recent logs from a container.
@@ -147,7 +150,7 @@ def get_container_logs(
         args.extend(["--since", since])
     args.append(container_name)
 
-    ok, output = _run_docker(args, timeout=10)
+    ok, output = await _run_docker(args, timeout=10)
     if not ok:
         return {"status": "error", "message": output}
 
@@ -160,7 +163,7 @@ def get_container_logs(
     }
 
 
-def get_container_stats(container_name: str) -> dict[str, Any]:
+async def get_container_stats(container_name: str) -> dict[str, Any]:
     """Gets CPU, memory, and network stats for a container.
 
     Args:
@@ -172,7 +175,7 @@ def get_container_stats(container_name: str) -> dict[str, Any]:
     if err := validate_string(container_name, "container_name", max_len=128):
         return err
 
-    ok, output = _run_docker(["stats", "--no-stream", "--format", "json", container_name])
+    ok, output = await _run_docker(["stats", "--no-stream", "--format", "json", container_name])
     if not ok:
         return {"status": "error", "message": output}
 
@@ -189,7 +192,7 @@ def get_container_stats(container_name: str) -> dict[str, Any]:
     }
 
 
-def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
+async def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
     """Gets the status of services in a Docker Compose project.
 
     Args:
@@ -207,7 +210,7 @@ def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
         args.extend(["-f", f"{project_dir}/docker-compose.yml"])
     args.extend(["ps", "--format", "json"])
 
-    ok, output = _run_docker(args)
+    ok, output = await _run_docker(args)
     if not ok:
         return {"status": "error", "message": output}
 

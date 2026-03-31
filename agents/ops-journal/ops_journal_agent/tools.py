@@ -17,7 +17,7 @@ from ai_agents_core.validation import validate_string, validate_url
 # ── Session State: tracks what happened in this conversation ───────────
 
 
-def log_operation(ctx: ToolContext, operation: str, details: str) -> dict[str, Any]:
+async def log_operation(ctx: ToolContext, operation: str, details: str) -> dict[str, Any]:
     """Logs an operation to the current session's activity log.
 
     Use this to track what actions have been performed in this session.
@@ -51,7 +51,7 @@ def log_operation(ctx: ToolContext, operation: str, details: str) -> dict[str, A
     }
 
 
-def get_session_summary(ctx: ToolContext) -> dict[str, Any]:
+async def get_session_summary(ctx: ToolContext) -> dict[str, Any]:
     """Returns a summary of all operations performed in this session.
 
     Args:
@@ -71,7 +71,7 @@ def get_session_summary(ctx: ToolContext) -> dict[str, Any]:
 # ── User State: persists across sessions for the same user ─────────────
 
 
-def save_note(
+async def save_note(
     ctx: ToolContext, title: str, content: str, tags: str | None = None
 ) -> dict[str, Any]:
     """Saves a note that persists across sessions for this user.
@@ -124,7 +124,7 @@ def save_note(
     }
 
 
-def list_notes(ctx: ToolContext, tag: str | None = None) -> dict[str, Any]:
+async def list_notes(ctx: ToolContext, tag: str | None = None) -> dict[str, Any]:
     """Lists all saved notes for this user, optionally filtered by tag.
 
     Args:
@@ -145,7 +145,7 @@ def list_notes(ctx: ToolContext, tag: str | None = None) -> dict[str, Any]:
     }
 
 
-def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
+async def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
     """Searches saved notes by keyword in title or content.
 
     Args:
@@ -172,7 +172,7 @@ def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
     }
 
 
-def delete_note(ctx: ToolContext, note_id: int) -> dict[str, Any]:
+async def delete_note(ctx: ToolContext, note_id: int) -> dict[str, Any]:
     """Deletes a saved note by ID.
 
     Args:
@@ -195,7 +195,7 @@ def delete_note(ctx: ToolContext, note_id: int) -> dict[str, Any]:
 # ── User Preferences: user-scoped settings ─────────────────────────────
 
 
-def set_preference(ctx: ToolContext, key: str, value: str) -> dict[str, Any]:
+async def set_preference(ctx: ToolContext, key: str, value: str) -> dict[str, Any]:
     """Sets a user preference that persists across sessions.
 
     Args:
@@ -216,7 +216,7 @@ def set_preference(ctx: ToolContext, key: str, value: str) -> dict[str, Any]:
     }
 
 
-def get_preferences(ctx: ToolContext) -> dict[str, Any]:
+async def get_preferences(ctx: ToolContext) -> dict[str, Any]:
     """Gets all user preferences.
 
     Args:
@@ -232,7 +232,7 @@ def get_preferences(ctx: ToolContext) -> dict[str, Any]:
 # ── App State: shared across all users ─────────────────────────────────
 
 
-def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, Any]:
+async def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, Any]:
     """Adds a shared bookmark visible to all users.
 
     Args:
@@ -258,7 +258,7 @@ def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, Any]:
     }
 
 
-def list_team_bookmarks(ctx: ToolContext) -> dict[str, Any]:
+async def list_team_bookmarks(ctx: ToolContext) -> dict[str, Any]:
     """Lists all shared team bookmarks.
 
     Args:

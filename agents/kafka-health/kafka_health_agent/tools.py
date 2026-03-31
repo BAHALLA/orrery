@@ -1,6 +1,8 @@
 """Kafka admin tools exposed to the agent."""
 
+import asyncio
 import logging
+from functools import partial
 from typing import Any
 
 from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicPartition
@@ -38,8 +40,14 @@ def _get_admin_client() -> AdminClient:
     return _admin_client
 
 
+async def _run_sync(func, *args, **kwargs):
+    """Run a blocking function in a thread pool executor."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+
+
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
-def get_kafka_cluster_health() -> dict[str, Any]:
+async def get_kafka_cluster_health() -> dict[str, Any]:
     """Checks the health of the Kafka cluster.
 
     Returns:
@@ -47,7 +55,7 @@ def get_kafka_cluster_health() -> dict[str, Any]:
     """
     admin = _get_admin_client()
     try:
-        metadata = admin.list_topics(timeout=10)
+        metadata = await _run_sync(admin.list_topics, timeout=10)
         brokers = metadata.brokers
         num_brokers = len(brokers)
         health_status = "healthy" if num_brokers > 0 else "unhealthy"
@@ -64,7 +72,7 @@ def get_kafka_cluster_health() -> dict[str, Any]:
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
-def list_kafka_topics() -> dict[str, Any]:
+async def list_kafka_topics() -> dict[str, Any]:
     """Lists all available topics in the Kafka cluster.
 
     Returns:
@@ -72,7 +80,7 @@ def list_kafka_topics() -> dict[str, Any]:
     """
     admin = _get_admin_client()
     try:
-        metadata = admin.list_topics(timeout=10)
+        metadata = await _run_sync(admin.list_topics, timeout=10)
         topics = list(metadata.topics.keys())
         return {"status": "success", "topics": topics, "count": len(topics)}
     except KafkaException as e:
@@ -81,7 +89,7 @@ def list_kafka_topics() -> dict[str, Any]:
 
 
 @confirm("creates a new topic on the cluster")
-def create_kafka_topic(
+async def create_kafka_topic(
     topic_name: str, num_partitions: int = 1, replication_factor: int = 1
 ) -> dict[str, Any]:
     """Creates a new Kafka topic.
@@ -111,7 +119,7 @@ def create_kafka_topic(
         futures = admin.create_topics([new_topic])
         for _topic, future in futures.items():
             try:
-                future.result()
+                await _run_sync(future.result)
                 return {
                     "status": "success",
                     "message": f"Topic '{topic_name}' created successfully.",
@@ -131,7 +139,7 @@ def create_kafka_topic(
 
 
 @destructive("permanently deletes the topic and all its data")
-def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
+async def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
     """Deletes an existing Kafka topic.
 
     Args:
@@ -148,7 +156,7 @@ def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
         futures = admin.delete_topics([topic_name])
         for _topic, future in futures.items():
             try:
-                future.result()
+                await _run_sync(future.result)
                 return {
                     "status": "success",
                     "message": f"Topic '{topic_name}' deleted successfully.",
@@ -168,7 +176,7 @@ def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
-def get_topic_metadata(topic_name: str) -> dict[str, Any]:
+async def get_topic_metadata(topic_name: str) -> dict[str, Any]:
     """Gets detailed metadata for a specific topic.
 
     Args:
@@ -182,7 +190,7 @@ def get_topic_metadata(topic_name: str) -> dict[str, Any]:
 
     admin = _get_admin_client()
     try:
-        metadata = admin.list_topics(topic=topic_name, timeout=10)
+        metadata = await _run_sync(admin.list_topics, topic=topic_name, timeout=10)
         if topic_name not in metadata.topics:
             return {"status": "error", "message": f"Topic '{topic_name}' not found."}
 
@@ -213,7 +221,7 @@ def get_topic_metadata(topic_name: str) -> dict[str, Any]:
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
-def list_consumer_groups() -> dict[str, Any]:
+async def list_consumer_groups() -> dict[str, Any]:
     """Lists all available consumer groups in the Kafka cluster.
 
     Returns:
@@ -222,7 +230,8 @@ def list_consumer_groups() -> dict[str, Any]:
     admin = _get_admin_client()
     try:
         result = admin.list_consumer_groups()
-        groups = [g.group_id for g in result.result().valid]
+        future_result = await _run_sync(result.result)
+        groups = [g.group_id for g in future_result.valid]
         return {"status": "success", "groups": groups, "count": len(groups)}
     except Exception as e:
         logger.exception("Failed to list consumer groups")
@@ -230,7 +239,7 @@ def list_consumer_groups() -> dict[str, Any]:
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
-def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
+async def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
     """Provides detailed information about specific consumer groups.
 
     Args:
@@ -248,7 +257,7 @@ def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
         results = []
         for group_id, future in future_dict.items():
             try:
-                desc = future.result()
+                desc = await _run_sync(future.result)
                 members = []
                 for m in desc.members:
                     members.append(
@@ -284,7 +293,7 @@ def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
-def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict[str, Any]:
+async def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict[str, Any]:
     """Calculates consumer lag for a given group and optionally a specific topic.
 
     Args:
@@ -304,7 +313,8 @@ def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict[str, 
     admin = _get_admin_client()
     try:
         offsets_future = admin.list_consumer_group_offsets([ConsumerGroupTopicPartitions(group_id)])
-        committed_offsets = offsets_future[group_id].result().topic_partitions
+        committed_result = await _run_sync(offsets_future[group_id].result)
+        committed_offsets = committed_result.topic_partitions
 
         if topic_name:
             committed_offsets = [tp for tp in committed_offsets if tp.topic == topic_name]
@@ -329,7 +339,7 @@ def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict[str, 
 
         for tp, future in latest_offsets_future.items():
             try:
-                latest_offset_res = future.result()
+                latest_offset_res = await _run_sync(future.result)
                 latest_offset = latest_offset_res.offset
 
                 committed_offset_tp = next(

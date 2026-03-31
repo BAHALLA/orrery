@@ -46,8 +46,10 @@ This is the most impactful way to contribute. See the [Adding a New Agent](docs/
 
 - Create a new directory under `agents/`
 - Use `create_agent()` from `ai_agents_core` — don't reinvent the factory
+- Define all tools as `async def` — use `asyncio.to_thread()` for blocking I/O
 - Mark destructive tools with `@destructive("reason")`
 - Separate tools (`tools.py`) from agent wiring (`agent.py`)
+- No callback wiring needed — cross-cutting concerns are handled by plugins on the Runner
 - Add tests in `agents/your-agent/tests/`
 - Add a `README.md` in your agent package
 - Add Makefile targets for running the agent
@@ -98,8 +100,9 @@ This is the most impactful way to contribute. See the [Adding a New Agent](docs/
 ## Testing Guidelines
 
 - **Tests live next to each package** — add a `tests/` directory inside your agent package
+- **All tool tests are async** — use `@pytest.mark.asyncio` and `async def` for every test that calls an async tool function
 - **Mock external dependencies** — no test should require a running Kafka broker, Kubernetes cluster, or Docker daemon
-- **Use `@patch`** to mock API clients at the tool level (e.g., `@patch("my_agent.tools._get_client")`)
+- **Use `@patch`** to mock API clients at the tool level (e.g., `@patch("my_agent.tools._get_client")`). For async helpers, use `AsyncMock`
 - **Test both success and error paths** — every tool should have at least one success test and one error/exception test
 - **Test input validation** — add tests verifying that invalid inputs return `{"status": "error", ...}` (empty strings, oversized values, path traversal, bad patterns)
 - **Verify guardrails** — if your tool uses `@confirm` or `@destructive`, add a test asserting the `_guardrail_level` attribute
@@ -107,7 +110,8 @@ This is the most impactful way to contribute. See the [Adding a New Agent](docs/
 
 ## Code Style
 
-- Tools are plain Python functions returning `dict` with a `status` field
+- Tools are `async def` Python functions returning `dict` with a `status` field
+- Use `asyncio.to_thread()` to offload blocking I/O (API clients, subprocess calls)
 - Use type hints
 - Keep tools focused — one function per operation
 - Follow existing patterns (look at `kafka-health` as the reference)
@@ -115,7 +119,7 @@ This is the most impactful way to contribute. See the [Adding a New Agent](docs/
   ```python
   from ai_agents_core.validation import validate_string, validate_positive_int
 
-  def my_tool(name: str, count: int = 10) -> dict:
+  async def my_tool(name: str, count: int = 10) -> dict:
       if err := validate_string(name, "name", max_len=200):
           return err
       if err := validate_positive_int(count, "count", max_value=1000):

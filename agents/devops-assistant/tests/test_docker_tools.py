@@ -4,7 +4,9 @@ All subprocess calls are mocked — no real Docker needed.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from devops_assistant.docker_tools import (
     _redact_env_vars,
@@ -15,65 +17,60 @@ from devops_assistant.docker_tools import (
     list_containers,
 )
 
-# ── Helpers ───────────────────────────────────────────────────────────
-
-
-def _mock_run(stdout="", stderr="", returncode=0):
-    """Build a mock subprocess.CompletedProcess."""
-    result = MagicMock()
-    result.stdout = stdout
-    result.stderr = stderr
-    result.returncode = returncode
-    return result
-
-
 # ── list_containers ───────────────────────────────────────────────────
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_list_containers_success(mock_run):
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_list_containers_success(mock_run):
     containers = [
         {"ID": "abc123", "Names": "web", "State": "running"},
         {"ID": "def456", "Names": "db", "State": "running"},
     ]
-    mock_run.return_value = _mock_run(stdout="\n".join(json.dumps(c) for c in containers))
+    mock_run.return_value = (True, "\n".join(json.dumps(c) for c in containers))
 
-    result = list_containers()
+    result = await list_containers()
     assert result["status"] == "success"
     assert result["count"] == 2
     assert result["containers"][0]["Names"] == "web"
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_list_containers_with_all_flag(mock_run):
-    mock_run.return_value = _mock_run(stdout="")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_list_containers_with_all_flag(mock_run):
+    mock_run.return_value = (True, "")
 
-    list_containers(all=True)
+    await list_containers(all=True)
     args = mock_run.call_args[0][0]
     assert "--all" in args
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_list_containers_empty(mock_run):
-    mock_run.return_value = _mock_run(stdout="")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_list_containers_empty(mock_run):
+    mock_run.return_value = (True, "")
 
-    result = list_containers()
+    result = await list_containers()
     assert result["status"] == "success"
     assert result["count"] == 0
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_list_containers_docker_error(mock_run):
-    mock_run.return_value = _mock_run(stderr="Cannot connect to daemon", returncode=1)
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_list_containers_docker_error(mock_run):
+    mock_run.return_value = (False, "Cannot connect to daemon")
 
-    result = list_containers()
+    result = await list_containers()
     assert result["status"] == "error"
     assert "Cannot connect" in result["message"]
 
 
-@patch("devops_assistant.docker_tools.subprocess.run", side_effect=FileNotFoundError)
-def test_list_containers_docker_not_installed(mock_run):
-    result = list_containers()
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_list_containers_docker_not_installed(mock_run):
+    mock_run.return_value = (False, "Docker CLI not found. Is Docker installed?")
+
+    result = await list_containers()
     assert result["status"] == "error"
     assert "not found" in result["message"].lower()
 
@@ -81,8 +78,9 @@ def test_list_containers_docker_not_installed(mock_run):
 # ── inspect_container ─────────────────────────────────────────────────
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_inspect_container_success(mock_run):
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_container_success(mock_run):
     inspect_data = [
         {
             "Name": "/web",
@@ -96,9 +94,9 @@ def test_inspect_container_success(mock_run):
             "RestartCount": 0,
         }
     ]
-    mock_run.return_value = _mock_run(stdout=json.dumps(inspect_data))
+    mock_run.return_value = (True, json.dumps(inspect_data))
 
-    result = inspect_container("web")
+    result = await inspect_container("web")
     assert result["status"] == "success"
     assert result["name"] == "web"
     assert result["image"] == "nginx:latest"
@@ -107,25 +105,28 @@ def test_inspect_container_success(mock_run):
     assert "80/tcp" in result["ports"]
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_inspect_container_not_found(mock_run):
-    mock_run.return_value = _mock_run(stderr="Error: No such container: ghost", returncode=1)
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_container_not_found(mock_run):
+    mock_run.return_value = (False, "Error: No such container: ghost")
 
-    result = inspect_container("ghost")
+    result = await inspect_container("ghost")
     assert result["status"] == "error"
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_inspect_container_empty_data(mock_run):
-    mock_run.return_value = _mock_run(stdout="[]")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_container_empty_data(mock_run):
+    mock_run.return_value = (True, "[]")
 
-    result = inspect_container("empty")
+    result = await inspect_container("empty")
     assert result["status"] == "error"
     assert "not found" in result["message"]
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_inspect_container_no_ports(mock_run):
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_container_no_ports(mock_run):
     inspect_data = [
         {
             "Name": "/worker",
@@ -135,9 +136,9 @@ def test_inspect_container_no_ports(mock_run):
             "RestartCount": 2,
         }
     ]
-    mock_run.return_value = _mock_run(stdout=json.dumps(inspect_data))
+    mock_run.return_value = (True, json.dumps(inspect_data))
 
-    result = inspect_container("worker")
+    result = await inspect_container("worker")
     assert result["status"] == "success"
     assert result["ports"] == {}
     assert result["restart_count"] == 2
@@ -146,21 +147,23 @@ def test_inspect_container_no_ports(mock_run):
 # ── get_container_logs ────────────────────────────────────────────────
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_get_container_logs_success(mock_run):
-    mock_run.return_value = _mock_run(stdout="line1\nline2\nline3")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_get_container_logs_success(mock_run):
+    mock_run.return_value = (True, "line1\nline2\nline3")
 
-    result = get_container_logs("web")
+    result = await get_container_logs("web")
     assert result["status"] == "success"
     assert result["lines"] == 3
     assert "line1" in result["logs"]
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_get_container_logs_with_tail_and_since(mock_run):
-    mock_run.return_value = _mock_run(stdout="log")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_get_container_logs_with_tail_and_since(mock_run):
+    mock_run.return_value = (True, "log")
 
-    get_container_logs("web", tail=10, since="1h")
+    await get_container_logs("web", tail=10, since="1h")
     args = mock_run.call_args[0][0]
     assert "--tail" in args
     assert "10" in args
@@ -168,21 +171,21 @@ def test_get_container_logs_with_tail_and_since(mock_run):
     assert "1h" in args
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_get_container_logs_error(mock_run):
-    mock_run.return_value = _mock_run(stderr="No such container", returncode=1)
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_get_container_logs_error(mock_run):
+    mock_run.return_value = (False, "No such container")
 
-    result = get_container_logs("ghost")
+    result = await get_container_logs("ghost")
     assert result["status"] == "error"
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_get_container_logs_timeout(mock_run):
-    import subprocess
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_get_container_logs_timeout(mock_run):
+    mock_run.return_value = (False, "Command timed out after 10s")
 
-    mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=10)
-
-    result = get_container_logs("stuck")
+    result = await get_container_logs("stuck")
     assert result["status"] == "error"
     assert "timed out" in result["message"].lower()
 
@@ -190,8 +193,9 @@ def test_get_container_logs_timeout(mock_run):
 # ── get_container_stats ───────────────────────────────────────────────
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_get_container_stats_success(mock_run):
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_get_container_stats_success(mock_run):
     stats = {
         "CPUPerc": "0.50%",
         "MemUsage": "50MiB / 1GiB",
@@ -200,62 +204,67 @@ def test_get_container_stats_success(mock_run):
         "BlockIO": "0B / 0B",
         "PIDs": "10",
     }
-    mock_run.return_value = _mock_run(stdout=json.dumps(stats))
+    mock_run.return_value = (True, json.dumps(stats))
 
-    result = get_container_stats("web")
+    result = await get_container_stats("web")
     assert result["status"] == "success"
     assert result["cpu_percent"] == "0.50%"
     assert result["memory_usage"] == "50MiB / 1GiB"
     assert result["pids"] == "10"
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_get_container_stats_error(mock_run):
-    mock_run.return_value = _mock_run(stderr="No such container", returncode=1)
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_get_container_stats_error(mock_run):
+    mock_run.return_value = (False, "No such container")
 
-    result = get_container_stats("ghost")
+    result = await get_container_stats("ghost")
     assert result["status"] == "error"
 
 
 # ── docker_compose_status ─────────────────────────────────────────────
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_compose_status_success(mock_run):
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_success(mock_run):
     services = [
         {"Name": "kafka", "State": "running", "Health": "healthy"},
         {"Name": "zookeeper", "State": "running", "Health": ""},
     ]
-    mock_run.return_value = _mock_run(stdout="\n".join(json.dumps(s) for s in services))
+    mock_run.return_value = (True, "\n".join(json.dumps(s) for s in services))
 
-    result = docker_compose_status()
+    result = await docker_compose_status()
     assert result["status"] == "success"
     assert result["count"] == 2
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_compose_status_with_project_dir(mock_run):
-    mock_run.return_value = _mock_run(stdout="")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_with_project_dir(mock_run):
+    mock_run.return_value = (True, "")
 
-    docker_compose_status(project_dir="/opt/myapp")
+    await docker_compose_status(project_dir="/opt/myapp")
     args = mock_run.call_args[0][0]
     assert "-f" in args
     assert "/opt/myapp/docker-compose.yml" in args
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_compose_status_error(mock_run):
-    mock_run.return_value = _mock_run(stderr="no configuration file provided", returncode=1)
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_error(mock_run):
+    mock_run.return_value = (False, "no configuration file provided")
 
-    result = docker_compose_status()
+    result = await docker_compose_status()
     assert result["status"] == "error"
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_compose_status_empty(mock_run):
-    mock_run.return_value = _mock_run(stdout="")
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_empty(mock_run):
+    mock_run.return_value = (True, "")
 
-    result = docker_compose_status()
+    result = await docker_compose_status()
     assert result["status"] == "success"
     assert result["count"] == 0
 
@@ -287,8 +296,9 @@ def test_redact_env_vars_empty():
     assert _redact_env_vars([]) == []
 
 
-@patch("devops_assistant.docker_tools.subprocess.run")
-def test_inspect_container_redacts_secrets(mock_run):
+@pytest.mark.asyncio
+@patch("devops_assistant.docker_tools._run_docker", new_callable=AsyncMock)
+async def test_inspect_container_redacts_secrets(mock_run):
     inspect_data = [
         {
             "Name": "/web",
@@ -301,9 +311,9 @@ def test_inspect_container_redacts_secrets(mock_run):
             "RestartCount": 0,
         }
     ]
-    mock_run.return_value = _mock_run(stdout=json.dumps(inspect_data))
+    mock_run.return_value = (True, json.dumps(inspect_data))
 
-    result = inspect_container("web")
+    result = await inspect_container("web")
     assert result["status"] == "success"
     assert "DB_PASSWORD=***" in result["env_vars"]
     assert "API_KEY=***" in result["env_vars"]
@@ -313,23 +323,27 @@ def test_inspect_container_redacts_secrets(mock_run):
 # ── Input validation ─────────────────────────────────────────────────
 
 
-def test_inspect_container_rejects_empty_name():
-    result = inspect_container("")
+@pytest.mark.asyncio
+async def test_inspect_container_rejects_empty_name():
+    result = await inspect_container("")
     assert result["status"] == "error"
 
 
-def test_get_container_logs_rejects_huge_tail():
-    result = get_container_logs("web", tail=999_999)
+@pytest.mark.asyncio
+async def test_get_container_logs_rejects_huge_tail():
+    result = await get_container_logs("web", tail=999_999)
     assert result["status"] == "error"
     assert "tail" in result["message"]
 
 
-def test_get_container_stats_rejects_empty_name():
-    result = get_container_stats("")
+@pytest.mark.asyncio
+async def test_get_container_stats_rejects_empty_name():
+    result = await get_container_stats("")
     assert result["status"] == "error"
 
 
-def test_compose_status_rejects_path_traversal():
-    result = docker_compose_status(project_dir="../../etc")
+@pytest.mark.asyncio
+async def test_compose_status_rejects_path_traversal():
+    result = await docker_compose_status(project_dir="../../etc")
     assert result["status"] == "error"
     assert "traversal" in result["message"]

@@ -26,6 +26,13 @@ from .log import JSONFormatter as JSONFormatter
 from .log import setup_logging as setup_logging
 from .metrics import MetricsCollector as MetricsCollector
 from .metrics import track_llm_tokens as track_llm_tokens
+from .plugins import ActivityPlugin as ActivityPlugin
+from .plugins import AuditPlugin as AuditPlugin
+from .plugins import ErrorHandlerPlugin as ErrorHandlerPlugin
+from .plugins import GuardrailsPlugin as GuardrailsPlugin
+from .plugins import MetricsPlugin as MetricsPlugin
+from .plugins import ResiliencePlugin as ResiliencePlugin
+from .plugins import default_plugins as default_plugins
 from .rbac import Role as Role
 from .rbac import RolePolicy as RolePolicy
 from .rbac import authorize as authorize

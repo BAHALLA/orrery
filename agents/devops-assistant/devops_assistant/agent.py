@@ -1,18 +1,9 @@
-import os
-
 from ai_agents_core import (
     AgentTool,
-    MetricsCollector,
-    activity_tracker,
-    audit_logger,
-    authorize,
     create_agent,
     create_parallel_agent,
     create_sequential_agent,
-    graceful_model_error,
-    graceful_tool_error,
     load_agent_env,
-    require_confirmation,
 )
 from k8s_health_agent.agent import root_agent as k8s_agent
 from k8s_health_agent.tools import (
@@ -50,15 +41,6 @@ load_agent_env(__file__)
 
 # ── Sub-agent: Docker operations ──────────────────────────────────────
 
-_authorize = authorize()
-_track = activity_tracker()
-_audit = audit_logger()
-_metrics = MetricsCollector()
-if os.getenv("ENABLE_METRICS_SERVER", "").lower() in ("1", "true", "yes"):
-    _metrics.start_server()
-_before_tool = [_authorize, _metrics.before_tool_callback()]
-_after_tool = [_track, _audit, _metrics.after_tool_callback()]
-
 docker_agent = create_agent(
     name="docker_agent",
     description=(
@@ -78,9 +60,6 @@ docker_agent = create_agent(
         get_container_stats,
         docker_compose_status,
     ],
-    before_tool_callback=_before_tool,
-    after_tool_callback=_after_tool,
-    on_tool_error_callback=[_metrics.on_tool_error_callback(), graceful_tool_error()],
 )
 
 # ── Incident triage: structured parallel health checks ────────────────
@@ -93,9 +72,6 @@ kafka_health_checker = create_agent(
         "Provide a brief status summary of your findings."
     ),
     tools=[get_kafka_cluster_health, list_kafka_topics, list_consumer_groups, get_consumer_lag],
-    before_tool_callback=_before_tool,
-    after_tool_callback=_after_tool,
-    on_tool_error_callback=[_metrics.on_tool_error_callback(), graceful_tool_error()],
     output_key="kafka_status",
 )
 
@@ -107,9 +83,6 @@ k8s_health_checker = create_agent(
         "and any failing pods. Provide a brief status summary of your findings."
     ),
     tools=[get_cluster_info, get_nodes, get_events, list_pods],
-    before_tool_callback=_before_tool,
-    after_tool_callback=_after_tool,
-    on_tool_error_callback=[_metrics.on_tool_error_callback(), graceful_tool_error()],
     output_key="k8s_status",
 )
 
@@ -121,9 +94,6 @@ docker_health_checker = create_agent(
         "Report any unhealthy or stopped containers. Provide a brief status summary."
     ),
     tools=[list_containers, get_container_stats, docker_compose_status],
-    before_tool_callback=_before_tool,
-    after_tool_callback=_after_tool,
-    on_tool_error_callback=[_metrics.on_tool_error_callback(), graceful_tool_error()],
     output_key="docker_status",
 )
 
@@ -135,9 +105,6 @@ observability_health_checker = create_agent(
         "and check active Alertmanager alerts. Provide a brief status summary."
     ),
     tools=[get_prometheus_targets, get_prometheus_alerts, get_active_alerts, query_prometheus],
-    before_tool_callback=_before_tool,
-    after_tool_callback=_after_tool,
-    on_tool_error_callback=[_metrics.on_tool_error_callback(), graceful_tool_error()],
     output_key="observability_status",
 )
 
@@ -180,8 +147,6 @@ journal_writer = create_agent(
         "Also log this operation using log_operation."
     ),
     tools=[save_note, log_operation],
-    before_tool_callback=_before_tool,
-    after_tool_callback=_after_tool,
 )
 
 # Sequential pipeline: parallel checks → summarize → save
@@ -232,6 +197,4 @@ root_agent = create_agent(
     sub_agents=[
         incident_triage_agent,
     ],
-    before_tool_callback=[authorize(), require_confirmation()],
-    on_model_error_callback=graceful_model_error(),
 )

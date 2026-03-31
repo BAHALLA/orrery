@@ -16,7 +16,7 @@ from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler
 from slack_bolt.async_app import AsyncApp
 
-from ai_agents_core import MetricsCollector, authorize
+from ai_agents_core import MetricsPlugin, authorize, default_plugins
 
 from .config import SlackBotConfig
 from .confirmation import ConfirmationStore, slack_confirmation
@@ -58,7 +58,8 @@ async def lifespan(app: FastAPI):
 
     session_service = DatabaseSessionService(db_url=config.slack_db_url)
 
-    # RBAC check runs first, then Slack confirmation buttons for guarded tools
+    # Slack-specific confirmation buttons are kept as agent-level callback.
+    # Cross-cutting concerns (RBAC, metrics, audit, etc.) are handled by plugins.
     root_agent.before_tool_callback = [
         authorize(),
         slack_confirmation(
@@ -68,10 +69,15 @@ async def lifespan(app: FastAPI):
         ),
     ]
 
+    # Use default plugins but skip the guardrail gate (Slack has its own
+    # confirmation flow via interactive buttons).
+    plugins = default_plugins(guardrail_mode="none")
+
     runner = Runner(
         agent=root_agent,
         app_name=APP_NAME,
         session_service=session_service,
+        plugins=plugins,
     )
 
     _handler = SlackAgentHandler(
@@ -83,8 +89,9 @@ async def lifespan(app: FastAPI):
     )
 
     # Start Prometheus metrics server for scraping
-    metrics = MetricsCollector()
-    metrics.start_server(port=9100)
+    metrics_plugin = next((p for p in plugins if isinstance(p, MetricsPlugin)), None)
+    if metrics_plugin:
+        metrics_plugin.start_server(port=9100)
 
     logger.info("Slack bot started — ADK runner ready")
     yield

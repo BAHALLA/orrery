@@ -1,5 +1,6 @@
 """Observability stack tools: Prometheus, Loki, and Alertmanager."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -41,25 +42,36 @@ def _get_session() -> requests.Session:
     return _session
 
 
-def _http_get(base_url: str, path: str, params: dict | None = None) -> requests.Response:
-    """Send a GET request to an observability endpoint."""
-    return _get_session().get(f"{base_url}{path}", params=params, timeout=_config.http_timeout)
+async def _http_get(base_url: str, path: str, params: dict | None = None) -> requests.Response:
+    """Send a GET request to an observability endpoint asynchronously."""
+    session = _get_session()
+    return await asyncio.to_thread(
+        session.get, f"{base_url}{path}", params=params, timeout=_config.http_timeout
+    )
 
 
-def _http_post(base_url: str, path: str, json: dict | list | None = None) -> requests.Response:
-    """Send a POST request to an observability endpoint."""
-    return _get_session().post(f"{base_url}{path}", json=json, timeout=_config.http_timeout)
+async def _http_post(
+    base_url: str, path: str, json: dict | list | None = None
+) -> requests.Response:
+    """Send a POST request to an observability endpoint asynchronously."""
+    session = _get_session()
+    return await asyncio.to_thread(
+        session.post, f"{base_url}{path}", json=json, timeout=_config.http_timeout
+    )
 
 
-def _http_delete(base_url: str, path: str) -> requests.Response:
-    """Send a DELETE request to an observability endpoint."""
-    return _get_session().delete(f"{base_url}{path}", timeout=_config.http_timeout)
+async def _http_delete(base_url: str, path: str) -> requests.Response:
+    """Send a DELETE request to an observability endpoint asynchronously."""
+    session = _get_session()
+    return await asyncio.to_thread(
+        session.delete, f"{base_url}{path}", timeout=_config.http_timeout
+    )
 
 
 # ── Prometheus Tools ──────────────────────────────────────────────────
 
 
-def query_prometheus(query: str, time: str | None = None) -> dict[str, Any]:
+async def query_prometheus(query: str, time: str | None = None) -> dict[str, Any]:
     """Executes an instant PromQL query against Prometheus.
 
     Args:
@@ -76,7 +88,7 @@ def query_prometheus(query: str, time: str | None = None) -> dict[str, Any]:
         params: dict[str, str] = {"query": query}
         if time:
             params["time"] = time
-        resp = _http_get(_config.prometheus_url, "/api/v1/query", params)
+        resp = await _http_get(_config.prometheus_url, "/api/v1/query", params)
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -93,7 +105,9 @@ def query_prometheus(query: str, time: str | None = None) -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
-def query_prometheus_range(query: str, start: str, end: str, step: str = "60s") -> dict[str, Any]:
+async def query_prometheus_range(
+    query: str, start: str, end: str, step: str = "60s"
+) -> dict[str, Any]:
     """Executes a range PromQL query against Prometheus.
 
     Args:
@@ -110,7 +124,7 @@ def query_prometheus_range(query: str, start: str, end: str, step: str = "60s") 
 
     try:
         params = {"query": query, "start": start, "end": end, "step": step}
-        resp = _http_get(_config.prometheus_url, "/api/v1/query_range", params)
+        resp = await _http_get(_config.prometheus_url, "/api/v1/query_range", params)
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -127,14 +141,14 @@ def query_prometheus_range(query: str, start: str, end: str, step: str = "60s") 
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
-def get_prometheus_alerts() -> dict[str, Any]:
+async def get_prometheus_alerts() -> dict[str, Any]:
     """Lists all alerting rules and their current states from Prometheus.
 
     Returns:
         A dictionary with firing, pending, and inactive alert counts and details.
     """
     try:
-        resp = _http_get(_config.prometheus_url, "/api/v1/rules", {"type": "alert"})
+        resp = await _http_get(_config.prometheus_url, "/api/v1/rules", {"type": "alert"})
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -170,14 +184,14 @@ def get_prometheus_alerts() -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
-def get_prometheus_targets() -> dict[str, Any]:
+async def get_prometheus_targets() -> dict[str, Any]:
     """Lists all Prometheus scrape targets and their health status.
 
     Returns:
         A dictionary with target health information.
     """
     try:
-        resp = _http_get(_config.prometheus_url, "/api/v1/targets")
+        resp = await _http_get(_config.prometheus_url, "/api/v1/targets")
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -215,7 +229,7 @@ def get_prometheus_targets() -> dict[str, Any]:
 # ── Loki Tools ────────────────────────────────────────────────────────
 
 
-def query_loki_logs(
+async def query_loki_logs(
     query: str, limit: int = 100, start: str | None = None, end: str | None = None
 ) -> dict[str, Any]:
     """Runs a LogQL query against Loki to search logs.
@@ -240,7 +254,7 @@ def query_loki_logs(
             params["start"] = start
         if end:
             params["end"] = end
-        resp = _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
+        resp = await _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -265,14 +279,14 @@ def query_loki_logs(
         return {"status": "error", "message": f"Failed to connect to Loki: {e}"}
 
 
-def get_loki_labels() -> dict[str, Any]:
+async def get_loki_labels() -> dict[str, Any]:
     """Lists all known label names in Loki.
 
     Returns:
         A dictionary with the list of label names.
     """
     try:
-        resp = _http_get(_config.loki_url, "/loki/api/v1/labels")
+        resp = await _http_get(_config.loki_url, "/loki/api/v1/labels")
         data = resp.json()
         if data.get("status") != "success":
             return {"status": "error", "message": "Failed to fetch Loki labels."}
@@ -282,7 +296,7 @@ def get_loki_labels() -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to connect to Loki: {e}"}
 
 
-def get_loki_label_values(label: str) -> dict[str, Any]:
+async def get_loki_label_values(label: str) -> dict[str, Any]:
     """Gets all values for a specific label in Loki.
 
     Args:
@@ -295,7 +309,7 @@ def get_loki_label_values(label: str) -> dict[str, Any]:
         return err
 
     try:
-        resp = _http_get(_config.loki_url, f"/loki/api/v1/label/{label}/values")
+        resp = await _http_get(_config.loki_url, f"/loki/api/v1/label/{label}/values")
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -311,14 +325,14 @@ def get_loki_label_values(label: str) -> dict[str, Any]:
 # ── Alertmanager Tools ────────────────────────────────────────────────
 
 
-def get_active_alerts() -> dict[str, Any]:
+async def get_active_alerts() -> dict[str, Any]:
     """Lists currently firing alerts from Alertmanager.
 
     Returns:
         A dictionary with active alert details.
     """
     try:
-        resp = _http_get(_config.alertmanager_url, "/api/v2/alerts", {"active": "true"})
+        resp = await _http_get(_config.alertmanager_url, "/api/v2/alerts", {"active": "true"})
         alerts = resp.json()
         results = []
         for alert in alerts:
@@ -338,14 +352,14 @@ def get_active_alerts() -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
-def get_alert_groups() -> dict[str, Any]:
+async def get_alert_groups() -> dict[str, Any]:
     """Lists alerts grouped by their labels from Alertmanager.
 
     Returns:
         A dictionary with grouped alert information.
     """
     try:
-        resp = _http_get(_config.alertmanager_url, "/api/v2/alerts/groups")
+        resp = await _http_get(_config.alertmanager_url, "/api/v2/alerts/groups")
         groups = resp.json()
         results = []
         for group in groups:
@@ -362,14 +376,14 @@ def get_alert_groups() -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
-def get_silences() -> dict[str, Any]:
+async def get_silences() -> dict[str, Any]:
     """Lists active silences in Alertmanager.
 
     Returns:
         A dictionary with active silence details.
     """
     try:
-        resp = _http_get(_config.alertmanager_url, "/api/v2/silences")
+        resp = await _http_get(_config.alertmanager_url, "/api/v2/silences")
         all_silences = resp.json()
         active = [s for s in all_silences if s.get("status", {}).get("state") == "active"]
         results = []
@@ -391,7 +405,7 @@ def get_silences() -> dict[str, Any]:
 
 
 @confirm("creates a silence that will suppress matching alerts")
-def create_silence(
+async def create_silence(
     matchers: list[dict[str, str]],
     duration_hours: int = 4,
     comment: str = "",
@@ -424,7 +438,7 @@ def create_silence(
             "createdBy": created_by,
             "comment": comment or f"Silence created by {created_by}",
         }
-        resp = _http_post(_config.alertmanager_url, "/api/v2/silences", payload)
+        resp = await _http_post(_config.alertmanager_url, "/api/v2/silences", payload)
         data = resp.json()
         if "silenceID" in data:
             return {
@@ -439,7 +453,7 @@ def create_silence(
 
 
 @destructive("removes a silence, which may cause suppressed alerts to fire immediately")
-def delete_silence(silence_id: str) -> dict[str, Any]:
+async def delete_silence(silence_id: str) -> dict[str, Any]:
     """Expires (deletes) a silence in Alertmanager.
 
     Args:
@@ -452,7 +466,7 @@ def delete_silence(silence_id: str) -> dict[str, Any]:
         return err
 
     try:
-        resp = _http_delete(_config.alertmanager_url, f"/api/v2/silence/{silence_id}")
+        resp = await _http_delete(_config.alertmanager_url, f"/api/v2/silence/{silence_id}")
         if resp.status_code == 200:
             return {
                 "status": "success",

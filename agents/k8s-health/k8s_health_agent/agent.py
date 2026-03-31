@@ -1,12 +1,4 @@
-from ai_agents_core import (
-    MetricsCollector,
-    audit_logger,
-    authorize,
-    create_agent,
-    graceful_tool_error,
-    load_agent_env,
-    require_confirmation,
-)
+from ai_agents_core import create_agent, load_agent_env
 
 from .tools import (
     describe_pod,
@@ -23,8 +15,6 @@ from .tools import (
 )
 
 load_agent_env(__file__)
-
-_metrics = MetricsCollector()
 
 root_agent = create_agent(
     name="k8s_health_agent",
@@ -58,7 +48,4 @@ root_agent = create_agent(
         restart_deployment,
         get_events,
     ],
-    before_tool_callback=[authorize(), require_confirmation(), _metrics.before_tool_callback()],
-    after_tool_callback=[audit_logger(), _metrics.after_tool_callback()],
-    on_tool_error_callback=[_metrics.on_tool_error_callback(), graceful_tool_error()],
 )

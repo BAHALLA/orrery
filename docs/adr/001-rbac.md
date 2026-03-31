@@ -26,9 +26,11 @@ ADMIN (2)    →  can also call @destructive tools (irreversible)
 
 2. **Role stored in session state** — The user's role is read from `session.state["user_role"]` (a string: `"viewer"`, `"operator"`, or `"admin"`). This is set by the integration layer (Slack bot, web UI, CLI) at session creation. Default is `"viewer"` (least privilege).
 
-3. **`authorize()` as a `before_tool_callback`** — Follows the same factory pattern as `require_confirmation()` and `dry_run()`. Composes naturally:
+3. **`authorize()` via `GuardrailsPlugin`** — RBAC and confirmation are bundled into the `GuardrailsPlugin`, registered once on the `Runner` via `default_plugins()`. The plugin applies globally to every agent and tool:
    ```python
-   before_tool_callback=[authorize(policy), require_confirmation()]
+   from ai_agents_core import default_plugins, RolePolicy
+   plugins = default_plugins(role_policy=RolePolicy(overrides={"sensitive_read": Role.OPERATOR}))
+   runner = Runner(agent=root_agent, ..., plugins=plugins)
    ```
    RBAC runs first (blocks unauthorized users), then guardrails run (prompts authorized users for confirmation).
 
@@ -73,32 +75,32 @@ ADMIN (2)    →  can also call @destructive tools (irreversible)
 - `core/ai_agents_core/rbac.py` — `Role` enum, `RolePolicy`, `authorize()`, `@requires_role`, `infer_minimum_role()`
 - `core/tests/test_rbac.py` — 25 test cases
 
-### Callback placement: per-agent, not centralized
+### Plugin-based enforcement (replaces per-agent callbacks)
 
-ADK's `before_tool_callback` does **not** propagate from a parent agent to its sub-agents. Each agent executes its own tools with its own callbacks. This means `authorize()` must be registered on **every agent that has tools**, not just the root orchestrator.
+**Update (2026-03-31):** RBAC is now enforced globally via the `GuardrailsPlugin`, registered once on the `Runner` through `default_plugins()`. This replaces the previous approach of wiring `authorize()` as a `before_tool_callback` on every individual agent.
 
-For example, the root `devops_assistant` delegates to `kafka_health_agent`. When `kafka_health_agent` runs `create_kafka_topic`, only its own `before_tool_callback` fires — the root agent's callback is never invoked.
+ADK Plugins apply to every agent, tool, and LLM call managed by the Runner — including sub-agents. This eliminates the need to remember to add `authorize()` to each new agent.
 
-**Current wiring (all tool-bearing agents):**
+```python
+from ai_agents_core import default_plugins
+from google.adk.runners import Runner
 
-| Agent | Guarded tools | `before_tool_callback` |
-|---|---|---|
-| `kafka_health_agent` | `@confirm` (create_topic), `@destructive` (delete_topic) | `[authorize(), require_confirmation()]` |
-| `k8s_health_agent` | `@confirm` (scale), `@destructive` (restart) | `[authorize(), require_confirmation()]` |
-| `observability_agent` | `@confirm` (create_silence), `@destructive` (delete_silence) | `[authorize(), require_confirmation()]` |
-| `ops_journal_agent` | none | `authorize()` |
-| `docker_agent` (devops) | none | `[authorize()]` |
-| Health checkers (devops) | none (read-only) | `[authorize()]` |
-| `journal_writer` (devops) | none | `[authorize()]` |
-| `devops_assistant` (root) | none (no direct tools) | `[authorize(), require_confirmation()]` |
+runner = Runner(
+    agent=root_agent,
+    app_name="devops_assistant",
+    session_service=session_service,
+    plugins=default_plugins(),  # includes GuardrailsPlugin with RBAC + confirmation
+)
+```
 
-**Rule:** When adding a new agent with tools, always include `authorize()` in its `before_tool_callback`. If any of its tools use `@confirm` or `@destructive`, also include `require_confirmation()`. Order matters — `authorize()` first, then `require_confirmation()`.
+**Rule:** When adding a new agent, no RBAC wiring is needed — just mark tools with `@confirm` or `@destructive` and the `GuardrailsPlugin` handles enforcement automatically.
 
-### Callback execution order
+### Plugin execution order
 
 ```
-authorize()            →  blocks if user role < tool's required role
-require_confirmation() →  asks "are you sure?" for @confirm/@destructive tools
+GuardrailsPlugin.before_agent_callback  →  ensures default viewer role if not server-set
+GuardrailsPlugin.before_tool_callback   →  authorize() blocks if user role < tool's required role
+                                        →  require_confirmation() asks "are you sure?" for guarded tools
 ```
 
 A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm.

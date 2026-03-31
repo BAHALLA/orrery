@@ -11,7 +11,9 @@ Agents can monitor infrastructure, diagnose issues, and take action — with bui
 - **Multi-agent orchestration** — a root agent delegates to specialist agents via `AgentTool` (LLM-routed) and deterministic sub-agent workflows ([ADR-002](docs/adr/002-agent-tool-vs-sub-agents.md))
 - **Structured workflows** — `SequentialAgent` and `ParallelAgent` for deterministic multi-step pipelines (e.g., incident triage checks Kafka, K8s, Docker, and observability in parallel, then summarizes)
 - **Slack integration** — chat with the agent from Slack, with interactive Approve/Deny buttons for guarded operations
-- **Role-based access control** — three-role hierarchy (viewer/operator/admin) inferred from guardrail decorators; enforced via `authorize()` callback ([ADR-001](docs/adr/001-rbac.md))
+- **ADK Plugins** — cross-cutting concerns (RBAC, guardrails, metrics, audit, activity tracking, resilience, error handling) are packaged as ADK plugins and registered once on the Runner via `default_plugins()` — no per-agent callback wiring
+- **Async tools** — all tool functions are `async def` using `asyncio.to_thread()` for non-blocking I/O
+- **Role-based access control** — three-role hierarchy (viewer/operator/admin) inferred from guardrail decorators; enforced globally via `GuardrailsPlugin` ([ADR-001](docs/adr/001-rbac.md))
 - **Input validation** — all tool inputs validated at the boundary with reusable validators (string length, integer range, URL scheme, path traversal, regex patterns)
 - **Safety guardrails** — destructive tools (`@destructive`) require explicit confirmation; mutating tools (`@confirm`) prompt before executing; confirmations are args-hashed and time-limited
 - **Structured logging** — JSON-formatted logs to stdout, ready for Loki/ELK/Cloud Logging; every tool call is audited with timestamp, agent, arguments, and result
@@ -85,7 +87,7 @@ graph TB
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| [**core**](core/) | Library | Agent factory, RBAC, guardrails, input validation, error handlers, structured logging, audit trail, activity tracking, Prometheus metrics, persistent runner, typed config |
+| [**core**](core/) | Library | Agent factory, ADK plugins, RBAC, guardrails, input validation, error handlers, structured logging, audit trail, activity tracking, Prometheus metrics, persistent runner, typed config |
 | [**kafka-health-agent**](agents/kafka-health/) | Single agent | Kafka cluster health, topics, consumer groups, lag |
 | [**k8s-health-agent**](agents/k8s-health/) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
 | [**observability-agent**](agents/observability/) | Single agent | Prometheus metrics/alerts, Loki log queries, Alertmanager silence management |
@@ -152,7 +154,7 @@ Each agent loads typed settings from `.env` files via Pydantic. Shared variables
 
 ## Testing
 
-Run the full suite (395 tests):
+Run the full suite (404 tests):
 
 ```bash
 make test
