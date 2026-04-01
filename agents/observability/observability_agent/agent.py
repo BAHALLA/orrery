@@ -1,6 +1,5 @@
-from google.adk.tools import FunctionTool
-
 from ai_agents_core import create_agent, load_agent_env
+from ai_agents_core.guardrails import require_confirmation
 
 from .tools import (
     create_silence,
@@ -35,7 +34,9 @@ root_agent = create_agent(
         "2. Check get_active_alerts for currently firing alerts\n"
         "3. Use query_prometheus for specific metric investigation\n"
         "4. Correlate with query_loki_logs for log-level context\n\n"
-        "Never create or delete silences without explicit user approval."
+        "When a tool returns a 'confirmation_required' status, you MUST ask the user "
+        "to confirm before calling the tool again. Never create or delete silences "
+        "without explicit user approval."
     ),
     tools=[
         query_prometheus,
@@ -48,7 +49,8 @@ root_agent = create_agent(
         get_active_alerts,
         get_alert_groups,
         get_silences,
-        FunctionTool(create_silence, require_confirmation=True),
-        FunctionTool(delete_silence, require_confirmation=True),
+        create_silence,
+        delete_silence,
     ],
+    before_tool_callback=require_confirmation(),
 )

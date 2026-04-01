@@ -1,9 +1,6 @@
 """Tests for ai_agents_core.guardrails."""
 
 import time
-import warnings
-
-import pytest
 
 from ai_agents_core.guardrails import (
     _CONFIRMATION_TTL,
@@ -11,20 +8,11 @@ from ai_agents_core.guardrails import (
     confirm,
     destructive,
     dry_run,
-    get_destructive_reason,
+    get_guard_reason,
     is_destructive,
     is_guarded,
     require_confirmation,
 )
-
-
-@pytest.fixture(autouse=True)
-def _suppress_deprecation():
-    """require_confirmation() is deprecated (AEP-001); suppress warnings in legacy tests."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        yield
-
 
 # ── @destructive decorator ─────────────────────────────────────────────
 
@@ -36,7 +24,7 @@ def test_destructive_marks_function():
 
     assert is_destructive(my_tool) is True
     assert is_guarded(my_tool) is True
-    assert get_destructive_reason(my_tool) == "deletes everything"
+    assert get_guard_reason(my_tool) == "deletes everything"
 
 
 def test_unmarked_function_is_not_destructive():
@@ -53,7 +41,7 @@ def test_destructive_with_empty_reason():
         pass
 
     assert is_destructive(my_tool) is True
-    assert get_destructive_reason(my_tool) == ""
+    assert get_guard_reason(my_tool) == ""
 
 
 def test_is_destructive_checks_func_attr(fake_tool):
@@ -84,7 +72,7 @@ def test_confirm_stores_reason():
     def my_tool():
         pass
 
-    assert get_destructive_reason(my_tool) == "creates a new topic"
+    assert get_guard_reason(my_tool) == "creates a new topic"
 
 
 # ── require_confirmation() ─────────────────────────────────────────────
@@ -142,7 +130,7 @@ def test_require_confirmation_allows_after_pending(fake_tool, fake_ctx):
 
     callback = require_confirmation()
     tool = fake_tool(name="danger_tool", func=danger_tool)
-    ctx = fake_ctx()
+    ctx = fake_ctx(invocation_id="inv-1")
 
     # First call: blocked
     result = callback(tool=tool, args={}, tool_context=ctx)
@@ -152,11 +140,36 @@ def test_require_confirmation_allows_after_pending(fake_tool, fake_ctx):
     assert isinstance(pending, dict)
     assert "args_hash" in pending
     assert "timestamp" in pending
+    assert "invocation_id" in pending
 
-    # Second call with same args: allowed (user confirmed)
+    # Simulate new invocation (user confirmed and agent retries)
+    ctx._invocation_context.invocation_id = "inv-2"
+
+    # Second call with same args from different invocation: allowed
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is None  # proceed
     assert ctx.state["_guardrail_pending_danger_tool"] is None
+
+
+def test_require_confirmation_blocks_same_invocation_retry(fake_tool, fake_ctx):
+    """LLM auto-retry within the same invocation must NOT bypass confirmation."""
+
+    @destructive("destroys data")
+    def danger_tool():
+        pass
+
+    callback = require_confirmation()
+    tool = fake_tool(name="danger_tool", func=danger_tool)
+    ctx = fake_ctx(invocation_id="inv-1")
+
+    # First call: blocked
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result["status"] == "confirmation_required"
+
+    # Same invocation retry: must block again
+    result = callback(tool=tool, args={}, tool_context=ctx)
+    assert result is not None
+    assert result["status"] == "confirmation_required"
 
 
 def test_require_confirmation_allows_confirm_tool_after_pending(fake_tool, fake_ctx):
@@ -166,11 +179,14 @@ def test_require_confirmation_allows_confirm_tool_after_pending(fake_tool, fake_
 
     callback = require_confirmation()
     tool = fake_tool(name="create_tool", func=create_tool)
-    ctx = fake_ctx()
+    ctx = fake_ctx(invocation_id="inv-1")
 
     # First call: blocked
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is not None
+
+    # Simulate new invocation
+    ctx._invocation_context.invocation_id = "inv-2"
 
     # Second call: allowed
     result = callback(tool=tool, args={}, tool_context=ctx)
@@ -279,7 +295,7 @@ def test_require_confirmation_expired_pending(fake_tool, fake_ctx):
 
     callback = require_confirmation()
     tool = fake_tool(name="danger_tool", func=danger_tool)
-    ctx = fake_ctx()
+    ctx = fake_ctx(invocation_id="inv-1")
 
     # First call: blocked
     callback(tool=tool, args={"id": 1}, tool_context=ctx)
@@ -288,7 +304,8 @@ def test_require_confirmation_expired_pending(fake_tool, fake_ctx):
     pending_key = "_guardrail_pending_danger_tool"
     ctx.state[pending_key]["timestamp"] = time.time() - _CONFIRMATION_TTL - 10
 
-    # Retry with same args: should block again (expired)
+    # New invocation, same args but expired: should block again
+    ctx._invocation_context.invocation_id = "inv-2"
     result = callback(tool=tool, args={"id": 1}, tool_context=ctx)
     assert result is not None
     assert result["status"] == "confirmation_required"

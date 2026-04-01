@@ -1,16 +1,14 @@
 """Guardrails for tool execution safety.
 
-Tools are classified with two decorators that attach metadata:
+Provides before_tool_callback factories that gate operations requiring confirmation.
+Tools are classified with two levels:
   - @destructive("reason") — dangerous, irreversible operations (delete, drop, etc.)
   - @confirm("reason")     — mutating but non-destructive operations (create, update, etc.)
 
-This metadata is used for:
-  1. **RBAC role inference** (rbac.py) — @destructive → ADMIN, @confirm → OPERATOR
-  2. **Dry-run mode** — blocks guarded tools and shows what would have been done
+Unmarked tools are treated as safe and execute immediately.
 
-For **confirmation gating**, use ADK's native ``FunctionTool(require_confirmation=True)``
-in agent definitions instead of the legacy ``require_confirmation()`` callback factory.
-See AEP-001 for migration details.
+ADK calls before_tool_callback with keyword args:
+    callback(tool=..., args=..., tool_context=...)
 """
 
 from __future__ import annotations
@@ -102,12 +100,6 @@ def is_guarded(tool_or_func: Any) -> bool:
     return get_guard_level(tool_or_func) is not None
 
 
-# Keep for backward compat
-def get_destructive_reason(tool_or_func: Any) -> str:
-    """Get the reason a tool is marked destructive."""
-    return get_guard_reason(tool_or_func)
-
-
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
@@ -121,26 +113,22 @@ def _hash_args(args: dict[str, Any]) -> str:
 
 
 def require_confirmation() -> Callable:
-    """Legacy callback factory for confirmation gating.
+    """Create a before_tool_callback that gates guarded tools.
 
-    .. deprecated::
-        Use ADK's native ``FunctionTool(fn, require_confirmation=True)``
-        instead. This factory is kept for backward compatibility but will
-        be removed in a future release. See AEP-001 for migration details.
+    - @destructive tools get a warning: "This is a destructive operation..."
+    - @confirm tools get a neutral prompt: "This operation will..."
+    - Unmarked tools execute immediately.
 
-    Wraps guarded tools with a confirmation prompt that tracks arguments
-    and expires after ``_CONFIRMATION_TTL`` seconds.
+    The confirmation state tracks the exact arguments and expires after
+    ``_CONFIRMATION_TTL`` seconds.  A retry with different arguments or
+    an expired confirmation will re-prompt.
+
+    Usage in create_agent():
+        create_agent(
+            ...,
+            before_tool_callback=require_confirmation(),
+        )
     """
-
-    import warnings
-
-    warnings.warn(
-        "require_confirmation() is deprecated. "
-        "Use FunctionTool(fn, require_confirmation=True) instead. "
-        "See docs/enhancements/aep-001-adk-native-confirmation.md",
-        DeprecationWarning,
-        stacklevel=2,
-    )
 
     def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
         func = getattr(tool, "func", None)
@@ -155,20 +143,32 @@ def require_confirmation() -> Callable:
         pending = tool_context.state.get(pending_key)
         args_hash = _hash_args(args)
 
+        # Identify the current invocation so we can distinguish LLM
+        # auto-retries (same invocation) from user-confirmed retries
+        # (new invocation triggered by a new user message or AgentTool call).
+        invocation_id = getattr(
+            getattr(tool_context, "_invocation_context", None),
+            "invocation_id",
+            None,
+        )
+
         # Check for a valid pending confirmation that matches these args.
         if isinstance(pending, dict):
             same_args = pending.get("args_hash") == args_hash
             not_expired = (time.time() - pending.get("timestamp", 0)) < _CONFIRMATION_TTL
-            if same_args and not_expired:
+            different_invocation = pending.get("invocation_id") != invocation_id
+            if same_args and not_expired and different_invocation:
                 tool_context.state[pending_key] = None  # consume confirmation
                 return None  # user confirmed, proceed
-            # Mismatch or expired — clear stale state and re-prompt below.
-            tool_context.state[pending_key] = None
+            # Same-invocation retry, args mismatch, or expired — re-prompt.
+            if not same_args or not not_expired:
+                tool_context.state[pending_key] = None
 
         # Block and store pending with args fingerprint + timestamp.
         tool_context.state[pending_key] = {
             "args_hash": args_hash,
             "timestamp": time.time(),
+            "invocation_id": invocation_id,
         }
 
         reason = get_guard_reason(func)

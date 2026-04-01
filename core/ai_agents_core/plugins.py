@@ -19,7 +19,7 @@ Usage::
 Plugin execution order matters — ``default_plugins()`` returns them in the
 correct sequence:
 
-1. GuardrailsPlugin  (RBAC + optional dry-run gate — blocks unauthorized calls)
+1. GuardrailsPlugin  (RBAC — blocks unauthorized calls)
 2. ResiliencePlugin   (circuit breaker — blocks calls to failing tools)
 3. MetricsPlugin      (timing + counters)
 4. AuditPlugin        (structured audit logging)
@@ -44,7 +44,6 @@ from google.adk.tools.tool_context import ToolContext
 from .activity import activity_tracker
 from .audit import audit_logger
 from .error_handlers import graceful_model_error, graceful_tool_error
-from .guardrails import require_confirmation as _require_confirmation_factory  # noqa: F401
 from .metrics import MetricsCollector
 from .rbac import RolePolicy, ensure_default_role
 from .rbac import authorize as _authorize_factory
@@ -59,17 +58,16 @@ logger = logging.getLogger("ai_agents.plugins")
 class GuardrailsPlugin(BasePlugin):
     """Enforces RBAC and optional dry-run gates globally.
 
-    Combines ``authorize()`` with an optional ``dry_run()`` gate.
-    Tool confirmation is handled natively by ADK's
-    ``FunctionTool(fn, require_confirmation=True)`` — see AEP-001.
+    RBAC is always enforced. Tool confirmation is handled at the agent level
+    via ``before_tool_callback=require_confirmation()`` so it works in all
+    execution contexts (ADK web UI, CLI runner, AgentTool sub-agents).
 
     Also ensures a default viewer role on untrusted sessions via
     ``before_agent_callback``.
 
     Args:
         role_policy: Optional ``RolePolicy`` for custom role overrides.
-        mode: ``"confirm"`` (default — RBAC only, ADK handles confirmation),
-              ``"dry_run"``, or ``"none"``.
+        mode: ``"confirm"`` (default — RBAC only), ``"dry_run"``, or ``"none"``.
     """
 
     def __init__(
@@ -85,8 +83,8 @@ class GuardrailsPlugin(BasePlugin):
 
             self._gate = _dry_run_factory()
         else:
-            # mode="confirm" no longer needs a gate here — ADK's native
-            # FunctionTool(require_confirmation=True) handles it.
+            # Confirmation is handled at the agent level via
+            # before_tool_callback=require_confirmation(), not here.
             self._gate = None
 
         self._ensure_role = ensure_default_role()

@@ -72,8 +72,8 @@ async def test_guardrails_plugin_rbac_blocks(base_tool, tool_context):
 
 @pytest.mark.asyncio
 async def test_guardrails_plugin_confirm_mode_skips_gate(base_tool, tool_context):
-    """In confirm mode, GuardrailsPlugin delegates confirmation to ADK's native
-    FunctionTool(require_confirmation=True) — no plugin-level gate."""
+    """In confirm mode, GuardrailsPlugin handles RBAC only — confirmation is
+    handled at the agent level via before_tool_callback."""
     from ai_agents_core.guardrails import confirm
 
     @confirm("testing")
@@ -88,7 +88,7 @@ async def test_guardrails_plugin_confirm_mode_skips_gate(base_tool, tool_context
 
     result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
 
-    # No confirmation gate — RBAC passes, tool proceeds
+    # No confirmation gate at plugin level — RBAC passes, tool proceeds
     assert result is None
 
 

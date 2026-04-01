@@ -22,15 +22,23 @@ class FakeTool:
         self.func = func
 
 
+class FakeInvocationContext:
+    """Minimal mock of ADK's InvocationContext."""
+
+    def __init__(self, invocation_id: str = "inv-default"):
+        self.invocation_id = invocation_id
+
+
 class FakeToolContext:
     """Minimal mock of ADK's Context / ToolContext."""
 
-    def __init__(self, state: dict | None = None):
+    def __init__(self, state: dict | None = None, invocation_id: str = "inv-default"):
         self.state = FakeState(state or {})
         self.agent_name = "test_agent"
         self.user_id = "test_user"
         self.session = MagicMock()
         self.session.id = "test_session_123"
+        self._invocation_context = FakeInvocationContext(invocation_id)
 
 
 @pytest.fixture
