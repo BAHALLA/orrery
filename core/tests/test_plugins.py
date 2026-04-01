@@ -71,9 +71,9 @@ async def test_guardrails_plugin_rbac_blocks(base_tool, tool_context):
 
 
 @pytest.mark.asyncio
-async def test_guardrails_plugin_confirmation_blocks(base_tool, tool_context):
-    """Verify confirmation gate blocks non-safe tools."""
-    # Tool is NOT in the safe list (implicitly destructive if we mock it so)
+async def test_guardrails_plugin_confirm_mode_skips_gate(base_tool, tool_context):
+    """In confirm mode, GuardrailsPlugin delegates confirmation to ADK's native
+    FunctionTool(require_confirmation=True) — no plugin-level gate."""
     from ai_agents_core.guardrails import confirm
 
     @confirm("testing")
@@ -84,12 +84,33 @@ async def test_guardrails_plugin_confirmation_blocks(base_tool, tool_context):
     base_tool.name = "my_tool"
 
     plugin = GuardrailsPlugin(mode="confirm")
-    tool_context.state["user_role"] = "admin"  # Authorized, but needs confirmation
+    tool_context.state["user_role"] = "admin"  # Authorized
+
+    result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
+
+    # No confirmation gate — RBAC passes, tool proceeds
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_guardrails_plugin_dry_run_blocks(base_tool, tool_context):
+    """Verify dry_run mode still blocks guarded tools at the plugin level."""
+    from ai_agents_core.guardrails import destructive
+
+    @destructive("deletes data")
+    def my_destructive_func():
+        pass
+
+    base_tool.func = my_destructive_func
+    base_tool.name = "my_tool"
+
+    plugin = GuardrailsPlugin(mode="dry_run")
+    tool_context.state["user_role"] = "admin"
 
     result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
 
     assert result is not None
-    assert result["status"] == "confirmation_required"
+    assert result["status"] == "dry_run"
 
 
 # ── ResiliencePlugin Tests ───────────────────────────────────────────

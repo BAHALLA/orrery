@@ -1,3 +1,5 @@
+from google.adk.tools import FunctionTool
+
 from ai_agents_core import create_agent, load_agent_env
 
 from .tools import (
@@ -19,15 +21,13 @@ root_agent = create_agent(
     instruction=(
         "You are a specialized agent for Kafka monitoring. You can check cluster health, "
         "manage topics, and inspect consumer groups and lag. Use the provided tools to "
-        "retrieve cluster information and troubleshoot performance or connectivity issues.\n\n"
-        "When a tool returns a 'confirmation_required' status, you MUST ask the user "
-        "to confirm before calling the tool again."
+        "retrieve cluster information and troubleshoot performance or connectivity issues."
     ),
     tools=[
         get_kafka_cluster_health,
         list_kafka_topics,
-        create_kafka_topic,
-        delete_kafka_topic,
+        FunctionTool(create_kafka_topic, require_confirmation=True),
+        FunctionTool(delete_kafka_topic, require_confirmation=True),
         get_topic_metadata,
         list_consumer_groups,
         describe_consumer_groups,

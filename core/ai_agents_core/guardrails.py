@@ -1,14 +1,16 @@
 """Guardrails for tool execution safety.
 
-Provides before_tool_callback factories that gate operations requiring confirmation.
-Tools are classified with two levels:
+Tools are classified with two decorators that attach metadata:
   - @destructive("reason") — dangerous, irreversible operations (delete, drop, etc.)
   - @confirm("reason")     — mutating but non-destructive operations (create, update, etc.)
 
-Unmarked tools are treated as safe and execute immediately.
+This metadata is used for:
+  1. **RBAC role inference** (rbac.py) — @destructive → ADMIN, @confirm → OPERATOR
+  2. **Dry-run mode** — blocks guarded tools and shows what would have been done
 
-ADK calls before_tool_callback with keyword args:
-    callback(tool=..., args=..., tool_context=...)
+For **confirmation gating**, use ADK's native ``FunctionTool(require_confirmation=True)``
+in agent definitions instead of the legacy ``require_confirmation()`` callback factory.
+See AEP-001 for migration details.
 """
 
 from __future__ import annotations
@@ -119,22 +121,26 @@ def _hash_args(args: dict[str, Any]) -> str:
 
 
 def require_confirmation() -> Callable:
-    """Create a before_tool_callback that gates guarded tools.
+    """Legacy callback factory for confirmation gating.
 
-    - @destructive tools get a warning: "This is a destructive operation..."
-    - @confirm tools get a neutral prompt: "This operation will..."
-    - Unmarked tools execute immediately.
+    .. deprecated::
+        Use ADK's native ``FunctionTool(fn, require_confirmation=True)``
+        instead. This factory is kept for backward compatibility but will
+        be removed in a future release. See AEP-001 for migration details.
 
-    The confirmation state tracks the exact arguments and expires after
-    ``_CONFIRMATION_TTL`` seconds.  A retry with different arguments or
-    an expired confirmation will re-prompt.
-
-    Usage in create_agent():
-        create_agent(
-            ...,
-            before_tool_callback=require_confirmation(),
-        )
+    Wraps guarded tools with a confirmation prompt that tracks arguments
+    and expires after ``_CONFIRMATION_TTL`` seconds.
     """
+
+    import warnings
+
+    warnings.warn(
+        "require_confirmation() is deprecated. "
+        "Use FunctionTool(fn, require_confirmation=True) instead. "
+        "See docs/enhancements/aep-001-adk-native-confirmation.md",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
         func = getattr(tool, "func", None)

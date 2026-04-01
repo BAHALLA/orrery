@@ -1,6 +1,9 @@
 """Tests for ai_agents_core.guardrails."""
 
 import time
+import warnings
+
+import pytest
 
 from ai_agents_core.guardrails import (
     _CONFIRMATION_TTL,
@@ -13,6 +16,14 @@ from ai_agents_core.guardrails import (
     is_guarded,
     require_confirmation,
 )
+
+
+@pytest.fixture(autouse=True)
+def _suppress_deprecation():
+    """require_confirmation() is deprecated (AEP-001); suppress warnings in legacy tests."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        yield
 
 # ── @destructive decorator ─────────────────────────────────────────────
 

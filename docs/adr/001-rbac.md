@@ -6,7 +6,7 @@
 
 ## Context
 
-The platform's agents expose tools that range from read-only queries (`list_topics`, `get_nodes`) to irreversible operations (`delete_kafka_topic`, `restart_pod`). The existing guardrail system (`@destructive`, `@confirm`, `require_confirmation()`) gates *execution* but does not gate *who* can execute. Any user interacting with the agent — via the ADK web UI, CLI, or Slack — can trigger any tool, including destructive ones (after confirmation).
+The platform's agents expose tools that range from read-only queries (`list_topics`, `get_nodes`) to irreversible operations (`delete_kafka_topic`, `restart_pod`). The existing guardrail system (`@destructive`, `@confirm`) gates *execution* but does not gate *who* can execute. Any user interacting with the agent — via the ADK web UI, CLI, or Slack — can trigger any tool, including destructive ones (after confirmation).
 
 As we move toward multi-user environments (Slack channels, shared web UI), we need a way to restrict what each user is allowed to do based on their role.
 
@@ -26,13 +26,13 @@ ADMIN (2)    →  can also call @destructive tools (irreversible)
 
 2. **Role stored in session state** — The user's role is read from `session.state["user_role"]` (a string: `"viewer"`, `"operator"`, or `"admin"`). This is set by the integration layer (Slack bot, web UI, CLI) at session creation. Default is `"viewer"` (least privilege).
 
-3. **`authorize()` via `GuardrailsPlugin`** — RBAC and confirmation are bundled into the `GuardrailsPlugin`, registered once on the `Runner` via `default_plugins()`. The plugin applies globally to every agent and tool:
+3. **`authorize()` via `GuardrailsPlugin`** — RBAC is enforced by the `GuardrailsPlugin`, registered once on the `Runner` via `default_plugins()`. The plugin applies globally to every agent and tool:
    ```python
    from ai_agents_core import default_plugins, RolePolicy
    plugins = default_plugins(role_policy=RolePolicy(overrides={"sensitive_read": Role.OPERATOR}))
    runner = Runner(agent=root_agent, ..., plugins=plugins)
    ```
-   RBAC runs first (blocks unauthorized users), then guardrails run (prompts authorized users for confirmation).
+   RBAC blocks unauthorized users. Tool confirmation is handled natively by ADK's `FunctionTool(require_confirmation=True)` — see [AEP-001](../enhancements/aep-001-adk-native-confirmation.md).
 
 4. **`RolePolicy` for overrides** — A policy object allows per-tool overrides when the inferred role isn't appropriate:
    ```python
@@ -89,7 +89,7 @@ runner = Runner(
     agent=root_agent,
     app_name="devops_assistant",
     session_service=session_service,
-    plugins=default_plugins(),  # includes GuardrailsPlugin with RBAC + confirmation
+    plugins=default_plugins(),  # includes GuardrailsPlugin with RBAC
 )
 ```
 
@@ -100,7 +100,7 @@ runner = Runner(
 ```
 GuardrailsPlugin.before_agent_callback  →  ensures default viewer role if not server-set
 GuardrailsPlugin.before_tool_callback   →  authorize() blocks if user role < tool's required role
-                                        →  require_confirmation() asks "are you sure?" for guarded tools
+FunctionTool(require_confirmation=True)  →  ADK natively asks "are you sure?" for guarded tools
 ```
 
-A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm.
+A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm by ADK's native confirmation flow.

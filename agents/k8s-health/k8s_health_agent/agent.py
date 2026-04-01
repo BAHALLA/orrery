@@ -1,3 +1,5 @@
+from google.adk.tools import FunctionTool
+
 from ai_agents_core import create_agent, load_agent_env
 
 from .tools import (
@@ -31,9 +33,7 @@ root_agent = create_agent(
         "2. Check get_events for recent warnings or errors\n"
         "3. Drill into specific pods with describe_pod and get_pod_logs\n"
         "4. Check deployment status with get_deployment_status\n\n"
-        "When a tool returns a 'confirmation_required' status, you MUST ask the user "
-        "to confirm before calling the tool again. Never scale or restart without "
-        "explicit user approval."
+        "Never scale or restart without explicit user approval."
     ),
     tools=[
         get_cluster_info,
@@ -44,8 +44,8 @@ root_agent = create_agent(
         get_pod_logs,
         list_deployments,
         get_deployment_status,
-        scale_deployment,
-        restart_deployment,
+        FunctionTool(scale_deployment, require_confirmation=True),
+        FunctionTool(restart_deployment, require_confirmation=True),
         get_events,
     ],
 )
