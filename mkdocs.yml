@@ -32,6 +32,21 @@ theme:
     - search.suggest
     - search.highlight
     - content.code.copy
+    - content.tooltips
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      type: iso_date
+  - gen-files:
+      scripts:
+        - docs/gen_ref_pages.py
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [core, agents/kafka-health, agents/k8s-health, agents/observability, agents/devops-assistant, agents/ops-journal, agents/slack-bot]
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -76,3 +91,16 @@ nav:
     - "AEP-011: Deployment Hardening": enhancements/aep-011-deployment-hardening.md
     - "AEP-012: Custom Agents": enhancements/aep-012-custom-agents.md
     - "AEP-013: Security Hardening": enhancements/aep-013-security-hardening.md
+  - Agents:
+    - Core: core/README.md
+    - Devops Assistant: agents/devops-assistant.md
+    - K8s Health: agents/k8s-health.md
+    - Kafka Health: agents/kafka-health.md
+    - Observability: agents/observability.md
+    - Ops Journal: agents/ops-journal.md
+    - Slack Bot: agents/slack-bot.md
+  - Project Info:
+    - Changelog: CHANGELOG.md
+    - Contributing: CONTRIBUTING.md
+    - Security: SECURITY.md
+    - License: LICENSE.md

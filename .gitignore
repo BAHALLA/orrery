@@ -27,4 +27,4 @@ wheels/
 # Audit and persistence
 *.jsonl
 *.db
-.site/
+site/

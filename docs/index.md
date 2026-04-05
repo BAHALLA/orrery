@@ -92,13 +92,13 @@ graph TB
 
 | Agent | Type | Description |
 |-------|------|-------------|
-| [**core**](core/) | Library | Agent factory, ADK plugins, RBAC, guardrails, input validation, error handlers, structured logging, audit trail, activity tracking, Prometheus metrics, persistent runner, typed config |
-| [**kafka-health-agent**](agents/kafka-health/) | Single agent | Kafka cluster health, topics, consumer groups, lag |
-| [**k8s-health-agent**](agents/k8s-health/) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
-| [**observability-agent**](agents/observability/) | Single agent | Prometheus metrics/alerts, Loki log queries, Alertmanager silence management |
-| [**devops-assistant**](agents/devops-assistant/) | Multi-agent | Orchestrator using AgentTool for specialist agents and sub-agents for deterministic workflows |
-| [**ops-journal**](agents/ops-journal/) | Memory/state | Notes, preferences, and session tracking with persistent storage |
-| [**slack-bot**](agents/slack-bot/) | Integration | Slack bot with thread-based sessions and interactive confirmation buttons |
+| [**core**](core/README.md) | Library | Agent factory, ADK plugins, RBAC, guardrails, input validation, error handlers, structured logging, audit trail, activity tracking, Prometheus metrics, persistent runner, typed config |
+| [**kafka-health-agent**](agents/kafka-health.md) | Single agent | Kafka cluster health, topics, consumer groups, lag |
+| [**k8s-health-agent**](agents/k8s-health.md) | Single agent | Kubernetes cluster health, nodes, pods, deployments, logs, events |
+| [**observability-agent**](agents/observability.md) | Single agent | Prometheus metrics/alerts, Loki log queries, Alertmanager silence management |
+| [**devops-assistant**](agents/devops-assistant.md) | Multi-agent | Orchestrator using AgentTool for specialist agents and sub-agents for deterministic workflows |
+| [**ops-journal**](agents/ops-journal.md) | Memory/state | Notes, preferences, and session tracking with persistent storage |
+| [**slack-bot**](agents/slack-bot.md) | Integration | Slack bot with thread-based sessions and interactive confirmation buttons |
 
 ## Quick Start
 
