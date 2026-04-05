@@ -1,5 +1,6 @@
-.PHONY: help install test eval lint type-check fmt infra-up infra-down infra-reset \
+.PHONY: help install test eval lint type-check ty fmt infra-up infra-down infra-reset \
        docker-build docker-demo docker-down \
+       docs-serve docs-build docs-deploy \
        run-kafka-health run-kafka-health-cli \
        run-k8s run-k8s-cli \
        run-observability run-observability-cli \
@@ -51,6 +52,17 @@ infra-down: ## Stop shared infrastructure
 
 infra-reset: ## Stop infrastructure and wipe volumes
 	docker compose down -v
+
+# ── Documentation ──────────────────────────────────────
+
+docs-serve: ## Serve documentation locally
+	uv run mkdocs serve
+
+docs-build: ## Build documentation site
+	uv run mkdocs build
+
+docs-deploy: ## Deploy documentation to GitHub Pages
+	uv run mkdocs gh-deploy --force
 
 # ── Docker ────────────────────────────────────────────
 

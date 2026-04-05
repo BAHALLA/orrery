@@ -1,0 +1,78 @@
+site_name: AI Agents for DevOps & SRE
+site_url: https://bahalla.github.io/ai-agents/
+repo_url: https://github.com/BAHALLA/ai-agents
+repo_name: BAHALLA/ai-agents
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Adding a New Agent: adding-an-agent.md
+    - Configuration: configuration.md
+    - Slack Bot Setup: slack-setup.md
+    - Metrics: metrics.md
+  - Architecture (ADR):
+    - ADR-001: RBAC: adr/001-rbac.md
+    - ADR-002: Agent Composition: adr/002-agent-tool-vs-sub-agents.md
+  - Enhancements (AEP):
+    - Overview: enhancements/README.md
+    - AEP-001: Tool Confirmation: enhancements/aep-001-adk-native-confirmation.md
+    - AEP-002: Agent Evaluation: enhancements/aep-002-agent-evaluation.md
+    - AEP-003: Memory Service: enhancements/aep-003-memory-service.md
+    - AEP-004: Remediation Loop: enhancements/aep-004-loop-agent-remediation.md
+    - AEP-005: A2A Protocol: enhancements/aep-005-a2a-protocol.md
+    - AEP-006: Artifacts: enhancements/aep-006-artifacts.md
+    - AEP-007: Context Caching: enhancements/aep-007-context-caching.md
+    - AEP-008: Skills: enhancements/aep-008-skills.md
+    - AEP-009: Streaming: enhancements/aep-009-streaming.md
+    - AEP-010: Tracing: enhancements/aep-010-observability-tracing.md
+    - AEP-011: Deployment Hardening: enhancements/aep-011-deployment-hardening.md
+    - AEP-012: Custom Agents: enhancements/aep-012-custom-agents.md
+    - AEP-013: Security Hardening: enhancements/aep-013-security-hardening.md
