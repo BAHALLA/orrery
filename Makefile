@@ -1,4 +1,4 @@
-.PHONY: help install test lint fmt infra-up infra-down infra-reset \
+.PHONY: help install test eval lint fmt infra-up infra-down infra-reset \
        docker-build docker-demo docker-down \
        run-kafka-health run-kafka-health-cli \
        run-k8s run-k8s-cli \
@@ -15,8 +15,11 @@ help: ## Show this help
 install: ## Install all workspace packages
 	uv sync
 
-test: ## Run all tests
+test: ## Run all tests (excludes evals)
 	uv run pytest -v
+
+eval: ## Run agent evaluation tests (requires LLM access)
+	uv run pytest -m eval -v
 
 lint: ## Run linter checks (ruff check + format check)
 	uv run ruff check .

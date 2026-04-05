@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from google.adk.agents import Agent
+from google.adk.apps import App
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
@@ -39,15 +40,14 @@ async def run_persistent(
 
     session_service = DatabaseSessionService(db_url=resolved_db_url)
 
-    runner_kwargs: dict = {
-        "agent": agent,
-        "app_name": app_name,
-        "session_service": session_service,
-    }
-    if plugins:
-        runner_kwargs["plugins"] = list(plugins)
-
-    runner = Runner(**runner_kwargs)
+    # Wrap the agent in an ADK App so plugins can be passed via the supported
+    # `app` argument (the `plugins=` kwarg on Runner is deprecated).
+    app = App(
+        name=app_name,
+        root_agent=agent,
+        plugins=list(plugins) if plugins else [],
+    )
+    runner = Runner(app=app, session_service=session_service)
 
     initial_state: dict[str, object] = {}
     set_user_role(initial_state, "admin")  # CLI user gets admin (local dev)

@@ -11,6 +11,7 @@ import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from google.adk.apps import App
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler
@@ -72,13 +73,8 @@ async def lifespan(app: FastAPI):
     # Use default plugins but skip the guardrail gate (Slack has its own
     # confirmation flow via interactive buttons).
     plugins = default_plugins(guardrail_mode="none")
-
-    runner = Runner(
-        agent=root_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
-        plugins=plugins,
-    )
+    app = App(name=APP_NAME, root_agent=root_agent, plugins=plugins)
+    runner = Runner(app=app, session_service=session_service)
 
     _handler = SlackAgentHandler(
         runner=runner,

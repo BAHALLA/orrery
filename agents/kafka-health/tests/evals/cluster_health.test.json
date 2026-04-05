@@ -1,0 +1,94 @@
+{
+  "eval_set_id": "kafka_health_agent_basic",
+  "name": "Kafka Health Agent Basic Scenarios",
+  "description": "Core scenarios verifying the Kafka agent routes to the correct tools.",
+  "eval_cases": [
+    {
+      "eval_id": "check_cluster_health",
+      "conversation": [
+        {
+          "invocation_id": "inv-001",
+          "user_content": {
+            "parts": [{"text": "Is my Kafka cluster healthy?"}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "The Kafka cluster is healthy with 2 brokers online: broker-1 and broker-2."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "get_kafka_cluster_health", "args": {}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "kafka_health_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    },
+    {
+      "eval_id": "list_topics",
+      "conversation": [
+        {
+          "invocation_id": "inv-002",
+          "user_content": {
+            "parts": [{"text": "What topics exist in our Kafka cluster?"}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "The Kafka cluster has 3 topics: orders, payments, and notifications."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "list_kafka_topics", "args": {}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "kafka_health_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    },
+    {
+      "eval_id": "list_consumer_groups",
+      "conversation": [
+        {
+          "invocation_id": "inv-003",
+          "user_content": {
+            "parts": [{"text": "Show me all consumer groups."}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "The Kafka cluster has 2 consumer groups: order-processor and payment-handler."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "list_consumer_groups", "args": {}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "kafka_health_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    }
+  ]
+}

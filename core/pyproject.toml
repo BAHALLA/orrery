@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Shared utilities for AI agents"
 requires-python = ">=3.11"
 dependencies = [
-    "google-adk>=1.27.1",
+    "google-adk[eval]>=1.27.1",
     "litellm>=1.60.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.0.0",

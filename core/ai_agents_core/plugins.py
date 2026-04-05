@@ -7,14 +7,12 @@ and LLM call.
 
 Usage::
 
+    from google.adk.apps import App
+    from google.adk.runners import Runner
     from ai_agents_core.plugins import default_plugins
 
-    runner = Runner(
-        agent=root_agent,
-        app_name="myapp",
-        session_service=session_service,
-        plugins=default_plugins(),
-    )
+    app = App(name="myapp", root_agent=root_agent, plugins=default_plugins())
+    runner = Runner(app=app, session_service=session_service)
 
 Plugin execution order matters — ``default_plugins()`` returns them in the
 correct sequence:

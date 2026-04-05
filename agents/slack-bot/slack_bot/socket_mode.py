@@ -15,6 +15,7 @@ import asyncio
 import logging
 import re
 
+from google.adk.apps import App
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
@@ -176,12 +177,12 @@ async def main() -> None:
         ),
     ]
 
-    runner = Runner(
-        agent=root_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
+    app = App(
+        name=APP_NAME,
+        root_agent=root_agent,
         plugins=default_plugins(guardrail_mode="none"),
     )
+    runner = Runner(app=app, session_service=session_service)
 
     handler_ref["handler"] = SlackAgentHandler(
         runner=runner,

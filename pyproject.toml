@@ -64,6 +64,10 @@ known-first-party = [
 ]
 
 [tool.pytest.ini_options]
+markers = [
+    "eval: agent evaluation tests that call a real LLM (deselected by default)",
+]
+addopts = "-m 'not eval'"
 testpaths = [
     "core/tests",
     "agents/kafka-health/tests",
