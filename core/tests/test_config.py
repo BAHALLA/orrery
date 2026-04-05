@@ -1,6 +1,7 @@
 """Tests for ai_agents_core.config."""
 
 from pathlib import Path
+from typing import Any, cast
 
 from ai_agents_core.config import AgentConfig, load_config
 
@@ -30,6 +31,7 @@ def test_agent_config_from_env(monkeypatch):
     config = AgentConfig(_env_file=None)
     assert config.gemini_model_version == "gemini-2.5-pro"
     assert config.google_cloud_project == "my-project"
+    assert config.google_api_key is None
     assert config.google_genai_use_vertexai is False
 
 
@@ -40,7 +42,7 @@ def test_subclass_config(monkeypatch):
     monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "broker:19092")
     monkeypatch.delenv("GEMINI_MODEL_VERSION", raising=False)
 
-    config = KafkaConfig(_env_file=None)
+    config = cast(Any, KafkaConfig)(_env_file=None)
     assert config.kafka_bootstrap_servers == "broker:19092"
     # Base fields still work
     assert config.model_name == "gemini-2.0-flash"

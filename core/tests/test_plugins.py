@@ -63,7 +63,9 @@ async def test_guardrails_plugin_rbac_blocks(base_tool, tool_context):
     # Mock context with viewer role (not authorized for "my_tool")
     tool_context.state["user_role"] = "viewer"
 
-    result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
+    result = await plugin.before_tool_callback(
+        tool=base_tool, tool_args={}, tool_context=tool_context
+    )
 
     assert result is not None
     assert result["status"] == "access_denied"
@@ -86,7 +88,9 @@ async def test_guardrails_plugin_confirm_mode_skips_gate(base_tool, tool_context
     plugin = GuardrailsPlugin(mode="confirm")
     tool_context.state["user_role"] = "admin"  # Authorized
 
-    result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
+    result = await plugin.before_tool_callback(
+        tool=base_tool, tool_args={}, tool_context=tool_context
+    )
 
     # No confirmation gate at plugin level — RBAC passes, tool proceeds
     assert result is None
@@ -107,7 +111,9 @@ async def test_guardrails_plugin_dry_run_blocks(base_tool, tool_context):
     plugin = GuardrailsPlugin(mode="dry_run")
     tool_context.state["user_role"] = "admin"
 
-    result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
+    result = await plugin.before_tool_callback(
+        tool=base_tool, tool_args={}, tool_context=tool_context
+    )
 
     assert result is not None
     assert result["status"] == "dry_run"
@@ -127,7 +133,9 @@ async def test_resilience_plugin_opens_circuit(base_tool, tool_context):
     )
 
     # Next call should be blocked by before_tool_callback
-    result = await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
+    result = await plugin.before_tool_callback(
+        tool=base_tool, tool_args={}, tool_context=tool_context
+    )
 
     assert result is not None
     assert "temporarily unavailable" in result["message"]
@@ -142,7 +150,7 @@ async def test_metrics_plugin_tracks_calls(base_tool, tool_context):
     plugin = MetricsPlugin()
 
     with patch.object(plugin, "_before", wraps=plugin._before) as mock_before:
-        await plugin.before_tool_callback(tool=base_tool, args={}, tool_context=tool_context)
+        await plugin.before_tool_callback(tool=base_tool, tool_args={}, tool_context=tool_context)
         mock_before.assert_called_once()
 
 
@@ -156,7 +164,7 @@ async def test_audit_plugin_logs_call(base_tool, tool_context):
 
     with patch.object(plugin, "_callback", wraps=plugin._callback) as mock_audit:
         await plugin.after_tool_callback(
-            tool=base_tool, args={}, tool_context=tool_context, tool_response={"status": "success"}
+            tool=base_tool, tool_args={}, tool_context=tool_context, result={"status": "success"}
         )
         mock_audit.assert_called_once()
 
@@ -170,7 +178,7 @@ async def test_activity_plugin_updates_state(base_tool, tool_context):
     plugin = ActivityPlugin()
 
     await plugin.after_tool_callback(
-        tool=base_tool, args={}, tool_context=tool_context, tool_response={"status": "success"}
+        tool=base_tool, tool_args={}, tool_context=tool_context, result={"status": "success"}
     )
 
     assert "session_log" in tool_context.state
@@ -208,7 +216,12 @@ async def test_error_handler_plugin_suppresses_model_error(callback_context):
     from google.adk.models.llm_response import LlmResponse
 
     assert isinstance(result, LlmResponse)
-    assert "Model timeout" in result.content.parts[0].text
+    assert result.content is not None
+    assert result.content.parts is not None
+    assert len(result.content.parts) > 0
+    text = result.content.parts[0].text
+    assert text is not None
+    assert "Model timeout" in text
 
 
 # ── Factory Tests ────────────────────────────────────────────────────

@@ -1,5 +1,10 @@
 # AI Agents for DevOps & SRE
 
+[![CI](https://github.com/BAHALLA/ai-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/BAHALLA/ai-agents/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/BAHALLA/ai-agents)](https://github.com/BAHALLA/ai-agents/blob/main/LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v1.json)](https://docs.astral.sh/uv/)
+
 An open-source platform for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/).
 
 Agents can monitor infrastructure, diagnose issues, and take action — with built-in safety guardrails that require human confirmation before any destructive operation. Interact via the ADK web UI, terminal, or directly from Slack.
@@ -148,7 +153,7 @@ Every tool call across all agents is instrumented with Prometheus metrics — la
 
 ## Configuration
 
-Each agent loads typed settings from `.env` files via Pydantic. Shared variables (GCP project, model version) plus per-agent settings (broker addresses, API tokens, etc.) are documented in the configuration reference.
+Each agent loads typed settings from `.env` files via Pydantic. Every agent ships a `.env.example` next to its module (e.g. `agents/kafka-health/kafka_health_agent/.env.example`) documenting every supported variable — copy it to `.env` in the same directory and fill in your values. Shared variables (LLM provider, GCP project) plus per-agent settings (broker addresses, API tokens, etc.) are documented in the configuration reference.
 
 → **[Configuration reference](docs/configuration.md)** (env vars, infrastructure ports, Docker Compose profiles)
 

@@ -1,4 +1,4 @@
-.PHONY: help install test eval lint fmt infra-up infra-down infra-reset \
+.PHONY: help install test eval lint type-check fmt infra-up infra-down infra-reset \
        docker-build docker-demo docker-down \
        run-kafka-health run-kafka-health-cli \
        run-k8s run-k8s-cli \
@@ -24,6 +24,20 @@ eval: ## Run agent evaluation tests (requires LLM access)
 lint: ## Run linter checks (ruff check + format check)
 	uv run ruff check .
 	uv run ruff format --check .
+
+type-check: ## Run type checks (ty)
+	uv run ty check \
+		--extra-search-path core \
+		--extra-search-path agents/kafka-health \
+		--extra-search-path agents/k8s-health \
+		--extra-search-path agents/observability \
+		--extra-search-path agents/devops-assistant \
+		--extra-search-path agents/ops-journal \
+		--extra-search-path agents/slack-bot \
+		.
+
+ty: type-check ## Alias for type-check
+
 
 fmt: ## Auto-fix lint and format issues
 	uv run ruff check --fix .

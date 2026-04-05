@@ -7,6 +7,7 @@ Config values are loaded from environment variables and .env files.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,9 @@ class AgentConfig(BaseSettings):
 
         config = KafkaConfig(_env_file="path/to/.env")
     """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
     model_config = SettingsConfigDict(
         env_file=".env",

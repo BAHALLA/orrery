@@ -39,7 +39,7 @@ session_map = SessionMap()
 channel_ref: dict[str, str] = {"channel": "", "thread_ts": ""}
 
 
-def _create_bolt_app() -> AsyncApp:
+def _create_bolt_app() -> tuple[AsyncApp, dict[str, SlackAgentHandler | None]]:
     """Create and configure the Slack Bolt app with all event handlers."""
     bolt_app = AsyncApp(token=config.slack_bot_token)
 

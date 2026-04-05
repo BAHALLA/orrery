@@ -73,8 +73,8 @@ async def lifespan(app: FastAPI):
     # Use default plugins but skip the guardrail gate (Slack has its own
     # confirmation flow via interactive buttons).
     plugins = default_plugins(guardrail_mode="none")
-    app = App(name=APP_NAME, root_agent=root_agent, plugins=plugins)
-    runner = Runner(app=app, session_service=session_service)
+    adk_app = App(name=APP_NAME, root_agent=root_agent, plugins=plugins)
+    runner = Runner(app=adk_app, session_service=session_service)
 
     _handler = SlackAgentHandler(
         runner=runner,

@@ -130,6 +130,8 @@ async def create_kafka_topic(
                     "status": "error",
                     "message": f"Failed to create topic '{topic_name}': {str(e)}",
                 }
+        # Fallback if futures is empty
+        return {"status": "error", "message": "Kafka returned no results for topic creation."}
     except Exception as e:
         logger.exception("Unexpected error while creating topic '%s'", topic_name)
         return {
@@ -167,6 +169,8 @@ async def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
                     "status": "error",
                     "message": f"Failed to delete topic '{topic_name}': {str(e)}",
                 }
+        # Fallback if futures is empty
+        return {"status": "error", "message": "Kafka returned no results for topic deletion."}
     except Exception as e:
         logger.exception("Unexpected error while deleting topic '%s'", topic_name)
         return {

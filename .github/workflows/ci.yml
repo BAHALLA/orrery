@@ -5,16 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint:
-    name: Lint
+    name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Set up Python
         run: uv python install 3.11
@@ -28,14 +29,38 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
+      - name: Type check (ty)
+        run: |
+          uv run ty check \
+            --extra-search-path core \
+            --extra-search-path agents/kafka-health \
+            --extra-search-path agents/k8s-health \
+            --extra-search-path agents/observability \
+            --extra-search-path agents/devops-assistant \
+            --extra-search-path agents/ops-journal \
+            --extra-search-path agents/slack-bot \
+            .
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Bandit check
+        run: uvx bandit -r agents/ core/ -ll
+
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Set up Python
         run: uv python install 3.11
@@ -45,3 +70,26 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -v
+
+  eval:
+    name: Agent Evaluation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-eval')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run evaluations
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: make eval

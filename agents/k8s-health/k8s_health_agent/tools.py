@@ -312,7 +312,7 @@ async def get_pod_logs(
 
     try:
         v1 = _core_api()
-        kwargs = {"tail_lines": tail_lines}
+        kwargs: dict[str, Any] = {"tail_lines": tail_lines}
         if container:
             kwargs["container"] = container
         if since_seconds:
@@ -522,7 +522,7 @@ async def get_events(
 
     try:
         v1 = _core_api()
-        kwargs = {"limit": limit}
+        kwargs: dict[str, Any] = {"limit": limit}
         if field_selector:
             kwargs["field_selector"] = field_selector
 

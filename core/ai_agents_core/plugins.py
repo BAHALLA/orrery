@@ -98,18 +98,18 @@ class GuardrailsPlugin(BasePlugin):
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
     ) -> dict | None:
         """Check RBAC, then confirmation gate."""
         # RBAC check
-        result = self._authorize(tool=tool, args=args, tool_context=tool_context)
+        result = self._authorize(tool=tool, args=tool_args, tool_context=tool_context)
         if result is not None:
             return result
 
         # Confirmation gate
         if self._gate is not None:
-            result = self._gate(tool=tool, args=args, tool_context=tool_context)
+            result = self._gate(tool=tool, args=tool_args, tool_context=tool_context)
             if result is not None:
                 return result
 
@@ -145,20 +145,20 @@ class ResiliencePlugin(BasePlugin):
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
     ) -> dict | None:
-        return self._before(tool, args, tool_context)
+        return self._before(tool, tool_args, tool_context)
 
     async def after_tool_callback(
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
-        tool_response: dict,
+        result: dict,
     ) -> dict | None:
-        return self._after(tool, args, tool_context, tool_response)
+        return self._after(tool, tool_args, tool_context, result)
 
     async def on_tool_error_callback(
         self,
@@ -195,22 +195,20 @@ class MetricsPlugin(BasePlugin):
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
     ) -> dict | None:
-        return self._before(tool, args, tool_context)
+        return self._before(tool, tool_args, tool_context)
 
     async def after_tool_callback(
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
-        tool_response: dict,
+        result: dict,
     ) -> dict | None:
-        return self._after(
-            tool=tool, args=args, tool_context=tool_context, tool_response=tool_response
-        )
+        return self._after(tool=tool, tool_args=tool_args, tool_context=tool_context, result=result)
 
     async def on_tool_error_callback(
         self,
@@ -247,12 +245,12 @@ class AuditPlugin(BasePlugin):
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
-        tool_response: dict,
+        result: dict,
     ) -> dict | None:
         return self._callback(
-            tool=tool, args=args, tool_context=tool_context, tool_response=tool_response
+            tool=tool, args=tool_args, tool_context=tool_context, tool_response=result
         )
 
 
@@ -270,12 +268,12 @@ class ActivityPlugin(BasePlugin):
         self,
         *,
         tool: BaseTool,
-        args: dict[str, Any],
+        tool_args: dict[str, Any],
         tool_context: ToolContext,
-        tool_response: dict,
+        result: dict,
     ) -> dict | None:
         return self._callback(
-            tool=tool, args=args, tool_context=tool_context, tool_response=tool_response
+            tool=tool, args=tool_args, tool_context=tool_context, tool_response=result
         )
 
 

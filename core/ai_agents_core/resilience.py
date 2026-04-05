@@ -40,12 +40,14 @@ import threading
 import time
 from collections.abc import Callable
 from enum import Enum
-from typing import Any
+from typing import Any, TypeVar
 
 from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
 
 logger = logging.getLogger("ai_agents.resilience")
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 # ── Circuit Breaker ──────────────────────────────────────────────────
@@ -216,7 +218,7 @@ def with_retry(
     base_delay: float = 1.0,
     max_delay: float = 30.0,
     retryable: tuple[type[Exception], ...] = _DEFAULT_RETRYABLE,
-) -> Callable:
+) -> Callable[[F], F]:
     """Decorator that retries a tool function on transient errors.
 
     Uses exponential backoff with jitter: ``delay = min(base_delay * 2^attempt, max_delay)``
@@ -249,7 +251,7 @@ def with_retry(
             jittered,
         )
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: F) -> F:
         if inspect.iscoroutinefunction(func):
 
             @functools.wraps(func)
@@ -264,9 +266,10 @@ def with_retry(
                             jittered = _compute_delay(attempt)
                             _log_retry(func.__name__, attempt, exc, jittered)
                             await asyncio.sleep(jittered)
-                raise last_error  # type: ignore[misc]
+                assert last_error is not None
+                raise last_error
 
-            return async_wrapper
+            return async_wrapper  # type: ignore
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -280,8 +283,9 @@ def with_retry(
                         jittered = _compute_delay(attempt)
                         _log_retry(func.__name__, attempt, exc, jittered)
                         time.sleep(jittered)
-            raise last_error  # type: ignore[misc]
+            assert last_error is not None
+            raise last_error
 
-        return wrapper
+        return wrapper  # type: ignore
 
     return decorator
