@@ -70,7 +70,7 @@ _INSPECT_JSON = json.dumps(
             "Name": "/web-app",
             "State": {"Status": "running", "StartedAt": "2025-01-01T00:00:00Z", "Pid": 1234},
             "Config": {"Image": "nginx:latest", "Env": ["NGINX_PORT=80"]},
-            "NetworkSettings": {"Ports": {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}},
+            "NetworkSettings": {"Ports": {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}},  # nosec B104
         }
     ]
 )
