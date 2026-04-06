@@ -28,7 +28,7 @@ Interact via the **ADK web UI**, **terminal**, or directly from **Slack**.
 - **Slack integration** — Chat with agents from Slack, featuring interactive Approve/Deny buttons for guarded operations.
 - **Safety first** — Destructive tools (`@destructive`) and mutating tools (`@confirm`) require explicit human confirmation.
 - **Observability** — Every tool call is instrumented with Prometheus metrics (latency, errors, token tracking).
-- **Extensible** — Add new agents using the [Agent Factory](https://bahalla.github.io/devops-agents/core/README.md) and standardized plugins.
+- **Extensible** — Add new agents using the [Agent Factory](https://bahalla.github.io/devops-agents/core/) and standardized plugins.
 
 ## Quick Start (Docker)
 
