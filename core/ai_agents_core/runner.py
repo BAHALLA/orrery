@@ -6,6 +6,9 @@ user notes, and app-wide data survive across restarts.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import signal
 from collections.abc import Sequence
 
 from google.adk.agents import Agent
@@ -15,7 +18,10 @@ from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.genai import types
 
+from .health import HealthServer
 from .rbac import set_user_role
+
+logger = logging.getLogger("ai_agents.runner")
 
 
 async def run_persistent(
@@ -25,6 +31,7 @@ async def run_persistent(
     db_url: str | None = None,
     user_id: str = "default_user",
     plugins: Sequence[BasePlugin] | None = None,
+    health_port: int | None = None,
 ) -> None:
     """Run an agent in a persistent CLI loop with SQLite-backed sessions.
 
@@ -35,6 +42,8 @@ async def run_persistent(
         user_id: User ID for session scoping.
         plugins: Optional list of ADK plugins for cross-cutting concerns.
             Use ``default_plugins()`` for the standard set.
+        health_port: Port for the health probe server.  Defaults to the
+            ``HEALTH_PORT`` env var or 8080.
     """
     resolved_db_url = db_url or f"sqlite:///{app_name}.db"
 
@@ -49,6 +58,21 @@ async def run_persistent(
     )
     runner = Runner(app=app, session_service=session_service)
 
+    # Start health probe server
+    health = HealthServer()
+    health.start(port=health_port)
+
+    # Graceful shutdown via SIGTERM/SIGINT
+    shutdown_event = asyncio.Event()
+
+    def _signal_handler(sig: int, _frame: object) -> None:
+        sig_name = signal.Signals(sig).name
+        logger.info("Received %s, shutting down gracefully...", sig_name)
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
     initial_state: dict[str, object] = {}
     set_user_role(initial_state, "admin")  # CLI user gets admin (local dev)
     session = await session_service.create_session(
@@ -62,10 +86,14 @@ async def run_persistent(
     print(f"Database: {resolved_db_url}")
     print("Type 'quit' to exit, 'new' for a new session.\n")
 
-    while True:
+    while not shutdown_event.is_set():
         try:
-            user_input = input("You: ").strip()
+            user_input = await asyncio.to_thread(input, "You: ")
+            user_input = user_input.strip()
         except (EOFError, KeyboardInterrupt):
+            break
+
+        if shutdown_event.is_set():
             break
 
         if not user_input:
@@ -101,3 +129,5 @@ async def run_persistent(
 
         if response_text:
             print(f"\nAgent: {response_text}\n")
+
+    logger.info("Shutdown complete.")

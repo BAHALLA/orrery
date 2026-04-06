@@ -32,7 +32,7 @@ COPY agents/ agents/
 RUN uv sync --no-dev --frozen
 
 # ── Runtime stage ─────────────────────────────────────────────────────
-FROM python:3.14-slim-bookworm
+FROM python:3.11-slim-bookworm
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
@@ -53,5 +53,7 @@ USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-EXPOSE 8000
+EXPOSE 8000 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')" || exit 1
 CMD ["adk", "web", "--host", "0.0.0.0", "--port", "8000", "agents/devops-assistant"]
