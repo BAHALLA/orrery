@@ -13,7 +13,7 @@ Agents can monitor infrastructure, diagnose issues, and take action — with bui
 
 ## Key Features
 
-- **Multi-agent orchestration** — a root agent delegates to specialist agents via `AgentTool` (LLM-routed) and deterministic sub-agent workflows ([ADR-002](adr/002-agent-tool-vs-sub-agents.md))
+- **Multi-agent orchestration** — a root agent delegates to specialist agents via `AgentTool` (LLM-routed) and deterministic sub-agent workflows ([ADR-002](adr/002-agent-tool-vs-sub-agents.md)). Aligned with [Google Cloud Agentic Design Patterns](agent-design-patterns.md).
 - **Structured workflows** — `SequentialAgent` and `ParallelAgent` for deterministic multi-step pipelines (e.g., incident triage checks Kafka, K8s, Docker, and observability in parallel, then summarizes)
 - **Slack integration** — chat with the agent from Slack, with interactive Approve/Deny buttons for guarded operations
 - **ADK Plugins** — cross-cutting concerns (RBAC, guardrails, metrics, audit, activity tracking, resilience, error handling) are packaged as ADK plugins and registered once on the Runner via `default_plugins()` — no per-agent callback wiring

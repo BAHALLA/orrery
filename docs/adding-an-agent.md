@@ -2,6 +2,13 @@
 
 See [CONTRIBUTING.md](https://github.com/BAHALLA/devops-agents/blob/main/CONTRIBUTING.md) for the full contribution guide. Below is the minimal boilerplate to get a new agent running.
 
+## 0. Choose a Design Pattern
+
+Before writing code, decide which [Agentic Design Pattern](agent-design-patterns.md) your agent should follow:
+- **Single Agent (ReAct)**: Good for standalone specialists.
+- **Sequential/Parallel**: Good for deterministic diagnostic or remediation pipelines.
+- **Coordinator**: Use if your agent needs to delegate to other specialist agents.
+
 ## 1. Create the package
 
 ```bash

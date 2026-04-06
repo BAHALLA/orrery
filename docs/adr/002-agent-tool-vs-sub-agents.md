@@ -18,7 +18,7 @@ Previously, all six agents were in `sub_agents`, mixing two fundamentally differ
 
 This violated the ADK best practice: use sub-agents for fixed workflows, use AgentTool for LLM-driven routing.
 
-**Reference:** [Where to use sub-agents versus agents as tools](https://cloud.google.com/blog/topics/developers-practitioners/where-to-use-sub-agents-versus-agents-as-tools) (Google Cloud Blog)
+**Reference:** [Where to use sub-agents versus agents as tools](https://cloud.google.com/blog/topics/developers-practitioners/where-to-use-sub-agents-versus-agents-as-tools) (Google Cloud Blog). These patterns are formally audited in [Agentic Design Patterns](../agent-design-patterns.md).
 
 ## Decision
 
