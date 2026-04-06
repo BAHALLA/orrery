@@ -1,8 +1,8 @@
 # AI Agents for DevOps & SRE
 
-[![CI](https://github.com/BAHALLA/ai-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/BAHALLA/ai-agents/actions/workflows/ci.yml)
+[![CI](https://github.com/BAHALLA/devops-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/BAHALLA/devops-agents/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://bahalla.github.io/devops-agents/)
-[![License: MIT](https://img.shields.io/github/license/BAHALLA/ai-agents)](https://github.com/BAHALLA/ai-agents/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/github/license/BAHALLA/devops-agents)](https://github.com/BAHALLA/devops-agents/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v1.json)](https://docs.astral.sh/uv/)
 
@@ -36,7 +36,7 @@ The fastest way to try the platform is using Docker Compose. You only need an AP
 
 ```bash
 # Clone the repo
-git clone https://github.com/BAHALLA/ai-agents.git && cd ai-agents
+git clone https://github.com/BAHALLA/devops-agents.git && cd devops-agents
 
 # Start the full stack with Gemini (default)
 GOOGLE_API_KEY=your-key docker compose --profile demo up -d

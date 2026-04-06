@@ -23,7 +23,7 @@ Place a `.env` file in `agents/kafka-health/kafka_health_agent/.env`:
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092   # defaults to localhost:9092
 ```
 
-See the root [README](../../README.md#environment-configuration) for Google AI / Vertex AI config.
+See the root [README](../../README.md#configuration) for Google AI / Vertex AI config.
 
 ## Running
 

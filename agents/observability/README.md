@@ -29,7 +29,7 @@ LOKI_URL=http://localhost:3100           # defaults to http://localhost:3100
 ALERTMANAGER_URL=http://localhost:9093   # defaults to http://localhost:9093
 ```
 
-See the root [README](../../README.md#environment-configuration) for Google AI / Vertex AI config.
+See the root [README](../../README.md#configuration) for Google AI / Vertex AI config.
 
 ## Running
 

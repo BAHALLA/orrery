@@ -33,7 +33,7 @@ for agent_path in agents_dir.iterdir():
 
                 # Fix links like ../../docs/adr/002-agent-tool-vs-sub-agents.md -> ../adr/002-agent-tool-vs-sub-agents.md
                 content = content.replace("../../docs/", "../")
-                # Fix links like ../../README.md#environment-configuration -> ../index.md#environment-configuration
+                # Fix links like ../../README.md#configuration -> ../index.md#configuration
                 content = content.replace("../../README.md", "../index.md")
                 # Fix links to other agents like ../kafka-health/ -> kafka-health.md
                 for other_agent in agents_dir.iterdir():

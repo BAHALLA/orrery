@@ -38,7 +38,7 @@ Place a `.env` file in `agents/k8s-health/k8s_health_agent/.env`:
 
 The agent uses the default kubeconfig (`~/.kube/config`) or in-cluster config automatically.
 
-See the root [README](../../README.md#environment-configuration) for Google AI / Vertex AI config.
+See the root [README](../../README.md#configuration) for Google AI / Vertex AI config.
 
 ## Running
 

@@ -1,7 +1,7 @@
 # AI Agents for DevOps & SRE
 
-[![CI](https://github.com/BAHALLA/ai-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/BAHALLA/ai-agents/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/BAHALLA/ai-agents)](https://github.com/BAHALLA/ai-agents/blob/main/LICENSE)
+[![CI](https://github.com/BAHALLA/devops-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/BAHALLA/devops-agents/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/BAHALLA/devops-agents)](https://github.com/BAHALLA/devops-agents/blob/main/LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v1.json)](https://docs.astral.sh/uv/)
 
@@ -179,8 +179,8 @@ All external dependencies (Kafka, Kubernetes, Docker, Slack) are mocked — no r
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](https://github.com/BAHALLA/ai-agents/blob/main/CONTRIBUTING.md) for guidelines on adding new agents, improving existing ones, and submitting pull requests.
+Contributions are welcome! See [CONTRIBUTING.md](https://github.com/BAHALLA/devops-agents/blob/main/CONTRIBUTING.md) for guidelines on adding new agents, improving existing ones, and submitting pull requests.
 
 ## License
 
-This project is licensed under the [MIT License](https://github.com/BAHALLA/ai-agents/blob/main/LICENSE).
+This project is licensed under the [MIT License](https://github.com/BAHALLA/devops-agents/blob/main/LICENSE).

@@ -1,6 +1,6 @@
 # Adding a New Agent
 
-See [CONTRIBUTING.md](https://github.com/BAHALLA/ai-agents/blob/main/CONTRIBUTING.md) for the full contribution guide. Below is the minimal boilerplate to get a new agent running.
+See [CONTRIBUTING.md](https://github.com/BAHALLA/devops-agents/blob/main/CONTRIBUTING.md) for the full contribution guide. Below is the minimal boilerplate to get a new agent running.
 
 ## 1. Create the package
 
@@ -87,4 +87,4 @@ async def test_get_status_success(mock_api):
     assert result["status"] == "success"
 ```
 
-Mock all external dependencies — no test should require running infrastructure. See [CONTRIBUTING.md](https://github.com/BAHALLA/ai-agents/blob/main/CONTRIBUTING.md#testing-guidelines) for testing conventions.
+Mock all external dependencies — no test should require running infrastructure. See [CONTRIBUTING.md](https://github.com/BAHALLA/devops-agents/blob/main/CONTRIBUTING.md#testing-guidelines) for testing conventions.
