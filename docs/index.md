@@ -15,45 +15,14 @@ Agents monitor infrastructure, diagnose issues, and take action — with built-i
 
 ## Highlights
 
-<div class="grid cards" markdown>
-
--   :material-robot-outline:{ .lg .middle } **Multi-Agent Orchestration**
-
-    ---
-
-    A root agent delegates to specialists via `AgentTool` and deterministic sub-agent workflows. [Learn more](agent-design-patterns.md)
-
--   :material-shield-check:{ .lg .middle } **Safety Guardrails**
-
-    ---
-
-    `@destructive` and `@confirm` decorators gate dangerous operations. RBAC (viewer/operator/admin) enforced globally via plugins. [ADR-001](adr/001-rbac.md)
-
--   :material-brain:{ .lg .middle } **Cross-Session Memory**
-
-    ---
-
-    Agents recall past incidents and investigations. Sensitive data is automatically redacted before storage. [Setup guide](memory.md)
-
--   :material-swap-horizontal:{ .lg .middle } **Multi-Provider LLM**
-
-    ---
-
-    Switch between Gemini, Claude, OpenAI, Ollama, or any LiteLLM provider with two env vars. [Configuration](config/general.md)
-
--   :material-chat-outline:{ .lg .middle } **Multi-Interface**
-
-    ---
-
-    Chat with agents from the ADK web UI, terminal, Slack, or Google Chat — same RBAC everywhere. [Integrations](integrations.md)
-
--   :material-chart-line:{ .lg .middle } **Observable & Resilient**
-
-    ---
-
-    Prometheus metrics, structured JSON logging, audit trails, circuit breakers, and retry with backoff. [Metrics](metrics.md)
-
-</div>
+| | |
+|---|---|
+| **Multi-Agent Orchestration** | A root agent delegates to specialists via `AgentTool` and deterministic sub-agent workflows. [Learn more](agent-design-patterns.md) |
+| **Safety Guardrails** | `@destructive` and `@confirm` decorators gate dangerous operations. RBAC (viewer/operator/admin) enforced globally via plugins. [ADR-001](adr/001-rbac.md) |
+| **Cross-Session Memory** | Agents recall past incidents and investigations. Sensitive data is automatically redacted before storage. [Setup guide](memory.md) |
+| **Multi-Provider LLM** | Switch between Gemini, Claude, OpenAI, Ollama, or any LiteLLM provider with two env vars. [Configuration](config/general.md) |
+| **Multi-Interface** | Chat from the ADK web UI, terminal, Slack, or Google Chat — same RBAC everywhere. [Integrations](integrations.md) |
+| **Observable & Resilient** | Prometheus metrics, structured JSON logging, audit trails, circuit breakers, and retry with backoff. [Metrics](metrics.md) |
 
 ---
 

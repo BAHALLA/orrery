@@ -39,6 +39,9 @@ theme:
     - content.tooltips
     - content.tabs.link
 
+extra_css:
+  - stylesheets/extra.css
+
 plugins:
   - search
   - minify:

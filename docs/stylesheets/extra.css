@@ -1,0 +1,31 @@
+/* ── Homepage highlights table ─────────────────────────────────────── */
+/* Style the first table on the homepage as borderless feature cards */
+.md-content h2#highlights + table {
+  border: none;
+  box-shadow: none;
+}
+
+.md-content h2#highlights + table thead {
+  display: none;
+}
+
+.md-content h2#highlights + table td {
+  border: none;
+  vertical-align: top;
+  padding: 0.6rem 0.8rem;
+}
+
+.md-content h2#highlights + table td:first-child {
+  white-space: nowrap;
+  font-weight: 600;
+  min-width: 10rem;
+  color: var(--md-primary-fg-color);
+}
+
+.md-content h2#highlights + table tr {
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-content h2#highlights + table tr:last-child {
+  border-bottom: none;
+}
