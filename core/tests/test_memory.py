@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from google.adk.events import Event
+from google.adk.memory.memory_entry import MemoryEntry
 from google.adk.sessions.session import Session
 from google.genai import types
 
@@ -39,6 +40,16 @@ def _make_session(
     return session
 
 
+def _get_text(mem: MemoryEntry) -> str:
+    """Extract the first text part from a MemoryEntry, with type narrowing."""
+    assert mem.content is not None
+    assert mem.content.parts is not None
+    assert len(mem.content.parts) > 0
+    text = mem.content.parts[0].text
+    assert text is not None
+    return text
+
+
 # ── Redaction tests ──────────────────────────────────────────────────
 
 
@@ -56,7 +67,7 @@ async def test_redacts_password_and_token():
 
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="Config")
     assert len(result.memories) >= 1
-    redacted_text = result.memories[0].content.parts[0].text
+    redacted_text = _get_text(result.memories[0])
     assert "hunter2" not in redacted_text
     assert "abc123xyz" not in redacted_text
     assert "[REDACTED]" in redacted_text
@@ -72,7 +83,7 @@ async def test_redacts_api_key():
     await svc.add_session_to_memory(session)
 
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="Using")
-    redacted_text = result.memories[0].content.parts[0].text
+    redacted_text = _get_text(result.memories[0])
     assert "sk-1234567890abcdef" not in redacted_text
     assert "[REDACTED]" in redacted_text
 
@@ -94,7 +105,7 @@ async def test_redacts_private_key():
     await svc.add_session_to_memory(session)
 
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="Found")
-    redacted_text = result.memories[0].content.parts[0].text
+    redacted_text = _get_text(result.memories[0])
     assert "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn" not in redacted_text
     assert "-----BEGIN RSA PRIVATE KEY-----" not in redacted_text
     assert "[REDACTED]" in redacted_text
@@ -111,9 +122,8 @@ async def test_add_events_to_memory_redacts():
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="secret")
     # The original secret value should not appear
     for mem in result.memories:
-        for part in mem.content.parts:
-            if part.text:
-                assert "mysecretvalue" not in part.text
+        text = _get_text(mem)
+        assert "mysecretvalue" not in text
 
 
 # ── Max entries tests ────────────────────────────────────────────────
@@ -131,7 +141,7 @@ async def test_max_entries_enforced():
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="Event")
     # Only the 3 most recent events should be stored
     assert len(result.memories) == 3
-    texts = [m.content.parts[0].text for m in result.memories]
+    texts = [_get_text(m) for m in result.memories]
     assert "Event 4" in texts
     assert "Event 5" in texts
     assert "Event 6" in texts
@@ -155,7 +165,7 @@ async def test_search_delegates_to_inner():
 
     result = await svc.search_memory(app_name="test_app", user_id="test_user", query="Kafka")
     assert len(result.memories) >= 1
-    assert any("Kafka" in m.content.parts[0].text for m in result.memories)
+    assert any("Kafka" in _get_text(m) for m in result.memories)
 
 
 @pytest.mark.asyncio
