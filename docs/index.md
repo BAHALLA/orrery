@@ -52,7 +52,42 @@ graph LR
     ROOT -.-> P3
 ```
 
-### 🧠 Core Philosophy
+---
+
+## ⚡ Quick Access
+
+<div class="grid cards" markdown>
+
+-   :material-rocket-launch:{ .lg .middle } __[Getting Started](getting-started.md)__
+
+    ---
+
+    Launch the platform in 5 minutes using Docker and try your first triage.
+
+-   :material-book-open-variant:{ .lg .middle } __[Adding an Agent](adding-an-agent.md)__
+
+    ---
+
+    Learn how to build and test your own specialist agents using our core library.
+
+-   :material-shield-lock:{ .lg .middle } __[RBAC & Safety](adr/001-rbac.md)__
+
+    ---
+
+    Understand how our 3-role hierarchy and guardrails protect your infrastructure.
+
+-   :material-chart-bar:{ .lg .middle } __[Metrics & Monitoring](metrics.md)__
+
+    ---
+
+    Explore the built-in Prometheus metrics and how to track agent performance.
+
+</div>
+
+---
+
+## 🧠 Core Philosophy
+
 1.  **Safety First:** No destructive tool executes without verified human confirmation.
 2.  **Autonomous Investigation:** Agents run diagnostics in parallel, mimicking an SRE's thought process.
 3.  **Closed-Loop Remediation:** Actions are always followed by verification and retry loops.
@@ -68,28 +103,3 @@ graph LR
 | [**agents**](agents/devops-assistant.md) | `agents/` | Specialist agent implementations (Kafka, K8s, Docker, etc.). |
 | [**infra**](config/general.md#infrastructure) | `infra/` | Local diagnostic stack (Prometheus, Loki, Kafka, Grafana). |
 | [**docs**](adr/001-rbac.md) | `docs/` | Architectural Decision Records (ADR) and Enhancement Proposals (AEP). |
-
----
-
-## 🛠️ Key Capabilities
-
-??? info "Multi-Agent Orchestration"
-    The root agent uses **AgentTool** for dynamic routing and **Sub-agents** for fixed workflows like incident triage. [Read ADR-002](adr/002-agent-tool-vs-sub-agents.md) for details.
-
-??? info "RBAC & Safety"
-    A 3-role hierarchy (**Viewer/Operator/Admin**) derived automatically from tool decorators. Destructive operations are gated by a secure confirmation flow. [Read ADR-001](adr/001-rbac.md).
-
-??? info "Self-Healing Remediation"
-    Implementation of the `LoopAgent` pattern: Act → Verify → Retry. Agents can automatically fix common issues found during triage. [Read AEP-004](enhancements/aep-004-loop-agent-remediation.md).
-
-??? info "Cross-Session Memory"
-    Uses ADK's Memory Service with a security layer to redact PII before persisting sessions. [Learn about Memory](memory.md).
-
----
-
-## 🚀 Getting Started
-
-1.  **[Quick Start](getting-started.md)** — Launch the platform in 5 minutes using Docker.
-2.  **[Configuration](config/general.md)** — Set up your LLM provider (Gemini, Claude, OpenAI).
-3.  **[Slack Integration](integrations/slack.md)** — Connect your agents to your team's workspace.
-4.  **[Developer Guide](adding-an-agent.md)** — Build your own specialist agents.

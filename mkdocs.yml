@@ -30,6 +30,8 @@ theme:
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.sections
+    - navigation.expand
+    - navigation.path
     - navigation.top
     - navigation.tracking
     - navigation.indexes
@@ -38,6 +40,15 @@ theme:
     - content.code.copy
     - content.tooltips
     - content.tabs.link
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/BAHALLA/devops-agents
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/ai-agents-core/
+
+copyright: Copyright &copy; 2026 Taoufiq &mdash; Built with Google ADK
 
 extra_css:
   - stylesheets/extra.css

@@ -1,46 +1,48 @@
-/* ── Homepage highlights table ─────────────────────────────────────── */
-/* Style the first table on the homepage as borderless feature rows */
-.md-content h2#highlights + table {
-  border: none;
-  box-shadow: none;
-  border-collapse: collapse;
+/* ── Homepage Grid Cards ─────────────────────────────────────────── */
+.grid.cards > ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding: 0;
+  list-style: none;
 }
 
-.md-content h2#highlights + table thead {
-  display: none;
+.grid.cards > ul > li {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+  padding: 1rem;
+  transition: border 0.2s, box-shadow 0.2s;
 }
 
-.md-content h2#highlights + table td {
-  border: none;
-  vertical-align: top;
-  padding: 0.8rem 1rem;
+.grid.cards > ul > li:hover {
+  border-color: var(--md-primary-fg-color);
+  box-shadow: var(--md-shadow-z1);
 }
 
-.md-content h2#highlights + table td:first-child {
-  white-space: nowrap;
-  font-weight: 600;
-  min-width: 10rem;
-  color: var(--md-primary-fg-color);
+.grid.cards > ul > li hr {
+  margin: 0.5rem 0;
 }
 
-.md-content h2#highlights + table tr {
-  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+.grid.cards > ul > li a {
+  font-weight: 700;
+  display: block;
+  margin-bottom: 0.5rem;
 }
 
-.md-content h2#highlights + table tr:last-child {
-  border-bottom: none;
+/* Icon styling in cards */
+.grid.cards .middle {
+  vertical-align: middle;
+  margin-right: 0.5rem;
 }
 
-/* Remove outer table border */
-.md-content h2#highlights + table,
-.md-content h2#highlights + table th,
-.md-content h2#highlights + table td,
-.md-content h2#highlights + table tr {
-  border-left: none;
-  border-right: none;
-  border-top: none;
+.grid.cards .lg {
+  font-size: 1.5rem;
 }
 
-.md-content h2#highlights + table tr:first-child td {
-  border-top: none;
+/* ── Mermaid Diagram Styling ─────────────────────────────────────── */
+.mermaid {
+  background-color: var(--md-default-bg-color);
+  padding: 1rem;
+  border-radius: 0.2rem;
+  margin-bottom: 1rem;
 }
