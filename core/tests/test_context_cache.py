@@ -128,7 +128,7 @@ class TestRunPersistentCacheConfig:
                 )
 
             call_kwargs = mock_app_cls.call_args
-            assert "context_cache_config" not in call_kwargs.kwargs
+            assert call_kwargs.kwargs.get("context_cache_config") is None
 
 
 # ── Cache metrics ────────────────────────────────────────────────────

@@ -98,15 +98,14 @@ async def run_persistent(
 
     # Wrap the agent in an ADK App so plugins can be passed via the supported
     # `app` argument (the `plugins=` kwarg on Runner is deprecated).
-    app_kwargs: dict[str, object] = {
-        "name": app_name,
-        "root_agent": agent,
-        "plugins": list(plugins) if plugins else [],
-    }
     if context_cache_config is not None:
-        app_kwargs["context_cache_config"] = context_cache_config
         logger.info("Context caching enabled: %s", context_cache_config)
-    app = App(**app_kwargs)
+    app = App(
+        name=app_name,
+        root_agent=agent,
+        plugins=list(plugins) if plugins else [],
+        context_cache_config=context_cache_config,
+    )
     runner = Runner(app=app, session_service=session_service, memory_service=memory_service)
 
     # Start health probe server
