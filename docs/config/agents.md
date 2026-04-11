@@ -1,6 +1,6 @@
 # Agent Configuration
 
-Each agent defines its own configuration class that inherits from `AgentConfig`. Values are loaded from `.env` files located within the agent's package directory.
+Each agent defines its own configuration class that inherits from `AgentConfig`. Values are loaded from environment variables or the centralized `.env` file at the project root.
 
 ## Agent-Specific Settings
 
@@ -17,12 +17,12 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | **slack-bot** | `SLACK_ADMIN_USERS` | — | Comma-separated Slack user IDs with `admin` role |
 | **slack-bot** | `SLACK_OPERATOR_USERS` | — | Comma-separated Slack user IDs with `operator` role |
 
-## Local `.env` Files
+## Centralized Environment
 
-Each agent ships with a `.env.example` template. To configure an agent:
+The platform uses a single `.env` file at the root of the workspace. To configure the agents:
 
-1. Navigate to the agent's directory (e.g., `agents/kafka-health/kafka_health_agent/`).
-2. Copy `.env.example` to `.env`.
-3. Fill in the required values.
+1. Create a `.env` file at the project root: `cp .env.example .env`.
+2. Fill in the required global and agent-specific values.
 
-The `load_agent_env(__file__)` helper automatically loads these values when the agent starts.
+The `load_agent_env()` and `load_config()` helpers in the core library are configured to search for this centralized file automatically.
+

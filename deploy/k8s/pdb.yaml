@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: devops-assistant
+  namespace: ai-agents
+  labels:
+    app.kubernetes.io/name: devops-assistant
+spec:
+  # Ensure at least one replica is always available during voluntary
+  # disruptions (node drains, rolling updates, cluster upgrades).
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: devops-assistant

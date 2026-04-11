@@ -11,11 +11,15 @@ import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from google.adk.apps import App
 from google.adk.runners import Runner
 from google.adk.sessions.database_session_service import DatabaseSessionService
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler
 from slack_bolt.async_app import AsyncApp
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from ai_agents_core import MetricsPlugin, authorize, default_plugins
 
@@ -31,6 +35,44 @@ logger = logging.getLogger("slack_bot")
 config = SlackBotConfig()
 store = ConfirmationStore()
 session_map = SessionMap()
+
+
+def _client_ip(request: Request) -> str:
+    """Return the caller's IP, honoring ``X-Forwarded-For`` when trusted.
+
+    When ``slack_trusted_proxy_hops > 0`` the bot assumes it is running
+    behind that many reverse-proxy hops (e.g. ingress-nginx + an LB) and
+    reads the corresponding entry from ``X-Forwarded-For``. With a hop
+    count of 0 (the default) the request's direct peer is used — this is
+    the safe choice when the bot is exposed without a trusted proxy,
+    because ``X-Forwarded-For`` is spoofable by any client.
+
+    The header is right-most-trusted: the last entry is the direct peer
+    and each preceding hop is one step further toward the original
+    client. We walk back ``hops`` entries from the right.
+    """
+    hops = config.slack_trusted_proxy_hops
+    if hops <= 0:
+        return get_remote_address(request)
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return get_remote_address(request)
+
+    chain = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
+    if not chain:
+        return get_remote_address(request)
+    # Index from the right: hops=1 → chain[-1], hops=2 → chain[-2], ...
+    # Clamp to the available length so a misconfigured hops value still
+    # yields a deterministic key (the left-most known entry).
+    idx = max(-len(chain), -hops)
+    return chain[idx]
+
+
+# Per-IP rate limiter for the public Slack webhook. Slack retries on 429
+# with backoff, so limiting here protects the LLM backend without dropping
+# legitimate events. Rate is configurable via SLACK_RATE_LIMIT env var.
+limiter = Limiter(key_func=_client_ip, default_limits=[config.slack_rate_limit])
 
 # Mutable ref updated per-message so the confirmation callback
 # knows where to post buttons.
@@ -57,7 +99,7 @@ async def lifespan(app: FastAPI):
     # Import agent here to avoid circular imports at module level
     from devops_assistant.agent import root_agent
 
-    session_service = DatabaseSessionService(db_url=config.slack_db_url)
+    session_service = DatabaseSessionService(db_url=config.resolve_db_url())
 
     # Slack-specific confirmation buttons are kept as agent-level callback.
     # Cross-cutting concerns (RBAC, metrics, audit, etc.) are handled by plugins.
@@ -225,10 +267,23 @@ async def handle_deny(ack, action, say, body):
 # ── FastAPI app ───────────────────────────────────────────────────────
 
 api = FastAPI(title="DevOps Slack Bot", lifespan=lifespan)
+api.state.limiter = limiter
+
+
+def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    detail = getattr(exc, "detail", str(exc))
+    return JSONResponse(
+        status_code=429,
+        content={"error": "rate_limited", "detail": str(detail)},
+    )
+
+
+api.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 slack_handler = AsyncSlackRequestHandler(bolt_app)
 
 
 @api.post("/slack/events")
+@limiter.limit(config.slack_rate_limit)
 async def slack_events(request: Request):
     """Slack Events API and interactivity endpoint."""
     return await slack_handler.handle(request)

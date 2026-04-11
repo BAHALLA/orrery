@@ -22,6 +22,7 @@ from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.genai import types
 
 from .health import HealthServer
+from .log import mask_dsn
 from .rbac import set_user_role
 
 logger = logging.getLogger("ai_agents.runner")
@@ -91,8 +92,21 @@ async def run_persistent(
         context_cache_config: Optional context caching configuration.
             Use ``create_context_cache_config()`` for env-var-configurable
             defaults.  Only effective with Gemini models.
+
+    Session database resolution order:
+
+    1. Explicit ``db_url`` argument (highest priority).
+    2. ``DATABASE_URL`` environment variable — use a PostgreSQL URL
+       (``postgresql+asyncpg://user:pass@host:5432/agents``) for
+       multi-instance deployments. SQLite does not support concurrent
+       writers and must not be used when running multiple replicas.
+    3. SQLite fallback ``sqlite:///{app_name}.db`` (single-instance only).
     """
-    resolved_db_url = db_url or f"sqlite:///{app_name}.db"
+    resolved_db_url = db_url or os.getenv("DATABASE_URL") or f"sqlite:///{app_name}.db"
+    if resolved_db_url.startswith("sqlite"):
+        logger.info("Using SQLite session store — not safe for multi-instance deployments")
+    else:
+        logger.info("Using database session store: %s", mask_dsn(resolved_db_url))
 
     session_service = DatabaseSessionService(db_url=resolved_db_url)
 
@@ -133,7 +147,7 @@ async def run_persistent(
 
     print(f"{agent.name} (persistent mode)")
     print(f"Session: {session.id}")
-    print(f"Database: {resolved_db_url}")
+    print(f"Database: {mask_dsn(resolved_db_url)}")
     print("Type 'quit' to exit, 'new' for a new session.\n")
 
     while not shutdown_event.is_set():

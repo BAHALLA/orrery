@@ -1,0 +1,153 @@
+## Default values for devops-assistant.
+## Override with `helm install ... -f my-values.yaml` or `--set key=value`.
+
+image:
+  repository: ghcr.io/bahalla/devops-agents
+  tag: ""  # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Number of replicas. Ignored when autoscaling.enabled is true.
+replicaCount: 2
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9100"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Main ADK web command. Override to run alternate entry points.
+command:
+  - adk
+  - web
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+  - agents/devops-assistant
+
+service:
+  type: ClusterIP
+  httpPort: 8000
+  metricsPort: 9100
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: agents.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# SIGTERM handling — give in-flight LLM calls time to finish.
+terminationGracePeriodSeconds: 60
+preStopSleepSeconds: 10
+
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 15
+    periodSeconds: 30
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  startup:
+    path: /healthz
+    periodSeconds: 5
+    failureThreshold: 12
+
+## ── Application config ──────────────────────────────────────────────
+## Values placed under `config` are rendered into a ConfigMap and mounted
+## via envFrom. Secret keys (API tokens, DATABASE_URL) MUST go under
+## `secrets` or be provided out-of-band via `existingSecret`.
+config:
+  MODEL_PROVIDER: gemini
+  MODEL_NAME: gemini-2.0-flash
+  GEMINI_MODEL_VERSION: gemini-2.0-flash
+  GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
+  ENABLE_METRICS_SERVER: "true"
+  HEALTH_PORT: "8080"
+  METRICS_PORT: "9100"
+  LOG_LEVEL: INFO
+  CONTEXT_CACHE_MIN_TOKENS: "2048"
+  CONTEXT_CACHE_TTL_SECONDS: "600"
+  CONTEXT_CACHE_INTERVALS: "10"
+  KAFKA_BOOTSTRAP_SERVERS: kafka.data.svc.cluster.local:9092
+  PROMETHEUS_URL: http://prometheus.observability.svc.cluster.local:9090
+  LOKI_URL: http://loki.observability.svc.cluster.local:3100
+  ALERTMANAGER_URL: http://alertmanager.observability.svc.cluster.local:9093
+
+## Secret values. Leave empty and set `existingSecret` to use a Secret
+## managed out-of-band (External Secrets Operator, Sealed Secrets, Vault).
+secrets: {}
+  # GOOGLE_API_KEY: ""
+  # ANTHROPIC_API_KEY: ""
+  # OPENAI_API_KEY: ""
+  # DATABASE_URL: "postgresql+asyncpg://user:pass@postgres:5432/agents"
+  # JWT_SECRET: ""
+
+## Name of a pre-existing Secret. If set, Helm will NOT manage secrets —
+## keys are mounted via envFrom.secretRef. This is the recommended path
+## for production.
+existingSecret: ""
+
+networkPolicy:
+  enabled: true
+  ingressControllerNamespace: ingress-nginx
+  monitoringNamespace: observability
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: devops-assistant
+          topologyKey: kubernetes.io/hostname

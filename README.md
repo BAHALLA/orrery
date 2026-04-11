@@ -53,6 +53,7 @@ The fastest way to try the platform is using Docker Compose.
 git clone https://github.com/BAHALLA/devops-agents.git && cd devops-agents
 
 # 2. Start with Gemini (default)
+# This launches Kafka (KRaft), PostgreSQL, Prometheus stack, and the Agent.
 GOOGLE_API_KEY=your-key docker compose --profile demo up -d
 
 # 3. Open the web UI

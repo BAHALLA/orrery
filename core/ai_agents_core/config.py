@@ -20,13 +20,14 @@ class AgentConfig(BaseSettings):
         class KafkaConfig(AgentConfig):
             kafka_bootstrap_servers: str = "localhost:9092"
 
-        config = KafkaConfig(_env_file="path/to/.env")
+        config = KafkaConfig()  # Loads from centralized .env or env vars
     """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
     model_config = SettingsConfigDict(
+        # Load from .env in CWD (usually project root when running via compose/adk)
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -55,11 +56,19 @@ class AgentConfig(BaseSettings):
     gemini_model_version: str | None = None
 
 
-def load_config(config_cls: type[AgentConfig], agent_file: str) -> AgentConfig:
-    """Load config from the .env file next to the given agent module.
+def load_config(config_cls: type[AgentConfig], agent_file: str | None = None) -> AgentConfig:
+    """Load config from the centralized .env or a local fallback.
+
+    By default, it uses Pydantic's standard loading logic (environment variables
+    and .env in the current working directory). If ``agent_file`` is provided
+    and a .env file exists next to it, that file is loaded with precedence.
 
     Usage:
         config = load_config(KafkaConfig, __file__)
     """
-    env_path = Path(agent_file).parent / ".env"
-    return config_cls(_env_file=env_path)
+    if agent_file:
+        env_path = Path(agent_file).parent / ".env"
+        if env_path.exists():
+            return config_cls(_env_file=env_path)
+
+    return config_cls()

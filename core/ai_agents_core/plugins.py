@@ -209,7 +209,12 @@ class MetricsPlugin(BasePlugin):
         tool_context: ToolContext,
         result: dict,
     ) -> dict | None:
-        return self._after(tool=tool, tool_args=tool_args, tool_context=tool_context, result=result)
+        return self._after(
+            tool=tool,
+            args=tool_args,
+            tool_context=tool_context,
+            tool_response=result,
+        )
 
     async def on_tool_error_callback(
         self,

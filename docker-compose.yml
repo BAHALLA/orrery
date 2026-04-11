@@ -1,71 +1,39 @@
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.9.2
-    hostname: zookeeper
-    container_name: zookeeper
-    restart: unless-stopped
-    ports:
-      - "2181:2181"
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-      ZOOKEEPER_INIT_LIMIT: 5
-      ZOOKEEPER_SYNC_LIMIT: 2
-    volumes:
-      - zk-data:/var/lib/zookeeper/data
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   kafka:
     image: confluentinc/cp-kafka:7.9.2
     hostname: kafka
     container_name: kafka
     restart: unless-stopped
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     ports:
       - "9092:9092"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:19092,PLAINTEXT_HOST://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-
-      # Topic configuration for learning
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:19092,CONTROLLER://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29092'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
-      KAFKA_MIN_INSYNC_REPLICAS: 1
-
+      KAFKA_CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       # Performance and resource settings for local development
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
       KAFKA_DELETE_TOPIC_ENABLE: 'true'
-
-      # JVM settings for better local performance
-      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
-
-      # Logging configuration
       KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
       KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
-
-      # Kafka Streams friendly settings
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "bash", "-c", "unset JMX_PORT; kafka-topics --bootstrap-server kafka:19092 --list"]
-      interval: 30s
+      test: ["CMD", "bash", "-c", "kafka-topics --bootstrap-server kafka:19092 --list"]
+      interval: 10s
       timeout: 10s
       retries: 5
-
 
   kafka-ui:
     image: kafbat/kafka-ui
@@ -93,6 +61,26 @@ services:
       - "--kafka.server=kafka:19092"
       - "--topic.filter=.*"
       - "--group.filter=.*"
+
+  # ── Session storage ──────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agents}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agents_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-agents}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agents} -d ${POSTGRES_DB:-agents}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── Observability stack ───────────────────────────────────────────────
 
@@ -156,6 +144,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
       - "8080:8080"
@@ -187,6 +177,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-2.0-flash}
 
+      # Session store
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:-agents_secret}@postgres:5432/${POSTGRES_DB:-agents}"
+
       # Metrics
       ENABLE_METRICS_SERVER: "true"
 
@@ -209,6 +202,8 @@ services:
     restart: unless-stopped
     depends_on:
       kafka:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     ports:
       - "3000:3000"
@@ -235,6 +230,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-2.0-flash}
 
+      # Session store
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:-agents_secret}@postgres:5432/${POSTGRES_DB:-agents}"
+
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
       PROMETHEUS_URL: http://prometheus:9090
       LOKI_URL: http://loki:3100
@@ -247,6 +245,7 @@ services:
 volumes:
   zk-data:
   kafka-data:
+  postgres-data:
   prometheus-data:
   loki-data:
   devops-data:

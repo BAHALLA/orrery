@@ -17,16 +17,27 @@ from .log import setup_logging
 logger = logging.getLogger("ai_agents.base")
 
 
-def load_agent_env(agent_file: str) -> None:
-    """Load the .env file located next to the given agent module file.
+def load_agent_env(agent_file: str | None = None) -> None:
+    """Load the .env file for the agent.
+
+    By default, it searches for a .env file in the current working directory
+    and its parents (centralized configuration). If ``agent_file`` is provided
+    and a .env file exists in the same directory, it is loaded with precedence.
 
     Also configures structured JSON logging to stdout on first call.
 
     Usage in an agent's agent.py:
         load_agent_env(__file__)
     """
-    env_path = Path(agent_file).parent / ".env"
-    load_dotenv(dotenv_path=env_path)
+    # 1. Load centralized .env (searches CWD and parents)
+    load_dotenv()
+
+    # 2. Fallback/Override: local .env next to the agent module
+    if agent_file:
+        local_env = Path(agent_file).parent / ".env"
+        if local_env.exists():
+            load_dotenv(dotenv_path=local_env, override=True)
+
     setup_logging()
 
 

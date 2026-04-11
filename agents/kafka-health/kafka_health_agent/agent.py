@@ -10,6 +10,7 @@ from .tools import (
     get_topic_metadata,
     list_consumer_groups,
     list_kafka_topics,
+    update_kafka_partitions,
 )
 
 load_agent_env(__file__)
@@ -19,8 +20,9 @@ root_agent = create_agent(
     description="Agent to monitor and report on the health of a Kafka cluster.",
     instruction=(
         "You are a specialized agent for Kafka monitoring. You can check cluster health, "
-        "manage topics, and inspect consumer groups and lag. Use the provided tools to "
-        "retrieve cluster information and troubleshoot performance or connectivity issues.\n\n"
+        "manage topics (list, create, delete, metadata, and scaling partitions), and inspect "
+        "consumer groups and lag. Use the provided tools to retrieve cluster information "
+        "and troubleshoot performance or connectivity issues.\n\n"
         "When a tool returns a 'confirmation_required' status, you MUST ask the user "
         "to confirm before calling the tool again."
     ),
@@ -29,6 +31,7 @@ root_agent = create_agent(
         list_kafka_topics,
         create_kafka_topic,
         delete_kafka_topic,
+        update_kafka_partitions,
         get_topic_metadata,
         list_consumer_groups,
         describe_consumer_groups,

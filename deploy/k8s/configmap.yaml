@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devops-assistant-config
+  namespace: ai-agents
+  labels:
+    app.kubernetes.io/name: devops-assistant
+    app.kubernetes.io/part-of: ai-agents
+data:
+  # ── LLM provider ──────────────────────────────────────────────────
+  MODEL_PROVIDER: "gemini"
+  MODEL_NAME: "gemini-2.0-flash"
+  GEMINI_MODEL_VERSION: "gemini-2.0-flash"
+  GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
+
+  # ── Observability ─────────────────────────────────────────────────
+  ENABLE_METRICS_SERVER: "true"
+  HEALTH_PORT: "8080"
+  METRICS_PORT: "9100"
+  LOG_LEVEL: "INFO"
+
+  # ── Context caching (Gemini only) ─────────────────────────────────
+  CONTEXT_CACHE_MIN_TOKENS: "2048"
+  CONTEXT_CACHE_TTL_SECONDS: "600"
+  CONTEXT_CACHE_INTERVALS: "10"
+
+  # ── Target infrastructure ─────────────────────────────────────────
+  # Override in environment-specific overlays or Helm values.
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.data.svc.cluster.local:9092"
+  PROMETHEUS_URL: "http://prometheus.observability.svc.cluster.local:9090"
+  LOKI_URL: "http://loki.observability.svc.cluster.local:3100"
+  ALERTMANAGER_URL: "http://alertmanager.observability.svc.cluster.local:9093"

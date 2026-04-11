@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Kafka KRaft Migration**: Removed Zookeeper dependency. Kafka now runs in KRaft mode for improved startup reliability and simplified architecture.
+- **PostgreSQL Service**: Added a dedicated PostgreSQL container to `docker-compose.yml` for persistent session storage.
+- **Centralized Configuration**: Merged per-agent `.env` files into a single root `.env` file. Updated core library to prioritize the root configuration while maintaining legacy override support.
+- **Cross-Session Memory**: Enabled `MemoryPlugin` in the `devops-assistant` agent, allowing it to remember past interactions and save session highlights to the persistent store.
+- **Kafka Partition Scaling**: Added `update_kafka_partitions` tool to the Kafka health agent with full unit test coverage.
+- **Production deployment hardening** (AEP-011) — complete Kubernetes deployment story
+  - Kustomize manifests under `deploy/k8s/` (Deployment, Service, HPA, PDB, NetworkPolicy, ServiceAccount with scoped ClusterRoles)
+  - Helm chart under `deploy/helm/devops-assistant/` with configurable values, NOTES, and `existingSecret` support for out-of-band secret management
+  - GHCR CD pipeline (`.github/workflows/docker-publish.yml`) publishing multi-arch (amd64/arm64) images with SBOM and provenance attestation on merges to `main` and `v*.*.*` tags
+  - PostgreSQL session store support — `runner.py` honors `DATABASE_URL` (async driver `postgresql+asyncpg://…`) for multi-instance deployments; `core[postgres]` extra adds `asyncpg` and `psycopg2-binary`
+  - Rate limiting on the Slack bot `/slack/events` webhook via `slowapi` (configurable via `SLACK_RATE_LIMIT`, default `60/minute`)
+  - Root-level `.env.example` documenting every required and optional variable across agents and deployment manifests
+  - `docs/deployment.md` — end-to-end production deployment guide (Postgres setup, Helm install, rolling updates, troubleshooting)
+
+### Changed
+
+- `SlackBotConfig.resolve_db_url()` prefers `DATABASE_URL` env var over the legacy `slack_db_url` default — enables sharing Postgres between the Slack bot and the ADK web UI workloads
+- `load_agent_env()` and `load_config()` now search for a `.env` file at the project root by default.
+
+### Fixed
+
+- **Metrics Callback Signature**: Fixed a `TypeError` in `MetricsPlugin` where incorrect keyword arguments were passed to the internal callback.
+- **Kafka Tool Imports**: Fixed a `NameError` in `kafka_health_agent/tools.py` caused by using decorators before they were imported.
+- **Database URL Masking**: Ensured `DATABASE_URL` is masked in all log outputs and console prints to prevent credential leaks.
+
 ## [0.1.0] - 2026-04-09
 
 First public release of the AI Agents for DevOps & SRE platform.

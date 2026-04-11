@@ -93,8 +93,8 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 
 | Service | Port | Description |
 |---------|------|-------------|
-| Kafka | `9092` | Kafka broker |
-| Zookeeper | `2181` | Zookeeper for Kafka |
+| Kafka | `9092` | Kafka broker (running in KRaft mode) |
+| PostgreSQL | `5432` | Shared session storage for agents |
 | Kafka UI | `8080` | Web UI for browsing topics and consumer groups |
 | Kafka Exporter | `9308` | Prometheus exporter for Kafka metrics |
 | Prometheus | `9090` | Metrics collection and alerting rules |

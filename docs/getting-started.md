@@ -45,16 +45,21 @@ If you want to modify agents or build your own, follow these steps:
     make install
     ```
 
-2.  **Start the Infrastructure**:
-    This launches Kafka, Prometheus, Loki, and other diagnostic tools.
+2.  **Configure Environment**:
+    Create a centralized `.env` file at the project root:
+    ```bash
+    cp .env.example .env
+    # Edit .env and add your API keys
+    ```
+
+3.  **Start the Infrastructure**:
+    This launches Kafka (KRaft), PostgreSQL, Prometheus, and other diagnostic tools.
     ```bash
     make infra-up
     ```
 
-3.  **Run the Agent**:
-    Set your API key in your environment and run:
+4.  **Run the Agent**:
     ```bash
-    export GOOGLE_API_KEY=your-api-key
     make run-devops
     ```
     The agent will be available at `http://localhost:8000`.

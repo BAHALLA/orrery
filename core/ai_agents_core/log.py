@@ -9,9 +9,31 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from datetime import UTC, datetime
 from typing import Any
+
+# Matches the password segment in SQLAlchemy-style DSNs:
+#   postgresql+asyncpg://user:password@host:5432/db
+# and redacts only the password. Handles %-encoded URL-safe passwords
+# as long as they don't contain raw "@".
+_DSN_PASSWORD_RE = re.compile(r"(://[^:/@\s]+:)[^@\s]+(@)")
+
+
+def mask_dsn(url: str) -> str:
+    """Return a database URL with the password segment redacted.
+
+    Used when logging connection strings so credentials never land in
+    log aggregators. Safe to call on URLs that have no password (no-op),
+    on non-URL strings (no-op), and on URLs with unusual characters.
+
+    >>> mask_dsn("postgresql+asyncpg://alice:s3cret@db:5432/agents")
+    'postgresql+asyncpg://alice:[REDACTED]@db:5432/agents'
+    >>> mask_dsn("sqlite:///local.db")
+    'sqlite:///local.db'
+    """
+    return _DSN_PASSWORD_RE.sub(r"\1[REDACTED]\2", url)
 
 
 class JSONFormatter(logging.Formatter):

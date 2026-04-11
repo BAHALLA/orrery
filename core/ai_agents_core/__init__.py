@@ -24,6 +24,7 @@ from .guardrails import is_guarded as is_guarded
 from .guardrails import require_confirmation as require_confirmation
 from .health import HealthServer as HealthServer
 from .log import JSONFormatter as JSONFormatter
+from .log import mask_dsn as mask_dsn
 from .log import setup_logging as setup_logging
 from .memory import SecureMemoryService as SecureMemoryService
 from .metrics import CONTEXT_CACHE_EVENTS_TOTAL as CONTEXT_CACHE_EVENTS_TOTAL

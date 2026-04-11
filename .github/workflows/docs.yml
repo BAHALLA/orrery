@@ -35,7 +35,7 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra postgres
 
       - name: Build documentation
         run: uv run mkdocs build --strict

@@ -12,5 +12,13 @@ dependencies = [
     "python-dotenv>=1.2.2",
 ]
 
+[project.optional-dependencies]
+# Install with: uv sync --extra postgres
+# Enables PostgreSQL-backed session storage for multi-instance deployments.
+postgres = [
+    "psycopg2-binary>=2.9.9",
+    "asyncpg>=0.30.0",
+]
+
 [tool.setuptools.packages.find]
 include = ["ai_agents_core*"]

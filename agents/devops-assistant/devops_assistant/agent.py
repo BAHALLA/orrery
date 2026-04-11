@@ -7,6 +7,7 @@ from ai_agents_core import (
     create_context_cache_config,
     create_parallel_agent,
     create_sequential_agent,
+    default_plugins,
     load_agent_env,
 )
 from devops_assistant.remediation import remediation_pipeline
@@ -193,5 +194,6 @@ root_agent = create_agent(
 app = App(
     name="devops_assistant",
     root_agent=root_agent,
+    plugins=default_plugins(enable_memory=True),
     context_cache_config=create_context_cache_config(),
 )

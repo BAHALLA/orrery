@@ -1,0 +1,26 @@
+Thank you for installing {{ .Chart.Name }} ({{ .Chart.Version }}).
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+1. Verify the pods are running:
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name={{ include "devops-assistant.name" . }}
+
+2. Tail logs:
+   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/name={{ include "devops-assistant.name" . }} -f
+
+3. Port-forward the ADK web UI:
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "devops-assistant.fullname" . }} 8000:{{ .Values.service.httpPort }}
+
+{{- if not .Values.existingSecret }}
+
+WARNING: You are using an in-chart Secret. For production, set
+`existingSecret` to a Secret managed out-of-band (External Secrets
+Operator, Sealed Secrets, Vault) so API keys are not stored in values.yaml.
+{{- end }}
+
+{{- if contains "sqlite" (default "" .Values.secrets.DATABASE_URL) }}
+
+WARNING: DATABASE_URL appears to be SQLite. SQLite does not support
+concurrent writers — you MUST use PostgreSQL for multi-replica deployments.
+{{- end }}

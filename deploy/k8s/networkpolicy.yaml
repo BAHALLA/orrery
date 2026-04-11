@@ -1,0 +1,56 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devops-assistant
+  namespace: ai-agents
+  labels:
+    app.kubernetes.io/name: devops-assistant
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: devops-assistant
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow HTTP traffic from the ingress controller namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Allow Prometheus to scrape /metrics.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - protocol: TCP
+          port: 9100
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow in-cluster targets (Kafka, Prometheus, Loki, Postgres).
+    - to:
+        - namespaceSelector: {}
+    # Allow outbound HTTPS to LLM providers (Google, Anthropic, OpenAI).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

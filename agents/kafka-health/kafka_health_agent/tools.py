@@ -6,7 +6,7 @@ from functools import partial
 from typing import Any
 
 from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicPartition
-from confluent_kafka.admin import AdminClient, NewTopic, OffsetSpec
+from confluent_kafka.admin import AdminClient, NewPartitions, NewTopic, OffsetSpec
 
 from ai_agents_core import AgentConfig, confirm, destructive, with_retry
 from ai_agents_core.validation import (
@@ -44,6 +44,52 @@ async def _run_sync(func, *args, **kwargs):
     """Run a blocking function in a thread pool executor."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+
+
+@confirm("increases the number of partitions for an existing topic")
+async def update_kafka_partitions(topic_name: str, new_total_partitions: int) -> dict[str, Any]:
+    """Increases the number of partitions for an existing Kafka topic.
+
+    Note: Kafka does not support decreasing the number of partitions.
+
+    Args:
+        topic_name: Name of the topic to update.
+        new_total_partitions: The new total number of partitions (must be greater than current).
+
+    Returns:
+        A dictionary with the operation result.
+    """
+    if err := validate_string(topic_name, "topic_name", pattern=KAFKA_TOPIC_PATTERN):
+        return err
+    if err := validate_positive_int(
+        new_total_partitions, "new_total_partitions", max_value=MAX_PARTITIONS
+    ):
+        return err
+
+    admin = _get_admin_client()
+    new_parts = [NewPartitions(topic_name, new_total_partitions)]
+    try:
+        futures = admin.create_partitions(new_parts)
+        for _topic, future in futures.items():
+            try:
+                await _run_sync(future.result)
+                return {
+                    "status": "success",
+                    "message": f"Topic '{topic_name}' partitions increased to {new_total_partitions}.",
+                }
+            except Exception as e:
+                logger.exception("Failed to update partitions for topic '%s'", topic_name)
+                return {
+                    "status": "error",
+                    "message": f"Failed to update partitions for '{topic_name}': {str(e)}",
+                }
+        return {"status": "error", "message": "Kafka returned no results for partition update."}
+    except Exception as e:
+        logger.exception("Unexpected error while updating partitions for '%s'", topic_name)
+        return {
+            "status": "error",
+            "message": f"Unexpected error while updating partitions: {str(e)}",
+        }
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))

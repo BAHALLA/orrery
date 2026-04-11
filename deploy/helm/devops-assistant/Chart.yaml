@@ -1,0 +1,21 @@
+apiVersion: v2
+name: devops-assistant
+description: |
+  Helm chart for the DevOps/SRE agent platform. Deploys the ADK-based
+  devops-assistant root agent with probes, RBAC, HPA, PDB, and network
+  policies for multi-instance production use.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0"
+keywords:
+  - devops
+  - sre
+  - agents
+  - llm
+  - kubernetes
+home: https://github.com/BAHALLA/devops-agents
+sources:
+  - https://github.com/BAHALLA/devops-agents
+maintainers:
+  - name: Taoufiq Bahalla
