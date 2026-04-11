@@ -3,16 +3,24 @@
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from ai_agents_core.config import AgentConfig, load_config
 
 
-def test_agent_config_defaults(monkeypatch):
+@pytest.fixture(autouse=True)
+def _clear_env(monkeypatch):
+    """Clear all relevant environment variables before each test to ensure isolation."""
     monkeypatch.delenv("GEMINI_MODEL_VERSION", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     monkeypatch.delenv("MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("MODEL_NAME", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+
+def test_agent_config_defaults():
     config = AgentConfig(
         _env_file=None,  # don't load any .env
     )
@@ -40,7 +48,6 @@ def test_subclass_config(monkeypatch):
         kafka_bootstrap_servers: str = "localhost:9092"
 
     monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "broker:19092")
-    monkeypatch.delenv("GEMINI_MODEL_VERSION", raising=False)
 
     config = cast(Any, KafkaConfig)(_env_file=None)
     assert config.kafka_bootstrap_servers == "broker:19092"
@@ -48,10 +55,7 @@ def test_subclass_config(monkeypatch):
     assert config.model_name == "gemini-2.0-flash"
 
 
-def test_load_config_from_env_file(tmp_path: Path, monkeypatch):
-    monkeypatch.delenv("GEMINI_MODEL_VERSION", raising=False)
-    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
-
+def test_load_config_from_env_file(tmp_path: Path):
     env_file = tmp_path / ".env"
     env_file.write_text("GEMINI_MODEL_VERSION=gemini-1.5-pro\nGOOGLE_CLOUD_PROJECT=test-project\n")
 
