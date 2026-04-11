@@ -1,12 +1,19 @@
-name: Release
+name: Release & Publish
 
 on:
   push:
-    tags:
-      - "v0.*"
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
+  packages: write
+  id-token: write  # for cosign keyless signing
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   ci:
@@ -45,9 +52,103 @@ jobs:
       - name: Test
         run: uv run pytest -v
 
+  build-and-push:
+    name: Build & push multi-arch image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=devops-assistant
+            org.opencontainers.image.description=AI-powered DevOps/SRE agent platform
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the images
+        if: github.event_name != 'pull_request'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+          cosign sign --yes ${images}
+
+      - name: Image digest
+        run: echo "digest=${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+  helm-lint:
+    name: Lint Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: Lint chart
+        run: helm lint deploy/helm/devops-assistant
+
+      - name: Template chart (smoke test)
+        run: helm template test deploy/helm/devops-assistant --debug > /tmp/rendered.yaml
+
+      - name: Validate rendered manifests (kubeconform)
+        uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+
   release:
     name: GitHub Release
-    needs: ci
+    needs: [ci, build-and-push, helm-lint]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -59,7 +160,6 @@ jobs:
       - name: Extract changelog for this version
         id: changelog
         run: |
-          # Extract the section between this version header and the next version header (or EOF)
           version="${{ steps.version.outputs.version }}"
           changelog=$(awk -v ver="$version" '
             /^## \[/ {
@@ -69,18 +169,45 @@ jobs:
             found { print }
           ' CHANGELOG.md)
 
-          # Write to output using heredoc delimiter
           {
             echo "body<<CHANGELOG_EOF"
             echo "$changelog"
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Generate Docker Image Links
+        id: docker_links
+        env:
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          IMAGE_URL="ghcr.io/${{ github.repository }}"
+          
+          {
+            echo "## 🐳 Docker Images"
+            echo ""
+            echo "Images are available on GitHub Container Registry:"
+            echo "- \`${IMAGE_URL}:${TAG}\`"
+            echo "- \`${IMAGE_URL}:latest\`"
+            echo ""
+            echo "### Multi-arch digest"
+            echo "\`${DIGEST}\`"
+          } > docker_info.md
+          
+          # Also create a simple text file for assets
+          echo "${IMAGE_URL}:${TAG}@${DIGEST}" > docker-images.txt
+          echo "${IMAGE_URL}:latest@${DIGEST}" >> docker-images.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: v${{ steps.version.outputs.version }}
-          body: ${{ steps.changelog.outputs.body }}
+          body: |
+            ${{ steps.changelog.outputs.body }}
+            
+            $(cat docker_info.md)
+          files: |
+            docker-images.txt
           draft: false
-          prerelease: true
+          prerelease: false
           generate_release_notes: false
