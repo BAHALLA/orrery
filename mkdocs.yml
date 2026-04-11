@@ -92,8 +92,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-    - Overview: getting-started.md
-    - Installation: getting-started.md # Reuse for now or split later
+    - Installation: getting-started.md
     - Configuration:
       - General: config/general.md
       - Agents: config/agents.md
