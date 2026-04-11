@@ -72,8 +72,6 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
-          add-hosts: |
-            host.docker.internal:host-gateway
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
