@@ -17,10 +17,6 @@ def client(monkeypatch):
     """
     fake = MagicMock()
     fake.handle_event = AsyncMock(return_value={"text": "ok"})
-    # Mock _wrap_for_addons to return DataAction structure for tests
-    fake._wrap_for_addons = lambda t: {
-        "hostAppDataAction": {"chatDataAction": {"createMessageAction": {"message": {"text": t}}}}
-    }
     monkeypatch.setattr(app_module, "_handler", fake)
     monkeypatch.setattr(app_module.config, "google_chat_audience", "123456789012")
     return TestClient(app_module.api), fake

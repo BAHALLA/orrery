@@ -74,14 +74,22 @@ GOOGLE_CHAT_AUDIENCE=https://your-bot.example.com/
 GOOGLE_CHAT_ADMIN_EMAILS=yourname@example.com
 GOOGLE_CHAT_OPERATOR_EMAILS=ops@example.com
 
-# Token verification is ON by default. Set to FALSE only for local dev
+# Token verification is ON by default. Set to false only for local dev
 # (e.g. ngrok without a real signed token).
-# GOOGLE_CHAT_VERIFY_TOKEN=FALSE
+# GOOGLE_CHAT_VERIFY_TOKEN=false
 
 # Allowed service accounts signing the tokens (comma-separated).
 # Standard Chat: chat@system.gserviceaccount.com
 # Add-ons Mode: service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com
 GOOGLE_CHAT_IDENTITIES=chat@system.gserviceaccount.com
+
+# Async Response Mode — set to true (default) for long-running agents.
+# Requires the Chat Bot API scope to be enabled.
+GOOGLE_CHAT_ASYNC_RESPONSE=true
+
+# Optional — path to service account JSON for async responses.
+# If unset, Application Default Credentials (ADC) are used.
+GOOGLE_CHAT_SERVICE_ACCOUNT_FILE=/path/to/service-account.json
 ```
 
 ### 4. Run locally
@@ -106,6 +114,29 @@ picks up the new audience.
 > domain** at <https://dashboard.ngrok.com/domains> (one per account), then
 > run `ngrok http --url=<your-domain>.ngrok-free.app 3001`. Your endpoint
 > URL and audience never change again.
+
+## Authentication (ADC vs Service Account)
+
+The bot prioritizes **Application Default Credentials (ADC)** for its internal REST client. This is the recommended approach for:
+- **GKE**: Uses Workload Identity automatically.
+- **Cloud Run / GCE**: Uses the metadata server identity.
+- **Local Dev**: Uses the identity from `gcloud auth application-default login`.
+
+**Important Note for Local Dev:** When using `gcloud`, you must explicitly request the `chat.bot` scope:
+```bash
+gcloud auth application-default login --scopes="https://www.googleapis.com/auth/chat.bot,https://www.googleapis.com/auth/cloud-platform"
+```
+
+Use `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` only if you need to override the default identity with a specific service account JSON.
+
+## Async Response Mode
+
+Google Chat enforces a **~30 second synchronous budget** on webhook responses. For long agent runs, the bot uses **Async Response Mode**:
+1. Webhook returns an immediate acknowledgment (or synchronous card).
+2. Agent run continues in a background task.
+3. Bot posts the final reply via the `spaces.messages.create` REST API.
+
+This requires the **Chat Bot API** to be enabled in the Google Cloud Console for your project.
 
 ## Security & RBAC
 
@@ -151,6 +182,13 @@ If you see `401 Unauthorized` with a message about an invalid identity, add the 
 ### `401 Token has wrong audience`
 - Google Chat uses the **HTTP endpoint URL** as the audience for HTTP apps. Ensure `.env` matches the URL you pasted in the "Configuration" tab.
 
+### `404 Not Found` during async replies
+- Occurs when the space name cannot be resolved. The bot uses robust multi-path parsing, but ensure the event contains valid space metadata.
+
+### `403 Forbidden: ACCESS_TOKEN_SCOPE_INSUFFICIENT`
+- The identity used for async calls lacks the `chat.bot` scope.
+- **Fix**: Use a Service Account JSON file or re-run `gcloud auth application-default login` with the scopes listed in the Authentication section above.
+
 ### `Session not found`
 - The bot is configured with `auto_create_session=True` to handle dynamic threads in Chat. If sessions are still missing, ensure your `DATABASE_URL` is correct or that the bot has write permissions to its local storage.
 
@@ -159,7 +197,6 @@ If you see `401 Unauthorized` with a message about an invalid identity, add the 
 - **FastAPI**: serves the webhook endpoint.
 - **google-auth**: verifies ID tokens from the Chat system account.
 - **ADK Runner**: executes the `devops-assistant` agent with `auto_create_session=True`.
-- **ConfirmationStore**: in-memory store of pending actions. Add TTL or
-  swap to Redis if your bot handles high volumes.
+- **ConfirmationStore**: in-memory store of pending actions.
 - **PostgreSQL** *(optional)*: set `DATABASE_URL` to persist cross-session
   state across restarts; otherwise an in-memory session service is used.

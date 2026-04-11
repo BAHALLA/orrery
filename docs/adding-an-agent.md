@@ -37,6 +37,10 @@ agents/my-agent/
 
 Tools are the core capabilities of your agent. They must be `async def` and reside in `tools.py`.
 
+Use **Guardrail Decorators** to mark tools that require human oversight:
+-   `@confirm("reason")`: For mutating but non-destructive operations (create, update, scale).
+-   `@destructive("reason")`: For dangerous, irreversible operations (delete, drop, purge).
+
 ```python
 # agents/my-agent/my_agent/tools.py
 import asyncio
@@ -68,11 +72,11 @@ async def delete_resource(name: str) -> dict:
 
 ## 3. Wire Up the Agent
 
-In `agent.py`, use the `create_agent` factory from `ai-agents-core`.
+In `agent.py`, use the `create_agent` factory. To enable the interactive confirmation flow for guarded tools, you **must** pass `require_confirmation()` to `before_tool_callback`.
 
 ```python
 # agents/my-agent/my_agent/agent.py
-from ai_agents_core import create_agent, load_agent_env
+from ai_agents_core import create_agent, load_agent_env, require_confirmation
 from .tools import get_status, update_resource, delete_resource
 
 # Load local .env file
@@ -88,6 +92,8 @@ root_agent = create_agent(
     2. Provide concise summaries of actions.
     """,
     tools=[get_status, update_resource, delete_resource],
+    # GATE: Enable the confirmation mechanism for @confirm/@destructive tools
+    before_tool_callback=require_confirmation(),
 )
 ```
 
@@ -95,7 +101,9 @@ root_agent = create_agent(
 
 ## 4. Enable Global Plugins
 
-When running your agent, we recommend using `default_plugins()`. This ensures it inherits **RBAC, Guardrails, Metrics, and Audit Logs** automatically.
+When running your agent, use `default_plugins()`. This ensures it inherits **RBAC, Guardrails, Metrics, and Audit Logs** automatically.
+
+The `GuardrailsPlugin` enforces RBAC policies globally. It also calls `ensure_default_role()` to force a `viewer` role if the server hasn't explicitly set a trusted role (e.g. from Slack or Google Chat identity).
 
 ```python
 # agents/my-agent/my_agent/__main__.py
@@ -104,6 +112,7 @@ from ai_agents_core import run_persistent, default_plugins
 from .agent import root_agent
 
 async def main():
+    # default_plugins() enables RBAC, Audit, Resilience, and Metrics
     await run_persistent(
         root_agent, 
         app_name="my_agent", 

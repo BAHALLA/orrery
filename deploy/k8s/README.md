@@ -48,7 +48,7 @@ Verify:
 ```bash
 # Trigger rollout
 kubectl -n ai-agents set image deployment/devops-assistant \
-  devops-assistant=ghcr.io/bahalla/devops-agents:v0.2.0
+  devops-assistant=ghcr.io/bahalla/devops-agents:v0.1.2
 
 # Watch pods cycle with no downtime
 kubectl -n ai-agents rollout status deployment/devops-assistant

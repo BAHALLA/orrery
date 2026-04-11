@@ -16,7 +16,13 @@ A production-ready bot that brings autonomous DevOps to your Slack channels.
 - **Interactive Guards**: When an agent hits a `@confirm` or `@destructive` tool, it posts a Slack Card with buttons, pausing execution until a human interacts.
 - **Setup Guide**: [Slack Setup Reference](integrations/slack.md)
 
-### 3. CLI Runner
+### 3. Google Chat Bot (Workspace Operations)
+Brings the same collaborative pattern to Google Workspace, including Workspace Add-ons deployments.
+- **Features**: Thread-based session isolation, interactive **Card v2** Approve/Deny flows, and email-based RBAC (`GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`).
+- **Dual-Path Event Handling**: Automatically detects standard Chat API vs Workspace Add-ons event envelopes and wraps responses in the `hostAppDataAction` schema when required.
+- **Setup Guide**: [Google Chat Setup Reference](integrations/google-chat.md)
+
+### 4. CLI Runner
 A headless interface for terminal-based interactions and CI/CD automation.
 - **Features**: Persistent session support and structured JSON logging.
 - **Best For**: Scripted diagnostics and automated remediation triggers.
@@ -25,17 +31,11 @@ A headless interface for terminal-based interactions and CI/CD automation.
 
 ## Upcoming Integrations (Roadmap)
 
-### 1. Google Chat Bot (In Progress)
-Bringing the same collaborative power of the Slack bot to Google Workspace.
-- **Target Pattern**: Interactive Cards for human-in-the-loop approvals.
-- **Identity**: Mapping Google Workspace emails to RBAC roles.
-- **Deployment**: Optimized for Google Cloud Run with VPC-native connectivity.
-
-### 2. Microsoft Teams Bot
+### 1. Microsoft Teams Bot
 Expanding support for enterprise collaboration environments.
 - **Target Pattern**: Adaptive Cards for tool confirmation and incident reporting.
 
-### 3. Custom API Gateway
+### 2. Custom API Gateway
 A REST/SSE interface for embedding agents into internal developer portals (IDP).
 - **Target Pattern**: Standardized `/run_sse` endpoints for real-time streaming to custom web frontends.
 

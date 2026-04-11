@@ -108,7 +108,35 @@ class TestHandleEvent:
         assert call_kwargs["user_id"] == "user@example.com"
         assert call_kwargs["session_id"] == "gchat:threads/123"
         assert call_kwargs["state_delta"]["user_role"] == "viewer"
+        # Server-trusted lock flag must be set so ensure_default_role()
+        # doesn't reset the role on before_agent_callback.
+        assert call_kwargs["state_delta"]["_role_set_by_server"] is True
         assert call_kwargs["state_delta"]["gchat_space"] == "spaces/abc"
+
+    @pytest.mark.asyncio
+    async def test_admin_email_is_marked_server_trusted(self, handler, mock_runner):
+        """Regression: admin role must survive ensure_default_role()."""
+        event = {
+            "type": "MESSAGE",
+            "message": {"argumentText": "restart it"},
+            "user": {"email": "admin@example.com"},
+            "space": {"name": "spaces/abc"},
+        }
+        await handler.handle_event(event)
+        call_kwargs = mock_runner.run_async.call_args.kwargs
+        state_delta = call_kwargs["state_delta"]
+        assert state_delta["user_role"] == "admin"
+        assert state_delta["_role_set_by_server"] is True
+
+        # End-to-end: simulate ensure_default_role() running on the
+        # resulting state. With the lock flag set, it must be a no-op.
+        from ai_agents_core import ensure_default_role
+
+        callback = ensure_default_role()
+        fake_ctx = MagicMock()
+        fake_ctx.state = dict(state_delta)
+        callback(fake_ctx)
+        assert fake_ctx.state["user_role"] == "admin"  # not downgraded to viewer
 
     @pytest.mark.asyncio
     async def test_message_session_id_fallback_to_space(self, handler, mock_runner):
@@ -216,6 +244,32 @@ class TestHandleCardClick:
         # Deny should clear the pending flag in state_delta to prevent a
         # silent bypass if the LLM retries the same tool.
         assert call_kwargs["state_delta"]["_gchat_pending_drop_topic"] is False
+
+    @pytest.mark.asyncio
+    async def test_addons_card_click_without_top_level_type(self, handler, store):
+        """Add-ons payloads omit top-level 'type' — detection must still fire."""
+        store.add(
+            PendingConfirmation(
+                action_id="addon1",
+                tool_name="scale_deployment",
+                user_id="user@example.com",
+                session_id="gchat:spaces/abc",
+                space_name="spaces/abc",
+                thread_name=None,
+                level="confirm",
+            )
+        )
+        event = {
+            # No "type" field — mimics the Workspace Add-ons envelope.
+            "commonEventObject": {
+                "invokedFunction": "confirm_action",
+                "parameters": [{"key": "action_id", "value": "addon1"}],
+            },
+            "chat": {"user": {"email": "ops@example.com", "displayName": "Ops User"}},
+        }
+        response = await handler.handle_event(event)
+        message = response["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+        assert "Approved" in message["text"]
 
     @pytest.mark.asyncio
     async def test_legacy_action_method_name_format(self, handler, store):

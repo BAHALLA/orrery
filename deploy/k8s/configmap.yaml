@@ -30,3 +30,11 @@ data:
   PROMETHEUS_URL: "http://prometheus.observability.svc.cluster.local:9090"
   LOKI_URL: "http://loki.observability.svc.cluster.local:3100"
   ALERTMANAGER_URL: "http://alertmanager.observability.svc.cluster.local:9093"
+
+  # ── Google Chat Bot ───────────────────────────────────────────────
+  GOOGLE_CHAT_AUDIENCE: ""
+  GOOGLE_CHAT_IDENTITIES: "chat@system.gserviceaccount.com"
+  GOOGLE_CHAT_ADMIN_EMAILS: ""
+  GOOGLE_CHAT_OPERATOR_EMAILS: ""
+  GOOGLE_CHAT_ASYNC_RESPONSE: "true"
+  GOOGLE_CHAT_SERVICE_ACCOUNT_FILE: ""

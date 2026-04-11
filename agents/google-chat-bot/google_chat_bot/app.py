@@ -15,9 +15,10 @@ from ai_agents_core.base import load_agent_env
 from ai_agents_core.plugins import default_plugins
 
 from .auth import verify_google_chat_token
+from .chat_client import ChatClient
 from .config import GoogleChatBotConfig
 from .confirmation import ConfirmationStore, google_chat_confirmation
-from .handler import GoogleChatHandler
+from .handler import GoogleChatHandler, wrap_for_addons
 
 # Initialize logging and load environment
 load_agent_env(__file__)
@@ -51,6 +52,13 @@ async def lifespan(app: FastAPI):
 
     # Wire the Google Chat confirmation callback on the root agent so any
     # guarded root-level tool posts a card instead of blocking on stdin.
+    #
+    # NOTE: ``root_agent`` is a module-level singleton imported from
+    # ``devops_assistant.agent``. Assigning ``before_tool_callback`` here
+    # mutates that shared object for the lifetime of the Python process.
+    # That is safe in our deployment because the Google Chat bot owns its
+    # own process, but it would interfere with any hypothetical single
+    # process that also hosted another transport (e.g. Slack + Chat).
     root_agent.before_tool_callback = google_chat_confirmation(_store)
 
     agent_app = App(
@@ -64,7 +72,35 @@ async def lifespan(app: FastAPI):
         auto_create_session=True,
     )
 
-    _handler = GoogleChatHandler(runner=runner, config=config, store=_store)
+    # 4. Optional async response mode — required when agent runs may exceed
+    #    Google Chat's ~30 second synchronous webhook budget. When enabled,
+    #    the webhook returns 200 OK immediately and the real reply is posted
+    #    later via ``spaces.messages.create``.
+    chat_client: ChatClient | None = None
+    if config.google_chat_async_response:
+        try:
+            # Priority 1: Explicit service account file override.
+            if config.google_chat_service_account_file:
+                chat_client = ChatClient.from_service_account_file(
+                    config.google_chat_service_account_file
+                )
+                logger.info("Async response mode enabled via service account file")
+            # Priority 2: Application Default Credentials (ADC).
+            # This is the recommended approach for Workload Identity (GKE),
+            # Cloud Run, GCE, or local dev via ``gcloud auth application-default login``.
+            else:
+                chat_client = ChatClient.from_adc()
+                logger.info("Async response mode enabled via Application Default Credentials")
+        except Exception:
+            logger.exception(
+                "Failed to initialize Chat REST client; falling back to sync path. "
+                "Long-running agent turns will time out in the Chat UI. "
+                "Ensure Chat Bot API is enabled and identity has chat.bot scope."
+            )
+
+    _handler = GoogleChatHandler(
+        runner=runner, config=config, store=_store, chat_client=chat_client
+    )
 
     logger.info("Google Chat bot initialized")
     yield
@@ -115,10 +151,6 @@ async def google_chat_endpoint(
         return await _handler.handle_event(event)
     except Exception:
         logger.exception("Error processing Google Chat event")
-        # Ensure even error responses follow the Workspace Add-ons schema if possible.
-        error_text = "Sorry, I hit an unexpected error. Please try again."
-        try:
-            return _handler._wrap_for_addons(error_text)
-        except Exception:
-            # Fallback if wrapping fails (e.g. _handler is corrupted).
-            return {"text": error_text}
+        # Always return a response matching the Workspace Add-ons schema so
+        # the Add-ons pipeline doesn't reject the error itself.
+        return wrap_for_addons("Sorry, I hit an unexpected error. Please try again.")

@@ -65,7 +65,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [core, agents/docker-agent, agents/kafka-health, agents/k8s-health, agents/observability, agents/devops-assistant, agents/ops-journal, agents/slack-bot]
+          paths: [core, agents/docker-agent, agents/kafka-health, agents/k8s-health, agents/observability, agents/devops-assistant, agents/ops-journal, agents/slack-bot, agents/google-chat-bot]
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -121,6 +121,7 @@ nav:
     - Observability: agents/observability.md
     - Ops Journal: agents/ops-journal.md
     - Slack Bot: agents/slack-bot.md
+    - Google Chat Bot: agents/google-chat-bot.md
   - Roadmap (AEP):
     - Overview: enhancements/README.md
     - "AEP-001: Tool Confirmation": enhancements/aep-001-adk-native-confirmation.md

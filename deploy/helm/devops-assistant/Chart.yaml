@@ -5,8 +5,8 @@ description: |
   devops-assistant root agent with probes, RBAC, HPA, PDB, and network
   policies for multi-instance production use.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.2
+appVersion: "0.1.2"
 kubeVersion: ">=1.25.0"
 keywords:
   - devops

@@ -38,7 +38,7 @@ wheels = [
 
 [[package]]
 name = "ai-agents"
-version = "0.1.1"
+version = "0.1.2"
 source = { virtual = "." }
 dependencies = [
     { name = "ai-agents-core" },
@@ -104,7 +104,7 @@ dev = [
 
 [[package]]
 name = "ai-agents-core"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "core" }
 dependencies = [
     { name = "google-adk", extra = ["eval"] },
@@ -693,7 +693,7 @@ wheels = [
 
 [[package]]
 name = "devops-assistant"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/devops-assistant" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -727,7 +727,7 @@ wheels = [
 
 [[package]]
 name = "docker-agent"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/docker-agent" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -1130,7 +1130,7 @@ wheels = [
 
 [[package]]
 name = "google-chat-bot"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/google-chat-bot" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -2032,7 +2032,7 @@ wheels = [
 
 [[package]]
 name = "k8s-health-agent"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/k8s-health" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -2047,7 +2047,7 @@ requires-dist = [
 
 [[package]]
 name = "kafka-health-agent"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/kafka-health" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -2749,7 +2749,7 @@ wheels = [
 
 [[package]]
 name = "observability-agent"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/observability" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -2925,7 +2925,7 @@ wheels = [
 
 [[package]]
 name = "ops-journal"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/ops-journal" }
 dependencies = [
     { name = "ai-agents-core" },
@@ -4128,7 +4128,7 @@ wheels = [
 
 [[package]]
 name = "slack-bot"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "agents/slack-bot" }
 dependencies = [
     { name = "ai-agents-core" },

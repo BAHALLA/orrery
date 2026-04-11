@@ -1,6 +1,6 @@
 [project]
 name = "devops-assistant"
-version = "0.1.1"
+version = "0.1.2"
 description = "DevOps orchestrator that delegates to specialized sub-agents"
 requires-python = ">=3.11"
 dependencies = [

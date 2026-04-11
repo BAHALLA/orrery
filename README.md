@@ -35,7 +35,7 @@ DevOps and SRE teams often face a "wall of alerts" and repetitive manual triage.
 - **Audit Trails** — Every tool call is logged with structured JSON, including user ID and session context.
 
 ### 🔌 Integration & Observability
-- **Multi-Interface** — Interact via **ADK Web UI**, **CLI**, or **Slack** (with interactive buttons).
+- **Multi-Interface** — Interact via **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (with interactive buttons / Cards v2).
 - **Observability** — Built-in Prometheus metrics for tool latency, error rates, and circuit breaker states.
 - **Context Caching** — Optimized for Gemini models to reduce token usage and latency.
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-12
+
+### Added
+
+- **Google Chat Async Mode**: Added `GOOGLE_CHAT_ASYNC_RESPONSE` and `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` to `.env.example` for long-running agent support.
+- **Enhanced Documentation**: Added Google Chat to the main README and expanded the integration guide with troubleshooting for ADC, scopes, and 401/404/403 errors.
+
+### Changed
+
+- **Google Chat Roadmap**: Moved Google Chat from "Upcoming" to "Current Integrations" in the documentation.
+- **API Reference**: Registered `google-chat-bot` for automatic API documentation generation in `mkdocs.yml`.
+
+### Fixed
+
+- **Google Chat Event Parsing**: Implemented robust multi-path parsing for space names, emails, and thread names to prevent 404 errors during asynchronous replies.
+- **Async Auth Scope Guidance**: Added detailed troubleshooting and configuration for `403 Forbidden` errors caused by missing `chat.bot` scopes when using Application Default Credentials (ADC).
+- **ADC-First Auth Pattern**: Updated Google Chat bot to prioritize Application Default Credentials, enabling seamless Workload Identity support on GKE and Cloud Run.
+
 ## [0.1.1] - 2026-04-11
 
 ### Added
@@ -30,11 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Root-level `.env.example` documenting every required and optional variable across agents and deployment manifests
   - `docs/deployment.md` — end-to-end production deployment guide (Postgres setup, Helm install, rolling updates, troubleshooting)
 
+
 ### Changed
 
 - `SlackBotConfig.resolve_db_url()` prefers `DATABASE_URL` env var over the legacy `slack_db_url` default — enables sharing Postgres between the Slack bot and the ADK web UI workloads
 - `load_agent_env()` and `load_config()` now search for a `.env` file at the project root by default.
-- Enhanced `docs/integrations/google-chat.md` with a detailed Workspace Add-ons setup guide and visual demos.
 
 ### Fixed
 
@@ -83,5 +101,7 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/devops-agents/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/devops-agents/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/BAHALLA/devops-agents/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/BAHALLA/devops-agents/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/BAHALLA/devops-agents/releases/tag/v0.1.0

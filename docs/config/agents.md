@@ -16,6 +16,11 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | **slack-bot** | `SLACK_SIGNING_SECRET` | — | Request signing secret |
 | **slack-bot** | `SLACK_ADMIN_USERS` | — | Comma-separated Slack user IDs with `admin` role |
 | **slack-bot** | `SLACK_OPERATOR_USERS` | — | Comma-separated Slack user IDs with `operator` role |
+| **google-chat** | `GOOGLE_CHAT_AUDIENCE` | — | Token audience (must match bot URL) |
+| **google-chat** | `GOOGLE_CHAT_ADMIN_EMAILS` | — | Comma-separated emails with `admin` role |
+| **google-chat** | `GOOGLE_CHAT_OPERATOR_EMAILS` | — | Comma-separated emails with `operator` role |
+| **google-chat** | `GOOGLE_CHAT_ASYNC_RESPONSE` | `true` | Enable async replies via Chat REST API |
+| **google-chat** | `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` | — | Optional override for REST API identity |
 
 ## Centralized Environment
 
