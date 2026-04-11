@@ -66,4 +66,3 @@ class TestRateLimiting:
         response = client.get("/test")
         assert response.status_code == 429
         assert response.json() == {"error": "rate_limited"}
-
