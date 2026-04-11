@@ -19,6 +19,7 @@ members = [
     "ai-agents-core",
     "devops-assistant",
     "docker-agent",
+    "google-chat-bot",
     "k8s-health-agent",
     "kafka-health-agent",
     "observability-agent",
@@ -43,6 +44,7 @@ dependencies = [
     { name = "ai-agents-core" },
     { name = "devops-assistant" },
     { name = "docker-agent" },
+    { name = "google-chat-bot" },
     { name = "k8s-health-agent" },
     { name = "kafka-health-agent" },
     { name = "observability-agent" },
@@ -76,6 +78,7 @@ requires-dist = [
     { name = "ai-agents-core", extras = ["postgres"], marker = "extra == 'postgres'", editable = "core" },
     { name = "devops-assistant", editable = "agents/devops-assistant" },
     { name = "docker-agent", editable = "agents/docker-agent" },
+    { name = "google-chat-bot", editable = "agents/google-chat-bot" },
     { name = "k8s-health-agent", editable = "agents/k8s-health" },
     { name = "kafka-health-agent", editable = "agents/kafka-health" },
     { name = "observability-agent", editable = "agents/observability" },
@@ -1123,6 +1126,31 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d5/ad/c1f2b1175096a8d04cf202ad5ea6065f108d26be6fc7215876bde4a7981d/google_auth_httplib2-0.3.0.tar.gz", hash = "sha256:177898a0175252480d5ed916aeea183c2df87c1f9c26705d74ae6b951c268b0b", size = 11134, upload-time = "2025-12-15T22:13:51.825Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/99/d5/3c97526c8796d3caf5f4b3bed2b05e8a7102326f00a334e7a438237f3b22/google_auth_httplib2-0.3.0-py3-none-any.whl", hash = "sha256:426167e5df066e3f5a0fc7ea18768c08e7296046594ce4c8c409c2457dd1f776", size = 9529, upload-time = "2025-12-15T22:13:51.048Z" },
+]
+
+[[package]]
+name = "google-chat-bot"
+version = "0.1.1"
+source = { editable = "agents/google-chat-bot" }
+dependencies = [
+    { name = "ai-agents-core" },
+    { name = "devops-assistant" },
+    { name = "fastapi" },
+    { name = "google-auth" },
+    { name = "httpx" },
+    { name = "pydantic-settings" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-agents-core", editable = "core" },
+    { name = "devops-assistant", editable = "agents/devops-assistant" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "google-auth", specifier = ">=2.35.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 
 [[package]]

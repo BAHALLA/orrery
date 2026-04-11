@@ -1,0 +1,22 @@
+[project]
+name = "google-chat-bot"
+version = "0.1.1"
+description = "Google Chat integration for AI Agents"
+authors = [{ name = "Taoufiq" }]
+requires-python = ">=3.11"
+dependencies = [
+    "ai-agents-core",
+    "devops-assistant",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "google-auth>=2.35.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.27.0",
+]
+
+[tool.uv.sources]
+ai-agents-core = { workspace = true }
+devops-assistant = { workspace = true }
+
+[tool.setuptools.packages.find]
+include = ["google_chat_bot*"]

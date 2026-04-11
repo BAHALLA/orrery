@@ -2,6 +2,8 @@
 
 Welcome to the documentation for the **AI Agents** platform — an open-source framework for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/).
 
+![Google Chat Demo](images/google-chat-demo.png){ align=center }
+
 ---
 
 ## 🏗️ Architecture Overview

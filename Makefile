@@ -7,7 +7,8 @@
        run-observability run-observability-cli \
        run-devops run-devops-cli run-devops-persistent \
        run-journal run-journal-cli run-journal-persistent \
-       run-slack-bot run-slack-bot-socket
+       run-slack-bot run-slack-bot-socket \
+       run-google-chat
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -37,6 +38,7 @@ type-check: ## Run type checks (ty)
 		--extra-search-path agents/devops-assistant \
 		--extra-search-path agents/ops-journal \
 		--extra-search-path agents/slack-bot \
+		--extra-search-path agents/google-chat-bot \
 		.
 
 ty: type-check ## Alias for type-check
@@ -138,3 +140,8 @@ run-slack-bot: ## Run the Slack bot (FastAPI + slack-bolt on :3000)
 
 run-slack-bot-socket: ## Run the Slack bot in Socket Mode (no public URL needed)
 	cd agents/slack-bot && uv run python -m slack_bot
+
+# ── google-chat-bot ──────────────────────────────────
+
+run-google-chat: ## Run the Google Chat bot (FastAPI on :3001)
+	cd agents/google-chat-bot && uv run uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3001

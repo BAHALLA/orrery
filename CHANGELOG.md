@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Google Chat Bot Integration**: A new integration bringing autonomous DevOps agents to Google Workspace with support for thread-based sessions and interactive Card v2.
+- **Workspace Add-ons Compatibility**: Implemented strict `hostAppDataAction` (DataActions) schema support, enabling the bot to run behind the Google Workspace Add-ons pipeline.
+- **Dual-Path Event Detection**: Added logic to seamlessly handle interaction events from both standard Google Chat API and the nested Workspace Add-ons event structure.
+- **Interactive Guardrails for Chat**: Wired `@confirm` and `@destructive` tools to post interactive Cards v2 with Approve/Deny buttons, allowing operators to authorize dangerous actions directly from the chat.
+- **Configurable Identities**: Added `GOOGLE_CHAT_IDENTITIES` to allow dynamic verification of multiple signing service accounts (e.g., standard Chat vs Add-ons service agents).
 - **Kafka KRaft Migration**: Removed Zookeeper dependency. Kafka now runs in KRaft mode for improved startup reliability and simplified architecture.
 - **PostgreSQL Service**: Added a dedicated PostgreSQL container to `docker-compose.yml` for persistent session storage.
 - **Centralized Configuration**: Merged per-agent `.env` files into a single root `.env` file. Updated core library to prioritize the root configuration while maintaining legacy override support.
@@ -29,9 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `SlackBotConfig.resolve_db_url()` prefers `DATABASE_URL` env var over the legacy `slack_db_url` default — enables sharing Postgres between the Slack bot and the ADK web UI workloads
 - `load_agent_env()` and `load_config()` now search for a `.env` file at the project root by default.
+- Enhanced `docs/integrations/google-chat.md` with a detailed Workspace Add-ons setup guide and visual demos.
 
 ### Fixed
 
+- **OIDC Token Verification**: Fixed a bug where tokens from Google's migrated OIDC flow (`iss=accounts.google.com`) were rejected. Added proper identity verification against the `email` claim.
+- **Dynamic Session Handling**: Fixed `SessionNotFoundError` in the ADK Runner by enabling `auto_create_session=True` for thread-based chat integrations.
+- **JSON Schema Validation**: Resolved "Failed to parse JSON" errors in Google Chat by ensuring all responses (including errors and added-to-space events) strictly follow the Add-ons response schema.
 - **Metrics Callback Signature**: Fixed a `TypeError` in `MetricsPlugin` where incorrect keyword arguments were passed to the internal callback.
 - **Kafka Tool Imports**: Fixed a `NameError` in `kafka_health_agent/tools.py` caused by using decorators before they were imported.
 - **Database URL Masking**: Ensured `DATABASE_URL` is masked in all log outputs and console prints to prevent credential leaks.

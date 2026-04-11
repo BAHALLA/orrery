@@ -14,6 +14,7 @@ dependencies = [
     "devops-assistant",
     "ops-journal",
     "slack-bot",
+    "google-chat-bot",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,7 @@ observability-agent = { workspace = true }
 devops-assistant = { workspace = true }
 ops-journal = { workspace = true }
 slack-bot = { workspace = true }
+google-chat-bot = { workspace = true }
 
 [dependency-groups]
 dev = [

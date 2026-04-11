@@ -72,6 +72,7 @@ open http://localhost:8000
 | [**observability**](https://bahalla.github.io/devops-agents/agents/observability/) | Prometheus metrics, Loki logs, and Alertmanager silences. |
 | [**docker-agent**](https://bahalla.github.io/devops-agents/agents/docker-agent/) | Container health, stats, logs, and Compose projects. |
 | [**slack-bot**](https://bahalla.github.io/devops-agents/agents/slack-bot/) | Interactive Slack integration with confirmation buttons. |
+| [**google-chat-bot**](https://bahalla.github.io/devops-agents/integrations/google-chat/) | Google Chat integration with interactive Cards v2. |
 | [**ops-journal**](https://bahalla.github.io/devops-agents/agents/ops-journal/) | Persistent notes and session-level bookmarks. |
 
 ## 📚 Documentation
