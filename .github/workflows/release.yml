@@ -141,7 +141,7 @@ jobs:
         run: helm template test deploy/helm/devops-assistant --debug > /tmp/rendered.yaml
 
       - name: Validate rendered manifests (kubeconform)
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
         with:
           version: latest
 
