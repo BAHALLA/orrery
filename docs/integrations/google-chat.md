@@ -80,8 +80,11 @@ GOOGLE_CHAT_IDENTITIES=chat@system.gserviceaccount.com
 # Requires the Chat Bot API scope to be enabled.
 GOOGLE_CHAT_ASYNC_RESPONSE=true
 
-# Optional — path to service account JSON for async responses.
-# If unset, Application Default Credentials (ADC) are used.
+# Path to service account JSON for async responses.
+# Required for local dev — user ADC from `gcloud auth application-default login`
+# cannot obtain the `chat.bot` scope (restricted). On GKE / Cloud Run, the
+# workload's attached service account is picked up automatically via ADC and
+# this can be left unset.
 GOOGLE_CHAT_SERVICE_ACCOUNT_FILE=/path/to/service-account.json
 
 # Optional — persist sessions across restarts. If unset, the bot uses
@@ -130,6 +133,24 @@ This mode is **enabled by default** (`GOOGLE_CHAT_ASYNC_RESPONSE=true`). It
 requires the service account used by the bot to have the **Chat Bot API**
 permissions enabled.
 
+## Authentication for async replies
+
+Posting async replies via `spaces.messages.create` requires a credential bearing the `https://www.googleapis.com/auth/chat.bot` scope. This scope is **restricted** — it cannot be obtained through user-credential OAuth flows.
+
+### Use a service account (required for local dev, recommended for production)
+
+User ADC from `gcloud auth application-default login` **will not work**. Google rejects the `chat.bot` scope with `Error 400: invalid_scope` because it's reserved for app (service-account) authentication.
+
+1. Create a service account in IAM & Admin → Service Accounts. No project-level IAM roles are required — authorization is enforced by the Chat API based on the SA being the app's configured identity.
+2. Download a JSON key and store it outside the repo.
+3. Register the SA as the app's identity in the Google Chat API *Configuration* tab under *App authentication*.
+4. Set `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE=/path/to/key.json` in your `.env`.
+5. Restart the bot — logs should show `Async response mode enabled via service account file`.
+
+### Production: Workload Identity / metadata server
+
+On **GKE** (Workload Identity) or **Cloud Run / GCE** (metadata server), ADC resolves to a service-account identity — the `chat.bot` scope *can* be requested. Leave `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` unset and the bot falls through to `ChatClient.from_adc()`. Ensure the workload's attached SA is the one registered as the Chat app's identity.
+
 ## Role-Based Access Control
 
 The bot verifies every incoming request's Google-signed ID token and
@@ -140,6 +161,10 @@ resolves the user via the `email` claim.
 | `viewer`   | Read-only tools                      | Default for any user                             |
 | `operator` | Read + `@confirm` tools              | Add email to `GOOGLE_CHAT_OPERATOR_EMAILS`       |
 | `admin`    | All tools, including `@destructive`  | Add email to `GOOGLE_CHAT_ADMIN_EMAILS`          |
+
+The role is resolved when a new thread starts. To test a different role, either @-mention from a different account that falls into another tier, or change the env var, restart the bot, and start a **new thread** — the existing thread keeps the role it was created with.
+
+For a side-by-side walk-through of exercising each role from Google Chat, ADK Web, and the CLI, see [Testing RBAC across surfaces](../rbac-testing.md).
 
 ## Interactive Guardrails
 

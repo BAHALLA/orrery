@@ -89,15 +89,15 @@ provides-extras = ["postgres"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "mkdocs", specifier = ">=1.6.0" },
-    { name = "mkdocs-gen-files", specifier = ">=0.5.0" },
+    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs-gen-files", specifier = ">=0.6.1" },
     { name = "mkdocs-git-revision-date-localized-plugin", specifier = ">=1.2.0" },
-    { name = "mkdocs-material", specifier = ">=9.5.0" },
+    { name = "mkdocs-material", specifier = ">=9.7.6" },
     { name = "mkdocs-minify-plugin", specifier = ">=0.8.0" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.24.0" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.3" },
     { name = "pymdown-extensions", specifier = ">=10.7.0" },
     { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "ruff", specifier = ">=0.11.0" },
     { name = "ty" },
 ]

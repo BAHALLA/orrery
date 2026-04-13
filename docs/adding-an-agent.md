@@ -72,7 +72,10 @@ async def delete_resource(name: str) -> dict:
 
 ## 3. Wire Up the Agent
 
-In `agent.py`, use the `create_agent` factory. To enable the interactive confirmation flow for guarded tools, you **must** pass `require_confirmation()` to `before_tool_callback`.
+In `agent.py`, use the `create_agent` factory. To enable the interactive confirmation flow for guarded tools, pass `require_confirmation()` to `before_tool_callback`.
+
+!!! info "Why this isn't a plugin"
+    `GuardrailsPlugin` (from `default_plugins()`) handles RBAC globally, but confirmation is wired at the agent level so it works uniformly when the agent is run standalone in `adk web`, called as an `AgentTool` sub-agent, or driven by a custom integration. For the full reasoning, see [Guardrails & RBAC](guardrails.md#why-confirmation-is-wired-at-the-agent-level-not-the-plugin).
 
 ```python
 # agents/my-agent/my_agent/agent.py
@@ -160,3 +163,19 @@ async def test_get_status_success(mock_api):
 ```
 
 Refer to `agents/k8s-health/tests/` for more complex examples including Agent Evaluations.
+
+---
+
+## 7. DevEx Checklist
+
+Before opening a PR, run through:
+
+```bash
+make install   # sync the workspace (`uv sync`)
+make test      # runs all 468 unit tests
+make eval      # 22 agent eval scenarios (requires LLM credentials)
+make lint      # ruff check + format check
+make fmt       # auto-fix linting and formatting
+```
+
+If you added a new agent, also register a `make run-<name>` / `make run-<name>-cli` target in the root `Makefile` so it shows up alongside the others (`make help` lists them) — follow the pattern of the existing agents like `run-kafka-health`.

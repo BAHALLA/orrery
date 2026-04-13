@@ -7,7 +7,7 @@ The platform exposes Prometheus metrics for every tool call across all agents. T
 Metrics are enabled automatically via `default_plugins()` — no per-agent wiring needed:
 
 ```python
-from ai_agents_core import default_plugins
+from ai_agents_core import MetricsPlugin, default_plugins
 from google.adk.runners import Runner
 
 plugins = default_plugins()
@@ -18,10 +18,14 @@ runner = Runner(
     plugins=plugins,
 )
 
-# Expose /metrics on port 9100 (call once at startup)
+# Expose /metrics on port 9100 (call once at startup).
+# The Slack and Google Chat bots do this in their FastAPI lifespan.
 metrics_plugin = next(p for p in plugins if isinstance(p, MetricsPlugin))
 metrics_plugin.start_server()
 ```
+
+!!! note "`default_plugins()` does not auto-start the metrics server"
+    The `MetricsPlugin` is registered, but the `/metrics` HTTP server is only started when a host calls `start_server()` explicitly. This is intentional — the ADK CLI and tests don't want a port binding. The Slack bot (`agents/slack-bot/slack_bot/app.py`) and Google Chat bot start it in their FastAPI `lifespan`; the persistent runner starts it when `ENABLE_METRICS_SERVER=true`.
 
 ## Available Metrics
 

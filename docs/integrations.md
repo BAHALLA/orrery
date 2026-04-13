@@ -8,7 +8,8 @@ The AI Agents platform is designed to be interface-agnostic. A single agent runn
 The primary interface for local development and agent debugging.
 - **Features**: Real-time trace visualization, session state inspection, and artifact downloads.
 - **Best For**: SREs and developers building or testing new agent capabilities.
-- **Run Command**: `make run-devops`
+- **Run Command**: `make run-devops` (binds `:8000`).
+- **Testing roles here**: see [Testing RBAC across surfaces → ADK Web](rbac-testing.md#testing-in-adk-web-adk-web).
 
 ### 2. Slack Bot (Collaborative Operations)
 A production-ready bot that brings autonomous DevOps to your Slack channels.
@@ -24,8 +25,10 @@ Brings the same collaborative pattern to Google Workspace, including Workspace A
 
 ### 4. CLI Runner
 A headless interface for terminal-based interactions and CI/CD automation.
-- **Features**: Persistent session support and structured JSON logging.
+- **Features**: Persistent session support (SQLite or Postgres), structured JSON logging, and a health probe server for readiness checks.
 - **Best For**: Scripted diagnostics and automated remediation triggers.
+- **Run Commands**: `make run-devops-cli` (ephemeral REPL via `adk run`) or `make run-devops-persistent` (session store + memory + health probes via `run_persistent()`).
+- **Entry point**: [`core.runner.run_persistent`](core/README.md) — this is also what the production container runs.
 
 ---
 

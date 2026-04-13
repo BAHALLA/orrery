@@ -63,7 +63,10 @@ Follow these steps if you want to modify agents or contribute to the core librar
     ```bash
     make run-devops
     ```
-    The web interface will be available at [http://localhost:8000](http://localhost:8000).
+    The ADK Dev UI will be available at [http://localhost:8000](http://localhost:8000).
+
+!!! warning "Same port as the Docker demo"
+    Both `make run-devops` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. If you're running the Docker demo, `make run-devops` will fail to start — `docker compose down` first, or change one of the ports.
 
 ---
 
@@ -90,7 +93,9 @@ Ask: **"Scale the 'web-app' deployment to 3 replicas."**
 
 ## 📖 Explore Further
 
-*   ⚙️ **[General Configuration](config/general.md)** — Tune LLM providers and infrastructure.
-*   🛡️ **[Safety & RBAC](adr/001-rbac.md)** — Learn how we protect your production environment.
-*   🏗️ **[Adding an Agent](adding-an-agent.md)** — Build your own specialized DevOps expert.
+*   📋 **[Agents overview](agents-overview.md)** — Every agent, its tools, and what role can call them.
+*   ⚙️ **[General configuration](config/general.md)** — Tune LLM providers and infrastructure.
+*   🛡️ **[Guardrails & RBAC](guardrails.md)** — Three risk tiers, three roles, and how confirmation works.
+*   🏗️ **[Adding an agent](adding-an-agent.md)** — Build your own specialized DevOps expert.
 *   📊 **[Observability](metrics.md)** — Monitor agent performance with Prometheus.
+*   🆘 **[Troubleshooting](troubleshooting.md)** — Common errors and their fixes.

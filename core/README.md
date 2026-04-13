@@ -330,6 +330,10 @@ session = session_service.create_session(state=initial_state, ...)
 
 Invalid role values default to `viewer`. The `GuardrailsPlugin` calls `ensure_default_role()` via `before_agent_callback` to prevent privilege escalation from untrusted session state.
 
+### Testing roles across surfaces
+
+For a hands-on guide to exercising `viewer` / `operator` / `admin` from ADK Web, `adk run`, Slack, Google Chat, and a custom `Runner`, see [Testing RBAC across surfaces](../docs/rbac-testing.md).
+
 ---
 
 ## Structured Logging

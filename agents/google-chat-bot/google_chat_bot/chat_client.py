@@ -8,9 +8,13 @@ must return ``200 OK`` immediately and post the real reply back via
 
 The client authenticates via the Chat Bot scope. Credentials come
 from either an explicit service-account file or Application Default
-Credentials (``GOOGLE_APPLICATION_CREDENTIALS`` or
-``gcloud auth application-default login``). The service account
-identity must be granted the Chat Bot API on the Chat API console.
+Credentials. ADC only works when it resolves to a service-account
+identity (Workload Identity on GKE, attached SA on Cloud Run / GCE,
+or ``GOOGLE_APPLICATION_CREDENTIALS`` pointing at a key file) —
+user credentials from ``gcloud auth application-default login``
+cannot obtain the ``chat.bot`` scope because it is restricted to
+app authentication. The service-account identity used must be the
+one registered as the Chat app's identity in the Chat API console.
 """
 
 from __future__ import annotations

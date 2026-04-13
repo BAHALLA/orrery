@@ -101,15 +101,19 @@ nav:
     - ADRs:
       - "ADR-001: RBAC": adr/001-rbac.md
       - "ADR-002: Agent Composition": adr/002-agent-tool-vs-sub-agents.md
+  - Platform Features:
+    - Agents Overview: agents-overview.md
+    - Guardrails & RBAC: guardrails.md
+    - Testing RBAC: rbac-testing.md
+    - Cross-Session Memory: memory.md
+    - Observability & Metrics: metrics.md
   - Operations:
     - Production Deployment: deployment.md
-    - Observability & Metrics: metrics.md
+    - Troubleshooting: troubleshooting.md
     - Integrations:
       - Overview: integrations.md
       - Slack: integrations/slack.md
       - Google Chat: integrations/google-chat.md
-  - Key Features:
-    - Cross-Session Memory: memory.md
   - Developer Guide:
     - Adding a New Agent: adding-an-agent.md
     - Core Library: core/README.md

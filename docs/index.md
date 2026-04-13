@@ -1,8 +1,46 @@
 # 🤖 AI Agents for DevOps & SRE
 
-Welcome to the documentation for the **AI Agents** platform — an open-source framework for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/).
+An open-source framework for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/).
 
 ![Google Chat Demo](images/google-chat-demo.png){ align=center }
+
+## Pick your path
+
+<div class="grid cards" markdown>
+
+-   :material-play-circle:{ .lg .middle } __I want to try it__
+
+    ---
+
+    Run the full stack locally in Docker in under 5 minutes — Kafka, Postgres, Prometheus, and the orchestrator ready to go.
+
+    [:octicons-arrow-right-24: Quick start with Docker](getting-started.md#quick-start-docker)
+
+-   :material-rocket-launch:{ .lg .middle } __I want to deploy it__
+
+    ---
+
+    Helm chart, multi-replica Postgres sessions, HPA, rolling updates, and observability scrape targets.
+
+    [:octicons-arrow-right-24: Production deployment](deployment.md)
+
+-   :material-hammer-wrench:{ .lg .middle } __I want to extend it__
+
+    ---
+
+    Add your own specialist agent, wire it into the orchestrator, and ship it behind the same RBAC + guardrails.
+
+    [:octicons-arrow-right-24: Adding a new agent](adding-an-agent.md)
+
+-   :material-chat:{ .lg .middle } __I want a chat surface__
+
+    ---
+
+    Bring the agents into Slack or Google Chat with interactive Approve / Deny cards and email/user-ID RBAC.
+
+    [:octicons-arrow-right-24: Integrations overview](integrations.md)
+
+</div>
 
 ---
 
@@ -56,33 +94,39 @@ graph LR
 
 ---
 
-## ⚡ Quick Access
+## ⚡ Jump to a topic
 
 <div class="grid cards" markdown>
 
--   :material-rocket-launch:{ .lg .middle } __[Getting Started](getting-started.md)__
+-   :material-view-list:{ .lg .middle } __[Agents overview](agents-overview.md)__
 
     ---
 
-    Launch the platform in 5 minutes using Docker and try your first triage.
+    What's in the box — every agent, its tools, and the role each tool requires.
 
--   :material-book-open-variant:{ .lg .middle } __[Adding an Agent](adding-an-agent.md)__
-
-    ---
-
-    Learn how to build and test your own specialist agents using our core library.
-
--   :material-shield-lock:{ .lg .middle } __[Safety & Governance](adr/001-rbac.md)__
+-   :material-shield-lock:{ .lg .middle } __[Guardrails & RBAC](guardrails.md)__
 
     ---
 
-    Understand how our 3-role hierarchy and guardrails protect your infrastructure.
+    Three risk tiers, three roles, and how the confirmation gate works end-to-end.
+
+-   :material-brain:{ .lg .middle } __[Cross-session memory](memory.md)__
+
+    ---
+
+    Let agents recall past incidents, resolutions, and team preferences.
 
 -   :material-chart-bar:{ .lg .middle } __[Observability](metrics.md)__
 
     ---
 
-    Explore built-in Prometheus metrics and how to track agent performance.
+    Prometheus metrics, circuit breaker state, and LLM token accounting.
+
+-   :material-lifebuoy:{ .lg .middle } __[Troubleshooting](troubleshooting.md)__
+
+    ---
+
+    Common errors across every surface with pointers to the fix.
 
 </div>
 

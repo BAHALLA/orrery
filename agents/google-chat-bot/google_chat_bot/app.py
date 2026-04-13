@@ -86,8 +86,10 @@ async def lifespan(app: FastAPI):
                 )
                 logger.info("Async response mode enabled via service account file")
             # Priority 2: Application Default Credentials (ADC).
-            # This is the recommended approach for Workload Identity (GKE),
-            # Cloud Run, GCE, or local dev via ``gcloud auth application-default login``.
+            # This works when ADC resolves to a service-account identity
+            # (Workload Identity on GKE, attached SA on Cloud Run / GCE).
+            # User ADC from ``gcloud auth application-default login`` will
+            # NOT work — the ``chat.bot`` scope is restricted to app auth.
             else:
                 chat_client = ChatClient.from_adc()
                 logger.info("Async response mode enabled via Application Default Credentials")

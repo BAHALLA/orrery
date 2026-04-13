@@ -104,3 +104,8 @@ FunctionTool(require_confirmation=True)  →  ADK natively asks "are you sure?" 
 ```
 
 A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm by ADK's native confirmation flow.
+
+## Related how-tos
+
+- **[Guardrails & RBAC](../guardrails.md)** — author-level reference: decorators, tiers, per-tool overrides, dry-run mode.
+- **[Testing RBAC across surfaces](../rbac-testing.md)** — drive each role from ADK Web, the CLI, Slack, Google Chat, and raw `Runner` code.

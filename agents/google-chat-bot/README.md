@@ -115,19 +115,28 @@ picks up the new audience.
 > run `ngrok http --url=<your-domain>.ngrok-free.app 3001`. Your endpoint
 > URL and audience never change again.
 
-## Authentication (ADC vs Service Account)
+## Authentication for async replies
 
-The bot prioritizes **Application Default Credentials (ADC)** for its internal REST client. This is the recommended approach for:
-- **GKE**: Uses Workload Identity automatically.
-- **Cloud Run / GCE**: Uses the metadata server identity.
-- **Local Dev**: Uses the identity from `gcloud auth application-default login`.
+For posting async replies via `spaces.messages.create`, the bot needs a credential bearing the `https://www.googleapis.com/auth/chat.bot` scope. This scope is **restricted** — it cannot be obtained through user-credential OAuth flows.
 
-**Important Note for Local Dev:** When using `gcloud`, you must explicitly request the `chat.bot` scope:
-```bash
-gcloud auth application-default login --scopes="https://www.googleapis.com/auth/chat.bot,https://www.googleapis.com/auth/cloud-platform"
-```
+### Use a service account (required for local dev, recommended for production)
 
-Use `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` only if you need to override the default identity with a specific service account JSON.
+User ADC from `gcloud auth application-default login` **will not work**. Google rejects the `chat.bot` scope with `Error 400: invalid_scope` on the consent screen because it's reserved for app (service-account) authentication.
+
+Steps:
+
+1. **Create a service account** in IAM & Admin → Service Accounts (e.g. `ai-agents-chat-bot`). No project-level IAM roles are required — authorization is enforced by the Chat API based on the SA being the app's configured identity.
+2. **Create and download a JSON key** for the SA. Store it outside the repo (e.g. `~/.secrets/chat-bot-sa.json`).
+3. **Register the SA as the app identity** in the Google Chat API → *Configuration* tab, under *App authentication* (or the equivalent section — Google renames this periodically). Save.
+4. **Point the bot at the key** in your `.env`:
+   ```
+   GOOGLE_CHAT_SERVICE_ACCOUNT_FILE=/home/you/.secrets/chat-bot-sa.json
+   ```
+5. Restart the bot. Logs should show `Async response mode enabled via service account file`.
+
+### Production: Workload Identity / metadata server
+
+On **GKE** (Workload Identity) or **Cloud Run / GCE** (metadata server), ADC returns a service-account identity — not a user credential — so the `chat.bot` scope *can* be requested. In that case, leave `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` unset and the bot falls through to `ChatClient.from_adc()`. Make sure the SA bound to the workload is the same one registered as the Chat app's identity.
 
 ## Async Response Mode
 
@@ -147,6 +156,8 @@ The bot verifies every incoming request's Google-signed ID token. User identity 
 | `viewer`   | Read-only tools                       | Default for any user |
 | `operator` | Read + `@confirm` tools               | Add email to `GOOGLE_CHAT_OPERATOR_EMAILS` |
 | `admin`    | All tools, including `@destructive`   | Add email to `GOOGLE_CHAT_ADMIN_EMAILS` |
+
+The role is resolved once per thread at session creation. To exercise a different role, @-mention from an account that maps to that role, or change the env var, restart, and start a **new thread**. For a cross-surface walk-through (Google Chat, Slack, ADK Web, CLI), see [docs/rbac-testing.md](../../docs/rbac-testing.md).
 
 ## Interactive guardrails
 
@@ -187,7 +198,11 @@ If you see `401 Unauthorized` with a message about an invalid identity, add the 
 
 ### `403 Forbidden: ACCESS_TOKEN_SCOPE_INSUFFICIENT`
 - The identity used for async calls lacks the `chat.bot` scope.
-- **Fix**: Use a Service Account JSON file or re-run `gcloud auth application-default login` with the scopes listed in the Authentication section above.
+- **Fix**: Configure a service account JSON key via `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` (see the *Authentication for async replies* section). User ADC from `gcloud auth application-default login` cannot supply this scope — it is restricted to app (service-account) authentication.
+
+### `Error 400: invalid_scope` when running `gcloud auth application-default login`
+- `chat.bot` is a restricted scope and the gcloud user-credential flow is not allowed to request it. This is by design — not a typo or version issue.
+- **Fix**: Don't use user ADC for the bot's outbound credential. Use a service-account JSON key instead (see above).
 
 ### `Session not found`
 - The bot is configured with `auto_create_session=True` to handle dynamic threads in Chat. If sessions are still missing, ensure your `DATABASE_URL` is correct or that the bot has write permissions to its local storage.
