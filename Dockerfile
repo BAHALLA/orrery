@@ -34,7 +34,7 @@ COPY agents/ agents/
 RUN uv sync --no-dev --frozen
 
 # ── Runtime stage ─────────────────────────────────────────────────────
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
