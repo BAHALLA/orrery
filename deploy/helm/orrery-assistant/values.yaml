@@ -170,7 +170,7 @@ pubsubWorker:
     create: true
     # On GKE, paste the `gsa_email` output from deploy/terraform/google-chat-bot
     # here to enable Workload Identity:
-    #   iam.gke.io/gcp-service-account: orrery-chat-bot@PROJECT.iam.gserviceaccount.com
+    #   iam.gke.io/gcp-service-account: your-chat-bot-sa@your-project-id.iam.gserviceaccount.com
     annotations: {}
     name: ""
   podAnnotations: {}
