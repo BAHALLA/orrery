@@ -48,6 +48,24 @@ spec:
                 name: {{ include "orrery-assistant.fullname" . }}
             - secretRef:
                 name: {{ include "orrery-assistant.secretName" . }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.pubsubWorker.healthPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: {{ .Values.pubsubWorker.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.pubsubWorker.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.pubsubWorker.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: {{ .Values.pubsubWorker.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.pubsubWorker.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.pubsubWorker.probes.readiness.failureThreshold }}
           resources:
             {{- toYaml .Values.pubsubWorker.resources | nindent 12 }}
           securityContext:

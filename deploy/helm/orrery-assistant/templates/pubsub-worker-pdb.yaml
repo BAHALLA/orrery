@@ -1,0 +1,13 @@
+{{- if and .Values.pubsubWorker.enabled .Values.pubsubWorker.podDisruptionBudget.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "orrery-assistant.pubsubWorker.fullname" . }}
+  labels:
+    {{- include "orrery-assistant.pubsubWorker.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pubsubWorker.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "orrery-assistant.pubsubWorker.selectorLabels" . | nindent 6 }}
+{{- end }}

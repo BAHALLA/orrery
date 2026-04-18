@@ -39,10 +39,17 @@ from typing import Any
 
 from google.cloud import pubsub_v1
 
+from orrery_core.health import HealthServer
+
 from .app import build_handler, config
 from .handler import GoogleChatHandler
 
 logger = logging.getLogger("google_chat_bot.pubsub_worker")
+
+# Default port for the in-worker health HTTP server. Overridden with
+# ``GOOGLE_CHAT_PUBSUB_HEALTH_PORT``. Kept tiny and unauthenticated — it
+# only exposes liveness/readiness for kubelet probes on localhost.
+DEFAULT_HEALTH_PORT = 8080
 
 # Sentinel returned by the callback factory for tests; the SubscriberClient
 # itself only cares that the callable accepts a Message.
@@ -140,6 +147,27 @@ def make_callback(
     return callback
 
 
+def _build_health_server(streaming_pull_future_ref: dict[str, Any]) -> HealthServer:
+    """Health server exposing `/healthz` (liveness) and `/readyz` (readiness).
+
+    The streaming-pull future is handed over via a mutable dict so
+    :func:`run` can populate it *after* the subscriber is created
+    without the health server needing a class.
+
+    Liveness is green once the worker is running; readiness flips red
+    the moment the streaming pull future is done / cancelled — that is
+    the only observable signal that the subscriber thread has died.
+    """
+
+    def subscriber_alive() -> bool:
+        future = streaming_pull_future_ref.get("future")
+        return future is not None and not future.done()
+
+    server = HealthServer()
+    server.register_check("pubsub_subscriber", subscriber_alive)
+    return server
+
+
 async def run() -> None:
     """Subscribe to Pub/Sub and dispatch events until SIGINT/SIGTERM."""
     handler = await build_handler(require_chat_client=True)
@@ -147,6 +175,14 @@ async def run() -> None:
 
     subscriber = pubsub_v1.SubscriberClient()
     subscription_path = resolve_subscription_path(subscriber)
+
+    # Health server comes up before the subscriber so readiness reflects
+    # initialization state honestly (503 until the pull stream is live).
+    future_ref: dict[str, Any] = {}
+    health_port = int(os.getenv("GOOGLE_CHAT_PUBSUB_HEALTH_PORT", str(DEFAULT_HEALTH_PORT)))
+    health_server = _build_health_server(future_ref)
+    health_server.start(port=health_port)
+    logger.info("Pub/Sub worker health server listening on :%d", health_port)
 
     flow_control = pubsub_v1.types.FlowControl(
         max_messages=config.google_chat_pubsub_max_messages,
@@ -162,6 +198,7 @@ async def run() -> None:
         callback=callback,
         flow_control=flow_control,
     )
+    future_ref["future"] = streaming_pull_future
     logger.info(
         "Pub/Sub worker subscribed to %s (max_messages=%d, handler_timeout=%ds)",
         subscription_path,
@@ -200,6 +237,7 @@ async def run() -> None:
         except Exception:
             logger.exception("Error waiting for streaming pull to stop")
         subscriber.close()
+        # HealthServer runs as a daemon thread; process exit tears it down.
         logger.info("Pub/Sub worker stopped")
 
 

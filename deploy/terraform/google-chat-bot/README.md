@@ -42,6 +42,9 @@ module "orrery_chat_bot" {
   # name                = "orrery-chat"   # prefix for all resources
   # enable_dead_letter  = true            # default
   # max_delivery_attempts = 5
+  # dlq_subscribers     = ["group:sre-oncall@example.com"]  # triage access
+  # enable_vertex_ai    = false           # if using OpenAI/Anthropic
+  # vertex_ai_project_id = "other-project"  # cross-project Vertex
 
   # If your Chat app is a Workspace Add-on, or your org policy
   # (`constraints/iam.allowedPolicyMemberDomains`) blocks the default

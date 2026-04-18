@@ -162,3 +162,33 @@ def test_resolve_subscription_path_requires_project(monkeypatch):
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     with pytest.raises(RuntimeError, match="GOOGLE_CHAT_PUBSUB_PROJECT"):
         pubsub_worker.resolve_subscription_path(MagicMock())
+
+
+# ── Health server ───────────────────────────────────────────────────────
+
+
+def test_health_server_readiness_fails_without_future():
+    """readiness check reports false until the streaming pull future is registered."""
+    server = pubsub_worker._build_health_server({})
+    ok, details = server._run_checks()
+    assert not ok
+    assert details == {"pubsub_subscriber": False}
+
+
+def test_health_server_readiness_ok_with_live_future():
+    future = MagicMock()
+    future.done.return_value = False
+    server = pubsub_worker._build_health_server({"future": future})
+    ok, details = server._run_checks()
+    assert ok
+    assert details == {"pubsub_subscriber": True}
+
+
+def test_health_server_readiness_fails_when_future_done():
+    """If the streaming pull dies, the readiness check flips to false."""
+    future = MagicMock()
+    future.done.return_value = True
+    server = pubsub_worker._build_health_server({"future": future})
+    ok, details = server._run_checks()
+    assert not ok
+    assert details == {"pubsub_subscriber": False}

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Pub/Sub Worker Health Probes**: The worker now exposes `/healthz` and `/readyz` via the shared `HealthServer`. Readiness flips to 503 if the streaming-pull future dies, so kubelet restarts the pod automatically.
+- **Helm: Liveness/Readiness + PDB**: `pubsubWorker` deployment now configures liveness, readiness, health port, and an optional `PodDisruptionBudget`.
+- **Terraform: DLQ Triage Access**: New `dlq_subscribers` variable grants `roles/pubsub.subscriber` on the DLQ subscription to configured SRE/on-call groups, plus a `dead_letter_subscription_name` output.
+- **Docs**: `docs/integrations/google-chat-pubsub.md` now documents every Terraform variable (`chat_publisher_email`, `enable_vertex_ai`, `vertex_ai_project_id`, tuning knobs) and the timeout-alignment rule for Pub/Sub ack deadlines.
+- **AEP-018**: Proposal for Pub/Sub idempotency (dedup store on `eventId`) and HPA-on-backlog for the `pubsubWorker` to remove the single-replica SPOF during incidents.
+
 ## [0.1.5] - 2026-04-18
 
 ### Added

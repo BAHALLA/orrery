@@ -181,6 +181,23 @@ pubsubWorker:
     limits:
       cpu: 500m
       memory: 512Mi
+  ## Health HTTP server inside the worker. Exposes /healthz and /readyz;
+  ## readiness flips to 503 if the Pub/Sub streaming-pull future dies.
+  healthPort: 8080
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 3
+  ## PodDisruptionBudget for the worker. Replica count defaults to 1; bump
+  ## replicaCount to 2+ before enabling this to avoid blocking node drains.
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
   nodeSelector: {}
   tolerations: []
   affinity: {}

@@ -12,8 +12,12 @@ spec:
   policyTypes:
     - Ingress
     - Egress
-  # No ingress rules — the worker is outbound-only.
-  ingress: []
+  # Only kubelet-sourced probes reach the health port. Everything else
+  # is outbound-only (Pub/Sub, Vertex, Chat REST).
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.pubsubWorker.healthPort }}
   egress:
     - to:
         - namespaceSelector: {}

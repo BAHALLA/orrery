@@ -27,3 +27,8 @@ output "dead_letter_topic_name" {
   description = "Dead-letter topic name (null when disabled)."
   value       = var.enable_dead_letter ? google_pubsub_topic.dlq[0].name : null
 }
+
+output "dead_letter_subscription_name" {
+  description = "Diagnostics subscription on the DLQ (null when disabled)."
+  value       = var.enable_dead_letter ? google_pubsub_subscription.dlq[0].name : null
+}

@@ -26,6 +26,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | P2 | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | proposed | High | Medium |
 | P2 | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | proposed | Medium | Medium |
 | P3 | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | proposed | Medium | Medium |
+| P0 | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | proposed | Medium | High |
 
 ## How to Read These Proposals
 
@@ -50,6 +51,7 @@ security perimeter:
 - **AEP-011 ✅**: Kubernetes manifests, Helm chart, CD pipeline, rate limiting, PostgreSQL sessions *(completed 2026-04-11)*
 - **AEP-013**: JWT/OAuth authentication, PII redaction, prompt injection detection, secrets management
 - **AEP-014**: SBOM generation, cosign image signing, trivy scanning, base image pinning
+- **AEP-018**: Pub/Sub worker idempotency (dedup on Chat `eventId`) and backlog-based HPA to remove the single-replica SPOF in the Chat transport
 
 ### Phase 2 - Autonomous Capabilities & Observability (P1)
 
@@ -93,3 +95,4 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-04-11 | AEP-015 added (P1) | Cost observability was flagged in production readiness audit but had no AEP. Needed before scale-up. |
 | 2026-04-11 | AEP-016 added (P2) | Load/chaos testing gap identified during AEP-011 review. |
 | 2026-04-11 | AEP-017 added (P1) | Runbooks are required before on-call rotation; gap in existing docs. |
+| 2026-04-18 | AEP-018 added (P0) | Pub/Sub at-least-once delivery means redelivered events can double-act on `@destructive` tools; single-replica worker is a SPOF during incidents. Split out of Google Chat Pub/Sub transport work. |

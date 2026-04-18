@@ -66,6 +66,20 @@ variable "enable_dead_letter" {
   default     = true
 }
 
+variable "dlq_subscribers" {
+  description = <<-EOT
+    IAM members granted `roles/pubsub.subscriber` on the DLQ subscription
+    for triage (pulling and inspecting poison messages). Accepts any
+    member syntax Pub/Sub supports, e.g.:
+
+      ["group:sre-oncall@example.com", "user:alice@example.com"]
+
+    Ignored when `enable_dead_letter` is false.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "chat_publisher_email" {
   description = <<-EOT
     Service account that Google Chat uses to publish events to the topic.

@@ -115,6 +115,18 @@ resource "google_pubsub_topic_iam_member" "dlq_publisher" {
   member  = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
 
+# Grant the configured operators `roles/pubsub.subscriber` on the DLQ
+# subscription so they can pull poison messages for triage without
+# needing project-level IAM.
+resource "google_pubsub_subscription_iam_member" "dlq_subscribers" {
+  for_each = var.enable_dead_letter ? toset(var.dlq_subscribers) : toset([])
+
+  project      = var.project_id
+  subscription = google_pubsub_subscription.dlq[0].name
+  role         = "roles/pubsub.subscriber"
+  member       = each.value
+}
+
 data "google_project" "this" {
   project_id = var.project_id
 }
