@@ -10,7 +10,7 @@ The bot is outbound-only — no Ingress or public Load Balancer is required.
 
 ## 1. GCP Infrastructure (Terraform)
 
-Use the provided module at `deploy/terraform/google-chat-bot` to provision the required resources:
+Use the provided module at [`deploy/terraform/google-chat-bot`](../../deploy/terraform/google-chat-bot/) to provision the required resources:
 
 ```hcl
 module "orrery_chat_bot" {
