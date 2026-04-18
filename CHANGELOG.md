@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.4] - 2026-04-18
 
+### Added
+- **Google Chat Pub/Sub Transport**: Added support for private GKE clusters via Pub/Sub connection type.
+- **Terraform Module**: New module in `deploy/terraform/google-chat-bot` for automated GCP infrastructure setup.
+- **Helm Expansion**: Added `pubsubWorker` deployment and Workload Identity support to the Helm chart.
+- **Overridable Publisher IAM**: Added `chat_publisher_email` variable to handle Domain Restricted Sharing (GCP Org Policy) for Workspace Add-ons.
+
+### Changed
+- **Unified Handler**: Refactored Google Chat bot to use a transport-agnostic handler shared between HTTP and Pub/Sub.
+- **GKE Deployment Story**: Removed legacy Kustomize manifests in favor of a unified Helm + Terraform production pattern.
+
+### Fixed
+- **Poison Message Handling**: Implemented robust `ack`/`nack` logic in the Pub/Sub worker to prevent infinite redelivery of malformed payloads.
+
 ## [0.1.3] - 2026-04-13
 
 ### Changed
@@ -120,7 +133,9 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/BAHALLA/orrery/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/BAHALLA/orrery/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/BAHALLA/orrery/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/BAHALLA/orrery/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/BAHALLA/orrery/compare/v0.1.0...v0.1.1
