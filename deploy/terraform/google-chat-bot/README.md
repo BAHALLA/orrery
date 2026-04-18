@@ -53,7 +53,7 @@ module "orrery_chat_bot" {
   # `chat-api-push@system.gserviceaccount.com`, copy the exact SA shown
   # in the Chat API console → Configuration → Connection settings →
   # "Service Account Email", and pass it here:
-  # chat_publisher_email = "service-288313289607@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
+  # chat_publisher_email = "service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
 }
 
 output "chat_bot_gsa" {

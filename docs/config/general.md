@@ -21,11 +21,11 @@ MODEL_PROVIDER=gemini
 MODEL_NAME=gemini-2.5-pro
 # Either Vertex AI:
 GOOGLE_GENAI_USE_VERTEXAI=TRUE
-GOOGLE_CLOUD_PROJECT=my-project
+GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
 # Or AI Studio:
 GOOGLE_GENAI_USE_VERTEXAI=FALSE
-GOOGLE_API_KEY=AIza...
+GOOGLE_API_KEY=your-api-key
 ```
 </details>
 
