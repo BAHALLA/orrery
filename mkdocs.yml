@@ -113,7 +113,10 @@ nav:
     - Integrations:
       - Overview: integrations.md
       - Slack: integrations/slack.md
-      - Google Chat: integrations/google-chat.md
+      - Google Chat:
+        - Overview: integrations/google-chat.md
+        - HTTP Webhook Setup: integrations/google-chat-webhook.md
+        - Pub/Sub Setup: integrations/google-chat-pubsub.md
   - Developer Guide:
     - Adding a New Agent: adding-an-agent.md
     - Core Library: core/README.md
