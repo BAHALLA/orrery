@@ -120,13 +120,20 @@ config:
   PROMETHEUS_URL: http://prometheus.observability.svc.cluster.local:9090
   LOKI_URL: http://loki.observability.svc.cluster.local:3100
   ALERTMANAGER_URL: http://alertmanager.observability.svc.cluster.local:9093
-  # ── Google Chat Bot ──
+  # ── Google Chat Bot (HTTP transport) ──
   GOOGLE_CHAT_AUDIENCE: ""
   GOOGLE_CHAT_IDENTITIES: "chat@system.gserviceaccount.com"
   GOOGLE_CHAT_ADMIN_EMAILS: ""
   GOOGLE_CHAT_OPERATOR_EMAILS: ""
   GOOGLE_CHAT_ASYNC_RESPONSE: "true"
   GOOGLE_CHAT_SERVICE_ACCOUNT_FILE: ""
+  # ── Google Chat Bot (Pub/Sub transport) ──
+  # Only consumed by the pubsubWorker Deployment. AUDIENCE / VERIFY_TOKEN
+  # are ignored in this mode; Pub/Sub IAM is the auth boundary.
+  GOOGLE_CHAT_PUBSUB_SUBSCRIPTION: ""
+  GOOGLE_CHAT_PUBSUB_PROJECT: ""
+  GOOGLE_CHAT_PUBSUB_MAX_MESSAGES: "4"
+  GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS: "600"
 
 ## Secret values. Leave empty and set `existingSecret` to use a Secret
 ## managed out-of-band (External Secrets Operator, Sealed Secrets, Vault).
@@ -146,6 +153,37 @@ networkPolicy:
   enabled: true
   ingressControllerNamespace: ingress-nginx
   monitoringNamespace: observability
+
+## ── Google Chat Pub/Sub worker ─────────────────────────────────────
+## Optional second Deployment that runs `python -m google_chat_bot.pubsub_worker`.
+## Use this when the Chat bot lives on a private GKE cluster that Google Chat
+## cannot reach via HTTP. The worker is outbound-only — no Service or Ingress.
+## See agents/google-chat-bot/README.md for the Pub/Sub transport overview.
+pubsubWorker:
+  enabled: false
+  replicaCount: 1
+  command:
+    - python
+    - -m
+    - google_chat_bot.pubsub_worker
+  serviceAccount:
+    create: true
+    # On GKE, paste the `gsa_email` output from deploy/terraform/google-chat-bot
+    # here to enable Workload Identity:
+    #   iam.gke.io/gcp-service-account: orrery-chat-bot@PROJECT.iam.gserviceaccount.com
+    annotations: {}
+    name: ""
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 nodeSelector: {}
 tolerations: []

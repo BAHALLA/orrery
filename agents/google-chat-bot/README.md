@@ -138,6 +138,84 @@ Steps:
 
 On **GKE** (Workload Identity) or **Cloud Run / GCE** (metadata server), ADC returns a service-account identity — not a user credential — so the `chat.bot` scope *can* be requested. In that case, leave `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` unset and the bot falls through to `ChatClient.from_adc()`. Make sure the SA bound to the workload is the same one registered as the Chat app's identity.
 
+## Pub/Sub mode (private GKE / private network)
+
+When the bot lives in a network Google Chat cannot reach over HTTP
+(private GKE clusters, no public Ingress, no LB), use the **Pub/Sub
+transport** instead of the HTTP webhook. Google Chat publishes events
+to a Pub/Sub topic; the bot pulls from a subscription on that topic.
+The pod is outbound-only — no Service, no Ingress, no public IP.
+
+### Architecture
+
+```
+┌──────────────┐  publish  ┌────────────────┐   pull   ┌─────────────────┐
+│ Google Chat  │──────────▶│ Pub/Sub topic  │◀─────────│ pubsub_worker   │
+└──────────────┘           └────────────────┘          │ (private GKE)   │
+       ▲                                                │                 │
+       │  REST: spaces.messages.create  (outbound)      │ ChatClient.from_adc()
+       └────────────────────────────────────────────────┘
+```
+
+The same `GoogleChatHandler` powers both transports — only the entry
+point differs. Replies go via the Chat REST API, which is mandatory
+in Pub/Sub mode because there is no synchronous response channel.
+
+### GCP setup (Terraform)
+
+A ready-made module lives at
+[`deploy/terraform/google-chat-bot`](../../deploy/terraform/google-chat-bot/).
+It creates the topic, subscription, dead-letter topic, GSA, and
+Workload Identity binding. After `terraform apply`, two manual steps
+remain in the Google Chat API console:
+
+1. **Configuration → App authentication**: paste the `gsa_email`
+   output as the Chat app identity.
+2. **Configuration → Connection settings**: select *Cloud Pub/Sub* and
+   paste the `topic_id` output.
+
+### Run the worker
+
+```bash
+# Local (against a real subscription, with ADC pointing at a SA key):
+GOOGLE_APPLICATION_CREDENTIALS=~/.secrets/chat-bot-sa.json \
+GOOGLE_CHAT_PUBSUB_SUBSCRIPTION=orrery-chat-events-sub \
+GOOGLE_CLOUD_PROJECT=my-project \
+GOOGLE_CHAT_ASYNC_RESPONSE=true \
+make run-google-chat-pubsub
+
+# In-cluster (Workload Identity supplies ADC automatically):
+python -m google_chat_bot.pubsub_worker
+```
+
+### Configuration knobs (Pub/Sub-specific)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GOOGLE_CHAT_PUBSUB_SUBSCRIPTION` | *(required)* | Short ID or full path of the subscription. |
+| `GOOGLE_CHAT_PUBSUB_PROJECT` | `GOOGLE_CLOUD_PROJECT` | Project hosting the subscription. |
+| `GOOGLE_CHAT_PUBSUB_MAX_MESSAGES` | `4` | Concurrent in-flight messages per pod. |
+| `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` | `600` | Per-message handler cap; on expiry the message is nacked for redelivery. |
+
+`GOOGLE_CHAT_VERIFY_TOKEN` and `GOOGLE_CHAT_AUDIENCE` are **ignored**
+in Pub/Sub mode — Pub/Sub IAM is the auth boundary, and inbound
+messages have no `Authorization` header.
+`GOOGLE_CHAT_ASYNC_RESPONSE` must be `true`; the worker refuses to
+start without a working `ChatClient`.
+
+### Trade-offs vs. HTTP push
+
+| Aspect | HTTP push | Pub/Sub pull |
+|--------|-----------|--------------|
+| Public IP / Ingress | Required | Not needed |
+| Auth | Per-request JWT | Pub/Sub IAM |
+| Latency | Lowest | +~1s steady-state |
+| Replay / DLQ | Not built-in | First-class |
+| Local dev | Tunnel (ngrok) | Real subscription |
+
+For local development you can still use the HTTP transport via ngrok —
+both modes coexist in the same codebase.
+
 ## Async Response Mode
 
 Google Chat enforces a **~30 second synchronous budget** on webhook responses. For long agent runs, the bot uses **Async Response Mode**:

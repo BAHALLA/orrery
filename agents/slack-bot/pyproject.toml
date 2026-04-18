@@ -1,6 +1,6 @@
 [project]
 name = "slack-bot"
-version = "0.1.2"
+version = "0.1.4"
 description = "Slack bot integration for the DevOps agent platform"
 requires-python = ">=3.11"
 dependencies = [

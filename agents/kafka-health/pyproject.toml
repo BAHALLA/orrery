@@ -1,6 +1,6 @@
 [project]
 name = "kafka-health-agent"
-version = "0.1.2"
+version = "0.1.4"
 description = "Agent for monitoring and managing Kafka cluster health"
 readme = "README.md"
 requires-python = ">=3.11"

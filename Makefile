@@ -145,3 +145,6 @@ run-slack-bot-socket: ## Run the Slack bot in Socket Mode (no public URL needed)
 
 run-google-chat: ## Run the Google Chat bot (FastAPI on :3001)
 	cd agents/google-chat-bot && uv run uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3001
+
+run-google-chat-pubsub: ## Run the Google Chat bot in Pub/Sub mode (private GKE friendly)
+	cd agents/google-chat-bot && uv run python -m google_chat_bot.pubsub_worker
