@@ -26,6 +26,12 @@ variable "vertex_ai_project_id" {
   default     = null
 }
 
+variable "enable_vertex_ai" {
+  description = "Grant Vertex AI User permissions to the bot GSA. Set to false if using a different LLM provider (OpenAI, Anthropic)."
+  type        = bool
+  default     = true
+}
+
 
 variable "ack_deadline_seconds" {
   description = <<-EOT

@@ -136,8 +136,10 @@ resource "google_pubsub_subscription_iam_member" "bot_subscriber" {
   member       = "serviceAccount:${google_service_account.bot.email}"
 }
 
-# Allow the bot to call Vertex AI (Gemini). Mandatory for agent execution.
+# Allow the bot to call Vertex AI (Gemini). Optional — only needed if
+# Gemini is used as the LLM provider.
 resource "google_project_iam_member" "vertex_ai_user" {
+  count   = var.enable_vertex_ai ? 1 : 0
   project = coalesce(var.vertex_ai_project_id, var.project_id)
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.bot.email}"
