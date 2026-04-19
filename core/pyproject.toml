@@ -1,10 +1,10 @@
 [project]
 name = "orrery-core"
-version = "0.1.4"
+version = "0.1.6"
 description = "Shared utilities for AI agents"
 requires-python = ">=3.11"
 dependencies = [
-    "google-adk[eval]>=1.27.1",
+    "google-adk[eval]>=1.31.0",
     "litellm>=1.60.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.0.0",

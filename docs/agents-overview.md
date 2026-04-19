@@ -9,8 +9,8 @@ For how agents are composed inside `orrery-assistant`, see [ADR-002: Agent Compo
 | Agent | Package | Tools | Guarded tools | Primary use |
 |-------|---------|-------|---------------|-------------|
 | [`orrery-assistant`](#orrery-assistant) | `agents/orrery-assistant` | *orchestrator* | delegates | Top-level entry point — routes to specialists and runs triage / remediation workflows |
-| [`kafka-health`](#kafka-health) | `agents/kafka-health` | 9 | 3 | Kafka cluster health, topic ops, consumer lag |
-| [`k8s-health`](#k8s-health) | `agents/k8s-health` | 12 | 3 | Kubernetes diagnostics, scaling, rollouts |
+| [`kafka-health`](#kafka-health) | `agents/kafka-health` | 19 | 5 | Kafka cluster health, topic ops, consumer lag, Strimzi-aware |
+| [`k8s-health`](#k8s-health) | `agents/k8s-health` | 18 | 3 | Kubernetes diagnostics, scaling, rollouts, operator-aware (Strimzi / ECK) |
 | [`observability`](#observability) | `agents/observability` | 12 | 2 | Prometheus queries, Loki logs, Alertmanager silences |
 | [`docker-agent`](#docker-agent) | `agents/docker-agent` | 10 | 4 | Container inspection and lifecycle ops |
 | [`ops-journal`](#ops-journal) | `agents/ops-journal` | 10 | 0 | Cross-session notes, preferences, and team bookmarks |
@@ -42,7 +42,9 @@ make run-devops-persistent   # SQLite-backed sessions + memory
 
 Cluster monitoring via `confluent-kafka`'s `AdminClient`. Clients are cached as module-level singletons to avoid per-call reconnect overhead.
 
-**Config:** `KAFKA_BOOTSTRAP_SERVERS=localhost:9092`
+**Config:** `KAFKA_BOOTSTRAP_SERVERS=localhost:9092`, `KUBECONFIG_PATH` (optional, for Strimzi tools)
+
+**Core tools — Kafka protocol:**
 
 | Tool | Role | Description |
 |------|------|-------------|
@@ -55,6 +57,24 @@ Cluster monitoring via `confluent-kafka`'s `AdminClient`. Clients are cached as 
 | `create_kafka_topic` | operator (`@confirm`) | Create with partitions + replication |
 | `update_kafka_partitions` | operator (`@confirm`) | Increase partition count |
 | `delete_kafka_topic` | admin (`@destructive`) | Permanent topic deletion |
+
+**Strimzi tools — Kubernetes control plane** (backed by `orrery_core.default_registry.StrimziDetector`):
+
+| Tool | Role | Description |
+|------|------|-------------|
+| `list_strimzi_clusters` | viewer | List `Kafka` CRs, enriched with healthy / phase / warnings |
+| `describe_strimzi_cluster` | viewer | Full spec + raw status + interpreted status for a `Kafka` CR |
+| `list_strimzi_topics` | viewer | List `KafkaTopic` CRs (Topic Operator view), optional `strimzi.io/cluster` label filter |
+| `list_kafka_users` | viewer | List `KafkaUser` CRs with authentication / authorization type |
+| `get_kafka_connect_status` | viewer | Describe a `KafkaConnect` cluster — REST URL, replicas, loaded plugins |
+| `list_kafka_connectors` | viewer | List `KafkaConnector` CRs with task state + failed-task count |
+| `get_mirrormaker2_status` | viewer | Describe a `KafkaMirrorMaker2` — clusters, replication flows, per-connector state |
+| `get_kafka_rebalance_status` | viewer | Cruise Control `KafkaRebalance` state + optimization result |
+| `approve_kafka_rebalance` | operator (`@confirm`) | Annotate `strimzi.io/rebalance: approve` — only when state is `ProposalReady` |
+| `restart_kafka_connector` | operator (`@confirm`) | Annotate `strimzi.io/restart: true` on a connector CR |
+
+!!! tip "Kafka protocol vs. Strimzi CRs"
+    `list_kafka_topics` returns what the broker actually serves; `list_strimzi_topics` returns what the Topic Operator *wants* the broker to serve. Divergence between the two usually means the operator is reconciling or the TO has errored — check `describe_custom_resource` on the offending `KafkaTopic` in `k8s-health`.
 
 ---
 
@@ -73,6 +93,20 @@ Kubernetes control-plane tooling via the official Python client. Uses in-cluster
 | `scale_deployment` | operator (`@confirm`) | Change replica count |
 | `restart_deployment` | operator (`@confirm`) | Rolling restart via annotation bump |
 | `rollback_deployment` | admin (`@destructive`) | Revert to a previous revision |
+
+**Operator-aware tools** — backed by `orrery_core.default_registry` (Strimzi + ECK built in; pluggable for others):
+
+| Tool | Role | Description |
+|------|------|-------------|
+| `detect_operators` | viewer | Scan CRDs and report which known operators are installed |
+| `list_custom_resources` | viewer | List any CR (GVR), enriched with healthy / phase / warnings when the group is known |
+| `describe_custom_resource` | viewer | Full CR spec + raw status + interpreted status block |
+| `get_owner_chain` | viewer | Walk `ownerReferences` from a Pod up to its root resource |
+| `describe_workload` | viewer | Pod → operator-managed CR aware: returns the operator's health/phase summary instead of raw pod info |
+| `get_operator_events` | viewer | Cluster events filtered to operator-watched kinds (e.g., only `Kafka` / `Elasticsearch` events) |
+
+!!! tip "Why this matters"
+    For a failing `kafka-broker-0` pod, `describe_pod` shows a `CrashLoopBackOff`; `describe_workload` walks to the owning `Kafka` CR and reports *"Kafka 'demo' is unhealthy — NotReady: rolling update in progress"*. The operator's view is usually the one you want.
 
 ---
 
@@ -136,6 +170,7 @@ If you're writing a new workflow and need to decide which specialist(s) to call:
 |----------|-------|
 | *"Is the broker healthy? Who's consuming from topic X? What's the lag?"* | `kafka-health` |
 | *"What pods are running? Why is this deployment unhealthy?"* | `k8s-health` |
+| *"Is the Strimzi Kafka / ECK Elasticsearch cluster healthy? Why is broker-0 failing?"* | `k8s-health` (via `describe_workload`, `describe_custom_resource`) |
 | *"What are the active alerts? Show me logs matching {job=\"api\"}"* | `observability` |
 | *"What containers are up? Restart the web service."* | `docker-agent` |
 | *"Remember this incident / recall last week's postmortem."* | `ops-journal` + [memory](memory.md) |

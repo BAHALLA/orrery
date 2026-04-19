@@ -31,6 +31,13 @@ from .metrics import CONTEXT_CACHE_EVENTS_TOTAL as CONTEXT_CACHE_EVENTS_TOTAL
 from .metrics import MetricsCollector as MetricsCollector
 from .metrics import track_cache_event as track_cache_event
 from .metrics import track_llm_tokens as track_llm_tokens
+from .operators import CRDRef as CRDRef
+from .operators import ECKDetector as ECKDetector
+from .operators import OperatorDetector as OperatorDetector
+from .operators import OperatorRegistry as OperatorRegistry
+from .operators import OperatorStatus as OperatorStatus
+from .operators import StrimziDetector as StrimziDetector
+from .operators import default_registry as default_registry
 from .plugins import ActivityPlugin as ActivityPlugin
 from .plugins import AuditPlugin as AuditPlugin
 from .plugins import ErrorHandlerPlugin as ErrorHandlerPlugin
@@ -51,6 +58,8 @@ from .resilience import CircuitState as CircuitState
 from .resilience import with_retry as with_retry
 from .runner import create_context_cache_config as create_context_cache_config
 from .runner import run_persistent as run_persistent
+from .tool_result import ResultStatus as ResultStatus
+from .tool_result import ToolResult as ToolResult
 from .validation import K8S_NAME_PATTERN as K8S_NAME_PATTERN
 from .validation import KAFKA_TOPIC_PATTERN as KAFKA_TOPIC_PATTERN
 from .validation import MAX_LOG_LINES as MAX_LOG_LINES

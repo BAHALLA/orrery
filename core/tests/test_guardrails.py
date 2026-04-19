@@ -1,6 +1,11 @@
 """Tests for orrery_core.guardrails."""
 
+from __future__ import annotations
+
 import time
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 from orrery_core.guardrails import (
     _CONFIRMATION_TTL,
@@ -273,7 +278,9 @@ def test_require_confirmation_rejects_different_args(fake_tool, fake_ctx):
         pass
 
     callback = require_confirmation()
-    tool = fake_tool(name="danger_tool", func=danger_tool)
+    tool = danger_tool
+    if callable(fake_tool):
+        tool = fake_tool(name="danger_tool", func=danger_tool)
     ctx = fake_ctx()
 
     # First call with args_a: blocked
@@ -350,3 +357,31 @@ def test_require_confirmation_handles_legacy_boolean_pending(fake_tool, fake_ctx
 
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result["status"] == "confirmation_required"
+
+
+# ── Hypothesis Property-Based Tests ────────────────────────────────────
+
+
+@given(st.dictionaries(st.text(), st.text()))
+def test_hash_args_determinism(args):
+    """Hash must be the same for the same input."""
+    assert _hash_args(args) == _hash_args(args)
+
+
+@given(st.dictionaries(st.text(), st.text()))
+def test_hash_args_key_ordering_invariance(args):
+    """Hash must be invariant under key reordering."""
+    if len(args) < 2:
+        return
+    keys = list(args.keys())
+    # Create a dictionary with a different insertion order
+    shuffled_args = {k: args[k] for k in reversed(keys)}
+    assert _hash_args(args) == _hash_args(shuffled_args)
+
+
+@given(st.dictionaries(st.text(), st.one_of(st.text(), st.integers(), st.booleans(), st.none())))
+def test_hash_args_handles_diverse_types(args):
+    """Hash must handle standard JSON-serializable types + default str fallback."""
+    h = _hash_args(args)
+    assert isinstance(h, str)
+    assert len(h) == 16

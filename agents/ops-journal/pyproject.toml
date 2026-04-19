@@ -1,6 +1,6 @@
 [project]
 name = "ops-journal"
-version = "0.1.4"
+version = "0.1.6"
 description = "Agent demonstrating memory and state patterns in ADK"
 requires-python = ">=3.11"
 dependencies = [

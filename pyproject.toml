@@ -1,6 +1,6 @@
 [project]
 name = "orrery"
-version = "0.1.4"
+version = "0.1.6"
 description = "A collection of autonomous AI agents"
 readme = "README.md"
 license = "MIT"
@@ -39,6 +39,7 @@ google-chat-bot = { workspace = true }
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=1.3.0",
+    "hypothesis>=6.0.0",
     "ruff>=0.11.0",
     "ty",
     "mkdocs>=1.6.1",
@@ -88,6 +89,9 @@ markers = [
     "eval: agent evaluation tests that call a real LLM (deselected by default)",
 ]
 addopts = "-m 'not eval'"
+filterwarnings = [
+    "ignore:\\[EXPERIMENTAL\\] feature.* is enabled:UserWarning:google.adk.features.*",
+]
 testpaths = [
     "core/tests",
     "agents/docker-agent/tests",

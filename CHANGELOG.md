@@ -5,10 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.6] - 2026-04-19
 
 ### Added
+- **Operator Registry (`orrery_core.operators`)**: Pluggable registry for Kubernetes operator detection and CR status interpretation. Ships with built-in detectors for **Strimzi** (`kafka.strimzi.io` — 9 kinds incl. `Kafka`, `KafkaTopic`, `KafkaConnector`, `KafkaRebalance`) and **ECK** (`*.k8s.elastic.co` — 7 kinds incl. `Elasticsearch`, `Kibana`, `ApmServer`, `Beat`). New detectors can be registered via `default_registry.register()`.
+- **Structured Tool Results (`orrery_core.ToolResult`)**: Pydantic model with `ok()` / `error()` / `partial()` factories and `remediation_hints` for cross-agent composition. Flattens to a backward-compatible dict via `.to_dict()`, so adoption is gradual and existing tests/tools keep working.
+- **k8s-health Operator-Aware Tools**: Six new tools on the `k8s-health` agent — `detect_operators`, `list_custom_resources`, `describe_custom_resource`, `get_owner_chain`, `describe_workload`, `get_operator_events`. `describe_workload` walks `ownerReferences` from a Pod up to its root CR (e.g., Pod → StatefulSet → `Kafka`) and returns the operator's interpreted status (healthy/phase/warnings) instead of raw pod info.
+- **kafka-health Strimzi Tools**: Ten new tools that complement the Kafka-protocol tools with a view into the Strimzi control plane — `list_strimzi_clusters`, `describe_strimzi_cluster`, `list_strimzi_topics`, `list_kafka_users`, `list_kafka_connectors`, `get_kafka_connect_status`, `get_mirrormaker2_status`, `get_kafka_rebalance_status`, plus the guarded `approve_kafka_rebalance` (patches `strimzi.io/rebalance: approve`) and `restart_kafka_connector` (patches `strimzi.io/restart: true`). Uses the shared operator registry for status interpretation.
+- **Property-Based Guardrail Tests**: Integrated `hypothesis` and added exhaustive tests for tool argument hashing in `core/tests/test_guardrails.py`, ensuring deterministic and order-invariant hashes for stable confirmation matching.
 - **Pub/Sub Worker Health Probes**: The worker now exposes `/healthz` and `/readyz` via the shared `HealthServer`. Readiness flips to 503 if the streaming-pull future dies, so kubelet restarts the pod automatically.
+
+### Changed
+- **ADK Upgrade**: Upgraded `google-adk` to **v1.31.0** across the workspace.
+- **Experimental Warning Suppression**: pytest is now configured to suppress all experimental feature warnings from `google.adk.features`, keeping test output clean and focused.
 - **Helm: Liveness/Readiness + PDB**: `pubsubWorker` deployment now configures liveness, readiness, health port, and an optional `PodDisruptionBudget`.
 - **Terraform: DLQ Triage Access**: New `dlq_subscribers` variable grants `roles/pubsub.subscriber` on the DLQ subscription to configured SRE/on-call groups, plus a `dead_letter_subscription_name` output.
 - **Docs**: `docs/integrations/google-chat-pubsub.md` now documents every Terraform variable (`chat_publisher_email`, `enable_vertex_ai`, `vertex_ai_project_id`, tuning knobs) and the timeout-alignment rule for Pub/Sub ack deadlines.

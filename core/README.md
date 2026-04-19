@@ -2,6 +2,45 @@
 
 Shared library providing the foundation for all agents: agent factory, plugins, RBAC, guardrails, input validation, audit logging, resilience, and typed configuration.
 
+## Tool Results
+
+### `ToolResult`
+
+A Pydantic model for structured tool outputs. While agents can return raw dicts, using `ToolResult` ensures consistency and enables machine-readable error handling for cross-agent composition (e.g., remediation loops).
+
+```python
+from orrery_core import ToolResult
+
+async def my_tool(name: str) -> dict:
+    if not name:
+        return ToolResult.error("Name is required", error_type="MissingInput").to_dict()
+    
+    return ToolResult.ok(message=f"Hello {name}", length=len(name)).to_dict()
+```
+
+- **Factories**: `ok()`, `error()`, `partial()`.
+- **Fields**: `status`, `message`, `error_type`, `data`, `remediation_hints`.
+- **Flattening**: `.to_dict()` flattens `data` into the top level for backward compatibility with legacy consumers while keeping reserved fields (`status`, `message`, etc.) safe.
+
+## Operator Registry
+
+### `OperatorRegistry`
+
+A central registry for Kubernetes operator awareness. It allows agents to reason about high-level custom resources (like Strimzi `Kafka` or ECK `Elasticsearch`) instead of just low-level Pods.
+
+```python
+from orrery_core import default_registry
+
+# Look up a detector by CRD group
+detector = default_registry.get_by_group("kafka.strimzi.io")
+
+# Interpret raw CR status into a unified OperatorStatus
+status = detector.interpret_status("Kafka", raw_cr_dict)
+print(status.healthy, status.phase, status.warnings)
+```
+
+Ships with built-in support for **Strimzi** and **ECK**. New operators can be registered by implementing the `OperatorDetector` protocol.
+
 ## Plugins
 
 Cross-cutting concerns are packaged as ADK `BasePlugin` subclasses and registered once on the `Runner` via `default_plugins()`. Plugins apply globally to every agent, tool, and LLM call — no per-agent callback wiring needed.

@@ -1,6 +1,14 @@
 from orrery_core import create_agent, load_agent_env
 from orrery_core.guardrails import require_confirmation
 
+from .operators import (
+    describe_custom_resource,
+    describe_workload,
+    detect_operators,
+    get_operator_events,
+    get_owner_chain,
+    list_custom_resources,
+)
 from .tools import (
     describe_pod,
     get_cluster_info,
@@ -33,6 +41,18 @@ root_agent = create_agent(
         "2. Check get_events for recent warnings or errors\n"
         "3. Drill into specific pods with describe_pod and get_pod_logs\n"
         "4. Check deployment status with get_deployment_status\n\n"
+        "Operator-aware diagnostics:\n"
+        "- Call detect_operators first to learn which operators (Strimzi, ECK, ...) "
+        "are installed.\n"
+        "- For a failing pod, prefer describe_workload over describe_pod when the pod "
+        "may be managed by an operator — it returns the root CR's interpreted "
+        "status (healthy/phase/warnings) instead of just pod-level info.\n"
+        "- Use list_custom_resources and describe_custom_resource to inspect CRs "
+        "like Kafka, KafkaTopic, Elasticsearch, Kibana directly.\n"
+        "- get_owner_chain shows the full ownerReferences chain from a pod up to "
+        "its root resource.\n"
+        "- get_operator_events filters cluster events down to operator-managed "
+        "kinds — great for spotting reconciliation errors.\n\n"
         "When a tool returns a 'confirmation_required' status, you MUST ask the user "
         "to confirm before calling the tool again. Never scale or restart without "
         "explicit user approval."
@@ -50,6 +70,12 @@ root_agent = create_agent(
         restart_deployment,
         rollback_deployment,
         get_events,
+        detect_operators,
+        list_custom_resources,
+        describe_custom_resource,
+        get_owner_chain,
+        describe_workload,
+        get_operator_events,
     ],
     before_tool_callback=require_confirmation(),
 )

@@ -1,8 +1,11 @@
 # k8s-health-agent
 
 A single agent with tools for monitoring and managing a Kubernetes cluster.
+Operator-aware: understands workloads managed by **Strimzi** (`kafka.strimzi.io`)
+and **ECK** (`*.k8s.elastic.co`) out of the box, and is pluggable for other
+operators via `orrery_core.default_registry`.
 
-## Tools
+## Core tools
 
 | Tool | Description | Guardrail |
 |------|-------------|-----------|
@@ -17,15 +20,38 @@ A single agent with tools for monitoring and managing a Kubernetes cluster.
 | `get_events` | Recent events with optional field selector filter | — |
 | `scale_deployment` | Scale a deployment to N replicas | `@confirm` |
 | `restart_deployment` | Trigger a rolling restart | `@destructive` |
+| `rollback_deployment` | Revert to the previous revision | `@destructive` |
+
+## Operator-aware tools
+
+These tools use the operator registry in `orrery_core` to give the agent
+visibility into CRs managed by installed operators. Strimzi and ECK are
+built-in; others are registered by calling `default_registry.register(...)`.
+
+| Tool | Description |
+|------|-------------|
+| `detect_operators` | List known operators installed in the cluster (scans CRDs) |
+| `list_custom_resources` | List any CR (GVR), enriched with healthy / phase / warnings when the operator is known |
+| `describe_custom_resource` | Full CR spec + raw status + an interpreted status block |
+| `get_owner_chain` | Walk `ownerReferences` from a Pod up to its root resource |
+| `describe_workload` | Pod → operator CR aware: returns the operator's health/phase summary instead of raw pod info |
+| `get_operator_events` | Cluster events filtered to operator-watched kinds, optionally narrowed by `operator_name` |
+
+**Example** — a failing Kafka broker pod:
+
+- `describe_pod broker-0 kafka` → shows `CrashLoopBackOff` on the pod.
+- `describe_workload broker-0 kafka` → walks `Pod → StatefulSet → Kafka`, reports *"Kafka 'demo' is unhealthy — NotReady: rolling update in progress"*, and surfaces the operator's `.status.conditions` as warnings.
 
 ## Diagnosis Flow
 
 The agent follows this investigation pattern:
 
-1. `get_cluster_info` + `get_nodes` — cluster overview
-2. `get_events` — recent warnings or errors
-3. `describe_pod` + `get_pod_logs` — drill into specific pods
-4. `get_deployment_status` — check rollout health
+1. `detect_operators` — learn which operators are installed (run once per session).
+2. `get_cluster_info` + `get_nodes` — cluster overview.
+3. `get_events` / `get_operator_events` — recent warnings or errors.
+4. For operator-managed workloads, prefer `describe_workload` or `describe_custom_resource` over `describe_pod`.
+5. `get_pod_logs` — drill into specific pods once the suspect workload is identified.
+6. `get_deployment_status` — check rollout health for plain Deployments.
 
 ## Environment Variables
 
