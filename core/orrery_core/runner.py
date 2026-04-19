@@ -154,7 +154,7 @@ async def run_persistent(
         try:
             user_input = await asyncio.to_thread(input, "You: ")
             user_input = user_input.strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             break
 
         if shutdown_event.is_set():

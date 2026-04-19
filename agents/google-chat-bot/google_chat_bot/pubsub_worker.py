@@ -100,7 +100,7 @@ def make_callback(
         #    redelivery would just re-raise — so we ack and drop.
         try:
             event = json.loads(message.data.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        except UnicodeDecodeError, json.JSONDecodeError:
             logger.exception(
                 "Dropping malformed Pub/Sub payload (message_id=%s)",
                 getattr(message, "message_id", "?"),

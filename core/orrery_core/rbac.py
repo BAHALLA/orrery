@@ -130,7 +130,7 @@ def get_user_role(tool_context: Context) -> Role:
     role_name = tool_context.state.get(USER_ROLE_STATE_KEY, "viewer")
     try:
         return Role[role_name.upper()]
-    except (KeyError, AttributeError):
+    except KeyError, AttributeError:
         return Role.VIEWER
 
 
