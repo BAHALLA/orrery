@@ -14,6 +14,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   ci:
@@ -47,6 +48,7 @@ jobs:
             --extra-search-path agents/orrery-assistant \
             --extra-search-path agents/ops-journal \
             --extra-search-path agents/slack-bot \
+            --extra-search-path agents/google-chat-bot \
             .
 
       - name: Test
@@ -93,7 +95,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile.prod
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

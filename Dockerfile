@@ -3,7 +3,13 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Enable bytecode compilation and use cache mount for faster syncs
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+
 # Install workspace dependencies (cached layer)
+# We copy all pyproject files first so uv can resolve the workspace
+# and cache the environment independently of source code changes.
 COPY pyproject.toml uv.lock ./
 COPY core/pyproject.toml core/pyproject.toml
 COPY agents/docker-agent/pyproject.toml agents/docker-agent/pyproject.toml
@@ -13,8 +19,9 @@ COPY agents/orrery-assistant/pyproject.toml agents/orrery-assistant/pyproject.to
 COPY agents/observability/pyproject.toml agents/observability/pyproject.toml
 COPY agents/ops-journal/pyproject.toml agents/ops-journal/pyproject.toml
 COPY agents/slack-bot/pyproject.toml agents/slack-bot/pyproject.toml
+COPY agents/google-chat-bot/pyproject.toml agents/google-chat-bot/pyproject.toml
 
-# Placeholder packages so uv sync can resolve the workspace
+# Placeholder packages so uv sync can resolve the workspace dependencies
 RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
     mkdir -p agents/docker-agent/docker_agent && touch agents/docker-agent/docker_agent/__init__.py && \
     mkdir -p agents/kafka-health/kafka_health_agent && touch agents/kafka-health/kafka_health_agent/__init__.py && \
@@ -22,16 +29,20 @@ RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
     mkdir -p agents/orrery-assistant/orrery_assistant && touch agents/orrery-assistant/orrery_assistant/__init__.py && \
     mkdir -p agents/observability/observability_agent && touch agents/observability/observability_agent/__init__.py && \
     mkdir -p agents/ops-journal/ops_journal_agent && touch agents/ops-journal/ops_journal_agent/__init__.py && \
-    mkdir -p agents/slack-bot/slack_bot && touch agents/slack-bot/slack_bot/__init__.py
+    mkdir -p agents/slack-bot/slack_bot && touch agents/slack-bot/slack_bot/__init__.py && \
+    mkdir -p agents/google-chat-bot/google_chat_bot && touch agents/google-chat-bot/google_chat_bot/__init__.py
 
-RUN uv sync --no-dev --frozen
+# Use cache mount for uv to speed up sync
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --extra postgres
 
 # Copy actual source code
 COPY core/ core/
 COPY agents/ agents/
 
 # Reinstall workspace packages with real source
-RUN uv sync --no-dev --frozen
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --extra postgres
 
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
@@ -40,6 +51,9 @@ RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
 
 WORKDIR /app
+
+# Add Docker CLI for container monitoring (used by docker-agent tools)
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Copy the virtual environment and source from builder
 COPY --from=builder /app/.venv /app/.venv
@@ -53,7 +67,9 @@ USER appuser
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Default: run the orrery-assistant orchestrator with web UI
+# Individual services (Slack bot, Google Chat bot) override this via command
 EXPOSE 8000 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')" || exit 1
+
 CMD ["adk", "web", "--host", "0.0.0.0", "--port", "8000", "agents/orrery-assistant"]
