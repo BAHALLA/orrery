@@ -121,7 +121,7 @@ nav:
     - Adding a New Agent: adding-an-agent.md
     - Core Library: core/README.md
   - Agent Reference:
-    - Devops Assistant: agents/orrery-assistant.md
+    - Orrery Assistant: agents/orrery-assistant.md
     - Docker Agent: agents/docker-agent.md
     - K8s Health: agents/k8s-health.md
     - Kafka Health: agents/kafka-health.md
