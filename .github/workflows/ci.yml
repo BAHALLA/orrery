@@ -7,9 +7,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   lint:
     name: Lint & Type Check
@@ -43,7 +40,6 @@ jobs:
             --extra-search-path agents/orrery-assistant \
             --extra-search-path agents/ops-journal \
             --extra-search-path agents/slack-bot \
-            --extra-search-path agents/google-chat-bot \
             .
 
   security:

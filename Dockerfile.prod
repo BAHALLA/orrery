@@ -13,6 +13,7 @@ COPY agents/orrery-assistant/pyproject.toml agents/orrery-assistant/pyproject.to
 COPY agents/observability/pyproject.toml agents/observability/pyproject.toml
 COPY agents/ops-journal/pyproject.toml agents/ops-journal/pyproject.toml
 COPY agents/slack-bot/pyproject.toml agents/slack-bot/pyproject.toml
+COPY agents/google-chat-bot/pyproject.toml agents/google-chat-bot/pyproject.toml
 
 # Placeholder packages so uv sync can resolve the workspace
 RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
@@ -22,16 +23,20 @@ RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
     mkdir -p agents/orrery-assistant/orrery_assistant && touch agents/orrery-assistant/orrery_assistant/__init__.py && \
     mkdir -p agents/observability/observability_agent && touch agents/observability/observability_agent/__init__.py && \
     mkdir -p agents/ops-journal/ops_journal_agent && touch agents/ops-journal/ops_journal_agent/__init__.py && \
-    mkdir -p agents/slack-bot/slack_bot && touch agents/slack-bot/slack_bot/__init__.py
+    mkdir -p agents/slack-bot/slack_bot && touch agents/slack-bot/slack_bot/__init__.py && \
+    mkdir -p agents/google-chat-bot/google_chat_bot && touch agents/google-chat-bot/google_chat_bot/__init__.py
 
-RUN uv sync --no-dev --frozen
+# Use cache mount for uv to speed up sync
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --extra postgres
 
 # Copy actual source code
 COPY core/ core/
 COPY agents/ agents/
 
 # Reinstall workspace packages with real source
-RUN uv sync --no-dev --frozen
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen --extra postgres
 
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
@@ -40,6 +45,9 @@ RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
 
 WORKDIR /app
+
+# Add Docker CLI for container monitoring (docker_tools.py)
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Copy the virtual environment and source from builder
 COPY --from=builder /app/.venv /app/.venv
@@ -52,7 +60,6 @@ USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Default: run the orrery-assistant orchestrator with web UI
 EXPOSE 8000 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')" || exit 1

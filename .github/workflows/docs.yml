@@ -12,14 +12,10 @@ on:
       - 'CHANGELOG.md'
       - 'CONTRIBUTING.md'
       - 'SECURITY.md'
-      LICENSE'
-      workflow_dispatch:
+      - 'LICENSE'
+  workflow_dispatch:
 
-      env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-      permissions:
-
+permissions:
   contents: read
   pages: write
   id-token: write
