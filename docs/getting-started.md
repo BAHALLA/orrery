@@ -103,7 +103,7 @@ Once the platform is running, try these scenarios to see the agents in action:
 ### 1. Automated System Triage
 Ask: **"Is my cluster healthy?"**
 
-**The "Magic":** The `orrery-assistant` triggers a parallel health check across Kafka, K8s, and Docker. It correlates the data and synthesizes a single, high-level status report.
+**The "Magic":** The `orrery-assistant` triggers a parallel health check across Kafka, K8s, Docker, and Elasticsearch. It correlates the data and synthesizes a single, high-level status report.
 
 ### 2. Targeted Investigation
 Ask: **"List all pods in the kube-system namespace."**

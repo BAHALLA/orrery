@@ -11,6 +11,10 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | **observability** | `PROMETHEUS_URL` | `http://localhost:9090` | Prometheus server URL |
 | **observability** | `LOKI_URL` | `http://localhost:3100` | Loki server URL |
 | **observability** | `ALERTMANAGER_URL` | `http://localhost:9093` | Alertmanager server URL |
+| **elasticsearch** | `ELASTICSEARCH_URL` | `http://localhost:9200` | Elasticsearch REST endpoint |
+| **elasticsearch** | `ELASTICSEARCH_USERNAME` | — | Basic auth username |
+| **elasticsearch** | `ELASTICSEARCH_PASSWORD` | — | Basic auth password |
+| **elasticsearch** | `ELASTICSEARCH_API_KEY` | — | API key authentication |
 | **slack-bot** | `SLACK_BOT_TOKEN` | — | Slack bot token (`xoxb-...`) |
 | **slack-bot** | `SLACK_APP_TOKEN` | — | App-level token for Socket Mode (`xapp-...`) |
 | **slack-bot** | `SLACK_SIGNING_SECRET` | — | Request signing secret |
@@ -30,4 +34,5 @@ The platform uses a single `.env` file at the root of the workspace. To configur
 2. Fill in the required global and agent-specific values.
 
 The `load_agent_env()` and `load_config()` helpers in the core library are configured to search for this centralized file automatically.
+
 

@@ -65,7 +65,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [core, agents/docker-agent, agents/kafka-health, agents/k8s-health, agents/observability, agents/orrery-assistant, agents/ops-journal, agents/slack-bot, agents/google-chat-bot]
+          paths: [core, agents/docker-agent, agents/elasticsearch, agents/kafka-health, agents/k8s-health, agents/observability, agents/orrery-assistant, agents/ops-journal, agents/slack-bot, agents/google-chat-bot]
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -124,6 +124,7 @@ nav:
   - Agent Reference:
     - Orrery Assistant: agents/orrery-assistant.md
     - Docker Agent: agents/docker-agent.md
+    - Elasticsearch: agents/elasticsearch.md
     - K8s Health: agents/k8s-health.md
     - Kafka Health: agents/kafka-health.md
     - Observability: agents/observability.md

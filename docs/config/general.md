@@ -100,6 +100,8 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 | Prometheus | `9090` | Metrics collection and alerting rules |
 | Loki | `3100` | Log aggregation |
 | Alertmanager | `9093` | Alert routing and silence management |
+| Elasticsearch | `9200` | Elasticsearch REST endpoint |
+| Kibana | `5601` | Kibana web UI |
 
 ### Management Commands
 
@@ -116,3 +118,4 @@ make infra-reset  # stop and wipe volumes
 | `docker compose up -d` | Infrastructure only |
 | `docker compose --profile demo up -d` | Infrastructure + orrery-assistant web UI on `:8000` |
 | `docker compose --profile slack up -d` | Infrastructure + Slack bot on `:3000` |
+| `docker compose --profile elastic up -d` | Elasticsearch + Kibana |
