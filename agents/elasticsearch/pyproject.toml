@@ -1,0 +1,14 @@
+[project]
+name = "elasticsearch-agent"
+version = "0.1.7"
+description = "Agent for monitoring Elasticsearch clusters (REST + ECK CRs on Kubernetes)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "orrery-core",
+    "requests>=2.31.0",
+    "kubernetes>=31.0.0",
+]
+
+[tool.uv.sources]
+orrery-core = { workspace = true }

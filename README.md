@@ -38,6 +38,7 @@ graph LR
         KAFKA[Kafka]
         K8S[K8s]
         OBS[Observability]
+        ES[Elasticsearch]
         DOCKER[Docker]
         JOURNAL[Ops Journal]
         REM[Remediation Loop]
@@ -55,6 +56,7 @@ graph LR
     ROOT --> KAFKA
     ROOT --> K8S
     ROOT --> OBS
+    ROOT --> ES
     ROOT --> DOCKER
     ROOT --> JOURNAL
     ROOT --> REM
@@ -126,6 +128,7 @@ open http://localhost:8000
 | [**k8s-health**](https://bahalla.github.io/orrery/agents/k8s-health/) | Nodes, Pods, Deployments, Logs, Events, and Rollbacks. |
 | [**kafka-health**](https://bahalla.github.io/orrery/agents/kafka-health/) | Brokers, Topics, Consumer Groups, and Lag monitoring. |
 | [**observability**](https://bahalla.github.io/orrery/agents/observability/) | Prometheus metrics, Loki logs, and Alertmanager silences. |
+| [**elasticsearch**](https://bahalla.github.io/orrery/agents/elasticsearch/) | Cluster health, indices, shard allocation, search, ILM, snapshots, and ECK CRs. |
 | [**docker-agent**](https://bahalla.github.io/orrery/agents/docker-agent/) | Container health, stats, logs, and Compose projects. |
 | [**slack-bot**](https://bahalla.github.io/orrery/agents/slack-bot/) | Interactive Slack integration with confirmation buttons. |
 | [**google-chat-bot**](https://bahalla.github.io/orrery/agents/google-chat-bot/) | Google Chat integration with interactive Cards v2. |

@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "orrery-core",
     "docker-agent",
+    "elasticsearch-agent",
     "kafka-health-agent",
     "k8s-health-agent",
     "observability-agent",
@@ -19,6 +20,7 @@ include = ["orrery_assistant*"]
 [tool.uv.sources]
 orrery-core = { workspace = true }
 docker-agent = { workspace = true }
+elasticsearch-agent = { workspace = true }
 kafka-health-agent = { workspace = true }
 k8s-health-agent = { workspace = true }
 observability-agent = { workspace = true }

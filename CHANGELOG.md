@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Elasticsearch Agent** (`agents/elasticsearch`): New specialist agent for Elasticsearch cluster operations, exposing **19 read-only REST tools** — cluster health/stats/nodes/pending tasks/settings, indices listing/stats/mappings/settings, shard allocation + `explain` diagnostics, `search` + `count`, index templates, aliases, ILM policies + `explain_ilm_status`, and snapshot repositories/snapshots. HTTP session is pooled as a module-level singleton with API-key / basic-auth / CA bundle support via `ELASTICSEARCH_*` env vars.
+- **ECK Operator Tools**: Five Kubernetes control-plane tools complementing the REST surface — `list_eck_clusters`, `describe_eck_cluster`, `list_kibana_instances`, `describe_kibana`, `get_eck_operator_events`. Wired through the shared `orrery_core.default_registry.ECKDetector` for interpreted `healthy` / `phase` / `warnings` on each CR.
+- **Orrery-assistant integration**: `elasticsearch_agent` is now a sibling `AgentTool` on the root orchestrator, and a new `elasticsearch_health_checker` joins `health_check_agent` as the fifth parallel branch of the incident triage pipeline (writes `elasticsearch_status` to session state for the `triage_summarizer`).
+- **Compose profile + Makefile targets**: `docker-compose.yml` gains an `elastic` profile with single-node Elasticsearch 8.13.4 + Kibana (security disabled for dev); `make run-elasticsearch` / `make run-elasticsearch-cli` launch the agent standalone.
+- **Tests & evals**: 36 new unit tests (25 REST + 11 ECK) with mocked `requests.Session` / `CustomObjectsApi` / `CoreV1Api`, plus 6 new eval scenarios (`cluster_and_indices.test.json`, `eck.test.json`) — bringing the suite to **608 tests / 28 eval scenarios**.
+
 ## [0.1.7] - 2026-04-19
 
 ### Added

@@ -8,6 +8,7 @@ requires-python = ">=3.14"
 dependencies = [
     "orrery-core",
     "docker-agent",
+    "elasticsearch-agent",
     "kafka-health-agent",
     "k8s-health-agent",
     "observability-agent",
@@ -27,6 +28,7 @@ postgres = [
 [tool.uv.sources]
 orrery-core = { workspace = true }
 docker-agent = { workspace = true }
+elasticsearch-agent = { workspace = true }
 kafka-health-agent = { workspace = true }
 k8s-health-agent = { workspace = true }
 observability-agent = { workspace = true }
@@ -76,6 +78,7 @@ ignore = [
 known-first-party = [
     "orrery_core",
     "docker_agent",
+    "elasticsearch_agent",
     "kafka_health_agent",
     "k8s_health_agent",
     "observability_agent",
@@ -95,6 +98,7 @@ filterwarnings = [
 testpaths = [
     "core/tests",
     "agents/docker-agent/tests",
+    "agents/elasticsearch/tests",
     "agents/kafka-health/tests",
     "agents/k8s-health/tests",
     "agents/observability/tests",

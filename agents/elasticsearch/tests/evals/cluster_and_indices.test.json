@@ -1,0 +1,117 @@
+{
+  "eval_set_id": "elasticsearch_agent_cluster_and_indices",
+  "name": "Elasticsearch Agent Cluster & Indices Scenarios",
+  "description": "Scenarios verifying the elasticsearch agent routes cluster, index, and search queries to the correct REST tools.",
+  "eval_cases": [
+    {
+      "eval_id": "get_cluster_health",
+      "conversation": [
+        {
+          "invocation_id": "inv-100",
+          "user_content": {
+            "parts": [{"text": "What is the overall health of the Elasticsearch cluster?"}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {"text": "The Elasticsearch cluster is green with 3 nodes and no unassigned shards."}
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "get_cluster_health", "args": {}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "elasticsearch_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    },
+    {
+      "eval_id": "list_indices_pattern",
+      "conversation": [
+        {
+          "invocation_id": "inv-101",
+          "user_content": {
+            "parts": [{"text": "List all indices that match the pattern logs-*."}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [{"text": "Found 1 index matching logs-*: logs-2024 (green, 100 docs)."}],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "list_indices", "args": {"pattern": "logs-*"}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "elasticsearch_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    },
+    {
+      "eval_id": "search_for_errors",
+      "conversation": [
+        {
+          "invocation_id": "inv-102",
+          "user_content": {
+            "parts": [{"text": "Search the logs-* indices for documents where level is error."}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [{"text": "Found 2 error documents across logs-* indices."}],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "search",
+                "args": {
+                  "index": "logs-*",
+                  "query": {"match": {"level": "error"}}
+                }
+              }
+            ],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "elasticsearch_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    },
+    {
+      "eval_id": "unassigned_shards",
+      "conversation": [
+        {
+          "invocation_id": "inv-103",
+          "user_content": {
+            "parts": [{"text": "Are there any unassigned shards in the cluster?"}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [{"text": "There is 1 unassigned shard in logs-2024 due to NODE_LEFT."}],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "get_shard_allocation", "args": {}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "elasticsearch_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    }
+  ]
+}

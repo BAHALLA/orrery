@@ -7,6 +7,17 @@ from docker_agent.tools import (
     get_container_stats,
     list_containers,
 )
+from elasticsearch_agent.agent import root_agent as elasticsearch_agent
+from elasticsearch_agent.eck import list_eck_clusters
+from elasticsearch_agent.tools import (
+    get_cluster_health as es_get_cluster_health,
+)
+from elasticsearch_agent.tools import (
+    get_shard_allocation as es_get_shard_allocation,
+)
+from elasticsearch_agent.tools import (
+    list_indices as es_list_indices,
+)
 from k8s_health_agent.agent import root_agent as k8s_agent
 from k8s_health_agent.tools import (
     get_cluster_info,
@@ -89,15 +100,32 @@ observability_health_checker = create_agent(
     output_key="observability_status",
 )
 
-# Run all four health checks in parallel
+elasticsearch_health_checker = create_agent(
+    name="elasticsearch_health_checker",
+    description="Checks Elasticsearch cluster health, indices, and ECK CRs.",
+    instruction=(
+        "Check Elasticsearch cluster health (green/yellow/red), list indices, and "
+        "scan for unassigned shards. If running on Kubernetes, also list ECK "
+        "Elasticsearch CRs to cross-check declarative state. Provide a brief "
+        "status summary; call out any red/yellow health, unassigned shards, or "
+        "ECK clusters not in the Ready phase."
+    ),
+    tools=[es_get_cluster_health, es_list_indices, es_get_shard_allocation, list_eck_clusters],
+    output_key="elasticsearch_status",
+)
+
+# Run all five health checks in parallel
 health_check_agent = create_parallel_agent(
     name="health_check_agent",
-    description="Runs Kafka, K8s, Docker, and Observability health checks in parallel.",
+    description=(
+        "Runs Kafka, K8s, Docker, Observability, and Elasticsearch health checks in parallel."
+    ),
     sub_agents=[
         kafka_health_checker,
         k8s_health_checker,
         docker_health_checker,
         observability_health_checker,
+        elasticsearch_health_checker,
     ],
 )
 
@@ -106,8 +134,9 @@ triage_summarizer = create_agent(
     name="triage_summarizer",
     description="Synthesizes health check results into an incident triage report.",
     instruction=(
-        "You receive health check results from four systems stored in session state: "
-        "kafka_status, k8s_status, docker_status, and observability_status.\n\n"
+        "You receive health check results from five systems stored in session state: "
+        "kafka_status, k8s_status, docker_status, observability_status, and "
+        "elasticsearch_status.\n\n"
         "Synthesize these into a single incident triage report with:\n"
         "1. Overall system status (healthy / degraded / critical)\n"
         "2. Issues found per system\n"
@@ -134,8 +163,8 @@ journal_writer = create_agent(
 incident_triage_agent = create_sequential_agent(
     name="incident_triage_agent",
     description=(
-        "Structured incident triage: checks Kafka, K8s, and Docker in parallel, "
-        "then summarizes findings and saves to journal."
+        "Structured incident triage: checks Kafka, K8s, Docker, Observability, "
+        "and Elasticsearch in parallel, then summarizes findings and saves to journal."
     ),
     sub_agents=[health_check_agent, triage_summarizer, journal_writer],
 )
@@ -151,9 +180,9 @@ root_agent = create_agent(
         "You have two delegation modes:\n\n"
         "## Structured Workflows (sub-agents)\n"
         "- **incident_triage_agent**: Runs a comprehensive health check across "
-        "Kafka, Kubernetes, Docker, and Observability in parallel, then summarizes "
-        "findings and saves a report to the journal. Use when the user asks "
-        "'is everything healthy?', 'run a triage', or 'check all systems'.\n"
+        "Kafka, Kubernetes, Docker, Observability, and Elasticsearch in parallel, "
+        "then summarizes findings and saves a report to the journal. Use when the "
+        "user asks 'is everything healthy?', 'run a triage', or 'check all systems'.\n"
         "## Specialist Tools (agent tools)\n"
         "Call these tools for targeted queries on individual systems:\n"
         "- **kafka_health_agent**: Kafka cluster health, topics, consumer groups, lag.\n"
@@ -161,6 +190,8 @@ root_agent = create_agent(
         "logs, events, scaling, and restarts.\n"
         "- **observability_agent**: Prometheus metrics/alerts, Loki log queries, "
         "Alertmanager silence management.\n"
+        "- **elasticsearch_agent**: Elasticsearch cluster health, indices, shard "
+        "allocation, search, ILM, snapshots, and ECK Kubernetes CRs.\n"
         "- **docker_agent**: Docker containers, logs, stats, compose status.\n"
         "- **ops_journal_agent**: Notes, past findings, session activity, preferences, "
         "team bookmarks.\n"
@@ -180,6 +211,7 @@ root_agent = create_agent(
         AgentTool(agent=kafka_agent),
         AgentTool(agent=k8s_agent),
         AgentTool(agent=observability_agent),
+        AgentTool(agent=elasticsearch_agent),
         AgentTool(agent=docker_agent_root),
         AgentTool(agent=journal_agent),
         AgentTool(agent=remediation_pipeline),

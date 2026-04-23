@@ -12,6 +12,7 @@ For how agents are composed inside `orrery-assistant`, see [ADR-002: Agent Compo
 | [`kafka-health`](#kafka-health) | `agents/kafka-health` | 19 | 5 | Kafka cluster health, topic ops, consumer lag, Strimzi-aware |
 | [`k8s-health`](#k8s-health) | `agents/k8s-health` | 18 | 3 | Kubernetes diagnostics, scaling, rollouts, operator-aware (Strimzi / ECK) |
 | [`observability`](#observability) | `agents/observability` | 12 | 2 | Prometheus queries, Loki logs, Alertmanager silences |
+| [`elasticsearch`](#elasticsearch) | `agents/elasticsearch` | 24 | 0 | ES cluster/index/shard diagnostics, search, ILM, snapshots, ECK-aware |
 | [`docker-agent`](#docker-agent) | `agents/docker-agent` | 10 | 4 | Container inspection and lifecycle ops |
 | [`ops-journal`](#ops-journal) | `agents/ops-journal` | 10 | 0 | Cross-session notes, preferences, and team bookmarks |
 
@@ -32,8 +33,8 @@ make run-devops-persistent   # SQLite-backed sessions + memory
 ```
 
 **Exposed capabilities:**
-- `incident_triage_agent` — parallel health checks across Kafka, K8s, Docker, and observability, then summarizes and journals
-- `kafka_health_agent`, `k8s_health_agent`, `observability_agent`, `docker_agent`, `ops_journal_agent` — direct specialist delegation
+- `incident_triage_agent` — parallel health checks across Kafka, K8s, Docker, observability, and Elasticsearch, then summarizes and journals
+- `kafka_health_agent`, `k8s_health_agent`, `observability_agent`, `elasticsearch_agent`, `docker_agent`, `ops_journal_agent` — direct specialist delegation
 - `remediation_pipeline` — `LoopAgent` that acts → verifies → retries up to 3 times; exits when the verifier calls `exit_loop`
 
 ---
@@ -127,6 +128,51 @@ A unified interface to Prometheus, Loki, and Alertmanager. HTTP sessions are poo
 
 ---
 
+## elasticsearch
+
+Elasticsearch cluster operations, split across two surfaces: **REST tools** that speak the Elasticsearch wire protocol against a live cluster, and **ECK tools** that introspect the Kubernetes control plane (`*.k8s.elastic.co` CRs) via the operator registry. HTTP sessions and the Kubernetes client are pooled.
+
+**Config:** `ELASTICSEARCH_URL` (default `http://localhost:9200`), `ELASTICSEARCH_API_KEY` *or* `ELASTICSEARCH_USERNAME` + `ELASTICSEARCH_PASSWORD`, `ELASTICSEARCH_VERIFY_CERTS`, `ELASTICSEARCH_CA_CERTS`, `ELASTICSEARCH_HTTP_TIMEOUT`, `KUBECONFIG_PATH` (optional, for ECK tools)
+
+**REST tools — Elasticsearch wire protocol:**
+
+| Tool | Role | Description |
+|------|------|-------------|
+| `get_cluster_health` | viewer | green/yellow/red status + shard counters |
+| `get_cluster_stats` | viewer | Node roles, OS/JVM summary, indices totals |
+| `get_nodes_info` | viewer | Per-node roles, version, host details |
+| `get_pending_tasks` | viewer | Master-queue backlog — non-empty means the cluster is behind |
+| `get_cluster_settings` | viewer | Persistent + transient cluster-level settings |
+| `list_indices` | viewer | `_cat/indices` with optional wildcard filter |
+| `get_index_stats` | viewer | Docs, storage, segment counts for an index |
+| `get_index_mappings` | viewer | Field mapping document |
+| `get_index_settings` | viewer | Index-level settings (refresh interval, replicas, etc.) |
+| `get_shard_allocation` | viewer | `_cat/shards` — states, sizes, assigned nodes |
+| `explain_shard_allocation` | viewer | `_cluster/allocation/explain` — why a shard is unassigned |
+| `search` | viewer | Full `_search` with request body + size/from |
+| `count_documents` | viewer | `_count` with optional query body |
+| `list_index_templates` | viewer | Composable index templates |
+| `list_aliases` | viewer | Alias → index mapping |
+| `list_ilm_policies` | viewer | Configured ILM policies |
+| `explain_ilm_status` | viewer | ILM state per index — the usual place "why is rollover stuck" is answered |
+| `list_snapshot_repositories` | viewer | Registered snapshot repos |
+| `list_snapshots` | viewer | Snapshots in a repo + state/duration |
+
+**ECK tools — Kubernetes control plane** (backed by `orrery_core.default_registry.ECKDetector`):
+
+| Tool | Role | Description |
+|------|------|-------------|
+| `list_eck_clusters` | viewer | List `Elasticsearch` CRs, enriched with healthy / phase / warnings |
+| `describe_eck_cluster` | viewer | Full spec + nodeSets + raw status + interpreted status for an `Elasticsearch` CR |
+| `list_kibana_instances` | viewer | List `Kibana` CRs with version, count, associated ES ref |
+| `describe_kibana` | viewer | Full spec + raw status + interpreted status for a `Kibana` CR |
+| `get_eck_operator_events` | viewer | Recent Kubernetes Events from the operator namespace (default `elastic-system`) |
+
+!!! tip "Wire protocol vs. ECK CRs"
+    `get_cluster_health` reflects what the Elasticsearch data plane is *actually* doing; `list_eck_clusters` reflects what the operator is *trying* to do. If the REST health is green but the ECK CR is stuck in `ApplyingChanges`, the operator is mid-reconcile — check `get_eck_operator_events` for stalls.
+
+---
+
 ## docker-agent
 
 Container inspection and lifecycle via the Docker CLI (subprocess). No Docker SDK dependency — works with whatever `docker` binary is on `PATH`.
@@ -172,6 +218,8 @@ If you're writing a new workflow and need to decide which specialist(s) to call:
 | *"What pods are running? Why is this deployment unhealthy?"* | `k8s-health` |
 | *"Is the Strimzi Kafka / ECK Elasticsearch cluster healthy? Why is broker-0 failing?"* | `k8s-health` (via `describe_workload`, `describe_custom_resource`) |
 | *"What are the active alerts? Show me logs matching {job=\"api\"}"* | `observability` |
+| *"Is the ES cluster green? Why is this shard unassigned? Is ILM stuck?"* | `elasticsearch` |
+| *"Is the ECK `Elasticsearch` / `Kibana` CR reconciled? What's the operator doing?"* | `elasticsearch` (via `list_eck_clusters`, `get_eck_operator_events`) |
 | *"What containers are up? Restart the web service."* | `docker-agent` |
 | *"Remember this incident / recall last week's postmortem."* | `ops-journal` + [memory](memory.md) |
 | *"Run a full triage and file the report."* | `orrery-assistant` (uses `incident_triage_agent`) |

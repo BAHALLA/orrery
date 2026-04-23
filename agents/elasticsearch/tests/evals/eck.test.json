@@ -1,0 +1,62 @@
+{
+  "eval_set_id": "elasticsearch_agent_eck",
+  "name": "Elasticsearch Agent ECK Scenarios",
+  "description": "Scenarios verifying the elasticsearch agent routes ECK/Kubernetes questions to the correct CR tools.",
+  "eval_cases": [
+    {
+      "eval_id": "list_eck_clusters",
+      "conversation": [
+        {
+          "invocation_id": "inv-200",
+          "user_content": {
+            "parts": [{"text": "List all Elasticsearch clusters managed by the ECK operator in Kubernetes."}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [{"text": "Found 1 ECK-managed Elasticsearch cluster: 'demo' in namespace 'elastic' (green, Ready)."}],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [{"name": "list_eck_clusters", "args": {}}],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "elasticsearch_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    },
+    {
+      "eval_id": "describe_eck_cluster",
+      "conversation": [
+        {
+          "invocation_id": "inv-201",
+          "user_content": {
+            "parts": [{"text": "Describe the ECK Elasticsearch cluster 'demo' in namespace 'elastic'."}],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [{"text": "Cluster 'demo' is running version 8.13.0 with 3 nodes (healthy, Ready)."}],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "describe_eck_cluster",
+                "args": {"name": "demo", "namespace": "elastic"}
+              }
+            ],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "elasticsearch_agent",
+        "user_id": "test_user",
+        "state": {"user_role": "viewer"}
+      }
+    }
+  ]
+}

@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "docker-agent",
+    "elasticsearch-agent",
     "google-chat-bot",
     "k8s-health-agent",
     "kafka-health-agent",
@@ -440,6 +441,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9d/a4/e44218c2b394e31a6dd0d6b095c4e1f32d0be54c2a4b250032d717647bab/durationpy-0.10.tar.gz", hash = "sha256:1fa6893409a6e739c9c72334fc65cca1f355dbdd93405d30f726deb5bde42fba", size = 3335, upload-time = "2025-05-17T13:52:37.26Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/0d/9feae160378a3553fa9a339b0e9c1a048e147a4127210e286ef18b730f03/durationpy-0.10-py3-none-any.whl", hash = "sha256:3b41e1b601234296b4fb368338fdcd3e13e0b4fb5b67345948f4f2bf9868b286", size = 3922, upload-time = "2025-05-17T13:52:36.463Z" },
+]
+
+[[package]]
+name = "elasticsearch-agent"
+version = "0.1.7"
+source = { editable = "agents/elasticsearch" }
+dependencies = [
+    { name = "kubernetes" },
+    { name = "orrery-core" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "kubernetes", specifier = ">=31.0.0" },
+    { name = "orrery-core", editable = "core" },
+    { name = "requests", specifier = ">=2.31.0" },
 ]
 
 [[package]]
@@ -2201,6 +2219,7 @@ version = "0.1.7"
 source = { virtual = "." }
 dependencies = [
     { name = "docker-agent" },
+    { name = "elasticsearch-agent" },
     { name = "google-chat-bot" },
     { name = "k8s-health-agent" },
     { name = "kafka-health-agent" },
@@ -2235,6 +2254,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "docker-agent", editable = "agents/docker-agent" },
+    { name = "elasticsearch-agent", editable = "agents/elasticsearch" },
     { name = "google-chat-bot", editable = "agents/google-chat-bot" },
     { name = "k8s-health-agent", editable = "agents/k8s-health" },
     { name = "kafka-health-agent", editable = "agents/kafka-health" },
@@ -2270,6 +2290,7 @@ source = { editable = "agents/orrery-assistant" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "docker-agent" },
+    { name = "elasticsearch-agent" },
     { name = "k8s-health-agent" },
     { name = "kafka-health-agent" },
     { name = "observability-agent" },
@@ -2281,6 +2302,7 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "docker-agent", editable = "agents/docker-agent" },
+    { name = "elasticsearch-agent", editable = "agents/elasticsearch" },
     { name = "k8s-health-agent", editable = "agents/k8s-health" },
     { name = "kafka-health-agent", editable = "agents/kafka-health" },
     { name = "observability-agent", editable = "agents/observability" },

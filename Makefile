@@ -5,6 +5,7 @@
        run-kafka-health run-kafka-health-cli \
        run-k8s run-k8s-cli \
        run-observability run-observability-cli \
+       run-elasticsearch run-elasticsearch-cli \
        run-assistant run-assistant-cli run-assistant-persistent \
        run-journal run-journal-cli run-journal-persistent \
        run-slack-bot run-slack-bot-socket \
@@ -35,6 +36,7 @@ type-check: ## Run type checks (ty)
 		--extra-search-path agents/kafka-health \
 		--extra-search-path agents/k8s-health \
 		--extra-search-path agents/observability \
+		--extra-search-path agents/elasticsearch \
 		--extra-search-path agents/orrery-assistant \
 		--extra-search-path agents/ops-journal \
 		--extra-search-path agents/slack-bot \
@@ -110,6 +112,14 @@ run-observability: ## Launch observability-agent in ADK Dev UI
 
 run-observability-cli: ## Run observability-agent in terminal
 	cd agents/observability && uv run adk run observability_agent
+
+# ── elasticsearch-agent ────────────────────────────────
+
+run-elasticsearch: ## Launch elasticsearch-agent in ADK Dev UI
+	cd agents/elasticsearch && uv run adk web
+
+run-elasticsearch-cli: ## Run elasticsearch-agent in terminal
+	cd agents/elasticsearch && uv run adk run elasticsearch_agent
 
 # ── orrery-assistant ───────────────────────────────────
 

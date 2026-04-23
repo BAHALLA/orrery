@@ -120,6 +120,10 @@ config:
   PROMETHEUS_URL: http://prometheus.observability.svc.cluster.local:9090
   LOKI_URL: http://loki.observability.svc.cluster.local:3100
   ALERTMANAGER_URL: http://alertmanager.observability.svc.cluster.local:9093
+  # ── Elasticsearch ──
+  ELASTICSEARCH_URL: http://elasticsearch.elastic-system.svc.cluster.local:9200
+  ELASTICSEARCH_VERIFY_CERTS: "true"
+  ELASTICSEARCH_HTTP_TIMEOUT: "15"
   # ── Google Chat Bot (HTTP transport) ──
   GOOGLE_CHAT_AUDIENCE: ""
   GOOGLE_CHAT_IDENTITIES: "chat@system.gserviceaccount.com"
@@ -137,10 +141,13 @@ config:
 
 ## Secret values. Leave empty and set `existingSecret` to use a Secret
 ## managed out-of-band (External Secrets Operator, Sealed Secrets, Vault).
-secrets: {}
+secrets:
   # GOOGLE_API_KEY: ""
   # ANTHROPIC_API_KEY: ""
   # OPENAI_API_KEY: ""
+  # ELASTICSEARCH_USERNAME: ""
+  # ELASTICSEARCH_PASSWORD: ""
+  # ELASTICSEARCH_API_KEY: ""
   # DATABASE_URL: "postgresql+asyncpg://user:pass@postgres:5432/agents"
   # JWT_SECRET: ""
 

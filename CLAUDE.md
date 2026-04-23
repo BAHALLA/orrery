@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 make install          # Install all workspace packages (uv sync)
-make test             # Run all 468 unit tests across all packages
-make eval             # Run 22 agent eval scenarios (requires LLM credentials)
+make test             # Run all 608 unit tests across all packages
+make eval             # Run 28 agent eval scenarios (requires LLM credentials)
 make lint             # ruff check + format check
 make fmt              # Auto-fix linting and formatting
 ```
@@ -43,8 +43,9 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 
 - **`core/`** — Shared library (`orrery-core`): agent factory, multi-provider LLM support (Gemini/Claude/OpenAI/Ollama via LiteLLM), RBAC, config, guardrails, input validation, resilience (circuit breaker + retry), structured logging, audit trail, activity tracking, error handlers, persistent runner
 - **`agents/`** — Independent agent packages, each runnable standalone or composable:
-  - `kafka-health/` — Kafka cluster monitoring (8 tools, uses confluent-kafka)
-  - `k8s-health/` — Kubernetes cluster management (11 tools, uses kubernetes client)
+  - `kafka-health/` — Kafka cluster monitoring (8 tools, uses confluent-kafka) + Strimzi operator tools
+  - `k8s-health/` — Kubernetes cluster management (11 tools, uses kubernetes client) + operator-aware tools
+  - `elasticsearch/` — Elasticsearch cluster/index/shard diagnostics (19 REST tools) + ECK operator tools (5 tools)
   - `ops-journal/` — State management demo with 4 state scopes (session/user/app/temp)
   - `orrery-assistant/` — Multi-agent orchestrator that composes all above agents + Docker tools
 
@@ -83,12 +84,14 @@ orrery_assistant (root orchestrator)
 │   │   ├── kafka_health_checker
 │   │   ├── k8s_health_checker
 │   │   ├── docker_health_checker
-│   │   └── observability_health_checker
+│   │   ├── observability_health_checker
+│   │   └── elasticsearch_health_checker
 │   ├── triage_summarizer
 │   └── journal_writer
 ├── [AgentTool] kafka_health_agent
 ├── [AgentTool] k8s_health_agent (12 tools including rollback_deployment)
 ├── [AgentTool] observability_agent
+├── [AgentTool] elasticsearch_agent (19 REST tools + 5 ECK CR tools)
 ├── [AgentTool] docker_agent (5 tools using subprocess Docker CLI)
 ├── [AgentTool] ops_journal_agent
 └── [AgentTool] remediation_pipeline (SequentialAgent)
