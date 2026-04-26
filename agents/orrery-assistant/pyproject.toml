@@ -1,6 +1,6 @@
 [project]
 name = "orrery-assistant"
-version = "0.1.8"
+version = "0.1.9"
 description = "DevOps orchestrator that delegates to specialized sub-agents"
 requires-python = ">=3.14"
 dependencies = [

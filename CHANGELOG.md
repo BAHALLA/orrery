@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.9] - 2026-04-26
 
 ### Added
 - **Progressive progress cards in Google Chat** (`agents/google-chat-bot`): The async response path now posts a live "🔍 Investigating…" Card v2 immediately and PATCHes it in place as the agent run progresses. Operators see the currently executing sub-agent (friendly label — *Checking Kafka*, *Synthesizing findings*, …), a tool-call breadcrumb, subsystem health chips (✅/⚠️/❌/⏳) derived from `state_delta` writes on `kafka_status` / `k8s_status` / `docker_status` / `observability_status` / `elasticsearch_status`, an optional remediation panel populated by `remediation_action` / `verification_result` / `remediation_summary`, and an elapsed-seconds footer. Updates are debounced at 800ms and force-flushed on status transitions.
@@ -204,8 +204,9 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.1.9...HEAD
 
+[0.1.9]: https://github.com/BAHALLA/orrery/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/BAHALLA/orrery/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/BAHALLA/orrery/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/BAHALLA/orrery/compare/v0.1.5...v0.1.6
