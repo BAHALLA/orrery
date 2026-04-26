@@ -72,7 +72,7 @@ When the agent invokes a tool marked `@confirm` or `@destructive`, a Card v2 is 
 
 Destructive tools render with a warning banner; confirm tools render with an info banner. Approvals are valid for **120 seconds** after the click, after which the bot re-prompts with a fresh card; pending entries themselves expire after 300 s. If the LLM retries with arguments that differ from those shown on the card (different `args_hash`), the bot re-prompts — operators authorize specific arguments, not just a tool name.
 
-The handshake lives on the bot's `ConfirmationStore` rather than per-context session state so it survives across `AgentTool` sub-agents (whose ADK sub-sessions are ephemeral and don't propagate state writes back to the gchat parent session). See [`google_chat_bot/confirmation.py`](google_chat_bot/confirmation.py) for the full callback.
+The handshake lives on the bot's `ConfirmationStore` rather than per-context session state so it survives across `AgentTool` sub-agents (whose ADK sub-sessions are ephemeral and don't propagate state writes back to the gchat parent session). See [`google_chat_bot/confirmation.py`](https://github.com/BAHALLA/orrery/blob/main/agents/google-chat-bot/google_chat_bot/confirmation.py) for the full callback.
 
 **Console setup (one-time).** Add the two Quick Commands under *App Configuration → Commands* in the Chat API console:
 

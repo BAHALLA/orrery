@@ -62,13 +62,13 @@ infra-reset: ## Stop infrastructure and wipe volumes
 # ── Documentation ──────────────────────────────────────
 
 docs-serve: ## Serve documentation locally
-	uv run mkdocs serve
+	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs serve
 
 docs-build: ## Build documentation site
-	uv run mkdocs build
+	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs build
 
 docs-deploy: ## Deploy documentation to GitHub Pages
-	uv run mkdocs gh-deploy --force
+	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs gh-deploy --force
 
 # ── Docker ────────────────────────────────────────────
 
