@@ -4,11 +4,11 @@ version = "0.1.9"
 description = "Shared utilities for AI agents"
 requires-python = ">=3.14"
 dependencies = [
-    "google-adk[eval]>=1.31.0",
-    "litellm>=1.60.0",
-    "pydantic>=2.12.5",
-    "pydantic-settings>=2.0.0",
-    "prometheus-client>=0.21.0",
+    "google-adk[eval]>=1.31.1",
+    "litellm>=1.82.6",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
+    "prometheus-client>=0.25.0",
     "python-dotenv>=1.2.2",
 ]
 

@@ -7,10 +7,10 @@ requires-python = ">=3.14"
 dependencies = [
     "orrery-core",
     "orrery-assistant",
-    "fastapi>=0.115.0",
-    "uvicorn>=0.30.0",
-    "google-auth>=2.35.0",
-    "google-cloud-pubsub>=2.23.0",
+    "fastapi>=0.136.1",
+    "uvicorn>=0.46.0",
+    "google-auth>=2.49.2",
+    "google-cloud-pubsub>=2.37.0",
     "pydantic-settings>=2.0.0",
     "httpx>=0.27.0",
 ]
