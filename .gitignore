@@ -42,4 +42,7 @@ _override.tf
 _override.tf.json
 .terraformrc
 terraform.rc
-.vscode/*
+
+# IDEs
+.idea/
+.vscode/
