@@ -88,6 +88,18 @@ This project runs LLM-driven agents with access to infrastructure
   underneath is the real boundary — RBAC, the confirmation gate on every
   mutating and destructive tool, the autonomy level, and input validation all
   hold even when a novel injection gets through.
+- **Index only what every `viewer` may read.** Knowledge retrieval
+  (`search_knowledge`, opt-in via `ORRERY_KNOWLEDGE_BACKEND`) is viewer-level
+  and **not ACL-aware**: a passage indexed from a restricted Confluence space
+  or a private runbook is readable by anyone who can talk to the agent.
+  `ConfluenceSource` refuses to auto-discover spaces for exactly this reason —
+  every indexed space is named explicitly in `KNOWLEDGE_CONFLUENCE_SPACES`.
+  Treat a retrieved document as attacker-reachable text: anyone with write
+  access to the source (a wiki page, a git-hosted runbook) can put
+  instructions in it. That is why `search_knowledge` is a real tool on the
+  after-tool chain rather than model-side grounding — the injection screen,
+  credential scrubbing, output cap and audit trail all apply to what it
+  returns, and a test fails the build if a grounding tool is ever attached.
 - **Protect your LLM API keys.** Token usage is metered and a compromised
   key can lead to significant costs. Use separate keys per environment.
 - **Audit logs are emitted to stdout by default.** Ship them to a

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-11
+
+The agent can now read what humans wrote. Until this release Orrery saw live
+infrastructure through ~70 tools and recalled its own past sessions, but had no
+access to a runbook, a postmortem or an ADR — every incident started from zero
+institutional knowledge. `search_knowledge` closes that, on the tool path where
+the injection screen, credential scrubbing, output cap and audit trail all apply,
+because a retrieved document is attacker-reachable text like any other tool
+result. Around it: the platform is itself on-callable (twelve runbooks, a
+`runbook_url` on every alert), the confirmation gate reports what it decides and
+who it refuses, conversation history lives in the session store instead of the
+browser, and CI is green again after two rounds of transitive-dependency
+advisories.
+
+Minor rather than patch: a new tool (`search_knowledge`), three new HTTP
+endpoints (`GET /sessions`, `GET|DELETE /session/{id}`), new metrics and alert
+rules, a new configuration surface (`ORRERY_KNOWLEDGE_*`, `KNOWLEDGE_*`,
+`EMBEDDING_*`) and a new build-time action (`make knowledge-sync`). Nothing
+existing changed shape; a 0.3.x deployment upgrades with no config edits and
+knowledge retrieval stays off until `ORRERY_KNOWLEDGE_BACKEND` is set.
+
 ### Added
 
 - **The agent can read what humans wrote** (AEP-025, `core/orrery_core/knowledge/`). Orrery could read live infrastructure through ~70 tools and recall its own past sessions; it had no access to a runbook, a postmortem or an ADR, so every incident started from zero institutional knowledge. `search_knowledge` closes that.
@@ -36,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Google ADK 2.5.0 → 2.7.1**, alongside a nine-PR dependency sweep (litellm 1.97.0, uvicorn 0.52.4, ty 0.0.73, react/vite/typescript-eslint/globals groups, node base digest). PyArrow left the `gcp` extra for the new `bigquery-analytics` extra upstream, which is unused here and cuts ~50 MB from the install. `google-genai` moved 2.11.0 → 2.19.0 transitively.
+- **Google ADK 2.5.0 → 2.8.0**, alongside two dependency sweeps (litellm 1.98.0, uvicorn 0.52.4, pydantic 2.13.5, pydantic-settings 2.15.0, google-auth 2.57.1, ty 0.0.75, ruff 0.16.6, hypothesis 6.168.0; react 19.2.8, vite 8.2.2, vitest 5, typescript-eslint 8.70.0, eslint 10.8.1 and the testing/globals groups; node 26 base digest; `actions/setup-uv` 10.0.1). PyArrow left the `gcp` extra for the new `bigquery-analytics` extra upstream, which is unused here and cuts ~50 MB from the install. `google-genai` moved 2.11.0 → 2.19.0 transitively.
   `core/pyproject.toml` had floored `google-adk[eval,db]>=2.5.0` while the workspace root moved to `>=2.7.1`. The lock resolved 2.7.1 either way, but `orrery-core` is published as its own distribution and a consumer installing it outside this workspace would have been allowed an ADK two minors behind what the code targets.
 - **`docker-compose.yml` uses `pgvector/pgvector:pg16`** in place of `postgres:16-alpine`. It is the stock Postgres image plus the `vector` extension — same data directory, same defaults — so an existing volume keeps working and sessions, memory and confirmations are unaffected. The Helm chart takes an external `DATABASE_URL` and needed no change.
 - **`AgentGateway.session_service` is optional in the type, not just at runtime.** `__init__` always assigns a service while `from_runner()` may assign `None`, so the attribute inferred as non-optional and the two constructors disagreed; the old `# type: ignore[assignment]` silenced the report rather than the mismatch. Declaring it `BaseSessionService | None` then surfaced **seven call sites** in the HTTP server and Slack handler dereferencing an optional. They now narrow through a `sessions` property that raises with a message naming `run_in_session()`, instead of an `AttributeError` three frames down. Found by ty 0.0.73, which flags what 0.0.63 let through.
@@ -45,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **CI had been red on `main` for over two weeks** — every run since 2026-08-06, and every open Dependabot PR with it. The Security Scan job's Trivy filesystem scan runs with `severity: HIGH,CRITICAL` / `exit-code: 1` / `ignore-unfixed: true`, so a *fixed* HIGH advisory is a hard failure by design; `cryptography` was pinned at 49.0.0 with CVE-2026-69247 against it. Clearing that exposed three more HIGH advisories against `sqlparse` 0.5.5 that had landed in Trivy's database since. Both are transitive, so both were lock-only upgrades (`cryptography` 50.0.0, `sqlparse` 0.6.0).
+- **CI red again on `main` and on all eleven open Dependabot PRs, same shape.** `nltk` 3.10.0 (transitive via `google-adk[eval] → rouge-score`) picked up one CRITICAL and three HIGH advisories (CVE-2026-79675, CVE-2026-71513, CVE-2026-72818, CVE-2026-78680), fixed upstream in 3.10.3 — a three-line `uv lock --upgrade-package nltk`. The bump then tripped **Dependency Review** on a newer advisory, GHSA-8mgp-746c-j5xp, which covers every published nltk release (`<= 3.10.3`) with no patched version yet. Trivy already skips it via `ignore-unfixed`; `dependency-review-action` has no equivalent, so without an allow the lockfile could never again be touched where nltk is concerned. The one GHSA is allow-listed in `ci.yml` with an inline justification (nltk is only used for eval scoring; the affected model-artifact APIs are never called) and a re-check pointer — the entry is to be deleted the moment a patched release exists.
+  A serial rebase-and-merge then landed the Dependabot backlog: the branch ruleset requires an up-to-date branch, so each merge knocked the rest `BEHIND` and they went one at a time.
 - **`vite.config.ts` imports `./src/api/paths.ts` with its extension.** Vite 8.2.1 warns that the extensionless form is unsupported by `configLoader: 'native'`, planned to become the default in a future major — the native loader resolves the config through Node, which has no extensionless resolution. Both tsconfigs already set `allowImportingTsExtensions`, so the explicit form type-checks unchanged.
 - **The pgvector backend validates its table identifier.** A table name cannot be a bound parameter — SQL binds values, not identifiers — so `KNOWLEDGE_PG_TABLE` is interpolated into every statement. It comes from configuration rather than a request, but "config is trusted" is exactly the assumption that ages badly once values arrive from a Helm chart, a ConfigMap or an operator CR. Validated once at construction against a plain-identifier pattern, which makes the interpolation provably safe rather than conventionally safe.
 
@@ -531,7 +554,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/BAHALLA/orrery/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/BAHALLA/orrery/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BAHALLA/orrery/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/BAHALLA/orrery/compare/v0.2.2...v0.2.3

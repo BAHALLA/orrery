@@ -1,6 +1,6 @@
 [project]
 name = "google-chat-bot"
-version = "0.3.1"
+version = "0.4.0"
 description = "Google Chat integration for AI Agents"
 authors = [{ name = "Taoufiq" }]
 requires-python = ">=3.14"
