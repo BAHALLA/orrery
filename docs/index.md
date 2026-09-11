@@ -1,6 +1,12 @@
-# 🤖 AI Agents for DevOps & SRE
+# Orrery
 
-An open-source framework for building autonomous DevOps and SRE agents. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/).
+**SRE agents you can let near production.**
+
+Autonomous DevOps & SRE agents that investigate, correlate and remediate — with a
+human gate on every destructive action. Specialists for Kafka, Kubernetes,
+Elasticsearch, Docker and Prometheus/Loki orbit a root coordinator that runs them in
+parallel and correlates what they find. Built on [Google ADK](https://google.github.io/adk-docs/),
+open source under MIT.
 
 <figure markdown>
   ![The Orrery web console after a full incident triage. The agent reports a Critical verdict: Kafka and Elasticsearch healthy, a TargetDown alert firing in Alertmanager, two unhealthy Docker containers, and the Kubernetes check unverified. The side panel keeps the recorded verdict and the per-system findings behind it.](images/web-console-triage.png)
@@ -47,7 +53,7 @@ An open-source framework for building autonomous DevOps and SRE agents. Built wi
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 The platform follows a **Coordinator-Specialist** pattern. A root orchestrator analyzes user intent and delegates to specialized agents. Cross-cutting concerns like safety, observability, and resilience are handled globally via a plugin system.
 
@@ -101,7 +107,7 @@ graph LR
 
 ---
 
-## ⚡ Jump to a topic
+## Jump to a topic
 
 <div class="grid cards" markdown>
 
@@ -157,7 +163,7 @@ graph LR
 
 ---
 
-## 🧠 Core Philosophy
+## Core Philosophy
 
 1.  **Safety First:** No destructive tool executes without verified human confirmation.
 2.  **Autonomous Investigation:** Agents run diagnostics in parallel, mimicking an SRE's thought process.
@@ -166,7 +172,7 @@ graph LR
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 | Component | Path | Description |
 |-----------|------|-------------|

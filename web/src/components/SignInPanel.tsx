@@ -1,3 +1,5 @@
+import { OrreryMark } from "./OrreryMark";
+
 interface Props {
   onSignIn: () => void;
   error?: string | null;
@@ -17,9 +19,7 @@ export function SignInPanel({ onSignIn, error, isLoading = false }: Props) {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-1 flex items-center justify-center gap-2">
-          <span aria-hidden="true" className="text-2xl">
-            🛰️
-          </span>
+          <OrreryMark className="h-7 w-7 text-slate-900 dark:text-slate-100" />
           <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Orrery Console
           </h1>
