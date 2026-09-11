@@ -1,4 +1,7 @@
-site_name: Orrery — AI Agents for DevOps & SRE
+site_name: Orrery
+site_description: >-
+  SRE agents you can let near production. Autonomous DevOps & SRE agents that
+  investigate, correlate and remediate — with a human gate on every destructive action.
 site_url: https://bahalla.github.io/orrery/
 repo_url: https://github.com/BAHALLA/orrery
 repo_name: BAHALLA/orrery
@@ -6,27 +9,33 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  # docs/overrides adds the Open Graph / Twitter card tags (static image in
+  # docs/assets/brand); Material's `social` plugin would generate one per page
+  # but drags in cairo + pillow, which the docs build does not otherwise need.
+  custom_dir: docs/overrides
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
   font:
     text: Inter
     code: JetBrains Mono
   icon:
-    logo: material/robot-outline
     repo: fontawesome/brands/github
   palette:
-    # Palette toggle for light mode
+    # `custom` hands the colours to stylesheets/extra.css, where they are the
+    # console's own slate/blue tokens — one palette across the docs, the web
+    # console and the brand assets.
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
 
-    # Palette toggle for dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -102,45 +111,25 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting Started:
+  - Get Started:
     - Installation: getting-started.md
     - Configuration:
       - General: config/general.md
       - Agents: config/agents.md
       - Security: config/security.md
-  - Architecture:
+  - Concepts:
     - Design Patterns: agent-design-patterns.md
-    - ADRs:
-      - "ADR-001: RBAC": adr/001-rbac.md
-      - "ADR-002: Agent Composition": adr/002-agent-tool-vs-sub-agents.md
-      - "ADR-003: Graph Workflow & Conversational Root": adr/003-graph-workflow-inversion.md
-  - Platform Features:
     - Agents Overview: agents-overview.md
     - Guardrails & RBAC: guardrails.md
     - Structured Tool Results: tool-results.md
-    - Testing RBAC: rbac-testing.md
-    - Agent Evaluations: evals.md
     - Cross-Session Memory: memory.md
     - Knowledge Retrieval: knowledge.md
-  - Runbooks:
-    - Overview: runbooks/README.md
-    - On-Call Checklist: runbooks/oncall-checklist.md
-    - Escalation: runbooks/escalation.md
-    - "Agents Unavailable": runbooks/agents-unavailable.md
-    - "Session DB Unreachable": runbooks/session-db-unreachable.md
-    - "Remediation Loop Storm": runbooks/remediation-loop-storm.md
-    - "Circuit Breaker Open": runbooks/circuit-breaker-open.md
-    - "High Tool Error Rate": runbooks/high-tool-error-rate.md
-    - "High LLM Spend": runbooks/high-llm-spend.md
-    - "Prompt Injection Detected": runbooks/prompt-injection-detected.md
-    - "Unauthorized Approval Attempt": runbooks/unauthorized-approval-attempt.md
-    - "Knowledge Index Unavailable": runbooks/knowledge-index-unavailable.md
-    - Template: runbooks/template.md
-    - Observability (Metrics & Tracing): metrics.md
-  - Operations:
+    - Decision Records:
+      - "ADR-001: RBAC": adr/001-rbac.md
+      - "ADR-002: Agent Composition": adr/002-agent-tool-vs-sub-agents.md
+      - "ADR-003: Graph Workflow & Conversational Root": adr/003-graph-workflow-inversion.md
+  - Operate:
     - Production Deployment: deployment.md
-    - Supply Chain Security: supply-chain.md
-    - Troubleshooting: troubleshooting.md
     - Integrations:
       - Overview: integrations.md
       - Web Console: integrations/web-console.md
@@ -149,20 +138,39 @@ nav:
         - Overview: integrations/google-chat.md
         - HTTP Webhook Setup: integrations/google-chat-webhook.md
         - Pub/Sub Setup: integrations/google-chat-pubsub.md
-  - Developer Guide:
+    - Observability (Metrics & Tracing): metrics.md
+    - Runbooks:
+      - Overview: runbooks/README.md
+      - On-Call Checklist: runbooks/oncall-checklist.md
+      - Escalation: runbooks/escalation.md
+      - "Agents Unavailable": runbooks/agents-unavailable.md
+      - "Session DB Unreachable": runbooks/session-db-unreachable.md
+      - "Remediation Loop Storm": runbooks/remediation-loop-storm.md
+      - "Circuit Breaker Open": runbooks/circuit-breaker-open.md
+      - "High Tool Error Rate": runbooks/high-tool-error-rate.md
+      - "High LLM Spend": runbooks/high-llm-spend.md
+      - "Prompt Injection Detected": runbooks/prompt-injection-detected.md
+      - "Unauthorized Approval Attempt": runbooks/unauthorized-approval-attempt.md
+      - "Knowledge Index Unavailable": runbooks/knowledge-index-unavailable.md
+      - Template: runbooks/template.md
+    - Supply Chain Security: supply-chain.md
+    - Troubleshooting: troubleshooting.md
+  - Build:
     - Adding a New Agent: adding-an-agent.md
+    - Testing RBAC: rbac-testing.md
+    - Agent Evaluations: evals.md
     - Core Library: core/README.md
-  - Agent Reference:
-    - Orrery Assistant: agents/orrery-assistant.md
-    - Docker Agent: agents/docker-agent.md
-    - Elasticsearch: agents/elasticsearch.md
-    - K8s Health: agents/k8s-health.md
-    - Kafka Health: agents/kafka-health.md
-    - Observability: agents/observability.md
-    - Ops Journal: agents/ops-journal.md
-    - Slack Bot: agents/slack-bot.md
-    - Google Chat Bot: agents/google-chat-bot.md
-  - Roadmap (AEP):
+    - Agent Reference:
+      - Orrery Assistant: agents/orrery-assistant.md
+      - Docker Agent: agents/docker-agent.md
+      - Elasticsearch: agents/elasticsearch.md
+      - K8s Health: agents/k8s-health.md
+      - Kafka Health: agents/kafka-health.md
+      - Observability: agents/observability.md
+      - Ops Journal: agents/ops-journal.md
+      - Slack Bot: agents/slack-bot.md
+      - Google Chat Bot: agents/google-chat-bot.md
+  - Roadmap:
     - Overview: enhancements/README.md
     - "AEP-001: Tool Confirmation": enhancements/aep-001-adk-native-confirmation.md
     - "AEP-002: Agent Evaluation": enhancements/aep-002-agent-evaluation.md

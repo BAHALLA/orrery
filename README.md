@@ -1,173 +1,146 @@
-# 🤖 Orrery — AI Agents for DevOps & SRE
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/orrery-mark-dark.svg">
+    <img src="docs/assets/brand/orrery-mark-light.svg" alt="Orrery" width="112" height="112">
+  </picture>
+</p>
 
-[![CI](https://github.com/BAHALLA/orrery/actions/workflows/ci.yml/badge.svg)](https://github.com/BAHALLA/orrery/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://bahalla.github.io/orrery/)
-[![License: MIT](https://img.shields.io/github/license/BAHALLA/orrery)](https://github.com/BAHALLA/orrery/blob/main/LICENSE)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/release/python-3140/)
-[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v1.json)](https://docs.astral.sh/uv/)
+<h1 align="center">Orrery</h1>
 
-**Orrery** is an open-source platform for building **autonomous DevOps and SRE agents**. Built with [Google ADK](https://google.github.io/adk-docs/) and managed as a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/).
+<p align="center"><strong>SRE agents you can let near production.</strong></p>
 
----
+<p align="center">
+  Autonomous DevOps &amp; SRE agents that investigate, correlate and remediate —<br>
+  with a human gate on every destructive action.
+</p>
 
-### 🚀 [Read the full documentation at bahalla.github.io/orrery](https://bahalla.github.io/orrery/)
+<p align="center">
+  <a href="https://github.com/BAHALLA/orrery/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BAHALLA/orrery/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/BAHALLA/orrery/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/BAHALLA/orrery?display_name=tag&sort=semver&color=2563eb"></a>
+  <a href="https://github.com/BAHALLA/orrery/pkgs/container/orrery"><img alt="Container image" src="https://img.shields.io/badge/ghcr.io-bahalla%2Forrery-0f172a?logo=docker&logoColor=white"></a>
+  <a href="https://bahalla.github.io/orrery/"><img alt="Docs" src="https://img.shields.io/badge/docs-bahalla.github.io%2Forrery-2563eb"></a>
+  <a href="https://www.python.org/downloads/release/python-3140/"><img alt="Python 3.14+" src="https://img.shields.io/badge/python-3.14+-3776ab?logo=python&logoColor=white"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/BAHALLA/orrery?color=0f172a"></a>
+</p>
 
----
+<p align="center">
+  <a href="https://bahalla.github.io/orrery/getting-started/">Get started</a> ·
+  <a href="https://bahalla.github.io/orrery/">Documentation</a> ·
+  <a href="https://bahalla.github.io/orrery/deployment/">Deploy</a> ·
+  <a href="https://bahalla.github.io/orrery/adding-an-agent/">Build an agent</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-## 💡 Why Orrery?
+<br>
 
-DevOps and SRE teams often face a "wall of alerts" and repetitive manual triage. **Orrery** (named after the mechanical models of the solar system) provides **specialist agents** that don't just alert you — they **investigate, correlate, and remediate**.
+<p align="center">
+  <img src="docs/images/web-console-triage.png" alt="The Orrery web console after a full incident triage: a Critical verdict, per-system findings for Kafka, Elasticsearch, Alertmanager, Docker and Kubernetes, and the evidence kept in a side panel." width="900">
+</p>
+<p align="center"><sub>One question, five systems checked in parallel, one verdict — with the evidence kept alongside.</sub></p>
 
-- **Don't just see a lag spike:** The Kafka agent checks consumer groups, the K8s agent inspects the pods, and the Observability agent queries Prometheus — all in parallel.
-- **Don't just restart blindly:** Self-healing loops verify if an action worked and retry with a different strategy if it didn't.
-- **Stay in control:** Destructive operations always require human approval via a secure confirmation flow.
+## Why Orrery
 
-## 🏗️ Architecture at a Glance
+An alert tells you *that* something is wrong. Finding out *what* still means a human
+opening five consoles at 03:00. Orrery gives you specialist agents — Kafka, Kubernetes,
+Elasticsearch, Docker, Prometheus/Loki — coordinated by a root agent that runs them in
+parallel, correlates what they find, and proposes or performs the fix.
 
-```mermaid
-graph LR
-    subgraph Frontends
-        WEB[Web UI / CLI]
-        SLACK[Slack]
-        GCHAT[Google Chat]
-    end
+The name is the design: an orrery is a mechanical model of the solar system. Specialists
+orbit a coordinator, and every moving part is visible and accountable.
 
-    ROOT[Orrery Chat<br/>LLM Orchestrator]
+What makes it safe enough to point at production:
 
-    subgraph Specialists
-        KAFKA[Kafka]
-        K8S[K8s]
-        OBS[Observability]
-        ES[Elasticsearch]
-        DOCKER[Docker]
-        JOURNAL[Ops Journal]
-        TRIAGE[Incident Triage]
-    end
+- **A human gate on every mutation.** Mutating and destructive tools stop and ask. Approval is
+  *requester-verified* — a deliberate word, from the same signed-in person who asked, after
+  the action existed. A casual "ok" or someone else's "approve" is refused.
+- **Two orthogonal axes of control.** RBAC answers *who* (viewer / operator / admin); an autonomy
+  level answers *what this process may do* (L2 read-only → L4 confirmed-destructive).
+- **Prompt-injection screening in both directions.** An injected user message is blocked before
+  the model runs; injected text arriving *inside a tool result* (a pod annotation, a log line) is
+  neutralized in place, because that payload is also the evidence being diagnosed.
+- **An audit trail you can alert on.** Every tool call, and every confirmation raised, decided,
+  refused or expired, is a structured log line and a Prometheus counter. Someone else trying to
+  approve your action pages on-call.
 
-    subgraph Plugins
-        P1[RBAC & Guardrails]
-        P2[Metrics & Audit]
-        P3[Memory & Resilience]
-    end
+## Quick start
 
-    KB[(Knowledge<br/>runbooks, postmortems, ADRs)]
-
-    WEB --> ROOT
-    SLACK --> ROOT
-    GCHAT --> ROOT
-    ROOT --> KAFKA
-    ROOT --> K8S
-    ROOT --> OBS
-    ROOT --> ES
-    ROOT --> DOCKER
-    ROOT --> JOURNAL
-    ROOT --> TRIAGE
-    ROOT --> KB
-    ROOT -.-> P1
-    ROOT -.-> P2
-    ROOT -.-> P3
+```bash
+docker run --rm -p 8000:8000 -e GOOGLE_API_KEY=your-key ghcr.io/bahalla/orrery:latest
 ```
 
-## ✨ Key Features
+Open <http://localhost:8000>. That is the web console with in-memory sessions and whichever
+provider you configured — Gemini, Claude, OpenAI, or a local Ollama model (no key needed).
 
-### 🧩 Intelligence & Orchestration
-- **Multi-agent coordination** — A root orchestrator delegates to specialists (Kafka, K8s, etc.) via dynamic routing or deterministic pipelines.
-- **Opt-in planning** — Set `ORRERY_PLANNER=plan_react` (provider-agnostic) or `builtin` (Gemini thinking tokens) to attach an ADK planner to the root orchestrator, triage summarizer, and remediation actor — explicit reasoning before destructive ops.
-- **Self-healing (graph workflow)** — Closed-loop remediation as a bounded graph cycle: **Act** (restart/scale) → **Verify** → **Retry** (up to 3 times), capped by `verify_route`.
-- **Cross-session memory** — Agents recall past incidents, investigations, and team preferences across sessions.
-- **Reads your runbooks, not just your clusters** — Opt-in retrieval over the documentation humans actually wrote: runbooks, postmortems, ADRs, Confluence. Two pluggable seams — sources (filesystem, git, Confluence) and backends (Elasticsearch/BM25, or hybrid pgvector fusing semantic and lexical ranks) — so neither a document store nor a search vendor is hard-wired. Every passage cites its source and its age, because an operator at 03:00 needs to tell a retrieved fact from a hallucination.
-- **Long incidents don't hit the context wall** — Past a token threshold, older turns are compacted into a digest while recent ones stay verbatim. Lossy for the model, **lossless for the record**: the original events remain in the session and are filtered only when the request is assembled, so audit and replay are untouched.
+For the full local stack (Kafka, Postgres, Prometheus, Loki, Alertmanager, Elasticsearch) —
+still no clone required:
 
-### 🛡️ Safety & Governance
-- **Human-in-the-Loop** — Mutating (`@confirm`) and destructive (`@destructive`) tools require explicit human confirmation. On every shipped surface that approval is **requester-verified**: a deliberate word, from the same verified person who triggered the action, spoken after the action existed — a casual "ok" or someone else's "approve" won't do.
-- **RBAC Hierarchy** — Three-role system (**Viewer**, **Operator**, **Admin**) enforced globally via plugins, with an orthogonal **autonomy level** (L2 read-only / L3 mutating / L4 confirmed-destructive) that answers *which mode this process runs in* rather than *who is asking*.
-- **Prompt-injection screening in both directions** — An injected user message is blocked before the model runs. Text that arrives *inside a tool result* — a pod annotation, a log line, a topic name — is neutralized in place instead, because that payload is also the evidence being diagnosed. Credentials are scrubbed from tool results and from long-term memory by one shared pattern set.
-- **SSO / OIDC sign-in** — The web console signs in with **Authorization Code + PKCE** against any OIDC provider (Keycloak, Authentik, Auth0, Okta, Entra ID, Google); the front door verifies the resulting tokens via RS256/JWKS and maps claims → roles. A local Keycloak with viewer/operator/admin demo users ships behind `make up PROFILES=sso`. Without an issuer configured it falls back to a pasted bearer token, so CI and offline work need no IdP.
-- **JWT authentication** — The HTTP front door (`orrery_core.serving.server`) verifies HS256 or RS256/JWKS bearer tokens, maps claims → roles (including nested paths like `realm_access.roles`), and rejects unauthenticated traffic. See [`docs/config/security.md`](https://bahalla.github.io/orrery/config/security/).
-- **Audit Trails** — Every tool call is logged with structured JSON, including user ID and session context. Guarded actions add a confirmation lifecycle — raised, decided, refused, expired — so "who approved this?" is a line in the log rather than an inference, and a **refused** approval (someone other than the requester trying to approve) raises a critical alert.
-- **Secrets via mounted files** — `SecretsManager` reads from `ORRERY_SECRETS_DIR` (Kubernetes Secret volume) before falling back to env vars.
-
-### 🔌 Integration & Observability
-- **Multi-Interface** — Interact via the **Web Console**, **ADK Web UI**, **CLI**, **Slack**, or **Google Chat** (Cards v2, with thread-reply confirmations by default and opt-in interactive buttons on HTTP deployments).
-- **Web Console** — Opt-in React SPA (`ORRERY_WEB_CONSOLE_ENABLED=true`) served by the FastAPI front door: SSO or token-gated chat, a tool-call timeline, the approve/deny panel for guarded actions, a triage view, and a first-run **environment check** that tells you which integrations are actually wired and what to configure when one isn't. See [`docs/integrations/web-console.md`](https://bahalla.github.io/orrery/integrations/web-console/).
-- **Observability** — Built-in Prometheus metrics for tool latency, error rates, circuit breaker states, injection screening and approval decisions. Every alert rule carries a `runbook_url` pointing at an [on-call runbook](https://bahalla.github.io/orrery/runbooks/) written for 03:00, not for a reader with the source open.
-- **Context Caching** — Optimized for Gemini models to reduce token usage and latency.
-
-## 🚀 Quick Start (Docker)
-
-The fastest way to try Orrery is to pull the pre-built image from GHCR — no
-clone required.
-
-### Prerequisites
-- [Docker](https://docs.docker.com/get-docker/)
-- An LLM API key (Gemini, Claude, or OpenAI) — or a local [Ollama](https://ollama.com/) model, no key required
-
-### Kick the tires (single container, ~30 seconds)
 ```bash
-docker pull ghcr.io/bahalla/orrery:latest
-
-docker run --rm -p 8000:8000 \
-  -e GOOGLE_API_KEY=your-key \
-  ghcr.io/bahalla/orrery:latest
-
-# Open the web UI
-open http://localhost:8000
-```
-The web UI boots with in-memory session state and whichever LLM provider you
-configured. Tools that need Kafka, Postgres, or Prometheus (the full stack) are
-covered below.
-
-### Full stack (Kafka + Postgres + Prometheus + Loki + Alertmanager)
-```bash
-# 1. Grab the compose file (still no clone required)
 curl -O https://raw.githubusercontent.com/BAHALLA/orrery/main/docker-compose.yml
-
-# 2. Start the full stack — uses the pulled image by default
 GOOGLE_API_KEY=your-key docker compose --profile demo up -d
-
-# 3. Open the web UI
-open http://localhost:8000
 ```
 
-### From source
+From source: `make install && make up && make run-api`, then `make dev-token ROLE=admin` for a
+token to sign in with. `make help` lists every target. The
+[Getting Started guide](https://bahalla.github.io/orrery/getting-started/) covers providers,
+SSO, Slack and Google Chat.
 
-```bash
-make install   # Python workspace + web console
-make up        # All containers (Kafka, Postgres + pgAdmin, observability, Keycloak, Elasticsearch)
-make run-api   # API + web console on http://localhost:8000
-make dev-token # Mint a token to sign in with (ROLE=viewer|operator|admin)
-```
+## What's in the box
 
-Variants are flags, not separate targets — `make run-api SSO=1`, `make run-cli PERSIST=1`,
-`make run-slack MODE=socket`, `make up PROFILES=tracing`. `make help` lists everything,
-and `make check` runs the whole gate (lint, types, Python tests, web tests).
+| Agent | Tools | What it does |
+|---|---:|---|
+| [**orrery-assistant**](https://bahalla.github.io/orrery/agents/orrery-assistant/) | — | Root coordinator; single-turn incident triage; closed-loop remediation (act → verify → retry) |
+| [**kafka-health**](https://bahalla.github.io/orrery/agents/kafka-health/) | 24 | Brokers, topics, consumer lag, offset resets; Strimzi-aware |
+| [**k8s-health**](https://bahalla.github.io/orrery/agents/k8s-health/) | 26 | Pods, deployments, events, logs, rollbacks, resource usage; operator-aware |
+| [**elasticsearch**](https://bahalla.github.io/orrery/agents/elasticsearch/) | 24 | Cluster, index and shard diagnostics, ILM, snapshots; ECK-aware |
+| [**observability**](https://bahalla.github.io/orrery/agents/observability/) | 16 | Prometheus queries, Loki logs, Alertmanager silences |
+| [**docker-agent**](https://bahalla.github.io/orrery/agents/docker-agent/) | 17 | Container health, stats, logs, Compose projects |
+| [**ops-journal**](https://bahalla.github.io/orrery/agents/ops-journal/) | 10 | Notes, preferences and bookmarks that persist across sessions |
+| [**slack-bot**](https://bahalla.github.io/orrery/agents/slack-bot/) / [**google-chat-bot**](https://bahalla.github.io/orrery/agents/google-chat-bot/) | — | Chat surfaces with Approve / Deny cards, same gate and RBAC |
 
-*For more setup options (Claude, OpenAI, local models), see the [Configuration Guide](https://bahalla.github.io/orrery/config/general/).*
+Every agent runs standalone or composed under the coordinator, and every cross-cutting concern
+is a plugin applied once to all of them.
 
-## 🤖 Available Agents
+## Highlights
 
-| Agent | Expertise |
-|-------|-----------|
-| [**orrery-assistant**](https://bahalla.github.io/orrery/agents/orrery-assistant/) | Root orchestrator, incident triage, and remediation. |
-| [**k8s-health**](https://bahalla.github.io/orrery/agents/k8s-health/) | Nodes, Pods, Deployments, Logs, Events, and Rollbacks. |
-| [**kafka-health**](https://bahalla.github.io/orrery/agents/kafka-health/) | Brokers, Topics, Consumer Groups, and Lag monitoring. |
-| [**observability**](https://bahalla.github.io/orrery/agents/observability/) | Prometheus metrics, Loki logs, and Alertmanager silences. |
-| [**elasticsearch**](https://bahalla.github.io/orrery/agents/elasticsearch/) | Cluster health, indices, shard allocation, search, ILM, snapshots, and ECK CRs. |
-| [**docker-agent**](https://bahalla.github.io/orrery/agents/docker-agent/) | Container health, stats, logs, and Compose projects. |
-| [**slack-bot**](https://bahalla.github.io/orrery/agents/slack-bot/) | Interactive Slack integration with confirmation buttons. |
-| [**google-chat-bot**](https://bahalla.github.io/orrery/agents/google-chat-bot/) | Google Chat integration with interactive Cards v2. |
-| [**ops-journal**](https://bahalla.github.io/orrery/agents/ops-journal/) | Persistent notes and session-level bookmarks. |
-| **remediation-nodes** | Closed-loop actor and verifier nodes wired via graph routing. |
+- **Reads your runbooks, not just your clusters** — opt-in retrieval over the docs your team wrote
+  (filesystem, git, Confluence → Elasticsearch BM25 or hybrid pgvector). Every passage cites its
+  source and its age. [Knowledge retrieval →](https://bahalla.github.io/orrery/knowledge/)
+- **Deterministic triage workflow** — a graph `Workflow` fans out to all specialists, joins, records a
+  severity verdict, then routes to bounded remediation or a final report. Runs on a schedule with
+  `make run-triage`. [ADR-003 →](https://bahalla.github.io/orrery/adr/003-graph-workflow-inversion/)
+- **Cross-session memory** — past incidents and resolutions are recalled on demand, with credentials
+  scrubbed on the way in and out. [Memory →](https://bahalla.github.io/orrery/memory/)
+- **Long incidents don't hit the context wall** — older turns are compacted into a digest for the
+  model while the full record stays intact for audit and replay.
+- **Any LLM provider** — Gemini, Claude, OpenAI or Ollama via one env var; context caching and
+  safety settings applied automatically on Gemini.
+- **Five surfaces, one gate** — web console (OIDC/PKCE SSO or JWT), CLI, ADK dev UI, Slack, Google
+  Chat. The confirmation and RBAC rules are identical on every one.
+- **Observable by design** — Prometheus metrics, OpenTelemetry traces with log↔trace correlation,
+  and a `runbook_url` on every alert rule pointing at an
+  [on-call runbook](https://bahalla.github.io/orrery/runbooks/) for operating Orrery itself.
+- **Production deployment** — Helm chart with HPA, PDB, network policies, Postgres-backed sessions and
+  approvals, signed multi-arch images with SBOMs. [Deployment →](https://bahalla.github.io/orrery/deployment/)
 
-## 📚 Documentation
+## How it fits together
 
-- 🏁 **[Getting Started](https://bahalla.github.io/orrery/getting-started/)** — Step-by-step setup and first interaction.
-- ⚙️ **[Configuration](https://bahalla.github.io/orrery/config/general/)** — LLM providers, env vars, and infrastructure.
-- 🛠️ **[Developer Guide](https://bahalla.github.io/orrery/adding-an-agent/)** — How to build and test your own specialist agents.
-- 🏗️ **[Architecture](https://bahalla.github.io/orrery/agent-design-patterns/)** — Design patterns, RBAC, and ADRs.
-- 📖 **[Knowledge Retrieval](https://bahalla.github.io/orrery/knowledge/)** — Indexing your runbooks and docs so the agent can cite them.
-- 🚨 **[Runbooks](https://bahalla.github.io/orrery/runbooks/)** — Operating Orrery itself: on-call checklist, escalation, and per-alert procedures.
+Built on [Google ADK](https://google.github.io/adk-docs/). A chat-mode root agent owns the
+conversation and delegates to specialists as tools; a separate graph workflow provides the
+deterministic batch path. Guardrails, RBAC, autonomy, audit, metrics, tracing, injection screening,
+credential redaction and output capping are ADK plugins registered once on the runner, so a new
+agent inherits all of them by construction.
 
-## ⚖️ License
+Read the [architecture overview](https://bahalla.github.io/orrery/agent-design-patterns/), the
+[ADRs](https://bahalla.github.io/orrery/adr/001-rbac/), or the
+[enhancement proposals](https://bahalla.github.io/orrery/enhancements/) that record how each
+piece came to be.
 
-This project is licensed under the [MIT License](LICENSE).
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security reports go
+through [SECURITY.md](SECURITY.md), not the public tracker. `make check` runs the whole gate
+(lint, types, ~1,400 Python tests, web console tests) and mirrors CI.
+
+## License
+
+[MIT](LICENSE).

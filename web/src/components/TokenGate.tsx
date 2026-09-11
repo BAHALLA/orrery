@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { OrreryMark } from "./OrreryMark";
 
 interface Props {
   onSubmit: (token: string) => void;
@@ -27,9 +28,7 @@ export function TokenGate({ onSubmit, error }: Props) {
         className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
       >
         <div className="mb-1 flex items-center gap-2">
-          <span aria-hidden="true" className="text-2xl">
-            🛰️
-          </span>
+          <OrreryMark className="h-7 w-7 text-slate-900 dark:text-slate-100" />
           <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Orrery Console
           </h1>

@@ -1,3 +1,37 @@
+/* ── Brand palette ───────────────────────────────────────────────── */
+/* Material's `primary: custom` / `accent: custom` read these. The values are
+   the web console's Tailwind tokens (slate-900 surfaces, blue-600 actions), so
+   the docs, the console and the brand assets share one palette. The sun in
+   the mark is #F5B32B; it is deliberately not a UI colour. */
+:root {
+  --md-primary-fg-color: #0f172a;         /* slate-900 */
+  --md-primary-fg-color--light: #1e293b;  /* slate-800 */
+  --md-primary-fg-color--dark: #020617;   /* slate-950 */
+  --md-primary-bg-color: #f8fafc;
+  --md-primary-bg-color--light: #e2e8f0;
+  --md-accent-fg-color: #2563eb;          /* blue-600 */
+  --md-accent-fg-color--transparent: rgba(37, 99, 235, 0.1);
+  --md-accent-bg-color: #ffffff;
+  --md-accent-bg-color--light: #ffffff;
+}
+[data-md-color-scheme="default"] {
+  --md-typeset-a-color: #1d4ed8;          /* blue-700: links on white */
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f172a;
+  --md-accent-fg-color: #60a5fa;          /* blue-400: readable on slate */
+  --md-accent-fg-color--transparent: rgba(96, 165, 250, 0.12);
+  --md-typeset-a-color: #93c5fd;          /* blue-300 */
+  --md-default-bg-color: #0b1220;
+  --md-code-bg-color: #111a2e;
+}
+/* The header logo inherits the header text colour via currentColor. */
+.md-header__button.md-logo svg,
+.md-header__button.md-logo img {
+  height: 1.7rem;
+  width: 1.7rem;
+}
+
 /* ── Layout width ────────────────────────────────────────────────── */
 /* Material's default content column is 61rem, which shrinks wide schemas,
    tables, and code to the point of being hard to read. Give them room. */

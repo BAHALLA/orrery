@@ -1,8 +1,8 @@
-# 🛠️ Adding a New Specialist Agent
+# Adding a New Specialist Agent
 
 This guide provides a step-by-step walkthrough for building a new specialist agent using the `orrery-core` library.
 
-## 🏗️ Agent Design Patterns
+## Agent Design Patterns
 
 Before you start coding, decide on your agent's role:
 -   **Specialist (LLM-routed):** A standalone expert with specific tools. Most agents fit here.

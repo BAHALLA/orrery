@@ -1,8 +1,8 @@
-# 🏁 Getting Started
+# Getting Started
 
 Welcome! This guide will help you set up Orrery and perform your first system triage in under 5 minutes.
 
-## 📋 Prerequisites
+## Prerequisites
 
 To try Orrery you only need:
 
@@ -16,7 +16,7 @@ For local development (modifying agents or the core library) you'll additionally
 
 ---
 
-## 🚀 Quick Start (Docker — no clone required)
+## Quick Start (Docker — no clone required)
 
 The fastest way to try Orrery is to pull the pre-built image from GHCR — no
 clone required.
@@ -85,7 +85,7 @@ Open [http://localhost:8000](http://localhost:8000).
 
 ---
 
-## 🤖 Using a different LLM provider
+## Using a different LLM provider
 
 Orrery routes every agent through [LiteLLM](https://docs.litellm.ai/), so you can
 switch backends with **two environment variables — no code changes**:
@@ -155,7 +155,7 @@ planner options, see **[General configuration → LLM Provider](config/general.m
 
 ---
 
-## 🛠️ Local Development Setup
+## Local Development Setup
 
 Follow these steps if you want to modify agents or contribute to the core library.
 
@@ -190,7 +190,7 @@ Follow these steps if you want to modify agents or contribute to the core librar
 
 ---
 
-## 💬 Your First Interaction
+## Your First Interaction
 
 Once the platform is running, try these scenarios to see the agents in action:
 
@@ -211,7 +211,7 @@ Ask: **"Scale the 'web-app' deployment to 3 replicas."**
 
 ---
 
-## 📖 Explore Further
+## Explore Further
 
 *   📋 **[Agents overview](agents-overview.md)** — Every agent, its tools, and what role can call them.
 *   ⚙️ **[General configuration](config/general.md)** — Tune LLM providers and infrastructure.

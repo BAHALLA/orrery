@@ -3,6 +3,7 @@ import type { Identity } from "../auth/token";
 import type { Conversation } from "../conversations/types";
 import type { ConversationsController } from "../conversations/useConversations";
 import { IdentityBadge } from "./IdentityBadge";
+import { OrreryMark } from "./OrreryMark";
 
 interface Props {
   conversations: ConversationsController;
@@ -58,9 +59,7 @@ export function Sidebar({
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <div className="flex items-center gap-2 px-4 py-4">
-        <span aria-hidden="true" className="text-xl">
-          🛰️
-        </span>
+        <OrreryMark className="h-6 w-6 text-slate-900 dark:text-slate-100" />
         <span className="font-semibold text-slate-900 dark:text-slate-100">Orrery Console</span>
       </div>
 
