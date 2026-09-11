@@ -131,6 +131,30 @@ config:
   ELASTICSEARCH_URL: http://elasticsearch.elastic-system.svc.cluster.local:9200
   ELASTICSEARCH_VERIFY_CERTS: "true"
   ELASTICSEARCH_HTTP_TIMEOUT: "15"
+  # ── Knowledge retrieval (AEP-025, opt-in) ──
+  # Off until ORRERY_KNOWLEDGE_BACKEND is set; the agent then gains a
+  # `search_knowledge` tool over runbooks/postmortems/ADRs you have indexed.
+  # Indexing is a build-time action (`make knowledge-sync`), never lazy at
+  # request time — run it from CI or a CronJob against the same backend.
+  # Only index what every `viewer` may read: retrieval is viewer-level and
+  # not ACL-aware. Full reference: https://bahalla.github.io/orrery/knowledge/
+  #
+  # elasticsearch — BM25 over the cluster below. Deliberately its own
+  # KNOWLEDGE_ES_* family, so the index cluster can differ from the one the
+  # elasticsearch agent diagnoses.
+  # ORRERY_KNOWLEDGE_BACKEND: elasticsearch
+  # KNOWLEDGE_ES_URL: http://elasticsearch.elastic-system.svc.cluster.local:9200
+  # KNOWLEDGE_ES_INDEX: orrery-knowledge
+  #
+  # pgvector — hybrid semantic + lexical ranking in Postgres. Defaults to
+  # DATABASE_URL (the server must have the `vector` extension); needs an
+  # embedding provider, which defaults to MODEL_PROVIDER.
+  # ORRERY_KNOWLEDGE_BACKEND: pgvector
+  # KNOWLEDGE_PG_TABLE: orrery_knowledge_chunks
+  # EMBEDDING_PROVIDER: gemini
+  # EMBEDDING_MODEL: ""            # provider default when empty
+  #
+  # ORRERY_KNOWLEDGE_TOP_K: "6"    # passages per query
   # ── Google Chat Bot (HTTP transport) ──
   GOOGLE_CHAT_AUDIENCE: ""
   GOOGLE_CHAT_IDENTITIES: "chat@system.gserviceaccount.com"
@@ -155,6 +179,10 @@ secrets:
   # ELASTICSEARCH_USERNAME: ""
   # ELASTICSEARCH_PASSWORD: ""
   # ELASTICSEARCH_API_KEY: ""
+  # ── Knowledge retrieval (AEP-025) ──
+  # KNOWLEDGE_ES_API_KEY: ""        # or KNOWLEDGE_ES_USERNAME / KNOWLEDGE_ES_PASSWORD
+  # KNOWLEDGE_PG_URL: ""            # only if the index lives outside DATABASE_URL
+  # KNOWLEDGE_CONFLUENCE_API_TOKEN: ""  # with KNOWLEDGE_CONFLUENCE_URL/_SPACES/_EMAIL in config
   # DATABASE_URL: "postgresql+asyncpg://user:pass@postgres:5432/agents"
   # JWT_SECRET: ""  # only used when auth.enabled and auth.algorithm=HS256
 

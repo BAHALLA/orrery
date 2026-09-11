@@ -24,7 +24,7 @@ itself, recorded in the Sigstore transparency log. Verify with
 cosign verify \
   --certificate-identity-regexp "https://github.com/BAHALLA/orrery/.*" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/bahalla/orrery:0.2.1
+  ghcr.io/bahalla/orrery:0.4.0
 ```
 
 A valid result proves the image was built by this repository's GitHub Actions
@@ -37,7 +37,7 @@ Each release attaches `sbom-python.cdx.json` (CycloneDX). Feed it to any SBOM
 tooling, e.g. scan it independently with Trivy or Grype:
 
 ```bash
-gh release download v0.2.1 --pattern 'sbom-python.cdx.json'
+gh release download v0.4.0 --pattern 'sbom-python.cdx.json'
 trivy sbom sbom-python.cdx.json
 ```
 
@@ -45,7 +45,7 @@ The BuildKit-embedded OS-layer SBOM is also queryable straight from the
 registry:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/bahalla/orrery:0.2.1 \
+docker buildx imagetools inspect ghcr.io/bahalla/orrery:0.4.0 \
   --format '{{ json .SBOM }}'
 ```
 

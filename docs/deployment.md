@@ -36,14 +36,16 @@ independently. All share the Postgres session store.
 
 ## Step 1 — Build and push the image
 
-CI publishes multi-arch images to GHCR automatically via
-`.github/workflows/docker-publish.yml`. For out-of-band builds:
+The [Release & Publish](https://github.com/BAHALLA/orrery/blob/main/.github/workflows/release.yml)
+workflow publishes multi-arch images to GHCR on every push to `main` (`:latest`,
+`:sha-<short>`) and on every `v*.*.*` tag (`:X.Y.Z`, `:X.Y`), signed with cosign.
+For out-of-band builds:
 
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f Dockerfile \
-  -t ghcr.io/bahalla/orrery:0.2.0 \
+  -t ghcr.io/bahalla/orrery:0.4.0 \
   --push .
 ```
 
@@ -98,7 +100,9 @@ migration step.
 # Pull options
 helm show values deploy/helm/orrery-assistant > my-values.yaml
 
-# Edit my-values.yaml — at minimum set image.tag and existingSecret
+# Edit my-values.yaml — at minimum set image.tag and existingSecret.
+# image.tag defaults to the chart's appVersion, so pinning it is optional
+# when the chart and the image you want are the same release.
 
 helm upgrade --install orrery-assistant \
   deploy/helm/orrery-assistant \
@@ -111,7 +115,7 @@ Recommended override file:
 ```yaml
 image:
   repository: ghcr.io/bahalla/orrery
-  tag: "v0.1.9"
+  tag: "0.4.0"  # bare semver — the published tags carry no leading "v"
 
 # Use the Secret created in Step 2 instead of storing values in the chart.
 existingSecret: orrery-assistant-secrets
@@ -278,7 +282,7 @@ Trigger a rollout:
 ```bash
 helm upgrade orrery-assistant deploy/helm/orrery-assistant \
   -n orrery -f my-values.yaml \
-  --set image.tag=v0.2.0
+  --set image.tag=0.4.0
 
 kubectl -n orrery rollout status deployment/orrery-assistant
 ```
