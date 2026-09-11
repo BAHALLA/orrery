@@ -55,6 +55,18 @@ jobs:
           fail-on-severity: high
           base-ref: ${{ github.event.pull_request.base.sha || github.event.before }}
           head-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Triaged advisories with NO upstream fix. Unlike Trivy this action
+          # has no `ignore-unfixed`, so an unfixable finding on a transitive
+          # dependency would block every lockfile change that touches it.
+          # Keep this list short and delete an entry as soon as a patched
+          # release exists (`uv lock --upgrade-package <name>` then clears it).
+          #
+          # GHSA-8mgp-746c-j5xp — nltk <= 3.10.3 (no patched version as of
+          # 2026-09-11). nltk is transitive via google-adk[eval] → rouge-score
+          # and is used only for eval scoring; Orrery never calls its
+          # model-artifact download/load APIs, which is where the path-escape
+          # lives. Re-check https://github.com/advisories/GHSA-8mgp-746c-j5xp.
+          allow-ghsas: GHSA-8mgp-746c-j5xp
 
   security:
     name: Security Scan
