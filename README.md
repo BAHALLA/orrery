@@ -135,6 +135,34 @@ Read the [architecture overview](https://bahalla.github.io/orrery/agent-design-p
 [enhancement proposals](https://bahalla.github.io/orrery/enhancements/) that record how each
 piece came to be.
 
+## Background
+
+Orrery was built in the open, and the reasoning behind most of it was written down as it
+happened. **[Building AI Agents for DevOps](https://tirraflow.com/series/building-ai-agents-for-devops)**
+is a twelve-part series covering the design decisions — what was tried, what broke, and why the
+code looks the way it does. Each part pairs with the reference docs for the same subsystem.
+
+| Post | Reference docs |
+|---|---|
+| [1 · Why and how I designed the architecture](https://tirraflow.com/posts/building-ai-agents-for-devops-part-1-why-and-how-i-designed-the-architecture) | [Agent design patterns](https://bahalla.github.io/orrery/agent-design-patterns/) · [Agents overview](https://bahalla.github.io/orrery/agents-overview/) |
+| [2 · From terminal to Slack](https://tirraflow.com/posts/building-ai-agents-for-devops-part-2-from-terminal-to-slack) | [Slack integration](https://bahalla.github.io/orrery/integrations/slack/) |
+| [3 · RBAC — who can do what](https://tirraflow.com/posts/building-ai-agents-for-devops-part-3-rbac-who-can-do-what) | [ADR-001: RBAC](https://bahalla.github.io/orrery/adr/001-rbac/) · [Guardrails & RBAC](https://bahalla.github.io/orrery/guardrails/) |
+| [4 · Prometheus metrics](https://tirraflow.com/posts/building-ai-agents-for-devops-part-4-prometheus-metrics) | [Metrics & tracing](https://bahalla.github.io/orrery/metrics/) |
+| [5 · Sub-agents vs AgentTool](https://tirraflow.com/posts/building-ai-agents-for-devops-part-5-sub-agents-vs-agenttool) | [ADR-002: Agent composition](https://bahalla.github.io/orrery/adr/002-agent-tool-vs-sub-agents/) |
+| [6 · Security hardening](https://tirraflow.com/posts/building-ai-agents-for-devops-part-6-security-hardening) | [Security config](https://bahalla.github.io/orrery/config/security/) · [Guardrails](https://bahalla.github.io/orrery/guardrails/) |
+| [7 · ADK plugins and async tools](https://tirraflow.com/posts/building-ai-agents-for-devops-part-7-adk-plugins-and-async-tools) | [Agent design patterns](https://bahalla.github.io/orrery/agent-design-patterns/) |
+| [8 · Agent evaluations](https://tirraflow.com/posts/building-ai-agents-for-devops-part-8-agent-evaluations) | [Evaluations](https://bahalla.github.io/orrery/evals/) |
+| [9 · Google Chat integration](https://tirraflow.com/posts/building-ai-agents-for-devops-part-9-google-chat-integration) | [Google Chat](https://bahalla.github.io/orrery/integrations/google-chat/) |
+| [10 · Fixing the approve handshake across sub-agents](https://tirraflow.com/posts/building-ai-agents-for-devops-part-10-fixing-the-approve-handshake-across-sub) | [Guardrails & confirmation](https://bahalla.github.io/orrery/guardrails/) |
+| [11 · Adding planning mode with ADK planners](https://tirraflow.com/posts/building-ai-agents-for-devops-part-11-adding-planning-mode-with-adk-planners) | [Agent design patterns](https://bahalla.github.io/orrery/agent-design-patterns/) |
+| [12 · Distributed tracing with OpenTelemetry](https://tirraflow.com/posts/building-ai-agents-for-devops-part-12-distributed-tracing-with-opentelemetry) | [Metrics & tracing](https://bahalla.github.io/orrery/metrics/) |
+
+Two standalone pieces go wider than the series:
+[The agent gateway — one turn pipeline behind every surface](https://tirraflow.com/posts/the-agent-gateway-one-turn-pipeline-behind-every-surface)
+on how five surfaces share one gate, and
+[How to build AI agents — a practical guide](https://tirraflow.com/posts/how-to-build-ai-agents-a-practical-guide-best-practices)
+on the patterns that generalise beyond this codebase.
+
 ## Contributing
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security reports go

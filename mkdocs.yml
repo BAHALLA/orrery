@@ -7,6 +7,11 @@ repo_url: https://github.com/BAHALLA/orrery
 repo_name: BAHALLA/orrery
 edit_uri: edit/main/docs/
 
+# `custom_dir` lives under `docs/`, so MkDocs would otherwise copy the raw Jinja
+# template to the built site and publish it at /overrides/main.html.
+exclude_docs: |
+  overrides/
+
 theme:
   name: material
   # docs/overrides adds the Open Graph / Twitter card tags (static image in
@@ -65,8 +70,10 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/BAHALLA/orrery
-    - icon: fontawesome/brands/python
-      link: https://pypi.org/project/orrery-core/
+    # Not PyPI: the `orrery` name there belongs to an unrelated project and
+    # `orrery-core` is unpublished. The container image is the real artifact.
+    - icon: fontawesome/brands/docker
+      link: https://github.com/BAHALLA/orrery/pkgs/container/orrery
 
 copyright: Copyright &copy; 2026 Taoufiq &mdash; Built with Google ADK
 

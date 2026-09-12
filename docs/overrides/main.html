@@ -23,4 +23,48 @@
   <meta name="twitter:description" content="{{ config.site_description }}" />
   <meta name="twitter:image" content="{{ image }}" />
   <meta name="theme-color" content="#0F172A" />
+
+  {#
+    JSON-LD. Emitted only on the homepage: one SoftwareSourceCode node for the
+    whole project is what search engines want, not one per docs page. `isBasedOn`
+    and `subjectOf` tie the project to the design write-ups on the blog, which is
+    the other half of the cross-reference.
+  #}
+  {% if page and page.is_homepage %}
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareSourceCode",
+      "name": "Orrery",
+      "description": {{ config.site_description | trim | tojson }},
+      "url": {{ config.site_url | tojson }},
+      "codeRepository": {{ config.repo_url | tojson }},
+      "programmingLanguage": "Python",
+      "runtimePlatform": "Python 3.14",
+      "applicationCategory": "DeveloperApplication",
+      "keywords": [
+        "SRE", "DevOps", "AIOps", "incident response", "AI agents",
+        "Kafka", "Kubernetes", "Elasticsearch", "Prometheus", "observability",
+        "Google ADK"
+      ],
+      "license": "https://opensource.org/licenses/MIT",
+      "author": {
+        "@type": "Person",
+        "name": "Taoufiq Bahalla",
+        "url": "https://tirraflow.com/"
+      },
+      "isBasedOn": {
+        "@type": "SoftwareApplication",
+        "name": "Google Agent Development Kit",
+        "url": "https://google.github.io/adk-docs/"
+      },
+      "subjectOf": {
+        "@type": "Blog",
+        "name": "Building AI Agents for DevOps",
+        "description": "A twelve-part series on the design decisions behind Orrery.",
+        "url": "https://tirraflow.com/series/building-ai-agents-for-devops"
+      }
+    }
+  </script>
+  {% endif %}
 {% endblock %}
