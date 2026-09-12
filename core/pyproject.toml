@@ -1,7 +1,7 @@
 [project]
 name = "orrery-core"
 version = "0.4.0"
-description = "Shared utilities for AI agents"
+description = "Shared runtime for Orrery SRE agents — guardrails, RBAC, confirmation, observability and plugin wiring"
 requires-python = ">=3.14"
 dependencies = [
     # [db] pulls sqlalchemy, which ADK 2.0 moved out of the base package into
@@ -17,6 +17,12 @@ dependencies = [
     "prometheus-client>=0.26.0",
     "python-dotenv>=1.2.3",
 ]
+
+[project.urls]
+Homepage = "https://bahalla.github.io/orrery/"
+Documentation = "https://bahalla.github.io/orrery/core/"
+Repository = "https://github.com/BAHALLA/orrery"
+Issues = "https://github.com/BAHALLA/orrery/issues"
 
 [project.optional-dependencies]
 # Install with: uv sync --extra postgres

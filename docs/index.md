@@ -180,3 +180,33 @@ graph LR
 | [**agents**](agents/orrery-assistant.md) | `agents/` | Specialist agent implementations (Kafka, K8s, Docker, etc.). |
 | [**infra**](config/general.md#infrastructure) | `infra/` | Local diagnostic stack (Prometheus, Loki, Kafka, Grafana). |
 | [**roadmap**](enhancements/README.md) | `docs/enhancements/` | Ongoing development and enhancement proposals (AEP). |
+
+
+---
+
+## Background: how this was built
+
+The reference pages above describe *what* Orrery does. **[Building AI Agents for DevOps](https://tirraflow.com/series/building-ai-agents-for-devops)**
+is a twelve-part series on *why* it does it that way — the decisions, the dead ends, and the
+rewrites behind each subsystem. Every part maps onto a page in these docs.
+
+| Post | Reference page |
+|---|---|
+| [1 · Why and how I designed the architecture](https://tirraflow.com/posts/building-ai-agents-for-devops-part-1-why-and-how-i-designed-the-architecture) | [Design patterns](agent-design-patterns.md) · [Agents overview](agents-overview.md) |
+| [2 · From terminal to Slack](https://tirraflow.com/posts/building-ai-agents-for-devops-part-2-from-terminal-to-slack) | [Slack](integrations/slack.md) |
+| [3 · RBAC — who can do what](https://tirraflow.com/posts/building-ai-agents-for-devops-part-3-rbac-who-can-do-what) | [ADR-001: RBAC](adr/001-rbac.md) · [Guardrails & RBAC](guardrails.md) |
+| [4 · Prometheus metrics](https://tirraflow.com/posts/building-ai-agents-for-devops-part-4-prometheus-metrics) | [Observability](metrics.md) |
+| [5 · Sub-agents vs AgentTool](https://tirraflow.com/posts/building-ai-agents-for-devops-part-5-sub-agents-vs-agenttool) | [ADR-002: Agent composition](adr/002-agent-tool-vs-sub-agents.md) |
+| [6 · Security hardening](https://tirraflow.com/posts/building-ai-agents-for-devops-part-6-security-hardening) | [Security](config/security.md) · [Guardrails](guardrails.md) |
+| [7 · ADK plugins and async tools](https://tirraflow.com/posts/building-ai-agents-for-devops-part-7-adk-plugins-and-async-tools) | [Design patterns](agent-design-patterns.md) |
+| [8 · Agent evaluations](https://tirraflow.com/posts/building-ai-agents-for-devops-part-8-agent-evaluations) | [Evaluations](evals.md) |
+| [9 · Google Chat integration](https://tirraflow.com/posts/building-ai-agents-for-devops-part-9-google-chat-integration) | [Google Chat](integrations/google-chat.md) |
+| [10 · Fixing the approve handshake across sub-agents](https://tirraflow.com/posts/building-ai-agents-for-devops-part-10-fixing-the-approve-handshake-across-sub) | [Guardrails & confirmation](guardrails.md) |
+| [11 · Adding planning mode with ADK planners](https://tirraflow.com/posts/building-ai-agents-for-devops-part-11-adding-planning-mode-with-adk-planners) | [Design patterns](agent-design-patterns.md) |
+| [12 · Distributed tracing with OpenTelemetry](https://tirraflow.com/posts/building-ai-agents-for-devops-part-12-distributed-tracing-with-opentelemetry) | [Observability](metrics.md) |
+
+Two standalone pieces go wider than the series:
+[The agent gateway](https://tirraflow.com/posts/the-agent-gateway-one-turn-pipeline-behind-every-surface) on how five
+surfaces share one gate, and
+[How to build AI agents](https://tirraflow.com/posts/how-to-build-ai-agents-a-practical-guide-best-practices) on the
+patterns that generalise beyond this codebase.

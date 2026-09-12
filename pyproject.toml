@@ -1,7 +1,7 @@
 [project]
 name = "orrery"
 version = "0.4.0"
-description = "A collection of autonomous AI agents"
+description = "SRE agents you can let near production — autonomous DevOps/SRE agents that investigate, correlate and remediate, with a human gate on every destructive action"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.14"
@@ -19,6 +19,14 @@ dependencies = [
     "google-adk>=2.7.1",
     "litellm>=1.98.0",
 ]
+
+[project.urls]
+Homepage = "https://bahalla.github.io/orrery/"
+Documentation = "https://bahalla.github.io/orrery/"
+Repository = "https://github.com/BAHALLA/orrery"
+Changelog = "https://github.com/BAHALLA/orrery/blob/main/CHANGELOG.md"
+Issues = "https://github.com/BAHALLA/orrery/issues"
+"Design notes" = "https://tirraflow.com/series/building-ai-agents-for-devops"
 
 [project.optional-dependencies]
 # Propagate postgres extra from orrery-core to the workspace root.
