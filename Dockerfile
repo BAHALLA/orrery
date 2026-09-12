@@ -70,6 +70,27 @@ RUN npm run build
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.14-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084d1f1a0a6ef6bcaae871a30
 
+# Apply Debian security updates on top of the pinned base.
+#
+# The official python images are rebuilt on their own cadence, which lags
+# bookworm-security. The pinned digest ships libpcre2-8-0 10.42-1 while
+# bookworm-security has 10.42-1+deb12u1 (CVE-2026-86145, CVE-2026-89161) —
+# and re-pinning does not help: the newest published digest carries the same
+# 10.42-1 (checked, not assumed). Since the Trivy gate runs with
+# `ignore-unfixed`, precisely this class of finding — a fix exists upstream but
+# is not in the image — is what turns it red, on any commit, unrelated to the
+# change being merged.
+#
+# This trades strict byte-for-byte reproducibility for staying patched: the
+# digest still fixes the starting layer, but the upgrade resolves against
+# whatever security archive is current at build time. That is the right way
+# round for a runtime image — a reproducible build of known-vulnerable bytes
+# is not the property worth keeping.
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
 
