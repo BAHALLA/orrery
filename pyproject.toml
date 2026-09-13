@@ -17,7 +17,7 @@ dependencies = [
     "slack-bot",
     "google-chat-bot",
     "google-adk>=2.7.1",
-    "litellm>=1.98.0",
+    "litellm>=1.100.1",
 ]
 
 [project.urls]
@@ -92,7 +92,7 @@ environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
 # litellm requirement in core/pyproject.toml and the root dependency above —
 # an override replaces every other litellm constraint, so a stale value here
 # silently caps resolution below the declared floor.
-override-dependencies = ["litellm>=1.98.0"]
+override-dependencies = ["litellm>=1.100.1"]
 
 [tool.ruff]
 target-version = "py314"
