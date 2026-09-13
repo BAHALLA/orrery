@@ -28,7 +28,7 @@ Issues = "https://github.com/BAHALLA/orrery/issues"
 # Install with: uv sync --extra postgres
 # Enables PostgreSQL-backed session storage for multi-instance deployments.
 postgres = [
-    "psycopg2-binary>=2.9.12",
+    "psycopg2-binary>=2.9.13",
     "asyncpg>=0.30.0",
 ]
 # Install with: uv sync --extra auth
@@ -68,7 +68,7 @@ knowledge = [
 # driver is added — vectors go over the wire as pgvector's text literal cast
 # in SQL, so the `pgvector` Python package is not required.
 knowledge-pg = [
-    "psycopg2-binary>=2.9.12",
+    "psycopg2-binary>=2.9.13",
 ]
 
 [tool.setuptools.packages.find]
