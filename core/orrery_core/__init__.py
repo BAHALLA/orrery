@@ -49,6 +49,8 @@ from .reliability.error_handlers import graceful_model_error as graceful_model_e
 from .reliability.error_handlers import graceful_tool_error as graceful_tool_error
 from .reliability.resilience import CircuitBreaker as CircuitBreaker
 from .reliability.resilience import CircuitState as CircuitState
+from .reliability.resilience import ToolOutcome as ToolOutcome
+from .reliability.resilience import classify_tool_outcome as classify_tool_outcome
 from .reliability.resilience import with_retry as with_retry
 from .security.auth import AUTH_STATE_KEY as AUTH_STATE_KEY
 from .security.auth import AuthContext as AuthContext

@@ -51,6 +51,7 @@ from ..security.guardrails import (
     ensure_pending_confirmation_store,
 )
 from .events import extract_reply_text
+from .session_cache import DEFAULT_MAX_SESSION_MAPPINGS, BoundedSessionCache
 
 # An async callback invoked once per runner event (e.g. to render progress).
 EventHook = Callable[[Event], Awaitable[None]]
@@ -121,10 +122,19 @@ class MappedSessionResolver:
     Keying by conversation alone therefore did not share history between
     participants; it only hid the fact that each one has their own. Sessions in a
     shared thread are per participant, and this mapping now says so.
+
+    The mapping is capacity-bounded (:class:`BoundedSessionCache`): nothing in a
+    production path removes an entry — ``forget`` serves an explicit "start
+    over", not eviction — so an unbounded dict would grow for the life of a bot
+    process. Evicting the least recently used thread costs it exactly what a
+    restart already costs it.
+
+    Args:
+        max_entries: Conversations to keep mapped before dropping the oldest.
     """
 
-    def __init__(self) -> None:
-        self._map: dict[tuple[str, str], str] = {}
+    def __init__(self, max_entries: int = DEFAULT_MAX_SESSION_MAPPINGS) -> None:
+        self._map: BoundedSessionCache[tuple[str, str]] = BoundedSessionCache(max_entries)
 
     async def resolve(
         self, *, session_service: BaseSessionService, app_name: str, user_id: str, key: str
@@ -133,7 +143,7 @@ class MappedSessionResolver:
             return session_id
         session = await session_service.create_session(app_name=app_name, user_id=user_id)
         if key:
-            self._map[(user_id, key)] = session.id
+            self._map.set((user_id, key), session.id)
         return session.id
 
     def forget(self, key: str, user_id: str | None = None) -> None:
@@ -143,10 +153,9 @@ class MappedSessionResolver:
         "restart this thread" is a property of the thread, not of one speaker.
         """
         if user_id is not None:
-            self._map.pop((user_id, key), None)
+            self._map.discard((user_id, key))
             return
-        for mapped in [k for k in self._map if k[1] == key]:
-            del self._map[mapped]
+        self._map.discard_where(lambda mapped: mapped[1] == key)
 
 
 class ExplicitSessionResolver:
