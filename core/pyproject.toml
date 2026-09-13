@@ -11,7 +11,7 @@ dependencies = [
     # google-cloud-aiplatform[evaluation]); the workspace-root
     # override-dependencies in pyproject.toml lifts that cap. Keep this floor
     # in lockstep with that override.
-    "litellm>=1.98.0",
+    "litellm>=1.100.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "prometheus-client>=0.26.0",
@@ -28,7 +28,7 @@ Issues = "https://github.com/BAHALLA/orrery/issues"
 # Install with: uv sync --extra postgres
 # Enables PostgreSQL-backed session storage for multi-instance deployments.
 postgres = [
-    "psycopg2-binary>=2.9.12",
+    "psycopg2-binary>=2.9.13",
     "asyncpg>=0.30.0",
 ]
 # Install with: uv sync --extra auth
@@ -68,12 +68,12 @@ knowledge = [
 # driver is added — vectors go over the wire as pgvector's text literal cast
 # in SQL, so the `pgvector` Python package is not required.
 knowledge-pg = [
-    "psycopg2-binary>=2.9.12",
+    "psycopg2-binary>=2.9.13",
 ]
 
 [tool.setuptools.packages.find]
 include = ["orrery_core*"]
 
 [build-system]
-requires = ["setuptools>=83.0.0"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
