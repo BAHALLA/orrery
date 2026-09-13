@@ -234,27 +234,30 @@ _memory_events = sa.Table(
     sa.Column("search_text", sa.Text, nullable=False),
     sa.Column("content_json", sa.Text, nullable=False),
     sa.Index("ix_orrery_memory_scope", "app_name", "user_id"),
-    #: Makes event de-duplication the *database's* job. ``_add_events_sync``
-    #: used to read the session's existing ids and filter new rows against them
-    #: in Python — correct single-threaded, but two turns in one session (a
-    #: shared Slack thread, overlapping webhooks) both read the same set, both
-    #: find the id absent, and both insert it. Recall then returns the event
-    #: twice and pays for it twice in the model's context.
-    #:
-    #: ``event_id`` is nullable, and Postgres treats NULLs as distinct in a
-    #: unique index — so this only bites if an event can arrive without an id.
-    #: ADK guarantees it cannot: ``Event`` re-stamps a missing *or empty* id
-    #: with a fresh UUID in a ``model_validator``. ``test_database_memory.py``
-    #: pins that guarantee so a change upstream fails here rather than silently
-    #: re-opening the hole.
-    sa.Index(
-        _EVENT_UNIQUE_INDEX,
-        "app_name",
-        "user_id",
-        "session_id",
-        "event_id",
-        unique=True,
-    ),
+)
+
+#: Makes event de-duplication the *database's* job. ``_add_events_sync`` used to
+#: read the session's existing ids and filter new rows against them in Python —
+#: correct single-threaded, but two turns in one session (a shared Slack thread,
+#: overlapping webhooks) both read the same set, both find the id absent, and
+#: both insert it. Recall then returns the event twice and pays for it twice in
+#: the model's context.
+#:
+#: ``event_id`` is nullable, and Postgres treats NULLs as distinct in a unique
+#: index — so this only bites if an event can arrive without an id. ADK
+#: guarantees it cannot: ``Event`` re-stamps a missing *or empty* id with a fresh
+#: UUID in a ``model_validator``. ``test_database_memory.py`` pins that guarantee
+#: so a change upstream fails here rather than silently re-opening the hole.
+#:
+#: Declared outside the ``Table()`` call purely so the back-fill below can hand
+#: the object to ``CreateIndex`` instead of formatting DDL into a string.
+_event_unique_index = sa.Index(
+    _EVENT_UNIQUE_INDEX,
+    _memory_events.c.app_name,
+    _memory_events.c.user_id,
+    _memory_events.c.session_id,
+    _memory_events.c.event_id,
+    unique=True,
 )
 
 
@@ -279,23 +282,26 @@ def _ensure_event_uniqueness(engine: sa.Engine) -> None:
     if _EVENT_UNIQUE_INDEX in existing:
         return
 
+    # Built with Core rather than formatted into a string: the table name is a
+    # module constant, so interpolating it is safe, but writing SQL by hand here
+    # trips Bandit's B608 and invites a future edit that interpolates something
+    # that is not.
+    earlier = _memory_events.alias("earlier")
+    has_an_earlier_twin = sa.exists(
+        sa.select(sa.literal(1)).where(
+            # Lowest surrogate id in each group wins.
+            earlier.c.id < _memory_events.c.id,
+            earlier.c.app_name == _memory_events.c.app_name,
+            earlier.c.user_id == _memory_events.c.user_id,
+            earlier.c.session_id == _memory_events.c.session_id,
+            # Never matches NULLs — exactly the index's own notion of
+            # distinctness, so the dedup and the constraint agree by construction.
+            earlier.c.event_id == _memory_events.c.event_id,
+        )
+    )
+
     with engine.begin() as conn:
-        # Keep the earliest row of each duplicate group (lowest surrogate id).
-        # ``a.event_id = b.event_id`` never matches NULLs, which is exactly the
-        # index's own notion of distinctness — the two agree by construction.
-        deleted = conn.execute(
-            sa.text(
-                f"""
-                DELETE FROM {_memory_events.name} AS a
-                USING {_memory_events.name} AS b
-                WHERE a.id > b.id
-                  AND a.app_name = b.app_name
-                  AND a.user_id = b.user_id
-                  AND a.session_id = b.session_id
-                  AND a.event_id = b.event_id
-                """
-            )
-        ).rowcount
+        deleted = conn.execute(sa.delete(_memory_events).where(has_an_earlier_twin)).rowcount
         if deleted:
             logger.warning(
                 "Removed %d duplicate memory event(s) left by the pre-constraint "
@@ -303,12 +309,7 @@ def _ensure_event_uniqueness(engine: sa.Engine) -> None:
                 deleted,
                 _EVENT_UNIQUE_INDEX,
             )
-        conn.execute(
-            sa.text(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS {_EVENT_UNIQUE_INDEX} "
-                f"ON {_memory_events.name} (app_name, user_id, session_id, event_id)"
-            )
-        )
+        conn.execute(sa.schema.CreateIndex(_event_unique_index, if_not_exists=True))
     logger.info("Memory event uniqueness enforced by %s", _EVENT_UNIQUE_INDEX)
 
 

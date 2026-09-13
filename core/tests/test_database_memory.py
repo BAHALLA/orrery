@@ -25,6 +25,7 @@ from orrery_core.persistence.memory import (
     DatabaseMemoryService,
     SecureMemoryService,
     _ensure_event_uniqueness,
+    _event_unique_index,
     _memory_events,
     _to_sync_url,
     create_memory_service,
@@ -395,7 +396,7 @@ def _drop_unique_index(url: str) -> None:
     engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
     try:
         with engine.begin() as conn:
-            conn.execute(sa.text(f"DROP INDEX IF EXISTS {_EVENT_UNIQUE_INDEX}"))
+            conn.execute(sa.schema.DropIndex(_event_unique_index, if_exists=True))
     finally:
         engine.dispose()
 
