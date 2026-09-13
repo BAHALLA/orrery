@@ -16,12 +16,29 @@ state, or long-term memory), not a reused session id.
 
 from __future__ import annotations
 
+from orrery_core.serving.session_cache import (
+    DEFAULT_MAX_SESSION_MAPPINGS,
+    BoundedSessionCache,
+)
+
 
 class SessionMap:
-    """In-memory mapping from a (thread, participant) pair to an ADK session ID."""
+    """Capacity-bounded mapping from a (thread, participant) pair to a session ID.
 
-    def __init__(self) -> None:
-        self._map: dict[tuple[str, str, str], str] = {}
+    Both Slack entrypoints hold one of these as a module-level singleton for the
+    life of the process, and ``remove`` is only reached on explicit session
+    expiry — so the map gains an entry per participant per thread and, unbounded,
+    never gives one back. It is a lookup shortcut over the durable session store
+    (a miss just creates a fresh session, exactly as a restart does), which makes
+    LRU eviction the cheap correct bound.
+
+    Args:
+        max_entries: Thread participants to keep mapped before dropping the
+            least recently used.
+    """
+
+    def __init__(self, max_entries: int = DEFAULT_MAX_SESSION_MAPPINGS) -> None:
+        self._map: BoundedSessionCache[tuple[str, str, str]] = BoundedSessionCache(max_entries)
 
     def get(self, channel: str, thread_ts: str, user_id: str) -> str | None:
         """Look up this participant's existing session ID for a thread."""
@@ -29,7 +46,7 @@ class SessionMap:
 
     def set(self, channel: str, thread_ts: str, user_id: str, session_id: str) -> None:
         """Store a session mapping for one participant in a thread."""
-        self._map[(channel, thread_ts, user_id)] = session_id
+        self._map.set((channel, thread_ts, user_id), session_id)
 
     def remove(self, channel: str, thread_ts: str, user_id: str | None = None) -> None:
         """Forget mappings for a thread (e.g. on session expiry).
@@ -38,7 +55,6 @@ class SessionMap:
         expiry is a property of the thread, not of one speaker.
         """
         if user_id is not None:
-            self._map.pop((channel, thread_ts, user_id), None)
+            self._map.discard((channel, thread_ts, user_id))
             return
-        for key in [k for k in self._map if k[0] == channel and k[1] == thread_ts]:
-            del self._map[key]
+        self._map.discard_where(lambda key: key[0] == channel and key[1] == thread_ts)

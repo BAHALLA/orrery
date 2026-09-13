@@ -263,6 +263,45 @@ async def test_mapped_resolver_gives_each_participant_their_own_session():
 
 
 @pytest.mark.asyncio
+async def test_mapped_resolver_is_capacity_bounded():
+    """Nothing in a production path calls ``forget`` — it serves an explicit
+    "start over", not eviction — so the map must bound itself or grow for the
+    life of a bot process."""
+    svc = MagicMock()
+    svc.create_session = AsyncMock(side_effect=[SimpleNamespace(id=f"s{i}") for i in range(500)])
+    r = MappedSessionResolver(max_entries=10)
+
+    for i in range(200):
+        await r.resolve(session_service=svc, app_name="app", user_id="u", key=f"chan:t{i}")
+
+    assert len(r._map) == 10
+
+
+@pytest.mark.asyncio
+async def test_mapped_resolver_evicts_the_least_recently_used_thread():
+    svc = MagicMock()
+    svc.create_session = AsyncMock(side_effect=[SimpleNamespace(id=f"s{i}") for i in range(10)])
+    r = MappedSessionResolver(max_entries=2)
+
+    busy = await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:busy")
+    await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:idle")
+    # Touch the busy thread, then push the map past capacity.
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:busy") == busy
+    )
+    await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:new")
+
+    # The active conversation survives; the idle one is remapped to a fresh
+    # session, exactly as a restart would do.
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:busy") == busy
+    )
+    assert (
+        await r.resolve(session_service=svc, app_name="app", user_id="u", key="chan:idle") != "s1"
+    )
+
+
+@pytest.mark.asyncio
 async def test_mapped_resolver_forget_clears_the_whole_thread_by_default():
     svc = MagicMock()
     svc.create_session = AsyncMock(side_effect=[SimpleNamespace(id=f"s{i}") for i in range(1, 6)])
