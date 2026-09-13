@@ -38,6 +38,7 @@ from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from google.adk.memory.memory_entry import MemoryEntry
 from google.adk.sessions.session import Session
 from google.genai import types
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability.log import mask_dsn
@@ -204,6 +205,9 @@ class SecureMemoryService(BaseMemoryService):
 
 _metadata = sa.MetaData()
 
+#: Name pinned so the back-fill migration below can look it up by name.
+_EVENT_UNIQUE_INDEX = "ux_orrery_memory_event"
+
 # One row per memory-worthy event (i.e. events carrying content parts).
 # Scoped by (app_name, user_id) to mirror ADK's per-user memory keying.
 #: Most recent matching events a single ``search_memory`` returns.
@@ -230,7 +234,98 @@ _memory_events = sa.Table(
     sa.Column("search_text", sa.Text, nullable=False),
     sa.Column("content_json", sa.Text, nullable=False),
     sa.Index("ix_orrery_memory_scope", "app_name", "user_id"),
+    #: Makes event de-duplication the *database's* job. ``_add_events_sync``
+    #: used to read the session's existing ids and filter new rows against them
+    #: in Python — correct single-threaded, but two turns in one session (a
+    #: shared Slack thread, overlapping webhooks) both read the same set, both
+    #: find the id absent, and both insert it. Recall then returns the event
+    #: twice and pays for it twice in the model's context.
+    #:
+    #: ``event_id`` is nullable, and Postgres treats NULLs as distinct in a
+    #: unique index — so this only bites if an event can arrive without an id.
+    #: ADK guarantees it cannot: ``Event`` re-stamps a missing *or empty* id
+    #: with a fresh UUID in a ``model_validator``. ``test_database_memory.py``
+    #: pins that guarantee so a change upstream fails here rather than silently
+    #: re-opening the hole.
+    sa.Index(
+        _EVENT_UNIQUE_INDEX,
+        "app_name",
+        "user_id",
+        "session_id",
+        "event_id",
+        unique=True,
+    ),
 )
+
+
+def _ensure_event_uniqueness(engine: sa.Engine) -> None:
+    """Back-fill the unique index onto a table that predates it.
+
+    ``create_all`` only creates missing *tables* — it will not add an index to
+    one that already exists, so a deployment that ran the select-then-insert
+    version keeps the old schema (and the race) forever unless something
+    migrates it. There is no Alembic in this project; this is that something.
+
+    Existing duplicates must go first or the index cannot be built, and the
+    dedup is a self-join over the whole table — so both steps run only when the
+    index is genuinely absent, making this a one-time cost rather than a
+    per-boot table scan. Concurrent replicas booting together are safe: the
+    delete is idempotent and ``IF NOT EXISTS`` absorbs the loser of the race.
+    """
+    inspector = sa.inspect(engine)
+    if not inspector.has_table(_memory_events.name):
+        return
+    existing = {index["name"] for index in inspector.get_indexes(_memory_events.name)}
+    if _EVENT_UNIQUE_INDEX in existing:
+        return
+
+    with engine.begin() as conn:
+        # Keep the earliest row of each duplicate group (lowest surrogate id).
+        # ``a.event_id = b.event_id`` never matches NULLs, which is exactly the
+        # index's own notion of distinctness — the two agree by construction.
+        deleted = conn.execute(
+            sa.text(
+                f"""
+                DELETE FROM {_memory_events.name} AS a
+                USING {_memory_events.name} AS b
+                WHERE a.id > b.id
+                  AND a.app_name = b.app_name
+                  AND a.user_id = b.user_id
+                  AND a.session_id = b.session_id
+                  AND a.event_id = b.event_id
+                """
+            )
+        ).rowcount
+        if deleted:
+            logger.warning(
+                "Removed %d duplicate memory event(s) left by the pre-constraint "
+                "insert path before adding %s",
+                deleted,
+                _EVENT_UNIQUE_INDEX,
+            )
+        conn.execute(
+            sa.text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {_EVENT_UNIQUE_INDEX} "
+                f"ON {_memory_events.name} (app_name, user_id, session_id, event_id)"
+            )
+        )
+    logger.info("Memory event uniqueness enforced by %s", _EVENT_UNIQUE_INDEX)
+
+
+def _insert_ignoring_duplicates(conn: sa.Connection, rows: list[dict[str, Any]]) -> None:
+    """Insert *rows*, skipping any event already stored for that session.
+
+    The conflict target is the unique index, so concurrent writers serialize on
+    it instead of racing a read: whoever gets there second is skipped by the
+    database rather than by a stale in-process snapshot. ``DO NOTHING`` (unlike
+    ``DO UPDATE``) also tolerates duplicates *within* one statement.
+    """
+    if not rows:
+        return
+    statement = pg_insert(_memory_events).on_conflict_do_nothing(
+        index_elements=["app_name", "user_id", "session_id", "event_id"]
+    )
+    conn.execute(statement, rows)
 
 
 def _format_ts(ts: float | None) -> str | None:
@@ -281,6 +376,7 @@ class DatabaseMemoryService(BaseMemoryService):
             sync_url, echo=echo, future=True, connect_args={"connect_timeout": connect_timeout}
         )
         _metadata.create_all(self._engine)
+        _ensure_event_uniqueness(self._engine)
         logger.info("Persistent memory store ready: %s", mask_dsn(sync_url))
 
     # ── Row helpers ──────────────────────────────────────────────────
@@ -320,31 +416,33 @@ class DatabaseMemoryService(BaseMemoryService):
                     _memory_events.c.session_id == session.id,
                 )
             )
-            if rows:
-                conn.execute(sa.insert(_memory_events), rows)
+            # A second writer replacing the same session concurrently deletes
+            # rows it cannot see uncommitted and re-inserts the same ids; without
+            # DO NOTHING the loser of that race would fail on the unique index.
+            _insert_ignoring_duplicates(conn, rows)
 
     def _add_events_sync(
         self, app_name: str, user_id: str, session_id: str, events: Sequence[Event]
     ) -> None:
-        candidates = [e for e in events if e.content and e.content.parts]
+        # De-duplication is the unique index's job, not a read's: filtering
+        # against ids selected a moment ago is only correct if nobody else is
+        # writing, and two turns in one session (a shared Slack thread,
+        # overlapping webhooks) both read the same snapshot and both insert.
+        # The in-batch pass below is just to avoid sending rows we already know
+        # collide; the index is what makes it safe across writers.
+        seen: set[str | None] = set()
+        rows: list[dict[str, Any]] = []
+        for event in events:
+            if not (event.content and event.content.parts):
+                continue
+            if event.id in seen:
+                continue
+            seen.add(event.id)
+            rows.append(self._event_to_row(app_name, user_id, session_id, event))
+        if not rows:
+            return
         with self._engine.begin() as conn:
-            existing = set(
-                conn.execute(
-                    sa.select(_memory_events.c.event_id).where(
-                        _memory_events.c.app_name == app_name,
-                        _memory_events.c.user_id == user_id,
-                        _memory_events.c.session_id == session_id,
-                    )
-                ).scalars()
-            )
-            rows: list[dict[str, Any]] = []
-            for event in candidates:
-                if event.id in existing:  # incremental delta — skip duplicates
-                    continue
-                existing.add(event.id)
-                rows.append(self._event_to_row(app_name, user_id, session_id, event))
-            if rows:
-                conn.execute(sa.insert(_memory_events), rows)
+            _insert_ignoring_duplicates(conn, rows)
 
     def _search_sync(self, app_name: str, user_id: str, query: str) -> SearchMemoryResponse:
         words_in_query = _extract_words_lower(query)

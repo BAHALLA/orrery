@@ -7,18 +7,25 @@ conftest. Fallback/validation tests need no live server.
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from google.adk.events import Event
 from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from google.adk.sessions.session import Session
 from google.genai import types
+from sqlalchemy.exc import IntegrityError
 
 from orrery_core.persistence.db import DatabaseUnavailableError
 from orrery_core.persistence.memory import (
+    _EVENT_UNIQUE_INDEX,
     DatabaseMemoryService,
     SecureMemoryService,
+    _ensure_event_uniqueness,
+    _memory_events,
     _to_sync_url,
     create_memory_service,
 )
@@ -255,3 +262,231 @@ async def test_service_usable_after_fallback(monkeypatch):
     await svc.add_session_to_memory(_make_session([_make_event("still works", "e1")], "app_x"))
     result = await svc.search_memory(app_name="app_x", user_id="test_user", query="works")
     assert len(result.memories) == 1
+
+
+# ── Event uniqueness (concurrency) ───────────────────────────────────
+
+
+def _count_rows(url: str, app: str) -> int:
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    try:
+        with engine.begin() as conn:
+            return conn.execute(
+                sa.select(sa.func.count())
+                .select_from(_memory_events)
+                .where(_memory_events.c.app_name == app)
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def test_adk_always_stamps_a_non_empty_event_id():
+    """The premise the unique index rests on.
+
+    ``event_id`` is nullable and Postgres treats NULLs as distinct in a unique
+    index, so a NULL id would slip past the constraint. ADK closes that: a
+    missing *or explicitly empty* id is replaced with a fresh UUID. Pinned here
+    so an upstream change fails loudly instead of quietly re-opening the race.
+    """
+    assert Event(author="u").id
+    assert Event(author="u", id="").id
+    assert Event(author="u").id != Event(author="u").id
+
+
+@pytest.mark.asyncio
+async def test_unique_index_is_created_on_a_fresh_database(pg_app):
+    url, _ = pg_app
+    DatabaseMemoryService(db_url=url)
+
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    try:
+        indexes = sa.inspect(engine).get_indexes("orrery_memory_events")
+    finally:
+        engine.dispose()
+
+    match = next((i for i in indexes if i["name"] == _EVENT_UNIQUE_INDEX), None)
+    assert match is not None, f"missing {_EVENT_UNIQUE_INDEX}; have {[i['name'] for i in indexes]}"
+    assert match["unique"] is True
+    assert match["column_names"] == ["app_name", "user_id", "session_id", "event_id"]
+
+
+@pytest.mark.asyncio
+async def test_database_rejects_a_duplicate_event_row(pg_app):
+    """The constraint is real, independent of the ON CONFLICT path above it."""
+    url, app = pg_app
+    svc = DatabaseMemoryService(db_url=url)
+    await svc.add_events_to_memory(
+        app_name=app, user_id="u", events=[_make_event("alpha", "e1")], session_id="s1"
+    )
+
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    row = {
+        "app_name": app,
+        "user_id": "u",
+        "session_id": "s1",
+        "event_id": "e1",
+        "author": "user",
+        "ts": 1.0,
+        "search_text": "alpha",
+        "content_json": "{}",
+    }
+    try:
+        with pytest.raises(IntegrityError), engine.begin() as conn:
+            conn.execute(sa.insert(_memory_events), [row])
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_writers_store_each_event_once(pg_app):
+    """The race the read-then-filter version lost.
+
+    Every writer used to read the session's existing ids, find the batch
+    absent, and insert it — so overlapping turns in one session (a shared Slack
+    thread, two webhooks) each stored the whole batch. Threads here start
+    together on a barrier so they genuinely overlap.
+    """
+    url, app = pg_app
+    events = [_make_event(f"event number {i}", f"e{i}") for i in range(5)]
+    writers = 8
+    barrier = threading.Barrier(writers)
+    services = [DatabaseMemoryService(db_url=url) for _ in range(writers)]
+
+    def write(svc: DatabaseMemoryService) -> None:
+        barrier.wait(timeout=30)
+        svc._add_events_sync(app, "u", "s1", events)
+
+    with ThreadPoolExecutor(max_workers=writers) as pool:
+        for future in [pool.submit(write, svc) for svc in services]:
+            future.result()
+
+    assert _count_rows(url, app) == len(events)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_session_replacement_does_not_raise(pg_app):
+    """``_add_session_sync`` deletes then re-inserts the same ids.
+
+    A second writer's delete cannot see the first's uncommitted rows, so both
+    insert — which the unique index would reject without ON CONFLICT DO NOTHING.
+    """
+    url, app = pg_app
+    session = _make_session([_make_event("recurring", "e1")], app)
+    writers = 6
+    barrier = threading.Barrier(writers)
+    services = [DatabaseMemoryService(db_url=url) for _ in range(writers)]
+
+    def write(svc: DatabaseMemoryService) -> None:
+        barrier.wait(timeout=30)
+        svc._add_session_sync(session)
+
+    with ThreadPoolExecutor(max_workers=writers) as pool:
+        for future in [pool.submit(write, svc) for svc in services]:
+            future.result()  # must not raise IntegrityError
+
+    assert _count_rows(url, app) == 1
+
+
+# ── Back-fill migration ──────────────────────────────────────────────
+
+
+def _drop_unique_index(url: str) -> None:
+    """Return the table to its pre-constraint shape."""
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text(f"DROP INDEX IF EXISTS {_EVENT_UNIQUE_INDEX}"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_backfill_dedups_existing_rows_then_adds_the_index(pg_app):
+    """``create_all`` only creates missing *tables*.
+
+    A deployment that ran the old insert path keeps the old schema — and may
+    already hold duplicates the new index cannot be built over. The back-fill
+    has to clear those first or every boot fails.
+    """
+    url, app = pg_app
+    DatabaseMemoryService(db_url=url)
+    _drop_unique_index(url)
+
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    row = {
+        "app_name": app,
+        "user_id": "u",
+        "session_id": "s1",
+        "event_id": "e1",
+        "author": "user",
+        "ts": 1.0,
+        "search_text": "duplicated",
+        "content_json": '{"parts": [{"text": "duplicated"}], "role": "user"}',
+    }
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.insert(_memory_events), [row, dict(row), dict(row)])
+        assert _count_rows(url, app) == 3
+
+        _ensure_event_uniqueness(engine)
+
+        assert _count_rows(url, app) == 1
+        indexes = {i["name"] for i in sa.inspect(engine).get_indexes("orrery_memory_events")}
+        assert _EVENT_UNIQUE_INDEX in indexes
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_backfill_keeps_distinct_events(pg_app):
+    """Dedup must group by the full key, not collapse a session's history."""
+    url, app = pg_app
+    DatabaseMemoryService(db_url=url)
+    _drop_unique_index(url)
+
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    base = {
+        "app_name": app,
+        "user_id": "u",
+        "session_id": "s1",
+        "author": "user",
+        "ts": 1.0,
+        "search_text": "x",
+        "content_json": "{}",
+    }
+    rows = [
+        {**base, "event_id": "e1"},
+        {**base, "event_id": "e1"},  # duplicate of the first
+        {**base, "event_id": "e2"},
+        {**base, "session_id": "s2", "event_id": "e1"},  # other session
+        {**base, "user_id": "other", "event_id": "e1"},  # other user
+    ]
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.insert(_memory_events), rows)
+
+        _ensure_event_uniqueness(engine)
+
+        assert _count_rows(url, app) == 4
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_backfill_is_idempotent(pg_app):
+    """Runs on every construction — including several replicas booting at once."""
+    url, app = pg_app
+    svc = DatabaseMemoryService(db_url=url)
+    await svc.add_events_to_memory(
+        app_name=app, user_id="u", events=[_make_event("alpha", "e1")], session_id="s1"
+    )
+
+    engine = sa.create_engine(_to_sync_url(url), connect_args={"connect_timeout": 5})
+    try:
+        for _ in range(3):
+            _ensure_event_uniqueness(engine)
+        DatabaseMemoryService(db_url=url)
+    finally:
+        engine.dispose()
+
+    assert _count_rows(url, app) == 1
