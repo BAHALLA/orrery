@@ -36,13 +36,13 @@ postgres = [
 # but NOT required for AuthPlugin alone (e.g. when a transport like
 # Google Chat verifies tokens itself and writes _auth into state).
 auth = [
-    "pyjwt[crypto]>=2.13.0",
+    "pyjwt[crypto]>=2.14.0",
 ]
 # Install with: uv sync --extra server
 # Adds FastAPI + Uvicorn for the authenticated HTTP front door
 # (orrery_core.server). Includes the auth dependencies transitively.
 server = [
-    "pyjwt[crypto]>=2.13.0",
+    "pyjwt[crypto]>=2.14.0",
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.53.0",
     "slowapi>=0.1.10",
