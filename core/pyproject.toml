@@ -6,7 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     # [db] pulls sqlalchemy, which ADK 2.0 moved out of the base package into
     # an extra; runner.py imports DatabaseSessionService unconditionally.
-    "google-adk[eval,db]>=2.8.0",
+    "google-adk[eval,db]>=2.9.1",
     # ADK 2.2.0 transitively caps litellm at <1.86.0 (via
     # google-cloud-aiplatform[evaluation]); the workspace-root
     # override-dependencies in pyproject.toml lifts that cap. Keep this floor
