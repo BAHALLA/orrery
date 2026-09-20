@@ -566,7 +566,7 @@ wheels = [
 
 [[package]]
 name = "docker-agent"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/docker-agent" }
 dependencies = [
     { name = "orrery-core" },
@@ -595,7 +595,7 @@ wheels = [
 
 [[package]]
 name = "elasticsearch-agent"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/elasticsearch" }
 dependencies = [
     { name = "kubernetes" },
@@ -847,7 +847,7 @@ requests = [
 
 [[package]]
 name = "google-chat-bot"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/google-chat-bot" }
 dependencies = [
     { name = "fastapi" },
@@ -1545,7 +1545,7 @@ wheels = [
 
 [[package]]
 name = "k8s-health-agent"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/k8s-health" }
 dependencies = [
     { name = "kubernetes" },
@@ -1560,7 +1560,7 @@ requires-dist = [
 
 [[package]]
 name = "kafka-health-agent"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/kafka-health" }
 dependencies = [
     { name = "confluent-kafka" },
@@ -2077,7 +2077,7 @@ wheels = [
 
 [[package]]
 name = "observability-agent"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/observability" }
 dependencies = [
     { name = "orrery-core" },
@@ -2218,7 +2218,7 @@ wheels = [
 
 [[package]]
 name = "ops-journal"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/ops-journal" }
 dependencies = [
     { name = "orrery-core", extra = ["postgres"] },
@@ -2229,7 +2229,7 @@ requires-dist = [{ name = "orrery-core", extras = ["postgres"], editable = "core
 
 [[package]]
 name = "orrery"
-version = "0.4.0"
+version = "0.4.1"
 source = { virtual = "." }
 dependencies = [
     { name = "docker-agent" },
@@ -2317,7 +2317,7 @@ dev = [
 
 [[package]]
 name = "orrery-assistant"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/orrery-assistant" }
 dependencies = [
     { name = "docker-agent" },
@@ -2342,7 +2342,7 @@ requires-dist = [
 
 [[package]]
 name = "orrery-core"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "core" }
 dependencies = [
     { name = "google-adk", extra = ["db", "eval"] },
@@ -3174,7 +3174,7 @@ wheels = [
 
 [[package]]
 name = "slack-bot"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "agents/slack-bot" }
 dependencies = [
     { name = "aiohttp" },

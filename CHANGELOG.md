@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-21
+
+A patch release: two defects that only show in long-running processes, a
+container image that stays patched, and the dependency floor moved ahead of an
+upstream deadline. No new tool, endpoint or configuration key — a 0.4.0
+deployment upgrades with no config edits. One thing to know before you roll it
+out: the memory store runs a **one-time migration at first boot** (see Fixed).
+
+### Fixed
+
+- **The circuit breaker never opened for the failure mode it exists for** (`core/orrery_core/plugins/resilience_plugin.py`, `reliability/resilience.py`). `after_tool_callback` recorded a success for any call that *completed*, and a failure was recorded only when an exception escaped a tool. Every tool here catches its own exception and returns `{"status": "error", ...}` instead of raising, so a broker outage reset the failure counter on precisely the calls the breaker was built to count. `classify_tool_outcome()` now maps a result to SUCCESS / FAILURE / **IGNORE** — the third is load-bearing: a gate's answer (`BLOCKED`, `AWAITING_CONFIRMATION`, `access_denied`, `confirmation_required`) or the breaker's own refusal means the tool never ran, so it is evidence in neither direction, and counting the breaker's own refusals would re-stamp `_opened_at` on every blocked call and wedge the circuit permanently open. An IGNORE also releases a half-open probe slot, because `require_confirmation()` is an agent callback and can answer after the plugin has marked a probe in flight. Deliberate false positive: "topic not found" with `status: "error"` counts as a failure — safe because the counter is consecutive and resets on the first success. The neutral statuses are pinned to their real definitions by `core/tests/test_resilience.py` so a rename fails the build.
+- **Session maps grew without bound** (`core/orrery_core/serving/session_cache.py`). `MappedSessionResolver` and the Slack bot's `SessionMap` each gained an entry per participant per thread and had no production path that removed one, in processes that run for weeks. Both now share `BoundedSessionCache`, an LRU: they are lookup shortcuts over the durable session store, so evicting the least-recently-used thread costs it exactly what a restart already does. One primitive for both because the same bug had been written twice independently.
+- **Memory events could be stored twice** (`core/orrery_core/persistence/memory.py`). `_add_events_sync` de-duplicated by reading the session's existing event ids and filtering the batch in Python — correct single-threaded, but two overlapping turns in one session (a shared Slack thread, two webhooks, parallel sub-agents) both read the same snapshot, both find the ids absent, and both insert; recall then returned the event twice and paid for it twice in the model's context. A barrier-synchronized 8-writer repro duplicated on two runs in three. Uniqueness is now the database's job: a unique index on `(app_name, user_id, session_id, event_id)` with `ON CONFLICT DO NOTHING` on both the event and session-replacement paths.
+  **Existing deployments:** there is no Alembic here and `create_all` only creates missing *tables*, so `_ensure_event_uniqueness()` back-fills the index at startup — deduplicating first, because the index cannot be built over rows the old path already duplicated. Both steps run only when the index is absent (one-time, idempotent, safe under concurrent replicas), so expect a single slower first boot on a large `orrery_memory_events` table and nothing thereafter. The constraint rests on ADK stamping every `Event` with a UUID (Postgres treats NULLs as distinct in a unique index); `test_database_memory.py` pins that upstream guarantee rather than trusting it.
+- **The runtime image applies Debian security updates on top of the pinned base** (`Dockerfile`). The release pipeline's Trivy gate had gone red on `main` for two `libpcre2` CVEs (CVE-2026-86145, CVE-2026-89161) that bookworm-security had fixed but the newest published `python:3.14-slim-bookworm` digest still shipped — checked by pulling both digests, not assumed. Re-pinning could not help, so the runtime stage now runs `apt-get upgrade`. This trades byte-for-byte reproducibility for staying patched: the digest still fixes the starting layer, and a reproducible build of known-vulnerable bytes is not the property worth keeping.
+- **Transitive `anyio` 4.12.1 → 4.14.2 (CVE-2026-63374).** A lockfile-only CVE that Dependabot never opens a PR for, yet the CI filesystem scan reads `uv.lock`, so it failed every open PR until relocked by hand. The class of problem is addressed below, not just the instance.
+- **Transitive `grpcio` 1.78 → 1.84.** google-auth warns it raises its minimum to ≥1.83 in October 2026; moved now rather than as a surprise inside a Dependabot PR.
+- **Docs and package metadata**: the PyPI social link 404'd (`orrery-core` is unpublished and the `orrery` name on PyPI belongs to an unrelated project — it now points at the container image); both `pyproject` files gained `[project.urls]`; the MkDocs `overrides` template was being published as a page; AEP-019 was `completed` in its own file but still `in-progress` in the enhancements index.
+
+### Changed
+
+- **Google ADK 2.8.0 → 2.9.2**, alongside a dependency sweep: litellm 1.102.0, openai 2.54.0, google-genai 2.24.0, starlette 1.6.0, uvicorn 0.53.0, sqlalchemy 2.0.54, google-cloud-pubsub 2.41.0, google-auth 2.58.0, confluent-kafka 2.15.1, cryptography 50.0.1, ruff 0.16.8, ty 0.0.82; react 19.3.0, vite 8.3.0, eslint 10.10.0, prettier 3.9.8 and the testing group; `astral-sh/setup-uv` 10.1.0. `typer` left the lock as no longer required.
+- **Dependency hygiene is automated for the case Dependabot does not cover** (`.github/workflows/relock-upgrade.yml`, `.github/dependabot.yml`). A weekly `uv lock --upgrade` opens a PR when transitive packages moved — the anyio case above would have resolved itself. Plain `git` + `gh` rather than a third-party PR action, for a job whose purpose is dependency hygiene. Dependabot's uv updates are grouped into one weekly PR for minor/patch bumps (majors and `google-adk` stay individual); one week had produced nine.
+- **The web console bundle is split** (`web/vite.config.ts`). `react` and the markdown pipeline (react-markdown, remark/rehype, lowlight) ship as their own chunks via Rolldown's `advancedChunks` — Vite 8 rejects the object form of `manualChunks`. The app chunk drops from 653 kB to 113 kB and the vendor chunks cache across console releases instead of one file re-downloading every time; the raised `chunkSizeWarningLimit` is gone.
+- **Orrery has a visual identity** (`docs/assets/brand/`, `README.md`, `web/`). An orrery mark — three orbits, an amber sun, three planets — replaces Material's stock robot in the docs, the emoji in the README and the console header; one palette across docs, console and brand assets; favicon and social card; tagline "SRE agents you can let near production." The README leads as a landing page, and both it and the docs home cross-reference the twelve-part blog series on why the platform is built the way it is. Cosmetic: no behaviour changed.
+
 ## [0.4.0] - 2026-09-11
 
 The agent can now read what humans wrote. Until this release Orrery saw live
@@ -555,6 +581,7 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Server-side role enforcement prevents privilege escalation
 
 [Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.4.0...HEAD
+[0.4.1]: https://github.com/BAHALLA/orrery/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/BAHALLA/orrery/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/BAHALLA/orrery/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BAHALLA/orrery/compare/v0.2.3...v0.3.0
