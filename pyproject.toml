@@ -71,7 +71,7 @@ dev = [
     "mkdocs-material>=9.7.7",
     "mkdocstrings[python]>=1.0.6",
     "mkdocs-minify-plugin>=0.8.0",
-    "mkdocs-git-revision-date-localized-plugin>=1.5.4",
+    "mkdocs-git-revision-date-localized-plugin>=1.6.0",
     "mkdocs-gen-files>=0.6.1",
     "pymdown-extensions>=11.0.2",
 ]
