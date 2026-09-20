@@ -19,7 +19,26 @@ export default defineConfig({
     // deterministic and fail the build on anything unexpectedly large.
     outDir: "dist",
     sourcemap: true,
-    chunkSizeWarningLimit: 700,
+    rollupOptions: {
+      output: {
+        // The markdown pipeline (react-markdown + remark/rehype + lowlight's
+        // grammars) is most of the bundle and changes only when those packages
+        // do. Splitting it keeps the app chunk small and lets the browser cache
+        // the vendor chunk across console releases instead of re-downloading a
+        // single ~650 kB file every time.
+        // Vite 8 bundles with Rolldown, whose grouping API is `advancedChunks`
+        // (the object form of Rollup's `manualChunks` is rejected there).
+        advancedChunks: {
+          groups: [
+            {
+              name: "markdown",
+              test: /node_modules[\\/](react-markdown|remark-|rehype-|lowlight|highlight\.js|micromark|mdast-|hast-|unified|unist-|vfile)/,
+            },
+            { name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+          ],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

@@ -1,0 +1,70 @@
+name: Weekly transitive relock
+
+# Dependabot only bumps *direct* dependencies. A CVE in a transitive package
+# that lives only in uv.lock (anyio, 2026-09) therefore never gets a Dependabot
+# PR — yet the Trivy filesystem scan in CI reads uv.lock, so it fails every
+# open PR until someone relocks by hand. This job is that hand: once a week it
+# runs `uv lock --upgrade` and opens a PR when anything moved. Direct
+# dependency floors in pyproject.toml are respected, so it only ever moves
+# within the ranges you already accepted.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC, after Dependabot's weekly run
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  relock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.1.0
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Upgrade the lockfile
+        id: relock
+        run: |
+          uv lock --upgrade
+          if git diff --quiet -- uv.lock; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "uv.lock is already at the newest resolvable versions."
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      # Same GITHUB_TOKEN caveat as dependabot-relock.yml: a PR opened with the
+      # default token does not trigger CI. Prefer DEPENDABOT_RELOCK_TOKEN (as an
+      # *Actions* secret here — this is a scheduled run, not a Dependabot one).
+      # Plain git + gh rather than a third-party PR action: one fewer supply-chain
+      # dependency for a job whose whole purpose is dependency hygiene.
+      - name: Open or refresh the pull request
+        if: steps.relock.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_RELOCK_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: chore/relock-transitive
+          TITLE: "chore(deps): weekly transitive relock of uv.lock"
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add uv.lock
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+          body="$(printf '%s\n' \
+            'Weekly `uv lock --upgrade` — transitive dependencies Dependabot does not open PRs for.' \
+            'Direct floors in `pyproject.toml` are unchanged; see the `uv.lock` diff for what moved.' \
+            '' \
+            'Merge when CI (including the Trivy filesystem scan) is green.')"
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --title "$TITLE" --body "$body"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$body" --label dependencies
+          fi
