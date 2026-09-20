@@ -32,7 +32,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--blue">P2</span> | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | <span class="badge badge--amber">proposed</span> | High | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | <span class="badge badge--amber">proposed</span> | Medium | Medium |
-| <span class="badge badge--blue">P2</span> | [AEP-019](aep-019-web-console.md) | Web Console for Onboarding & Operator Usage | <span class="badge badge--blue">in-progress</span> | High | Medium-High |
+| <span class="badge badge--blue">P2</span> | [AEP-019](aep-019-web-console.md) | Web Console for Onboarding & Operator Usage | <span class="badge badge--green">completed</span> | High | Medium-High |
 | <span class="badge badge--grey">P3</span> | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--red">P0</span> | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | <span class="badge badge--green">completed</span> | Medium | High |
 
@@ -86,7 +86,7 @@ tool organization, and load/chaos coverage:
 - **AEP-008**: Skills-based tool grouping for cleaner agent composition
 - **AEP-009**: Streaming responses for real-time agent output
 - **AEP-016**: Load and chaos testing harness (Locust, LLM flakiness, circuit breaker exercises)
-- **AEP-019**: Web console for onboarding and safe operator usage (chat + tool timeline, confirmation UI, triage view, onboarding wizard) — sits behind the AEP-013 auth perimeter
+- **AEP-019 ✅**: Web console for onboarding and safe operator usage (chat + tool timeline, confirmation UI, triage view, onboarding wizard) — sits behind the AEP-013 auth perimeter; token streaming tracked as AEP-009
 - **AEP-022**: Trajectory capture — harvest real runs into eval scenarios (and a fine-tune corpus)
 - **AEP-023**: First-class scheduled agent tasks — recurring triage sweeps with persisted run history
 - **AEP-026**: Experience capture & REX — mine the platform's own incident history into reviewed runbooks

@@ -10,6 +10,15 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # One PR per week for routine minor/patch bumps instead of one per package
+    # (a single week once produced nine). Majors stay individual so a breaking
+    # change is reviewed on its own. `google-adk` is kept separate at any level:
+    # it is the framework, and its release notes deserve a dedicated read.
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns:
+          - "google-adk"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
