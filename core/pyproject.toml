@@ -1,6 +1,6 @@
 [project]
 name = "orrery-core"
-version = "0.4.0"
+version = "0.4.1"
 description = "Shared runtime for Orrery SRE agents — guardrails, RBAC, confirmation, observability and plugin wiring"
 requires-python = ">=3.14"
 dependencies = [

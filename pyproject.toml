@@ -1,6 +1,6 @@
 [project]
 name = "orrery"
-version = "0.4.0"
+version = "0.4.1"
 description = "SRE agents you can let near production — autonomous DevOps/SRE agents that investigate, correlate and remediate, with a human gate on every destructive action"
 readme = "README.md"
 license = "MIT"
