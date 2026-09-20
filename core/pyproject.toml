@@ -11,7 +11,7 @@ dependencies = [
     # google-cloud-aiplatform[evaluation]); the workspace-root
     # override-dependencies in pyproject.toml lifts that cap. Keep this floor
     # in lockstep with that override.
-    "litellm>=1.100.1",
+    "litellm>=1.101.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "prometheus-client>=0.26.0",
