@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deleting one journal note could delete several** (`agents/ops-journal/ops_journal_agent/tools.py`). Note ids were `len(notes) + 1`, so after any delete the next save reused an id that was still in use, and `delete_note` removed *every* note carrying it: save two notes, delete #1, save a third, delete #2, and both remaining notes were gone. Ids now come from a per-user monotonic counter (`user:notes_last_id`) seeded from the highest existing id, so they are never reissued, and `delete_note` removes exactly one note, which also keeps notes saved under the old scheme safe (some of them may already share an id).
+- **The ops journal's state grew without bound.** `log_operation` and `save_note` appended to `session_log` with no cap, although `ActivityPlugin` writes to the same key and was bounded for exactly this reason (ADK copies the whole list into each event's state delta, so the write volume grows quadratically). Both now keep the same most-recent `MAX_SESSION_LOG_ENTRIES`. Notes (500 per user), preferences (50 per user) and team bookmarks (100) are records the user chose to keep, so past the limit they refuse the write with a message saying what to remove rather than silently dropping the oldest entry.
+- **`set_preference` did no input validation**, the only tool in the repository that skipped it. Keys must now be short identifiers (`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`), so a preference key can no longer carry free text that the model later reads back, and values are capped at 1,000 characters. Note tags and the `list_notes` tag filter are validated the same way; `delete_note` rejects a non-integer id.
+
+### Security
+
+- **`add_team_bookmark` now requires `operator` and a confirmation.** It writes `app:` state that every user of the deployment is shown, and any viewer could call it, including the anonymous callers that auth-disabled mode pins to viewer. That made it the one place where the least-privileged caller could put content in front of everyone. It is now `@confirm`, and the ops-journal agent wires `require_confirmation()` like every other agent. Re-adding an existing name updates that bookmark's URL instead of adding a duplicate. **Upgrade note:** viewers who used to add bookmarks now get an access-denied answer.
+
 ## [0.4.1] - 2026-09-21
 
 A patch release: two defects that only show in long-running processes, a

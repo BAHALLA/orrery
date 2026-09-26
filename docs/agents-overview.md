@@ -222,9 +222,10 @@ Demonstrates ADK's four state scopes (session / user / app / temp). Not infrastr
 | `log_operation`, `get_session_summary` | viewer | Session-scoped event log |
 | `save_note`, `list_notes`, `search_notes`, `delete_note` | viewer | User-scoped notes (persist across sessions when a `memory_service` is configured) |
 | `set_preference`, `get_preferences` | viewer | User-scoped preferences |
-| `add_team_bookmark`, `list_team_bookmarks` | viewer | App-scoped shared bookmarks |
+| `list_team_bookmarks` | viewer | App-scoped shared bookmarks |
+| `add_team_bookmark` | operator | Adds or updates (by name) a bookmark every user sees — `@confirm` |
 
-All tools are read/write on local session state — no external system is touched, so none are guarded. See [Cross-session memory](memory.md) for how notes can outlive a single session.
+No external system is touched. Session- and user-scoped tools are unguarded because they only ever affect the caller; `add_team_bookmark` is the exception, because app-scoped state is the one place a single user's write reaches everyone else. Every collection is bounded: the session log keeps its most recent 200 entries (shared with `ActivityPlugin`), and notes (500 per user), preferences (50 per user) and bookmarks (100 per deployment) refuse writes past their limit rather than silently dropping records. Note ids are never reused. See [Cross-session memory](memory.md) for how notes can outlive a single session.
 
 ---
 
