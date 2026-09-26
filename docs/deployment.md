@@ -211,10 +211,20 @@ secretsVolume:
   mountPath: /var/run/secrets/orrery
 ```
 
-The chart sets `ORRERY_SECRETS_DIR` to the mount path; each key in the
-Secret becomes a file under it, and `default_secrets.get("JWT_SECRET")`
-resolves transparently. Falls back to env vars when a key is not in the
-volume, so this composes with the existing `envFrom` flow.
+The chart sets `ORRERY_SECRETS_DIR` to the mount path, and each key in the
+Secret becomes a file under it. When `orrery_core` is imported, before any
+configuration is read, every file whose name is a valid environment-variable
+name (`JWT_SECRET`, `DATABASE_URL`, `GOOGLE_API_KEY`, `SLACK_BOT_TOKEN`, …) is
+loaded into the process environment. So it works for every consumer:
+`os.getenv` readers, the agents' pydantic settings, and SDKs that read their own
+key (Gemini, LiteLLM). The values never appear in the pod spec.
+
+- A file **overrides** an `envFrom` variable of the same name (logged by name,
+  never by value). Keys missing from the volume fall back to the environment,
+  so this composes with the existing `envFrom` flow.
+- Keys that cannot be variable names (`ca.crt`, `tls-key`) are left as files for
+  path-based settings, and so are files over 64 KiB.
+- Values are read at startup: **restart the pods after rotating a secret**.
 
 ### Roll out
 
