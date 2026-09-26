@@ -100,6 +100,7 @@ from .security.secrets import FileBackend as FileBackend
 from .security.secrets import SecretsBackend as SecretsBackend
 from .security.secrets import SecretsManager as SecretsManager
 from .security.secrets import default_secrets as default_secrets
+from .security.secrets import load_secrets_into_environment as load_secrets_into_environment
 from .security.validation import K8S_NAME_PATTERN as K8S_NAME_PATTERN
 from .security.validation import KAFKA_TOPIC_PATTERN as KAFKA_TOPIC_PATTERN
 from .security.validation import MAX_LOG_LINES as MAX_LOG_LINES
@@ -133,3 +134,10 @@ from .tools.operators import StrimziDetector as StrimziDetector
 from .tools.operators import default_registry as default_registry
 from .tools.tool_result import ResultStatus as ResultStatus
 from .tools.tool_result import ToolResult as ToolResult
+
+# Mounted secret files ($ORRERY_SECRETS_DIR) become environment variables
+# before any agent reads its configuration: every agent module imports this
+# package before it builds its config, and credentials are read three ways
+# (os.getenv, pydantic settings, third-party SDKs) that only the environment
+# reaches. A no-op unless the variable is set. See load_secrets_into_environment.
+load_secrets_into_environment()

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -72,6 +73,83 @@ class FileBackend:
             return None
 
 
+# ── Environment hydration ───────────────────────────────────────────
+
+SECRETS_DIR_ENV = "ORRERY_SECRETS_DIR"
+
+#: File names that can be environment variables. Kubernetes Secret keys may
+#: also contain '.' and '-' (e.g. a ``ca.crt`` mounted alongside); those are
+#: files for a path-based setting, not variables, and are left alone.
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: Larger files are certificates or bundles, not variable values.
+_MAX_SECRET_BYTES = 64 * 1024
+
+
+def load_secrets_into_environment(directory: str | Path | None = None) -> list[str]:
+    """Expose every secret file under *directory* as an environment variable.
+
+    *directory* defaults to ``$ORRERY_SECRETS_DIR``; with neither, this is a
+    no-op. Called once when ``orrery_core`` is imported, before any config is
+    read.
+
+    **Why the environment, rather than a lookup API.** Credentials here are
+    read three ways: ``os.getenv`` (``DATABASE_URL``, ``JWT_SECRET``), pydantic
+    settings (Slack tokens, Elasticsearch credentials), and third-party SDKs
+    that read their own key from the environment (``GOOGLE_API_KEY``,
+    ``ANTHROPIC_API_KEY`` through LiteLLM). Only the environment reaches all
+    three. The chart has always mounted the Secret and set this variable, and
+    the docs said it was resolved, but nothing read it. A deployment that
+    followed the docs failed at boot with "JWT_SECRET is required".
+
+    This keeps the property the volume exists for. The values never appear in
+    the pod spec (``kubectl describe``, or anyone with ``pods/get``); they
+    exist only in this process's memory, which already held them the moment
+    they were used.
+
+    A file overrides a variable of the same name, as :class:`SecretsManager`
+    documents (volume first, environment as fallback); each override is
+    logged by name, never by value. Rotated files take effect on restart.
+
+    Returns:
+        The names that were set, sorted.
+    """
+    raw = directory if directory is not None else os.getenv(SECRETS_DIR_ENV)
+    if not raw:
+        return []
+    root = Path(raw)
+    if not root.is_dir():
+        logger.warning("%s=%s is not a directory; no secrets loaded", SECRETS_DIR_ENV, root)
+        return []
+
+    loaded: list[str] = []
+    for entry in sorted(root.iterdir()):
+        name = entry.name
+        # Hidden entries include Kubernetes' own `..data` / `..<timestamp>`
+        # indirection directories; the visible keys are symlinks into them.
+        if name.startswith(".") or not _ENV_NAME.fullmatch(name) or not entry.is_file():
+            continue
+        try:
+            if entry.stat().st_size > _MAX_SECRET_BYTES:
+                logger.warning("Secret file %s is over %d bytes; skipped", name, _MAX_SECRET_BYTES)
+                continue
+            value = entry.read_text(encoding="utf-8").rstrip("\r\n")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("Secret file %s could not be read: %s", name, exc)
+            continue
+        if "\0" in value:
+            logger.warning("Secret file %s contains a NUL byte; skipped", name)
+            continue
+        existing = os.environ.get(name)
+        if existing is not None and existing != value:
+            logger.warning(
+                "Secret file %s overrides the environment variable of the same name", name
+            )
+        os.environ[name] = value
+        loaded.append(name)
+
+    return loaded
+
+
 # ── Manager ─────────────────────────────────────────────────────────
 
 
@@ -83,7 +161,7 @@ class SecretsManager:
     final fallback so existing deployments continue to work unchanged.
     """
 
-    _DEFAULT_SECRETS_DIR_ENV = "ORRERY_SECRETS_DIR"
+    _DEFAULT_SECRETS_DIR_ENV = SECRETS_DIR_ENV
 
     def __init__(self, backends: list[SecretsBackend] | None = None) -> None:
         self._backends: list[SecretsBackend] = list(backends or [])

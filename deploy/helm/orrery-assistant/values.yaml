@@ -228,10 +228,12 @@ auth:
   corsOrigins: ""
 
 ## ── Mounted-secrets volume (ORRERY_SECRETS_DIR) ────────────────────
-## Mount a Kubernetes Secret as files under /var/run/secrets/orrery so
-## SecretsManager can resolve JWT_SECRET / API keys via the file backend
-## without exposing them in the pod's environment. Recommended over
+## Mount a Kubernetes Secret as files under /var/run/secrets/orrery. At
+## startup each file named like an env var (JWT_SECRET, DATABASE_URL,
+## GOOGLE_API_KEY, ...) is loaded into the process environment, overriding
+## envFrom, so the values never appear in the pod spec. Recommended over
 ## envFrom.secretRef for sensitive secrets in compliance-bound deployments.
+## Restart the pods after rotating a secret.
 ##
 ## When enabled, the chart sets ORRERY_SECRETS_DIR on the container and
 ## mounts `secretName` at `mountPath`. The Secret must be created out of
