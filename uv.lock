@@ -599,14 +599,14 @@ version = "0.4.1"
 source = { editable = "agents/elasticsearch" }
 dependencies = [
     { name = "kubernetes" },
-    { name = "orrery-core" },
+    { name = "orrery-core", extra = ["kubernetes"] },
     { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "kubernetes", specifier = ">=36.0.3" },
-    { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["kubernetes"], editable = "core" },
     { name = "requests", specifier = ">=2.34.2" },
 ]
 
@@ -1549,13 +1549,13 @@ version = "0.4.1"
 source = { editable = "agents/k8s-health" }
 dependencies = [
     { name = "kubernetes" },
-    { name = "orrery-core" },
+    { name = "orrery-core", extra = ["kubernetes"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "kubernetes", specifier = ">=36.0.3" },
-    { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["kubernetes"], editable = "core" },
 ]
 
 [[package]]
@@ -1565,14 +1565,14 @@ source = { editable = "agents/kafka-health" }
 dependencies = [
     { name = "confluent-kafka" },
     { name = "kubernetes" },
-    { name = "orrery-core" },
+    { name = "orrery-core", extra = ["kubernetes"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "confluent-kafka", specifier = ">=2.15.0" },
     { name = "kubernetes", specifier = ">=36.0.3" },
-    { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["kubernetes"], editable = "core" },
 ]
 
 [[package]]
@@ -2363,6 +2363,9 @@ knowledge = [
 knowledge-pg = [
     { name = "psycopg2-binary" },
 ]
+kubernetes = [
+    { name = "kubernetes" },
+]
 otel = [
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
     { name = "opentelemetry-sdk" },
@@ -2383,6 +2386,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.141.1" },
     { name = "google-adk", extras = ["eval", "db"], specifier = ">=2.9.1" },
+    { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=36.0.3" },
     { name = "litellm", specifier = ">=1.100.1" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'otel'", specifier = ">=1.42.1" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.42.1" },
@@ -2398,7 +2402,7 @@ requires-dist = [
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.10" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.53.0" },
 ]
-provides-extras = ["postgres", "auth", "server", "otel", "knowledge", "knowledge-pg"]
+provides-extras = ["postgres", "auth", "server", "kubernetes", "otel", "knowledge", "knowledge-pg"]
 
 [[package]]
 name = "packaging"

@@ -5,7 +5,7 @@ description = "Agent for monitoring and managing Kafka cluster health"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "orrery-core",
+    "orrery-core[kubernetes]",
     "confluent-kafka>=2.15.0",
     "kubernetes>=36.0.3",
 ]

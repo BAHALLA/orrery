@@ -6,7 +6,7 @@ import re
 from datetime import UTC
 from typing import Any
 
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from orrery_core import AgentConfig, confirm, destructive
@@ -17,6 +17,7 @@ from orrery_core.security.validation import (
     validate_positive_int,
     validate_string,
 )
+from orrery_core.tools.kube import shared_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +30,14 @@ class K8sConfig(AgentConfig):
 
 _config = K8sConfig()
 
-_kube_config_loaded = False
 _core_api_client: client.CoreV1Api | None = None
 _apps_api_client: client.AppsV1Api | None = None
 _custom_api_client: client.CustomObjectsApi | None = None
 
 
-def _load_kube_config() -> None:
-    """Load kubeconfig from file or in-cluster config (once)."""
-    global _kube_config_loaded
-    if _kube_config_loaded:
-        return
-    try:
-        if _config.kubeconfig_path:
-            config.load_kube_config(config_file=_config.kubeconfig_path)
-        else:
-            config.load_kube_config()
-    except config.ConfigException:
-        config.load_incluster_config()
-    _kube_config_loaded = True
+def _api_client() -> client.ApiClient:
+    """The shared, timeout-bounded ``ApiClient`` (see ``orrery_core.tools.kube``)."""
+    return shared_api_client(_config.kubeconfig_path)
 
 
 def _validate_namespace(namespace: str) -> dict[str, Any] | None:
@@ -95,16 +85,14 @@ def _validate_label_selector(label_selector: str | None) -> dict[str, Any] | Non
 def _core_api() -> client.CoreV1Api:
     global _core_api_client
     if _core_api_client is None:
-        _load_kube_config()
-        _core_api_client = client.CoreV1Api()
+        _core_api_client = client.CoreV1Api(_api_client())
     return _core_api_client
 
 
 def _apps_api() -> client.AppsV1Api:
     global _apps_api_client
     if _apps_api_client is None:
-        _load_kube_config()
-        _apps_api_client = client.AppsV1Api()
+        _apps_api_client = client.AppsV1Api(_api_client())
     return _apps_api_client
 
 
@@ -118,8 +106,7 @@ async def get_cluster_info() -> dict[str, Any]:
         A dictionary with cluster version and node count.
     """
     try:
-        await asyncio.to_thread(_load_kube_config)
-        version_api = client.VersionApi()
+        version_api = client.VersionApi(await asyncio.to_thread(_api_client))
         version = await asyncio.to_thread(version_api.get_code)
 
         v1 = _core_api()
@@ -937,8 +924,7 @@ async def get_configmap(name: str, namespace: str = "default") -> dict[str, Any]
 def _metrics_api() -> client.CustomObjectsApi:
     global _custom_api_client
     if _custom_api_client is None:
-        _load_kube_config()
-        _custom_api_client = client.CustomObjectsApi()
+        _custom_api_client = client.CustomObjectsApi(_api_client())
     return _custom_api_client
 
 

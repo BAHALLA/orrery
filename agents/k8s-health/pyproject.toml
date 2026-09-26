@@ -4,7 +4,7 @@ version = "0.4.1"
 description = "Agent for monitoring and managing Kubernetes clusters"
 requires-python = ">=3.14"
 dependencies = [
-    "orrery-core",
+    "orrery-core[kubernetes]",
     "kubernetes>=36.0.3",
 ]
 

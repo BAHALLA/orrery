@@ -17,11 +17,12 @@ import asyncio
 import logging
 from typing import Any
 
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from orrery_core import AgentConfig, ToolResult, default_registry
 from orrery_core.security.validation import K8S_NAME_PATTERN, validate_string
+from orrery_core.tools.kube import shared_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,6 @@ class EckK8sConfig(AgentConfig):
 
 _config = EckK8sConfig()
 
-_kube_config_loaded = False
 _custom_objects_client: client.CustomObjectsApi | None = None
 _core_client: client.CoreV1Api | None = None
 
@@ -48,33 +48,22 @@ _KB_VERSION = "v1"
 _KB_PLURAL = "kibanas"
 
 
-def _load_kube_config() -> None:
-    global _kube_config_loaded
-    if _kube_config_loaded:
-        return
-    try:
-        if _config.kubeconfig_path:
-            config.load_kube_config(config_file=_config.kubeconfig_path)
-        else:
-            config.load_kube_config()
-    except config.ConfigException:
-        config.load_incluster_config()
-    _kube_config_loaded = True
+def _api_client() -> client.ApiClient:
+    """The shared, timeout-bounded ``ApiClient`` (see ``orrery_core.tools.kube``)."""
+    return shared_api_client(_config.kubeconfig_path)
 
 
 def _custom_objects_api() -> client.CustomObjectsApi:
     global _custom_objects_client
     if _custom_objects_client is None:
-        _load_kube_config()
-        _custom_objects_client = client.CustomObjectsApi()
+        _custom_objects_client = client.CustomObjectsApi(_api_client())
     return _custom_objects_client
 
 
 def _core_v1_api() -> client.CoreV1Api:
     global _core_client
     if _core_client is None:
-        _load_kube_config()
-        _core_client = client.CoreV1Api()
+        _core_client = client.CoreV1Api(_api_client())
     return _core_client
 
 

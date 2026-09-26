@@ -32,17 +32,18 @@ from k8s_health_agent.tools import (
     top_nodes,
     top_pods,
 )
+from orrery_core.tools.kube import clear_client_cache
 
 
 @pytest.fixture(autouse=True)
 def _reset_client_cache():
     """Reset cached K8s clients between tests."""
-    _tools_mod._kube_config_loaded = False
+    clear_client_cache()
     _tools_mod._core_api_client = None
     _tools_mod._apps_api_client = None
     _tools_mod._custom_api_client = None
     yield
-    _tools_mod._kube_config_loaded = False
+    clear_client_cache()
     _tools_mod._core_api_client = None
     _tools_mod._apps_api_client = None
     _tools_mod._custom_api_client = None
@@ -174,7 +175,7 @@ def _api_exception(reason="Not Found", status=404):
 
 @pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-@patch("k8s_health_agent.tools._load_kube_config")
+@patch("k8s_health_agent.tools._api_client")
 @patch("k8s_health_agent.tools.client")
 async def test_get_cluster_info_success(mock_client, mock_config, mock_core):
     version = MagicMock()
@@ -196,7 +197,7 @@ async def test_get_cluster_info_success(mock_client, mock_config, mock_core):
 
 @pytest.mark.asyncio
 @patch("k8s_health_agent.tools._core_api")
-@patch("k8s_health_agent.tools._load_kube_config")
+@patch("k8s_health_agent.tools._api_client")
 @patch("k8s_health_agent.tools.client")
 async def test_get_cluster_info_api_error(mock_client, mock_config, mock_core):
     mock_client.VersionApi.return_value.get_code.side_effect = ApiException(
@@ -208,7 +209,7 @@ async def test_get_cluster_info_api_error(mock_client, mock_config, mock_core):
 
 
 @pytest.mark.asyncio
-@patch("k8s_health_agent.tools._load_kube_config", side_effect=Exception("no config"))
+@patch("k8s_health_agent.tools._api_client", side_effect=Exception("no config"))
 async def test_get_cluster_info_connection_error(mock_config):
     result = await get_cluster_info()
     assert result["status"] == "error"

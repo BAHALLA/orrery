@@ -23,14 +23,15 @@ from kafka_health_agent.strimzi import (
     list_strimzi_topics,
     restart_kafka_connector,
 )
+from orrery_core.tools.kube import clear_client_cache
 
 
 @pytest.fixture(autouse=True)
 def _reset_client_cache():
-    _strimzi._kube_config_loaded = False
+    clear_client_cache()
     _strimzi._custom_objects_client = None
     yield
-    _strimzi._kube_config_loaded = False
+    clear_client_cache()
     _strimzi._custom_objects_client = None
 
 
