@@ -16,7 +16,9 @@ settings here.
 |--------|------------|
 | Anyone on the network calling `/chat` as `admin` | `AuthPlugin` only accepts a role from a verified JWT (`_auth` payload). Missing payload → forced `viewer`. |
 | Stolen/replayed token | `exp` is required; default leeway 30 s. Bind to `aud` + `iss` to prevent reuse against other services. |
-| Token forgery | HS256 verifies against a shared `JWT_SECRET`; RS256/ES256 verifies against the IdP's public keys via JWKS. |
+| Token forgery | HS256/384/512 verify against a shared `JWT_SECRET`, which must be at least as long as the hash (32/48/64 bytes, RFC 7518 §3.2) or the server refuses to start; RS256/ES256 verify against the IdP's public keys via JWKS. A token whose header `alg` differs from `JWT_ALGORITHM` is refused before any key lookup (algorithm confusion). |
+| Forged tokens used to hammer the IdP / stall the server | JWKS verification runs on a worker thread, never the event loop. The key set is cached for 10 minutes; a token with an unknown `kid` can force a refresh at most once per 60 s (enough to pick up a key rotation), and every other unknown `kid` in that window is rejected from cache. Tokens with no `kid` never reach the network. |
+| IdP outage | Reported as `503 Retry-After: 5`, not `401` — the caller's token may be perfectly valid, and a 401 tells the console to discard it. |
 | Leaked secrets via env vars | `ORRERY_SECRETS_DIR` reads secrets from a mounted Kubernetes Secret volume so they never appear in the pod's environment. |
 | Privilege escalation via untrusted session state | `set_user_role()` flags the role as server-trusted; `ensure_default_role()` forces `viewer` on any session that didn't go through the trusted path. |
 | Stale role after revocation | The HTTP front door re-stamps `_auth` on every request from the verified token, so a re-minted token with a downgraded role applies on the next call. |
@@ -30,7 +32,7 @@ settings here.
 ```bash
 AUTH_ENABLED=true
 JWT_ALGORITHM=HS256
-JWT_SECRET=$(openssl rand -hex 32)    # 32+ bytes
+JWT_SECRET=$(openssl rand -hex 32)    # 32+ bytes for HS256 (48 for HS384, 64 for HS512)
 JWT_AUDIENCE=orrery
 JWT_ISSUER=https://your-gateway
 ```

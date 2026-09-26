@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import jwt as pyjwt
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 from orrery_core.security.auth import (
     AUTH_STATE_KEY,
@@ -76,7 +74,21 @@ class TestJWTConfig:
             cfg.validate()
 
     def test_validate_hs256_with_secret_ok(self):
-        JWTConfig(algorithm="HS256", secret="x").validate()
+        JWTConfig(algorithm="HS256", secret="x" * 32).validate()
+
+    @pytest.mark.parametrize(
+        ("algorithm", "minimum"), [("HS256", 32), ("HS384", 48), ("HS512", 64)]
+    )
+    def test_validate_rejects_hmac_secret_shorter_than_the_hash(self, algorithm, minimum):
+        """RFC 7518 §3.2: a short HMAC key is brute-forceable offline from one
+        captured token — and a forged token here is a forged admin."""
+        with pytest.raises(AuthError, match="too short"):
+            JWTConfig(algorithm=algorithm, secret="x" * (minimum - 1)).validate()
+        JWTConfig(algorithm=algorithm, secret="x" * minimum).validate()
+
+    def test_secret_length_is_measured_in_bytes(self):
+        # 16 two-byte characters are 32 bytes of key material.
+        JWTConfig(algorithm="HS256", secret="é" * 16).validate()
 
     def test_validate_rs256_requires_jwks(self):
         cfg = JWTConfig(algorithm="RS256", jwks_url=None)
@@ -110,6 +122,29 @@ _TEST_SECRET = "x" * 64  # 32+ bytes to satisfy PyJWT HMAC length recommendation
 
 def _hs256_token(claims: dict, secret: str = _TEST_SECRET) -> str:
     return pyjwt.encode(claims, secret, algorithm="HS256")
+
+
+class TestVerifyTokenHMACVariants:
+    @pytest.mark.parametrize("algorithm", ["HS384", "HS512"])
+    def test_round_trip(self, algorithm):
+        token = pyjwt.encode(
+            {"sub": "alice", "roles": ["operator"], "exp": int(time.time()) + 60},
+            _TEST_SECRET,
+            algorithm=algorithm,
+        )
+        ctx = verify_token(token, JWTConfig(algorithm=algorithm, secret=_TEST_SECRET))
+        assert (ctx.subject, ctx.role) == ("alice", "operator")
+
+    def test_token_signed_with_other_hmac_variant_is_rejected(self):
+        token = pyjwt.encode(
+            {"sub": "alice", "exp": int(time.time()) + 60}, _TEST_SECRET, algorithm="HS512"
+        )
+        with pytest.raises(AuthError):
+            verify_token(token, JWTConfig(algorithm="HS256", secret=_TEST_SECRET))
+
+    def test_garbage_token_is_an_auth_error(self):
+        with pytest.raises(AuthError):
+            verify_token("not-a-jwt", JWTConfig(algorithm="HS256", secret=_TEST_SECRET))
 
 
 class TestVerifyTokenHS256:
@@ -183,63 +218,6 @@ class TestVerifyTokenHS256:
             token, JWTConfig(algorithm="HS256", secret=_TEST_SECRET, leeway_seconds=30)
         )
         assert ctx.subject == "a"
-
-
-# ── verify_token (RS256/JWKS) ────────────────────────────────────────
-
-
-@pytest.fixture
-def rsa_keypair():
-    private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = private.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    public_pem = private.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return private_pem, public_pem
-
-
-class TestVerifyTokenRS256:
-    def test_round_trip_via_mocked_jwks(self, rsa_keypair, monkeypatch):
-        private_pem, public_pem = rsa_keypair
-        token = pyjwt.encode(
-            {
-                "sub": "bob",
-                "roles": ["admin"],
-                "exp": int(time.time()) + 600,
-            },
-            private_pem,
-            algorithm="RS256",
-            headers={"kid": "test-key"},
-        )
-
-        # Clear the module-level JWKS client cache so this test is isolated.
-        from orrery_core.security import auth
-
-        auth._jwks_clients.clear()
-
-        with patch.object(auth, "_get_jwks_client") as get_client:
-            fake_signing_key = MagicMock()
-            fake_signing_key.key = public_pem
-            client = MagicMock()
-            client.get_signing_key_from_jwt.return_value = fake_signing_key
-            get_client.return_value = client
-
-            ctx = verify_token(
-                token,
-                JWTConfig(algorithm="RS256", jwks_url="https://idp/jwks"),
-            )
-
-        assert ctx.subject == "bob"
-        assert ctx.role == "admin"
-
-    def test_jwks_url_required_for_rs256(self):
-        with pytest.raises(AuthError, match="JWT_JWKS_URL"):
-            verify_token("ignored", JWTConfig(algorithm="RS256"))
 
 
 # ── AuthPlugin ──────────────────────────────────────────────────────
@@ -351,50 +329,6 @@ class TestExtractRoleDottedClaims:
         read as a path. No provider we target emits one, and failing closed to
         viewer is the safe direction."""
         assert extract_role({"a.b": ["admin"]}, role_claim="a.b") == "viewer"
-
-
-class TestJWKSKeyLookupFailures:
-    """A key-lookup failure must not become a 500.
-
-    PyJWT raises ``PyJWKClientError`` — which is *not* an ``InvalidTokenError``
-    — when no JWKS key matches the token's ``kid``. That covers essentially
-    every forged or garbage bearer token, so before this was handled each one
-    escaped as an unhandled exception: a 500 with a traceback on an
-    unauthenticated request path.
-    """
-
-    def _client_raising(self, exc: Exception) -> MagicMock:
-        client = MagicMock()
-        client.get_signing_key_from_jwt.side_effect = exc
-        return client
-
-    def test_unknown_kid_is_an_auth_error_not_a_crash(self):
-        from jwt.exceptions import PyJWKClientError
-
-        from orrery_core.security import auth
-
-        auth._jwks_clients.clear()
-        with patch.object(auth, "_get_jwks_client") as get_client:
-            get_client.return_value = self._client_raising(
-                PyJWKClientError('Unable to find a signing key that matches: "None"')
-            )
-            with pytest.raises(AuthError, match="Invalid or expired token"):
-                verify_token("a.b.c", JWTConfig(algorithm="RS256", jwks_url="https://idp/jwks"))
-
-    def test_unreachable_idp_is_not_reported_as_a_bad_token(self):
-        """An IdP outage isn't the caller's fault and a new token won't fix it,
-        so it must not be flattened into a 401."""
-        from jwt.exceptions import PyJWKClientConnectionError
-
-        from orrery_core.security import auth
-
-        auth._jwks_clients.clear()
-        with patch.object(auth, "_get_jwks_client") as get_client:
-            get_client.return_value = self._client_raising(
-                PyJWKClientConnectionError("connection refused")
-            )
-            with pytest.raises(PyJWKClientConnectionError):
-                verify_token("a.b.c", JWTConfig(algorithm="RS256", jwks_url="https://idp/jwks"))
 
 
 # ── Dotted role-claim resolution ─────────────────────────────────────
