@@ -9,7 +9,7 @@ The platform supports multiple LLM providers through [LiteLLM](https://docs.lite
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MODEL_PROVIDER` | `gemini` | LLM backend: `gemini`, `anthropic`, `openai`, `ollama`, etc. |
-| `MODEL_NAME` | `gemini-2.0-flash` | Model identifier (provider prefix auto-added if missing) |
+| `MODEL_NAME` | `gemini-3.6-flash` | Model identifier (provider prefix auto-added if missing) |
 
 ### Provider examples
 

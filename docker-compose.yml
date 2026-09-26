@@ -331,7 +331,7 @@ services:
       MODEL_NAME: ${MODEL_NAME:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-2.0-flash}
+      GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-3.6-flash}
 
       # Session store
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:-agents_secret}@postgres:5432/${POSTGRES_DB:-agents}"
@@ -385,7 +385,7 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-2.0-flash}
+      GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-3.6-flash}
 
       # Session store
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:-agents_secret}@postgres:5432/${POSTGRES_DB:-agents}"

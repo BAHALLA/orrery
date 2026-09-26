@@ -292,6 +292,40 @@ class SelfTestResponse(BaseModel):
 # ── App factory ─────────────────────────────────────────────────────
 
 
+#: Set by the Helm chart when more than one pod can serve traffic.
+MULTI_REPLICA_ENV = "ORRERY_MULTI_REPLICA"
+
+
+def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
+    """Refuse to serve from several replicas on per-process state.
+
+    The chart checks the confirmation backend at render time, but it cannot
+    see a ``DATABASE_URL`` supplied through ``existingSecret`` or the secrets
+    volume, so the pod checks what it actually received. Without a shared
+    store, each pod keeps its own sessions and pending approvals: a
+    conversation's next turn, or a human's "approve", lands on a pod that has
+    never seen it. A pod that will not start is easier to diagnose than one
+    that forgets conversations at random.
+    """
+    if os.getenv(MULTI_REPLICA_ENV, "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+    from ..security.confirmation_store import CONFIRMATION_BACKEND_ENV
+
+    problems = []
+    if not cfg.database_url:
+        problems.append("DATABASE_URL is not set (sessions would be per-pod)")
+    backend = os.getenv(CONFIRMATION_BACKEND_ENV, "memory").strip().lower()
+    if backend != "postgres":
+        problems.append(
+            f"{CONFIRMATION_BACKEND_ENV}={backend} (approvals would be per-pod; use postgres)"
+        )
+    if problems:
+        raise RuntimeError(
+            f"{MULTI_REPLICA_ENV} is set, so this server runs as one of several replicas, "
+            "but its state is per-process: " + "; ".join(problems) + "."
+        )
+
+
 def create_app(
     *,
     root_agent: Agent | Workflow,
@@ -356,6 +390,8 @@ def create_app(
             "Auth DISABLED. Do not run this configuration in production — "
             "RBAC is meaningless without verified identity."
         )
+
+    _require_shared_state_when_replicated(cfg)
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
     # loop, reply extraction). This HTTP surface is one ChannelAdapter over it.

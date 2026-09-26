@@ -945,3 +945,47 @@ def test_docs_env_flag_overrides_in_both_directions(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
     monkeypatch.setenv("ORRERY_DOCS_ENABLED", "false")
     assert ServerConfig.from_env().serve_docs is False
+
+
+# ── Multi-replica startup guard ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("database_url", "backend", "message"),
+    [
+        (None, "postgres", "DATABASE_URL is not set"),
+        ("postgresql://db/x", "memory", "ORRERY_CONFIRMATION_BACKEND=memory"),
+        (None, None, "DATABASE_URL is not set"),
+    ],
+)
+def test_replicated_server_refuses_per_process_state(
+    monkeypatch, patched_runner, database_url, backend, message
+):
+    """With several replicas, per-pod sessions/approvals break conversations at
+    random; the chart cannot see an existingSecret's DATABASE_URL, so the pod
+    checks what it actually got."""
+    monkeypatch.setenv("ORRERY_MULTI_REPLICA", "true")
+    if backend is None:
+        monkeypatch.delenv("ORRERY_CONFIRMATION_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("ORRERY_CONFIRMATION_BACKEND", backend)
+
+    with pytest.raises(RuntimeError, match=message):
+        create_app(
+            root_agent=MagicMock(name="root"),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig(auth_enabled=False, database_url=database_url),
+        )
+
+
+def test_single_replica_may_use_per_process_state(monkeypatch, patched_runner):
+    monkeypatch.delenv("ORRERY_MULTI_REPLICA", raising=False)
+    monkeypatch.setenv("ORRERY_CONFIRMATION_BACKEND", "memory")
+
+    create_app(
+        root_agent=MagicMock(name="root"),
+        app_name="test",
+        plugins=[],
+        config=ServerConfig(auth_enabled=False, database_url=None),
+    )

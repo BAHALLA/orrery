@@ -8,7 +8,13 @@ image:
   pullSecrets: []
 
 # Number of replicas. Ignored when autoscaling.enabled is true.
-replicaCount: 2
+#
+# One by default, because the default `persistence.backend` is "memory":
+# conversations and pending approvals then live in one process. More than one
+# replica needs `persistence.backend: postgres` plus a DATABASE_URL. The chart
+# refuses to render otherwise, and the server refuses to start if the
+# database URL is missing at runtime. See the `persistence` block below.
+replicaCount: 1
 
 nameOverride: ""
 fullnameOverride: ""
@@ -72,15 +78,28 @@ resources:
     memory: 1Gi
 
 autoscaling:
-  enabled: true
+  # Needs persistence.backend: postgres (see replicaCount).
+  enabled: false
   minReplicas: 2
   maxReplicas: 6
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
 podDisruptionBudget:
+  # Rendered only when more than one replica can run: with a single pod,
+  # minAvailable: 1 would block every node drain.
   enabled: true
   minAvailable: 1
+
+## ── State: conversations and pending approvals ─────────────────────
+## "memory": per-process. Correct only with ONE replica. With several, a
+##   conversation's next turn lands on a pod that never saw it, and an
+##   approval lands on a pod that never raised the pending action.
+## "postgres": shared across replicas and restarts. Needs DATABASE_URL (under
+##   `secrets`, or in `existingSecret` / the secrets volume).
+## Required before raising replicaCount or enabling autoscaling.
+persistence:
+  backend: memory
 
 # SIGTERM handling — give in-flight LLM calls time to finish.
 terminationGracePeriodSeconds: 60
@@ -111,10 +130,10 @@ config:
   ## (needs DATABASE_URL) so an approval received on one replica resolves a
   ## pending raised on another. The pubsubWorker template sets the same env
   ## var from pubsubWorker.confirmation.backend.
-  # ORRERY_CONFIRMATION_BACKEND: postgres
+  # ORRERY_CONFIRMATION_BACKEND: postgres   # prefer persistence.backend (below)
   MODEL_PROVIDER: gemini
-  MODEL_NAME: gemini-2.0-flash
-  GEMINI_MODEL_VERSION: gemini-2.0-flash
+  MODEL_NAME: gemini-3.6-flash
+  GEMINI_MODEL_VERSION: gemini-3.6-flash
   GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
   ENABLE_METRICS_SERVER: "true"
   HEALTH_PORT: "8080"
@@ -213,6 +232,10 @@ existingSecret: ""
 ## Kubernetes Secret instead.
 auth:
   enabled: false
+  ## With auth disabled every caller is an anonymous viewer, keyed by source IP.
+  ## Behind a shared ingress or NAT, that means one shared conversation list.
+  ## The chart refuses ingress.enabled without auth unless this is true.
+  allowAnonymous: false
   ## "HS256" — symmetric, requires JWT_SECRET (under `secrets`).
   ## "RS256" / "ES256" — asymmetric, requires JWKS URL (IdP-fronted).
   algorithm: HS256

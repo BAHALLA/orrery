@@ -496,7 +496,7 @@ class KafkaConfig(AgentConfig):
 config = load_config(KafkaConfig, __file__)
 print(config.kafka_bootstrap_servers)
 print(config.model_provider)  # "gemini", "anthropic", "openai", etc.
-print(config.model_name)  # "gemini-2.0-flash", "anthropic/claude-sonnet-4-20250514", etc.
+print(config.model_name)  # "gemini-3.6-flash", "anthropic/claude-sonnet-4-20250514", etc.
 ```
 
 Base fields (inherited by all configs):
@@ -504,7 +504,7 @@ Base fields (inherited by all configs):
 | Field | Default | Env var | Description |
 |-------|---------|---------|-------------|
 | `model_provider` | `"gemini"` | `MODEL_PROVIDER` | LLM backend (`gemini`, `anthropic`, `openai`, `ollama`, ...) |
-| `model_name` | `"gemini-2.0-flash"` | `MODEL_NAME` | Model identifier |
+| `model_name` | `"gemini-3.6-flash"` | `MODEL_NAME` | Model identifier |
 | `google_genai_use_vertexai` | `True` | `GOOGLE_GENAI_USE_VERTEXAI` | Use Vertex AI or AI Studio (Gemini only) |
 | `google_cloud_project` | `None` | `GOOGLE_CLOUD_PROJECT` | GCP project (Vertex AI only) |
 | `google_cloud_location` | `None` | `GOOGLE_CLOUD_LOCATION` | GCP region (Vertex AI only) |

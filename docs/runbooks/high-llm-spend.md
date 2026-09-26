@@ -92,7 +92,7 @@ kubectl -n $NS set env deploy/orrery-assistant ORRERY_CHAT_RATE_LIMIT=5/minute
    few hours.
 
 ```bash
-kubectl -n $NS set env deploy/orrery-assistant MODEL_NAME=gemini-2.0-flash
+kubectl -n $NS set env deploy/orrery-assistant MODEL_NAME=gemini-3.1-flash-lite
 ```
 
 4. **Read-only.** Stops remediation loops outright while keeping diagnosis.

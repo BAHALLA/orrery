@@ -15,6 +15,7 @@ from google.adk.tools.base_tool import BaseTool
 
 from ..observability.log import setup_logging
 from ..security.guardrails import ACTOR_STATE_KEY
+from .config import DEFAULT_GEMINI_MODEL
 
 logger = logging.getLogger("orrery.base")
 
@@ -132,7 +133,7 @@ def resolve_model() -> str | BaseLlm:
     provider = os.getenv("MODEL_PROVIDER", "gemini").lower()
 
     if provider == "gemini":
-        return os.getenv("MODEL_NAME") or os.getenv("GEMINI_MODEL_VERSION") or "gemini-2.0-flash"
+        return os.getenv("MODEL_NAME") or os.getenv("GEMINI_MODEL_VERSION") or DEFAULT_GEMINI_MODEL
 
     # Non-Gemini provider — use LiteLlm
     from google.adk.models.lite_llm import LiteLlm
