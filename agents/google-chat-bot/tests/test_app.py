@@ -39,9 +39,7 @@ def test_missing_authorization_when_verify_enabled(client, monkeypatch):
 def test_invalid_token_rejected(client, monkeypatch):
     c, _ = client
     monkeypatch.setattr(app_module.config, "google_chat_verify_token", True)
-    monkeypatch.setattr(
-        app_module, "verify_google_chat_token", lambda token, audience, valid_identities: None
-    )
+    monkeypatch.setattr(app_module, "verify_google_chat_token_async", AsyncMock(return_value=None))
     resp = c.post(
         "/",
         json={"type": "MESSAGE"},
@@ -55,8 +53,8 @@ def test_valid_token_dispatches_event(client, monkeypatch):
     monkeypatch.setattr(app_module.config, "google_chat_verify_token", True)
     monkeypatch.setattr(
         app_module,
-        "verify_google_chat_token",
-        lambda token, audience, valid_identities: {"email": "user@example.com"},
+        "verify_google_chat_token_async",
+        AsyncMock(return_value={"email": "user@example.com"}),
     )
     event = {"type": "MESSAGE", "message": {"argumentText": "hi"}}
     resp = c.post("/", json=event, headers={"Authorization": "Bearer fake"})

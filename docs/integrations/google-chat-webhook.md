@@ -59,3 +59,10 @@ To test the HTTP transport locally, use `ngrok` to create a secure tunnel:
 If you see `401 Unauthorized: Invalid ID token` in the logs:
 1.  Verify `GOOGLE_CHAT_AUDIENCE` matches the URL in the GCP Console exactly.
 2.  Check `GOOGLE_CHAT_IDENTITIES` — if your bot is an Add-on, you must include the `service-NNN@...` identity.
+3.  If the log says `certificates unavailable`, the bot could not download Google's signing certificates from `https://www.googleapis.com/oauth2/v1/certs`. Check the pod's egress (NetworkPolicy, proxy). Once one download has succeeded, the bot keeps verifying with the cached set through a later outage.
+
+### How verification works
+
+Each webhook carries an RS256 ID token signed by Google. The bot checks the signature, `aud` (= `GOOGLE_CHAT_AUDIENCE`), `exp`/`iat` (10 s clock skew allowed), the issuer (`accounts.google.com`), and that the `email` claim is one of `GOOGLE_CHAT_IDENTITIES` (case-insensitive). Google's certificates are downloaded **once** and reused for as long as Google's `Cache-Control: max-age` allows (6 h at most). A token signed with a key id not yet in the cache triggers at most one early refresh per minute, which is enough to pick up a key rotation, so forged key ids cannot make the bot call Google on every request. Verification runs on a worker thread and never blocks other requests.
+
+The bot never logs message text or sender emails. Event log lines carry only the event type and the space/thread/message resource names.

@@ -58,6 +58,38 @@ def empty_ack() -> dict[str, Any]:
     return {"hostAppDataAction": {"chatDataAction": {"actionStatus": {"statusCode": "OK"}}}}
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def event_summary(event: Any) -> dict[str, Any]:
+    """What is safe to log about a Chat event: its shape, never its content.
+
+    A raw event carries the message text and the sender's email and display
+    name. Logging it verbatim put every user's words and identity into the
+    application logs (at INFO, on every event), so logs got a summary instead.
+    It keeps only what's needed to trace one event across log lines: the event
+    type and the space/thread/message resource names. It works for both the
+    Chat API shape and the Workspace Add-ons shape.
+    """
+    if not isinstance(event, dict):
+        return {"type": type(event).__name__}
+    chat = _as_dict(event.get("chat"))
+    payload = _as_dict(chat.get("messagePayload"))
+    message = _as_dict(event.get("message") or payload.get("message"))
+    space = _as_dict(event.get("space") or payload.get("space") or chat.get("space"))
+    thread = _as_dict(message.get("thread"))
+    common = _as_dict(event.get("commonEventObject"))
+    summary = {
+        "type": event.get("type") or ("MESSAGE" if payload else None),
+        "space": space.get("name"),
+        "thread": thread.get("name"),
+        "message": message.get("name"),
+        "invoked_function": common.get("invokedFunction"),
+    }
+    return {k: v for k, v in summary.items() if v}
+
+
 def session_id_for(space_name: str, thread_name: str | None) -> str:
     """Deterministic session id for a Chat thread (or space, for unthreaded posts).
 
@@ -110,7 +142,7 @@ class GoogleChatHandler:
 
         Supports standard Chat API events and Workspace Add-ons events.
         """
-        logger.info("Processing Google Chat event: %s", event)
+        logger.info("Processing Google Chat event: %s", event_summary(event))
 
         # 1. Standard Chat API uses top-level 'type'.
         event_type = event.get("type")
@@ -146,7 +178,11 @@ class GoogleChatHandler:
             logger.info("Detected ADDED_TO_SPACE event")
             return self._wrap_for_addons("Thanks for adding me! Mention me to start investigating.")
 
-        logger.warning("Unrecognized event structure: %s", event)
+        logger.warning(
+            "Unrecognized event structure: %s (keys: %s)",
+            event_summary(event),
+            sorted(event)[:20],
+        )
         return self._wrap_for_addons("I'm not sure how to handle this event type.")
 
     # ── Internal helpers ─────────────────────────────────────────────
@@ -523,10 +559,11 @@ class GoogleChatHandler:
         """Background-task counterpart to ``_handle_message``."""
         logger.info("Background task started for MESSAGE event")
         user_text, user_email, space_name, thread_name = self._parse_message_event(event)
+        # Lengths and resource names only — never the words or who said them.
         logger.info(
-            "Parsed: user_text='%s', user_email='%s', space_name='%s', thread_name='%s'",
-            user_text,
-            user_email,
+            "Parsed message: %d chars, sender known=%s, space=%s, thread=%s",
+            len(user_text or ""),
+            bool(user_email),
             space_name,
             thread_name,
         )

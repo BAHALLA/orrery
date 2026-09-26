@@ -25,11 +25,11 @@ from orrery_core.agent.base import load_agent_env
 from orrery_core.persistence.db import create_session_service
 from orrery_core.plugins import default_plugins
 
-from .auth import verify_google_chat_token
+from .auth import verify_google_chat_token_async
 from .chat_client import ChatClient
 from .config import GoogleChatBotConfig
 from .confirmation import apply_chat_confirmation, create_confirmation_store
-from .handler import GoogleChatHandler, wrap_for_addons
+from .handler import GoogleChatHandler, event_summary, wrap_for_addons
 
 # Initialize logging and load environment
 load_agent_env(__file__)
@@ -197,7 +197,7 @@ async def google_chat_endpoint(
             raise HTTPException(status_code=500, detail="Server misconfiguration")
 
         token = authorization.split(" ", 1)[1]
-        payload = verify_google_chat_token(
+        payload = await verify_google_chat_token_async(
             token,
             audience=config.google_chat_audience,
             valid_identities=config.valid_identities,
@@ -207,7 +207,8 @@ async def google_chat_endpoint(
 
     # 2. Dispatch the event to the handler.
     event = await request.json()
-    logger.debug("Received event: %s", event)
+    # Never log the raw event: it carries message text and user emails.
+    logger.debug("Received event: %s", event_summary(event))
 
     try:
         return await _handler.handle_event(event)
