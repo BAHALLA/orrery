@@ -8,6 +8,13 @@ data:
   {{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- if not (hasKey .Values.config "ORRERY_CONFIRMATION_BACKEND") }}
+  ORRERY_CONFIRMATION_BACKEND: {{ .Values.persistence.backend | quote }}
+  {{- end }}
+  {{- if include "orrery-assistant.multiReplica" . }}
+  # Read by the server at startup: refuse to run on per-process state.
+  ORRERY_MULTI_REPLICA: "true"
+  {{- end }}
   {{- if .Values.auth.enabled }}
   AUTH_ENABLED: "true"
   JWT_ALGORITHM: {{ .Values.auth.algorithm | quote }}

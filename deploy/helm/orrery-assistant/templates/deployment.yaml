@@ -1,3 +1,19 @@
+{{- /*
+  Safety guard, same rule as the Pub/Sub worker's: per-process state cannot be
+  shared across pods. With more than one replica, a conversation's next turn
+  and a human's approval can land on a pod that has never seen them.
+*/}}
+{{- if and (include "orrery-assistant.multiReplica" .) (ne (include "orrery-assistant.confirmationBackend" .) "postgres") }}
+{{- fail "More than one replica (replicaCount > 1 or autoscaling.enabled) needs shared state: set persistence.backend=postgres and provide DATABASE_URL. With the in-memory backend, conversations lose their context and approvals are not found when requests land on different pods." }}
+{{- end }}
+{{- /*
+  An unauthenticated API behind a public ingress is anyone's viewer session,
+  and everyone behind one NAT shares its conversation list. Require an
+  explicit opt-in.
+*/}}
+{{- if and .Values.ingress.enabled (not .Values.auth.enabled) (not .Values.auth.allowAnonymous) }}
+{{- fail "ingress.enabled exposes the API, but auth.enabled is false. Enable auth (auth.enabled=true with JWT settings), or set auth.allowAnonymous=true to accept anonymous viewer access deliberately." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

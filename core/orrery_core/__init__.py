@@ -7,6 +7,7 @@ from .agent.base import load_agent_env as load_agent_env
 from .agent.base import resolve_model as resolve_model
 from .agent.base import resolve_planner as resolve_planner
 from .agent.base import resolve_safety_config as resolve_safety_config
+from .agent.config import DEFAULT_GEMINI_MODEL as DEFAULT_GEMINI_MODEL
 from .agent.config import AgentConfig as AgentConfig
 from .agent.config import load_config as load_config
 from .agent.prompts import CONFIRMATION_RULE as CONFIRMATION_RULE

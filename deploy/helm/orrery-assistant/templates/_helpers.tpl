@@ -92,3 +92,18 @@ app.kubernetes.io/component: pubsub-worker
 {{- default "default" .Values.pubsubWorker.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+True when the HTTP deployment can run more than one pod at a time.
+*/}}
+{{- define "orrery-assistant.multiReplica" -}}
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) -}}true{{- end -}}
+{{- end }}
+
+{{/*
+Where pending approvals live: an explicit config.ORRERY_CONFIRMATION_BACKEND
+wins (backwards compatible), otherwise persistence.backend.
+*/}}
+{{- define "orrery-assistant.confirmationBackend" -}}
+{{- index .Values.config "ORRERY_CONFIRMATION_BACKEND" | default .Values.persistence.backend -}}
+{{- end }}

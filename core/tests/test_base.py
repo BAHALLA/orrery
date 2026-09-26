@@ -6,6 +6,7 @@ import pytest
 from google.adk.planners import BuiltInPlanner, PlanReActPlanner
 
 from orrery_core.agent.base import resolve_model, resolve_planner
+from orrery_core.agent.config import DEFAULT_GEMINI_MODEL
 
 # ── resolve_model ────────────────────────────────────────────────────
 
@@ -22,7 +23,7 @@ class TestResolveModel:
     def test_defaults_to_gemini(self, monkeypatch):
         self._clean_env(monkeypatch)
         result = resolve_model()
-        assert result == "gemini-2.0-flash"
+        assert result == DEFAULT_GEMINI_MODEL
 
     def test_gemini_model_name_override(self, monkeypatch):
         self._clean_env(monkeypatch)

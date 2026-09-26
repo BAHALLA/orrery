@@ -11,6 +11,14 @@ from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The model used when neither MODEL_NAME nor GEMINI_MODEL_VERSION is set.
+#: A stable (GA) Gemini Flash model with function calling and context caching,
+#: both of which the agents need. The previous default, gemini-2.0-flash, was
+#: shut down on 2026-06-01, so a default install failed on every model call.
+#: Keep this on a GA model and review it when Google publishes deprecations
+#: (https://ai.google.dev/gemini-api/docs/deprecations).
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
 
 class AgentConfig(BaseSettings):
     """Base config shared by all agents.
@@ -49,7 +57,7 @@ class AgentConfig(BaseSettings):
     #   MODEL_PROVIDER=openai     MODEL_NAME=openai/gpt-4o
     #   MODEL_PROVIDER=ollama     MODEL_NAME=ollama/llama3
     model_provider: str = "gemini"
-    model_name: str = "gemini-2.0-flash"
+    model_name: str = DEFAULT_GEMINI_MODEL
 
     # Google AI / Vertex AI settings (used when model_provider=gemini)
     google_genai_use_vertexai: bool = True

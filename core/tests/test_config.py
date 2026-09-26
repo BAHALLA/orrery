@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-from orrery_core.agent.config import AgentConfig, load_config
+from orrery_core.agent.config import DEFAULT_GEMINI_MODEL, AgentConfig, load_config
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def test_agent_config_defaults():
     )
     assert config.google_genai_use_vertexai is True
     assert config.model_provider == "gemini"
-    assert config.model_name == "gemini-2.0-flash"
+    assert config.model_name == DEFAULT_GEMINI_MODEL
     assert config.google_cloud_project is None
     assert config.google_api_key is None
 
@@ -52,7 +52,7 @@ def test_subclass_config(monkeypatch):
     config = cast(Any, KafkaConfig)(_env_file=None)
     assert config.kafka_bootstrap_servers == "broker:19092"
     # Base fields still work
-    assert config.model_name == "gemini-2.0-flash"
+    assert config.model_name == DEFAULT_GEMINI_MODEL
 
 
 def test_load_config_from_env_file(tmp_path: Path):
@@ -94,3 +94,44 @@ def test_validation_errors_never_embed_the_input(monkeypatch):
     rendered = str(info.value)
     assert "AIza-very-secret" not in rendered
     assert "not-an-int-secret" not in rendered
+
+
+#: Gemini models Google has shut down (ai.google.dev/gemini-api/docs/deprecations).
+#: A default on this list fails every model call of a fresh install.
+SHUT_DOWN_GEMINI_MODELS = frozenset(
+    {
+        "gemini-1.0-pro",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-001",
+        "gemini-2.0-flash-lite",
+    }
+)
+
+
+def test_default_model_is_one_constant_and_still_served(monkeypatch):
+    """Regression: the default was gemini-2.0-flash, shut down on 2026-06-01,
+    hardcoded in two places. It now has one source of truth."""
+    from orrery_core.agent.base import resolve_model
+
+    for name in ("MODEL_PROVIDER", "MODEL_NAME", "GEMINI_MODEL_VERSION"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert DEFAULT_GEMINI_MODEL not in SHUT_DOWN_GEMINI_MODELS
+    assert cast(Any, AgentConfig)(_env_file=None).model_name == DEFAULT_GEMINI_MODEL
+    assert resolve_model() == DEFAULT_GEMINI_MODEL
+
+
+def test_shipped_configuration_does_not_name_a_shut_down_model():
+    """.env.example, docker-compose and the Helm chart are what a new user copies."""
+    root = Path(__file__).resolve().parents[2]
+    for relative in (
+        ".env.example",
+        "docker-compose.yml",
+        "deploy/helm/orrery-assistant/values.yaml",
+    ):
+        text = (root / relative).read_text()
+        for model in SHUT_DOWN_GEMINI_MODELS:
+            assert f"{model}\n" not in text and f"{model}}}" not in text, (relative, model)

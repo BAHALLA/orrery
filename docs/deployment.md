@@ -122,9 +122,16 @@ existingSecret: orrery-assistant-secrets
 
 config:
   MODEL_PROVIDER: gemini
-  MODEL_NAME: gemini-2.0-flash
+  MODEL_NAME: gemini-3.6-flash
   KAFKA_BOOTSTRAP_SERVERS: kafka.data.svc.cluster.local:9092
   PROMETHEUS_URL: http://prometheus.observability.svc.cluster.local:9090
+
+# Sessions and pending approvals in Postgres (DATABASE_URL from Step 2).
+# Required for more than one replica: the chart refuses to render
+# autoscaling on the in-memory backend, and the server refuses to start
+# as a replica without DATABASE_URL.
+persistence:
+  backend: postgres
 
 autoscaling:
   enabled: true
@@ -143,7 +150,17 @@ ingress:
   tls:
     - secretName: agents-tls
       hosts: [agents.example.com]
+
+# An ingress requires auth (Step 4). The chart refuses to render a public
+# ingress in front of an anonymous API unless auth.allowAnonymous=true.
+auth:
+  enabled: true
+  algorithm: RS256
+  jwksUrl: https://YOUR_TENANT.auth0.com/.well-known/jwks.json
 ```
+
+The chart's own defaults (one replica, in-memory state, no ingress) are for
+evaluation: they install with no database and no identity provider.
 
 ---
 
@@ -342,6 +359,10 @@ Check the logs — the most common causes are:
 - `DatabaseSessionService` complains about missing driver: ensure the
   image was built with `uv sync --extra postgres` (the provided
   `Dockerfile` includes this by default).
+- `ORRERY_MULTI_REPLICA is set, so this server runs as one of several
+  replicas, but its state is per-process`: more than one replica needs
+  `persistence.backend: postgres` **and** a `DATABASE_URL` the pod actually
+  receives (check `existingSecret` / the secrets volume).
 - `auth.enabled=true` but `JWT_SECRET` is unset (HS256) or
   `JWT_JWKS_URL` is unset (RS256). `create_app()` calls
   `cfg.jwt.validate()` at startup precisely so this fails fast — look
