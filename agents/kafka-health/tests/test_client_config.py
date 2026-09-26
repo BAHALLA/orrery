@@ -234,7 +234,7 @@ def test_loaded_from_environment(monkeypatch):
             },
             "must be https://",
         ),
-        ({"kafka_ssl_ca_location": "/tmp/ca.pem"}, "does not use TLS"),
+        ({"kafka_ssl_ca_location": "/etc/kafka/ca.pem"}, "does not use TLS"),
         (
             {"kafka_security_protocol": "SSL", "kafka_ssl_ca_location": "/nope/ca.pem"},
             "does not exist",
