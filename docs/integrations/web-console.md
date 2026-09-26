@@ -36,6 +36,22 @@ In a deployment, set:
 | `ORRERY_CORS_ORIGINS` | *(empty)* | Only needed when the console is served from a different origin than the API. Never `*` — a wildcard disables credentialed CORS (with a warning). |
 | `ORRERY_CHAT_RATE_LIMIT` | `30/minute` | Per-caller ceiling on `POST /chat`. |
 | `ORRERY_SELFTEST_RATE_LIMIT` | `10/minute` | Per-caller ceiling on the environment check. |
+| `ORRERY_RATE_LIMIT_STORAGE_URI` | `memory://` | Where rate-limit counters live. In memory, each replica counts separately, so N replicas allow N× the limit (logged at startup). Point every replica at one store, e.g. `redis://redis:6379` (needs the `redis` package), to enforce the limit per caller. An unknown scheme fails at startup. |
+| `ORRERY_CSP_EXTRA_ORIGINS` | *(empty)* | Comma-separated origins the console may `connect`/`frame` besides its own. The `JWT_ISSUER` origin is allowed automatically for SSO. Needed only for a console built with `VITE_API_BASE_URL` on another origin. |
+
+### Security headers
+
+Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin` and a
+restrictive `Permissions-Policy`. JSON responses are `Cache-Control: no-store`
+because they carry transcripts and identity. The console is served under a
+Content-Security-Policy that allows only its own scripts and styles: no inline
+script, no `eval`, no CDN, `frame-ancestors 'none'`. The console keeps a bearer
+token in the browser, so this is what makes a future injection sink harmless
+instead of a token theft. It was verified in a real browser against the built
+bundle, including the chat view's markdown and syntax highlighting (zero
+violations). `/docs` and `/redoc`, which load from a CDN and are served only when
+enabled, are exempt from the CSP. Set HSTS at your TLS-terminating ingress.
 
 The Docker image builds the bundle in a `node:` stage and copies it into the
 Python runtime, so the runtime image stays Node-free.

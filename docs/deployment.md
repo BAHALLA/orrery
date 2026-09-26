@@ -384,6 +384,14 @@ Check the logs — the most common causes are:
 
 ### Readiness probe flaps
 
+`/readyz` returns `503 {"status": "not_ready", "checks": {"database": "unreachable"}}`
+when the session database (`DATABASE_URL`) does not accept a connection within
+2 s. The result is cached for 5 s, so probes never pile up connections. It
+deliberately ignores the model provider and the integrations (Kafka,
+Kubernetes, …): those are what the agent diagnoses, and `/onboarding/selftest`
+reports on them. `/healthz` (liveness) checks nothing external, so a database
+outage takes pods out of rotation without restarting them.
+
 The startup probe allows up to 60 seconds (12 × 5s). If the agent is
 still not ready after that, look for slow cold starts from:
 
