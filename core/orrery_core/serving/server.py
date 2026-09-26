@@ -76,7 +76,9 @@ from .onboarding import (
     check_model_connectivity,
     run_probes,
 )
+from .readiness import ReadinessCheck
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
+from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
 
 logger = logging.getLogger("orrery.server")
 
@@ -124,6 +126,8 @@ class ServerConfig:
     chat_rate_limit: str = "30/minute"
     selftest_rate_limit: str = "10/minute"
     docs_enabled: bool | None = None
+    rate_limit_storage_uri: str = "memory://"
+    csp_extra_origins: tuple[str, ...] = ()
 
     @property
     def serve_docs(self) -> bool:
@@ -157,6 +161,13 @@ class ServerConfig:
           limit on ``POST /onboarding/selftest``.
         - ``ORRERY_DOCS_ENABLED`` — serve the interactive ``/docs`` schema.
           Unset defaults to *on only when auth is off* (see :attr:`serve_docs`).
+        - ``ORRERY_RATE_LIMIT_STORAGE_URI`` (default ``memory://``) — where the
+          rate-limit counters live. In memory, each replica counts on its own,
+          so N replicas allow N times the limit; point every replica at one
+          store (e.g. ``redis://redis:6379``, which needs the ``redis``
+          package) to enforce the limit per caller across the deployment.
+        - ``ORRERY_CSP_EXTRA_ORIGINS`` (comma-separated) — origins the web
+          console may connect to besides its own and ``JWT_ISSUER``'s.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
@@ -170,6 +181,11 @@ class ServerConfig:
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
             selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
             docs_enabled=(docs in ("1", "true", "yes")) if docs else None,
+            rate_limit_storage_uri=os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
+            or "memory://",
+            csp_extra_origins=tuple(
+                o.strip() for o in os.getenv("ORRERY_CSP_EXTRA_ORIGINS", "").split(",") if o.strip()
+            ),
         )
 
 
@@ -434,7 +450,12 @@ def create_app(
     # actually differs — a `/chat` turn buys tokens, `/confirmations/pending` is a
     # cheap read the console polls on a timer and must not be throttled into
     # failure.
-    limiter = Limiter(key_func=rate_limit_key)
+    limiter = Limiter(key_func=rate_limit_key, storage_uri=cfg.rate_limit_storage_uri)
+    if cfg.rate_limit_storage_uri.startswith("memory://") and os.getenv(MULTI_REPLICA_ENV):
+        logger.warning(
+            "Rate limits are counted per replica (ORRERY_RATE_LIMIT_STORAGE_URI=memory://): "
+            "with N replicas a caller gets N times the configured limit."
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -463,6 +484,13 @@ def create_app(
         )
 
     api.add_exception_handler(RateLimitExceeded, _rate_limited)
+
+    # Registered before CORS so its headers are on every response, including
+    # CORS preflights and errors.
+    api.add_middleware(
+        SecurityHeadersMiddleware,
+        csp=build_csp(trusted_origins(cfg.jwt.issuer, cfg.csp_extra_origins)),
+    )
 
     if cfg.cors_origins:
         # A wildcard origin and credentials are mutually exclusive in any sane
@@ -536,9 +564,20 @@ def create_app(
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    readiness = ReadinessCheck(cfg.database_url)
+
     @api.get("/readyz")
-    async def readyz() -> dict[str, str]:
-        return {"status": "ready"}
+    async def readyz() -> JSONResponse:
+        """Ready when the session database answers (see ``readiness.py``).
+
+        Only this server's own hard dependency: never the model provider or
+        the integrations the agent diagnoses.
+        """
+        result = await readiness.check()
+        return JSONResponse(
+            status_code=200 if result.ready else 503,
+            content={"status": "ready" if result.ready else "not_ready", "checks": result.checks},
+        )
 
     @api.post("/chat", response_model=ChatResponse)
     @limiter.limit(cfg.chat_rate_limit)
