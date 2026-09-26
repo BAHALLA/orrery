@@ -63,7 +63,7 @@ Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` so `
 | `save_note` | Save a note with optional tags |
 | `list_notes` | List all notes, optionally filter by tag |
 | `search_notes` | Search notes by keyword |
-| `delete_note` | Delete a note by ID |
+| `delete_note` | Delete a note by ID (ids are never reused) |
 | `set_preference` | Save a user preference |
 | `get_preferences` | Get all user preferences |
 
@@ -71,7 +71,7 @@ Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` so `
 
 | Tool | Description |
 |------|-------------|
-| `add_team_bookmark` | Add a shared bookmark |
+| `add_team_bookmark` | Add or update (by name) a shared bookmark — requires `operator` and confirmation |
 | `list_team_bookmarks` | List all team bookmarks |
 
 ## Running

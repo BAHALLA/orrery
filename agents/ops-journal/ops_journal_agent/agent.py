@@ -1,4 +1,5 @@
 from orrery_core import create_agent, load_agent_env
+from orrery_core.security.guardrails import require_confirmation
 
 from .tools import (
     add_team_bookmark,
@@ -36,6 +37,8 @@ root_agent = create_agent(
         "- After a write (save/delete/set), confirm what was written by echoing the "
         "tool's returned result, not your intent.\n"
         "- When a user reports a finding, offer once to save it — don't nag.\n"
+        "- add_team_bookmark is visible to the whole team and needs confirmation: if it "
+        "returns confirmation_required, relay that to the user and wait for their answer.\n"
         "- Answer directly; no filler."
     ),
     tools=[
@@ -53,4 +56,7 @@ root_agent = create_agent(
         add_team_bookmark,
         list_team_bookmarks,
     ],
+    # Gates the @confirm tools (add_team_bookmark). Wired per agent rather than
+    # as a plugin so it also holds inside AgentTool sub-sessions and `adk web`.
+    before_tool_callback=require_confirmation(),
 )
