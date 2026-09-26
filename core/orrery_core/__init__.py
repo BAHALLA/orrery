@@ -56,9 +56,11 @@ from .security.auth import AUTH_STATE_KEY as AUTH_STATE_KEY
 from .security.auth import AuthContext as AuthContext
 from .security.auth import AuthError as AuthError
 from .security.auth import AuthPlugin as AuthPlugin
+from .security.auth import AuthUnavailableError as AuthUnavailableError
 from .security.auth import JWTConfig as JWTConfig
 from .security.auth import extract_role as extract_role
 from .security.auth import verify_token as verify_token
+from .security.auth import verify_token_async as verify_token_async
 from .security.confirmation_flow import approval_refusal as approval_refusal
 from .security.confirmation_flow import blocked_payload as blocked_payload
 from .security.confirmation_flow import hash_args as hash_args

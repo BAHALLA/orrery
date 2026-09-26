@@ -123,6 +123,35 @@ def test_chat_with_invalid_token_returns_401(app_with_auth):
     assert r.json()["detail"] == "Invalid token"
 
 
+def test_unreachable_idp_returns_503_not_401_or_500(app_with_auth):
+    """An IdP outage is not the caller's fault: a 401 would make the console
+    discard a valid token, and an unhandled error would be a 500 traceback."""
+    from orrery_core.security.auth import AuthUnavailableError
+
+    client = TestClient(app_with_auth)
+    with patch(
+        "orrery_core.serving.server.verify_token_async",
+        AsyncMock(side_effect=AuthUnavailableError("JWKS endpoint unreachable")),
+    ):
+        r = client.get("/me", headers={"Authorization": "Bearer a.b.c"})
+
+    assert r.status_code == 503
+    assert r.headers["Retry-After"] == "5"
+    assert "unreachable" not in r.text  # no internals in the response
+
+
+def test_create_app_refuses_a_short_hmac_secret(patched_runner):
+    from orrery_core.security.auth import AuthError
+
+    with pytest.raises(AuthError, match="too short"):
+        create_app(
+            root_agent=MagicMock(name="root"),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret="x")),
+        )
+
+
 def test_chat_with_valid_token_dispatches_to_runner(app_with_auth, patched_runner, mock_session):
     token = _hs256(
         {

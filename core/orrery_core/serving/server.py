@@ -61,7 +61,14 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
 from ..concurrency import configure_default_executor
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
-from ..security.auth import AUTH_STATE_KEY, AuthContext, AuthError, JWTConfig, verify_token
+from ..security.auth import (
+    AUTH_STATE_KEY,
+    AuthContext,
+    AuthError,
+    AuthUnavailableError,
+    JWTConfig,
+    verify_token_async,
+)
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
 from .onboarding import (
@@ -468,9 +475,19 @@ def create_app(
             )
 
         try:
-            context = verify_token(credentials.credentials, cfg.jwt)
+            context = await verify_token_async(credentials.credentials, cfg.jwt)
             request.state.auth_subject = context.subject
             return context
+        except AuthUnavailableError as exc:
+            # The IdP's key set is unreachable. Not the caller's fault and not
+            # something a new token fixes — say "try again", not "bad token",
+            # and never let it escape as a 500 with a traceback.
+            logger.error("JWKS endpoint unreachable, cannot verify tokens: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication temporarily unavailable",
+                headers={"Retry-After": "5"},
+            ) from exc
         except AuthError as exc:
             logger.info("Auth rejected for client %s: %s", request.client, exc)
             raise HTTPException(
