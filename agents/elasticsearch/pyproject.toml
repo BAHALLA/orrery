@@ -5,7 +5,7 @@ description = "Agent for monitoring Elasticsearch clusters (REST + ECK CRs on Ku
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "orrery-core",
+    "orrery-core[kubernetes]",
     "requests>=2.34.2",
     "kubernetes>=36.0.3",
 ]

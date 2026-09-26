@@ -16,6 +16,7 @@ from google.adk.evaluation.agent_evaluator import AgentEvaluator
 
 import k8s_health_agent.tools as _tools_mod
 from orrery_core import load_agent_env
+from orrery_core.tools.kube import clear_client_cache
 
 EVAL_DIR = os.path.join(os.path.dirname(__file__), "evals")
 
@@ -37,11 +38,11 @@ def _has_llm_credentials() -> bool:
 @pytest.fixture(autouse=True)
 def _reset_k8s_clients():
     """Reset cached K8s clients between tests."""
-    _tools_mod._kube_config_loaded = False
+    clear_client_cache()
     _tools_mod._core_api_client = None
     _tools_mod._apps_api_client = None
     yield
-    _tools_mod._kube_config_loaded = False
+    clear_client_cache()
     _tools_mod._core_api_client = None
     _tools_mod._apps_api_client = None
 
@@ -228,7 +229,7 @@ async def test_agent_eval():
     with (
         patch("k8s_health_agent.tools._core_api", return_value=core_api),
         patch("k8s_health_agent.tools._apps_api", return_value=apps_api),
-        patch("k8s_health_agent.tools._load_kube_config"),
+        patch("k8s_health_agent.tools._api_client"),
         patch("k8s_health_agent.tools.client") as mock_client,
         patch("k8s_health_agent.operators._custom_objects_api", return_value=MagicMock()),
     ):

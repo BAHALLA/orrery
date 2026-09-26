@@ -56,22 +56,19 @@ _MAX_OWNER_DEPTH = 6
 def _custom_objects_api() -> client.CustomObjectsApi:
     global _custom_objects_client
     if _custom_objects_client is None:
-        _tools._load_kube_config()
-        _custom_objects_client = client.CustomObjectsApi()
+        _custom_objects_client = client.CustomObjectsApi(_tools._api_client())
     return _custom_objects_client
 
 
 def _apiext_api() -> client.ApiextensionsV1Api:
     global _apiext_client
     if _apiext_client is None:
-        _tools._load_kube_config()
-        _apiext_client = client.ApiextensionsV1Api()
+        _apiext_client = client.ApiextensionsV1Api(_tools._api_client())
     return _apiext_client
 
 
 def _batch_api() -> client.BatchV1Api:
-    _tools._load_kube_config()
-    return client.BatchV1Api()
+    return client.BatchV1Api(_tools._api_client())
 
 
 def _get_owner_refs(obj: dict[str, Any]) -> list[dict[str, Any]]:

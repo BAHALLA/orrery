@@ -47,6 +47,13 @@ server = [
     "uvicorn[standard]>=0.53.0",
     "slowapi>=0.1.10",
 ]
+# Install with: uv sync --extra kubernetes
+# The shared, timeout-bounded Kubernetes API client (orrery_core.tools.kube)
+# used by every agent that talks to a cluster. Not re-exported from
+# orrery_core, so the core itself never needs it.
+kubernetes = [
+    "kubernetes>=36.0.3",
+]
 # Install with: uv sync --extra otel
 # OpenTelemetry tracing: configure_tracing() + TracingPlugin export ADK's
 # native spans (agent / tool / LLM) to an OTLP collector (Tempo, Jaeger,

@@ -21,18 +21,19 @@ from k8s_health_agent.operators import (
     get_owner_chain,
     list_custom_resources,
 )
+from orrery_core.tools.kube import clear_client_cache
 
 
 @pytest.fixture(autouse=True)
 def _reset_clients():
     """Reset cached API clients between tests."""
-    _tools._kube_config_loaded = False
+    clear_client_cache()
     _tools._core_api_client = None
     _tools._apps_api_client = None
     _ops._custom_objects_client = None
     _ops._apiext_client = None
     yield
-    _tools._kube_config_loaded = False
+    clear_client_cache()
     _tools._core_api_client = None
     _tools._apps_api_client = None
     _ops._custom_objects_client = None

@@ -18,15 +18,16 @@ from elasticsearch_agent.eck import (
     list_eck_clusters,
     list_kibana_instances,
 )
+from orrery_core.tools.kube import clear_client_cache
 
 
 @pytest.fixture(autouse=True)
 def _reset_client_cache():
-    _eck._kube_config_loaded = False
+    clear_client_cache()
     _eck._custom_objects_client = None
     _eck._core_client = None
     yield
-    _eck._kube_config_loaded = False
+    clear_client_cache()
     _eck._custom_objects_client = None
     _eck._core_client = None
 

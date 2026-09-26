@@ -16,11 +16,12 @@ import asyncio
 import logging
 from typing import Any
 
-from kubernetes import client, config
+from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 from orrery_core import AgentConfig, ToolResult, confirm, default_registry
 from orrery_core.security.validation import K8S_NAME_PATTERN, validate_string
+from orrery_core.tools.kube import shared_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,6 @@ class StrimziK8sConfig(AgentConfig):
 
 _config = StrimziK8sConfig()
 
-_kube_config_loaded = False
 _custom_objects_client: client.CustomObjectsApi | None = None
 
 # Strimzi CRD coordinates — kept in sync with orrery_core.StrimziDetector.watched.
@@ -49,25 +49,15 @@ _PLURAL_MM2 = "kafkamirrormaker2s"
 _PLURAL_REBALANCE = "kafkarebalances"
 
 
-def _load_kube_config() -> None:
-    global _kube_config_loaded
-    if _kube_config_loaded:
-        return
-    try:
-        if _config.kubeconfig_path:
-            config.load_kube_config(config_file=_config.kubeconfig_path)
-        else:
-            config.load_kube_config()
-    except config.ConfigException:
-        config.load_incluster_config()
-    _kube_config_loaded = True
+def _api_client() -> client.ApiClient:
+    """The shared, timeout-bounded ``ApiClient`` (see ``orrery_core.tools.kube``)."""
+    return shared_api_client(_config.kubeconfig_path)
 
 
 def _custom_objects_api() -> client.CustomObjectsApi:
     global _custom_objects_client
     if _custom_objects_client is None:
-        _load_kube_config()
-        _custom_objects_client = client.CustomObjectsApi()
+        _custom_objects_client = client.CustomObjectsApi(_api_client())
     return _custom_objects_client
 
 

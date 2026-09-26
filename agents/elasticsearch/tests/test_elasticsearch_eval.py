@@ -15,6 +15,7 @@ from google.adk.evaluation.agent_evaluator import AgentEvaluator
 import elasticsearch_agent.eck as _eck_mod
 import elasticsearch_agent.tools as _tools_mod
 from orrery_core import load_agent_env
+from orrery_core.tools.kube import clear_client_cache
 
 EVAL_DIR = os.path.join(os.path.dirname(__file__), "evals")
 
@@ -36,12 +37,12 @@ def _has_llm_credentials() -> bool:
 @pytest.fixture(autouse=True)
 def _reset_caches():
     _tools_mod._session = None
-    _eck_mod._kube_config_loaded = False
+    clear_client_cache()
     _eck_mod._custom_objects_client = None
     _eck_mod._core_client = None
     yield
     _tools_mod._session = None
-    _eck_mod._kube_config_loaded = False
+    clear_client_cache()
     _eck_mod._custom_objects_client = None
     _eck_mod._core_client = None
 
