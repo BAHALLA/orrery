@@ -320,6 +320,7 @@ def test_default_plugins_composition():
     # record; PII redaction sits before audit so the audit log records
     # redacted values; the output cap runs last among after-tool observers.
     expected_names = [
+        "identity_state_guard",
         "safety_screen",
         "pii_redaction",
         "audit",
@@ -344,6 +345,7 @@ def test_default_plugins_with_memory():
     plugins = default_plugins(enable_memory=True, enable_tracing=False)
 
     expected_names = [
+        "identity_state_guard",
         "safety_screen",
         "pii_redaction",
         "audit",

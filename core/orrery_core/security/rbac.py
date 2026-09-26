@@ -301,7 +301,9 @@ def authorize(
 
 # ── Role management ─────────────────────────────────────────────────
 
-_ROLE_LOCKED_KEY = "_role_set_by_server"
+#: Marks ``user_role`` as set by a trusted entry point (see set_user_role).
+ROLE_LOCKED_STATE_KEY = "_role_set_by_server"
+_ROLE_LOCKED_KEY = ROLE_LOCKED_STATE_KEY
 _VALID_ROLES = frozenset({"viewer", "operator", "admin"})
 
 

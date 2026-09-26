@@ -18,6 +18,10 @@ Usage::
 Plugin execution order matters — ``default_plugins()`` returns them in the
 correct sequence (each step sees the call before the next; ErrorHandler last):
 
+0. IdentityStateGuardPlugin (reverts any tool-call write to identity and
+   authorization state: role, auth payload, autonomy level, actor,
+   confirmation mode/decision. First, because both ADK tool chains
+   early-exit and a later guard could be skipped.)
 1. TracingPlugin       (span wraps everything — optional, [otel] extra)
 2. SafetyScreenPlugin  (blocks prompt-injection *messages* before the model
    runs, and neutralizes injected text in *tool results* — on by default,
@@ -71,6 +75,7 @@ from .autonomy_plugin import (
 )
 from .error_handler_plugin import ErrorHandlerPlugin
 from .guardrails_plugin import GuardrailsPlugin
+from .identity_guard_plugin import GUARDED_STATE_KEYS, IdentityStateGuardPlugin
 from .memory_plugin import MemoryPlugin
 from .metrics_plugin import MetricsPlugin
 from .output_cap_plugin import DEFAULT_MAX_TOOL_RESULT_BYTES, ToolOutputCapPlugin
@@ -87,7 +92,9 @@ __all__ = [
     "AuthPlugin",
     "AutonomyPlugin",
     "ErrorHandlerPlugin",
+    "GUARDED_STATE_KEYS",
     "GuardrailsPlugin",
+    "IdentityStateGuardPlugin",
     "MemoryPlugin",
     "MetricsPlugin",
     "PIIRedactionPlugin",
@@ -145,6 +152,7 @@ def default_plugins(
     enable_safety_screen: bool | None = None,
     enable_pii_redaction: bool | None = None,
     redact_ips: bool | None = None,
+    enable_identity_guard: bool = True,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
@@ -195,6 +203,10 @@ def default_plugins(
             ``None`` resolves from ``ORRERY_REDACT_IPS`` and defaults to
             **off** — an SRE agent that cannot see pod/broker IPs cannot
             diagnose much; enable for compliance-bound deployments.
+        enable_identity_guard: Whether to revert tool-call writes to identity
+            and authorization state (``IdentityStateGuardPlugin``). On by
+            default; disable only in a test that needs to write those keys
+            from a tool.
     """
     if enable_tracing is None:
         enable_tracing = os.getenv("OTEL_TRACING_ENABLED", "").strip().lower() in {
@@ -209,6 +221,12 @@ def default_plugins(
     )
 
     plugins: list[BasePlugin] = []
+
+    # First, ahead of everything: both of ADK's tool chains stop at the first
+    # callback that answers or replaces, so a guard placed later could be
+    # skipped by an earlier plugin's return.
+    if enable_identity_guard:
+        plugins.append(IdentityStateGuardPlugin())
 
     if enable_tracing:
         # Imported lazily: tracing.py imports OpenTelemetry at module load, so
