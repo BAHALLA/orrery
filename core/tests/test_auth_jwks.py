@@ -9,17 +9,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import json
+import socket
 import threading
 import time
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.error import URLError
 
 import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jwt import jwks_client
 from jwt.algorithms import RSAAlgorithm
 
 from orrery_core.security import auth
@@ -52,29 +52,46 @@ def _token(private: rsa.RSAPrivateKey, kid: str | None, **claims: Any) -> str:
 
 
 class FakeIdP:
-    """Stands in for the JWKS endpoint at the socket boundary; counts fetches.
+    """A real HTTP server on localhost serving a JWKS document; counts fetches.
 
-    Replaces ``urllib.request.urlopen`` only, so PyJWT's own ``fetch_data``
-    (error translation, cache writes) runs exactly as in production.
+    A real socket rather than a patched urllib: PyJWT's fetch path has changed
+    between releases (``urlopen`` → ``build_opener().open``), and this exercises
+    whichever one is installed, caching and error translation included.
     """
 
     def __init__(self, *keys: dict[str, Any]) -> None:
         self.keys = list(keys)
         self.fetches = 0
         self.delay = 0.0
-        self.down = False
-        self.timeouts: list[float] = []
         self._lock = threading.Lock()
+        idp = self
 
-    def urlopen(self, request: Any, *, timeout: float, context: Any = None) -> io.BytesIO:
-        with self._lock:
-            self.fetches += 1
-            self.timeouts.append(timeout)
-        if self.delay:
-            time.sleep(self.delay)
-        if self.down:
-            raise URLError("connection refused")
-        return io.BytesIO(json.dumps({"keys": list(self.keys)}).encode())
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                with idp._lock:
+                    idp.fetches += 1
+                if idp.delay:
+                    time.sleep(idp.delay)
+                body = json.dumps({"keys": list(idp.keys)}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 — stdlib name
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}/jwks"
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        self._thread.start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
 
 
 class FakeClock:
@@ -96,13 +113,19 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-def idp(monkeypatch, key_a, clock) -> FakeIdP:
-    """A resolver for JWKS_URL wired to a FakeIdP and a controllable clock."""
+def idp(monkeypatch, key_a, clock) -> Iterator[FakeIdP]:
+    """A FakeIdP, and CONFIG's JWKS URL resolved against it with a fake clock."""
     fake = FakeIdP(_jwk(key_a, "key-a"))
-    monkeypatch.setattr(jwks_client.urllib.request, "urlopen", fake.urlopen)
-    resolver = auth._JwksKeyResolver(JWKS_URL, clock=clock)
+    resolver = auth._JwksKeyResolver(fake.url, clock=clock)
     monkeypatch.setattr(auth, "_jwks_resolvers", {JWKS_URL: resolver})
-    return fake
+    yield fake
+    fake.close()
+
+
+def _unused_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 class TestVerification:
@@ -112,10 +135,10 @@ class TestVerification:
         assert (ctx.subject, ctx.role) == ("bob", "admin")
         assert idp.fetches == 1
 
-    def test_fetch_is_bounded_by_a_short_timeout(self, idp, key_a):
-        verify_token(_token(key_a, "key-a"), CONFIG)
+    def test_fetch_is_bounded_by_a_short_timeout(self, idp):
+        resolver = auth._jwks_resolvers[JWKS_URL]
 
-        assert idp.timeouts == [auth.JWKS_FETCH_TIMEOUT_SECONDS]
+        assert resolver._client.timeout == auth.JWKS_FETCH_TIMEOUT_SECONDS
 
     def test_key_set_is_cached_across_tokens(self, idp, key_a):
         for _ in range(5):
@@ -223,9 +246,11 @@ class TestUnknownKidCannotDriveFetches:
 
 
 class TestIdPOutage:
-    def test_unreachable_idp_is_unavailable_not_a_bad_token(self, idp, key_a):
+    def test_unreachable_idp_is_unavailable_not_a_bad_token(self, monkeypatch, key_a):
         """An outage isn't the caller's fault and a new token won't fix it."""
-        idp.down = True
+        nothing_listening = f"http://127.0.0.1:{_unused_port()}/jwks"
+        resolver = auth._JwksKeyResolver(nothing_listening)
+        monkeypatch.setattr(auth, "_jwks_resolvers", {JWKS_URL: resolver})
 
         with pytest.raises(AuthUnavailableError):
             verify_token(_token(key_a, "key-a"), CONFIG)
