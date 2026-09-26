@@ -7,6 +7,7 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | Agent | Variable | Default | Description |
 |-------|----------|---------|-------------|
 | **kafka-health** | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker address(es) |
+| **kafka-health** | `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | `SSL`, `SASL_PLAINTEXT` or `SASL_SSL` for secured clusters; the TLS/SASL settings are listed in the [kafka-health README](https://github.com/BAHALLA/orrery/tree/main/agents/kafka-health#connecting-to-a-secured-cluster-tls--sasl) and validated at startup |
 | **k8s-health** | `KUBECONFIG_PATH` | — | Path to kubeconfig file (else `~/.kube/config`, else in-cluster service account) |
 | **k8s-health**, **kafka-health** (Strimzi), **elasticsearch** (ECK) | `ORRERY_K8S_CONNECT_TIMEOUT_SECONDS` | `5` | Seconds to connect to the Kubernetes API server |
 | same | `ORRERY_K8S_READ_TIMEOUT_SECONDS` | `30` | Seconds to wait for the next bytes of an API response. Bounds every call that does not set its own timeout; a hung call is retried at most once (reads only, never mutations), so it holds a worker thread for about two read timeouts at most. Non-positive or non-finite values fall back to the default |

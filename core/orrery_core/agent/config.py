@@ -31,6 +31,11 @@ class AgentConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Every config holds credentials (at least google_api_key, inherited
+        # here). Without this, a failing validator's error embeds the whole
+        # input, secrets included, as `input_value={...}`, and that error is
+        # what a misconfigured deployment prints as it crashes at boot.
+        hide_input_in_errors=True,
     )
 
     # ── LLM provider settings ────────────────────────────────────────

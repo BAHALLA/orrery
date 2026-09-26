@@ -46,6 +46,46 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092   # defaults to localhost:9092
 # KUBECONFIG_PATH=/path/to/kubeconfig
 ```
 
+### Connecting to a secured cluster (TLS / SASL)
+
+Settings are validated at startup. A cluster that needs SCRAM but was given
+PLAIN, or a client certificate without its key, fails at boot with the variable
+to fix, not as a broker timeout on the first tool call.
+
+| Variable | Values | Notes |
+|---|---|---|
+| `KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` (default), `SSL`, `SASL_PLAINTEXT`, `SASL_SSL` | |
+| `KAFKA_SASL_MECHANISM` | `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`, `OAUTHBEARER` | required with `SASL_*` |
+| `KAFKA_SASL_USERNAME` / `KAFKA_SASL_PASSWORD` | | for PLAIN / SCRAM. Keep the password in a Secret. |
+| `KAFKA_SASL_OAUTHBEARER_CLIENT_ID` / `_CLIENT_SECRET` / `_TOKEN_ENDPOINT_URL` / `_SCOPE` | | OIDC client credentials; the token endpoint must be `https://` |
+| `KAFKA_SSL_CA_LOCATION` | path | CA bundle for a private CA (the system trust store otherwise) |
+| `KAFKA_SSL_CERTIFICATE_LOCATION` / `KAFKA_SSL_KEY_LOCATION` / `KAFKA_SSL_KEY_PASSWORD` | paths | mutual TLS; certificate and key go together |
+| `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM` | `https` (default), `none` | `none` skips broker hostname verification, and logs a warning |
+| `KAFKA_CLIENT_PROPERTIES` | JSON object | any other librdkafka property, e.g. `{"client.id": "orrery"}`. It cannot override the settings above. |
+
+```bash
+# Confluent Cloud / Aiven
+KAFKA_BOOTSTRAP_SERVERS=pkc-xxxx.europe-west1.gcp.confluent.cloud:9092
+KAFKA_SECURITY_PROTOCOL=SASL_SSL
+KAFKA_SASL_MECHANISM=PLAIN
+KAFKA_SASL_USERNAME=<api-key>
+KAFKA_SASL_PASSWORD=<api-secret>
+
+# Strimzi TLS listener with a KafkaUser (type: tls)
+KAFKA_BOOTSTRAP_SERVERS=my-cluster-kafka-bootstrap.kafka:9093
+KAFKA_SECURITY_PROTOCOL=SSL
+KAFKA_SSL_CA_LOCATION=/etc/kafka/ca/ca.crt                 # <cluster>-cluster-ca-cert
+KAFKA_SSL_CERTIFICATE_LOCATION=/etc/kafka/user/user.crt    # the KafkaUser Secret
+KAFKA_SSL_KEY_LOCATION=/etc/kafka/user/user.key
+
+# Amazon MSK with SCRAM
+KAFKA_SECURITY_PROTOCOL=SASL_SSL
+KAFKA_SASL_MECHANISM=SCRAM-SHA-512
+```
+
+MSK **IAM** authentication is not supported: it needs a token-signing callback,
+not configuration. Use SCRAM or mTLS on MSK.
+
 See the root [README](../../README.md#configuration) for Google AI / Vertex AI config.
 
 ## Running

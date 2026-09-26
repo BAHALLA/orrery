@@ -95,6 +95,9 @@ spec:
               mountPath: {{ .Values.secretsVolume.mountPath }}
               readOnly: true
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -106,6 +109,9 @@ spec:
         - name: orrery-secrets
           secret:
             secretName: {{ .Values.secretsVolume.secretName }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

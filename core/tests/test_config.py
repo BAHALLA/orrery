@@ -72,3 +72,25 @@ def test_config_extra_fields_ignored(monkeypatch):
     monkeypatch.setenv("SOME_RANDOM_VAR", "value")
     config = AgentConfig(_env_file=None)
     assert not hasattr(config, "some_random_var")
+
+
+def test_validation_errors_never_embed_the_input(monkeypatch):
+    """Every config holds credentials. A failing validator's error must not
+    print them: that error is what a misconfigured deployment logs at boot."""
+    from pydantic import ValidationError, model_validator
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-very-secret")
+
+    class Strict(AgentConfig):
+        port: int = 0
+
+        @model_validator(mode="after")
+        def _always_fails(self) -> Strict:
+            raise ValueError("bad combination")
+
+    with pytest.raises(ValidationError) as info:
+        cast(Any, Strict)(_env_file=None, port="not-an-int-secret")
+
+    rendered = str(info.value)
+    assert "AIza-very-secret" not in rendered
+    assert "not-an-int-secret" not in rendered

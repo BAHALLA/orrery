@@ -56,7 +56,10 @@ def default_probes() -> list[IntegrationProbe]:
         IntegrationProbe(
             name="kafka",
             label="Kafka",
-            hint="Set KAFKA_BOOTSTRAP_SERVERS to a reachable broker list.",
+            hint=(
+                "Set KAFKA_BOOTSTRAP_SERVERS to a reachable broker list; for a secured "
+                "cluster also KAFKA_SECURITY_PROTOCOL and its TLS/SASL settings."
+            ),
             run=kafka,
         ),
         IntegrationProbe(
