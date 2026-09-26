@@ -112,6 +112,16 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /home/appuser/.cache
+            # Same mounts as the HTTP deployment: this worker runs the same agent
+            # (Kafka TLS files, the secrets volume ORRERY_SECRETS_DIR points at).
+            {{- if .Values.secretsVolume.enabled }}
+            - name: orrery-secrets
+              mountPath: {{ .Values.secretsVolume.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -119,6 +129,14 @@ spec:
         - name: cache
           emptyDir:
             sizeLimit: 512Mi
+        {{- if .Values.secretsVolume.enabled }}
+        - name: orrery-secrets
+          secret:
+            secretName: {{ .Values.secretsVolume.secretName }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.pubsubWorker.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

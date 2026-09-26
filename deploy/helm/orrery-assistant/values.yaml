@@ -124,6 +124,11 @@ config:
   CONTEXT_CACHE_TTL_SECONDS: "600"
   CONTEXT_CACHE_INTERVALS: "10"
   KAFKA_BOOTSTRAP_SERVERS: kafka.data.svc.cluster.local:9092
+  ## Secured clusters (validated at startup; see agents/kafka-health/README.md):
+  # KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  # KAFKA_SASL_MECHANISM: SCRAM-SHA-512
+  # KAFKA_SASL_USERNAME: orrery
+  # KAFKA_SSL_CA_LOCATION: /etc/kafka/ca/ca.crt   # mount via extraVolumes (below)
   PROMETHEUS_URL: http://prometheus.observability.svc.cluster.local:9090
   LOKI_URL: http://loki.observability.svc.cluster.local:3100
   ALERTMANAGER_URL: http://alertmanager.observability.svc.cluster.local:9093
@@ -176,6 +181,8 @@ secrets:
   # GOOGLE_API_KEY: ""
   # ANTHROPIC_API_KEY: ""
   # OPENAI_API_KEY: ""
+  # KAFKA_SASL_PASSWORD: ""
+  # KAFKA_SASL_OAUTHBEARER_CLIENT_SECRET: ""
   # ELASTICSEARCH_USERNAME: ""
   # ELASTICSEARCH_PASSWORD: ""
   # ELASTICSEARCH_API_KEY: ""
@@ -242,6 +249,24 @@ secretsVolume:
   enabled: false
   secretName: orrery-secrets-volume
   mountPath: /var/run/secrets/orrery
+
+## Extra volumes for files a setting points at by path, e.g. the CA and
+## client certificate of a TLS Kafka listener (KAFKA_SSL_*_LOCATION).
+## Mounted read-only by convention; the root filesystem stays read-only.
+extraVolumes: []
+#  - name: kafka-ca
+#    secret:
+#      secretName: my-cluster-cluster-ca-cert   # Strimzi cluster CA
+#  - name: kafka-user
+#    secret:
+#      secretName: orrery                       # Strimzi KafkaUser (type: tls)
+extraVolumeMounts: []
+#  - name: kafka-ca
+#    mountPath: /etc/kafka/ca
+#    readOnly: true
+#  - name: kafka-user
+#    mountPath: /etc/kafka/user
+#    readOnly: true
 
 networkPolicy:
   enabled: true

@@ -16,7 +16,7 @@ from confluent_kafka.admin import (
     OffsetSpec,
 )
 
-from orrery_core import AgentConfig, confirm, destructive, with_retry
+from orrery_core import confirm, destructive, with_retry
 from orrery_core.security.validation import (
     KAFKA_TOPIC_PATTERN,
     MAX_PARTITIONS,
@@ -26,13 +26,9 @@ from orrery_core.security.validation import (
     validate_string,
 )
 
+from .client_config import KafkaConfig, build_client_properties, describe_connection
+
 logger = logging.getLogger(__name__)
-
-
-class KafkaConfig(AgentConfig):
-    """Kafka-specific configuration."""
-
-    kafka_bootstrap_servers: str = "localhost:9092"
 
 
 # Loaded once at import time; agent.py calls load_agent_env() first.
@@ -44,7 +40,8 @@ _admin_client: AdminClient | None = None
 def _get_admin_client() -> AdminClient:
     global _admin_client
     if _admin_client is None:
-        _admin_client = AdminClient({"bootstrap.servers": _config.kafka_bootstrap_servers})
+        logger.info("Connecting Kafka admin client to %s", describe_connection(_config))
+        _admin_client = AdminClient(build_client_properties(_config))
     return _admin_client
 
 
