@@ -37,6 +37,7 @@ from .plugins import AuditPlugin as AuditPlugin
 from .plugins import AutonomyPlugin as AutonomyPlugin
 from .plugins import ErrorHandlerPlugin as ErrorHandlerPlugin
 from .plugins import GuardrailsPlugin as GuardrailsPlugin
+from .plugins import IdentityStateGuardPlugin as IdentityStateGuardPlugin
 from .plugins import MemoryPlugin as MemoryPlugin
 from .plugins import MetricsPlugin as MetricsPlugin
 from .plugins import PIIRedactionPlugin as PIIRedactionPlugin
