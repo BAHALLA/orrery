@@ -10,7 +10,7 @@ dependencies = [
     "orrery-core[postgres]",
     "orrery-assistant",
     "fastapi>=0.141.1",
-    "uvicorn>=0.52.4",
+    "uvicorn>=0.54.0",
     "google-auth>=2.58.0",
     "google-cloud-pubsub>=2.40.0",
     "pydantic-settings>=2.15.0",
