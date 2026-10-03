@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A batch triage sweep refused its reads exited `0` and reported "healthy"** (`agents/orrery-assistant/run_triage.py`, `orrery_assistant/batch.py`). `make run-triage` always exited `0`, so a CronJob could not tell a clean sweep from one denied its reads by RBAC, the autonomy level or a run budget, where the summarizer reports on the systems it *could* see. It also could not tell either from a sweep that produced no verdict at all. The run is now judged from the session state and a `ToolLedger`. It exits `0` (complete, whatever the severity), `1` (raised or no verdict) or `2` (a refused read, a spent budget, or an inferred verdict), and the last stdout line is a JSON summary with `coverage_holes` and `awaiting_human`. A remediation stopped at the confirmation gate is listed under `awaiting_human` and does not fail the sweep. First increment of AEP-023.
+
 - **A Google Chat turn could run forever, and a restart dropped it silently** (`agents/google-chat-bot/google_chat_bot/handler.py`). `MESSAGE` and `CARD_CLICKED` events run in a background task once Async Response Mode is on (always over Pub/Sub). The event is acknowledged as soon as the task is scheduled, so `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` only ever bounded the dispatch: a wedged run left its thread on "Investigating…" indefinitely, and a pod shutdown cancelled in-flight turns that Pub/Sub would never redeliver. Now:
   - `GOOGLE_CHAT_TURN_TIMEOUT_SECONDS` (default `600`) bounds each turn.
   - Shutdown drains in-flight turns for `GOOGLE_CHAT_SHUTDOWN_GRACE_SECONDS` (default `20`) before stopping them.

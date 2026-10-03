@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | Medium (3-5 days) |
 | **Impact** | Medium |
@@ -11,6 +11,44 @@
 > Pattern borrowed from the Hermes agent architecture (first-class cron scheduling
 > with JSON-persisted job state). Retargeted at Orrery's deterministic triage
 > Workflow.
+
+## Progress
+
+### Increment 1 — a sweep's outcome you can alert on (shipped)
+
+Before any scheduler exists, the one-shot `run_triage.py` that a CronJob would
+wrap had to say whether it *worked*. It always exited `0`. Two outcomes were
+therefore indistinguishable from a healthy sweep:
+
+- **A sweep refused its reads.** RBAC, the autonomy level or a run budget
+  ([AEP-027](aep-027-run-budgets.md)) answers instead of the tool, the checker
+  reports on what it could see, and the summarizer writes "healthy" over a
+  system nobody looked at. A refusal is not an all-clear.
+- **A sweep with no verdict.** It raised, or the route had to infer the severity.
+
+`orrery_assistant/batch.py` now judges each run from the session state and a
+`ToolLedger` armed for the sweep. The ledger is needed because the checks run
+inside graph nodes and `AgentTool` specialists whose results never reach the
+runner's event stream. The run exits `0` (complete), `1` (failed / no verdict)
+or `2` (incomplete: a refused read, a spent budget, or an inferred verdict),
+and prints a one-line JSON summary. A remediation stopped at the confirmation
+gate is reported under `awaiting_human` and does **not** count against the
+sweep: that is the unattended path working as designed.
+
+This is the run-history record Step 1 below will persist. The exit-code contract
+stays the same when the scheduler replaces cron.
+
+### Still to do
+
+Steps 1–4 below: persisted schedules and run history, the scheduler process,
+the history API and web pane, and the Helm `scheduler` Deployment.
+
+One design note carried forward: when the scheduler grows beyond the fixed
+triage Workflow into user-defined tasks that read attacker-reachable text (chat
+rooms, tickets), each task should declare a **tool allow-list** enforced by a
+plugin (an allow-list, not a deny-list, so a tool added later is unreachable
+until a task names it). For the fixed triage Workflow the tool set *is* the
+agent graph, so the allow-list would add nothing yet.
 
 ## Gap Analysis
 
@@ -145,6 +183,7 @@ over time plus the latest report — turning point-in-time triage into a trend.
 - [ ] Exactly-once execution across replicas via atomic claim (advisory lock / `SKIP LOCKED`)
 - [ ] In-memory backend refuses >1 scheduler replica (mirrors Pub/Sub worker guard)
 - [ ] Scheduled sweeps run at **L2 read-only** by default; no unattended mutation
+- [x] Each run reports complete / failed / incomplete (exit code + JSON summary); a refused read is never reported as an all-clear
 - [ ] Read-only `/triage/runs` history behind the AEP-013 auth perimeter
 - [ ] Web console shows a sweep-history pane (severity trend + latest report)
 - [ ] Unit tests: cron matching, atomic claim under contention, verdict recording
