@@ -227,7 +227,10 @@ class TestGeminiSafetyFilters:
         from orrery_core import create_agent
 
         agent = create_agent(name="t", description="d", instruction="i", tools=[])
-        assert agent.generate_content_config is None
+        # The config still carries the model-call retry policy (AEP-021);
+        # only the safety settings are gone.
+        config = agent.generate_content_config
+        assert config is None or not config.safety_settings
 
     def test_threshold_env_override(self, monkeypatch):
         monkeypatch.setenv("MODEL_PROVIDER", "gemini")

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--green">completed</span> |
 | **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | Low-Medium (2-3 days) |
 | **Impact** | High |
@@ -11,6 +11,40 @@
 > Pattern borrowed from the Hermes agent architecture (`runtime_provider.py`
 > fallback chains). Adapted to Orrery's `resolve_model()` factory and existing
 > `CircuitBreaker` / `@with_retry` primitives.
+
+## Implementation (completed)
+
+Shipped in `core/orrery_core/agent/fallback.py`, with two departures from the
+proposal below, both made because the proposal's version would have failed in
+production:
+
+1. **A retry policy came first.** The proposal assumed per-model retries already
+   existed ("keep per-target retries low"). They did not: no agent set
+   `http_options.retry_options`, so a single `503` failed the turn.
+   `create_agent()` now attaches `HttpRetryOptions` (`ORRERY_LLM_RETRY_ATTEMPTS`,
+   default 4 total tries, on 408/429/5xx) to every agent. Gemini reads it
+   natively, and ADK's `LiteLlm` maps it to `num_retries`.
+2. **Chains are single-family.** The proposal's example chained Claude to Gemini.
+   ADK only preserves the ids LiteLLM uses to pair tool calls with their results
+   when the *agent's* model is a LiteLLM model. A Gemini-primary agent that fails
+   over to Claude mid-conversation therefore sends history the fallback cannot
+   pair, and fails with a `400` that does not explain itself. `resolve_model_chain()`
+   refuses a mixed chain at startup with that explanation.
+
+Also differs in detail:
+
+- **404 moves the chain on.** A retired preview model answers 404, and that is
+  exactly the case a chain should survive. 400/401/403 do not.
+- **No mid-answer switch.** Once a model has yielded a response, a later failure
+  is re-raised rather than spliced onto a second model's output.
+- **Cooldown instead of a breaker.** A model that just failed is tried *last*
+  for `MODEL_FALLBACK_COOLDOWN_SECONDS`, but it is never skipped outright. If
+  every model is cooling down, all of them are still tried.
+- **Pristine request per link.** The request is snapshotted before the first
+  attempt, because a provider may mutate it (Gemini appends a user turn).
+- `orrery_llm_failover_total{from_model,to_model}`, and a `WARNING` per failover.
+
+Configuration reference: [General configuration → Model-call retry and fallback](../config/general.md#model-call-retry-and-fallback).
 
 ## Gap Analysis
 
@@ -146,13 +180,13 @@ def _is_retryable(exc: Exception) -> bool:
 
 ## Acceptance Criteria
 
-- [ ] `MODEL_FALLBACK_CHAIN` (comma-separated `provider/model` specs) parsed into a `FallbackLlm`
-- [ ] Empty/unset chain → single-model behavior identical to today (no regression)
-- [ ] Failover on `408/429/5xx`/timeout; **no** failover on auth/4xx/content-filter
-- [ ] Per-target circuit breaker skips a provider that's already tripped
-- [ ] `LlmChainExhausted` raised (and audited) only when every target fails
-- [ ] `llm_failover_total` metric + WARN log per failover
-- [ ] Unit tests cover each error class and the exhausted case
+- [x] `MODEL_FALLBACK_CHAIN` (comma-separated `provider/model` specs) parsed into a `FallbackLlm`
+- [x] Empty/unset chain → single-model behavior identical to today (no regression)
+- [x] Failover on `408/429/5xx`/timeout; **no** failover on auth/4xx/content-filter
+- [x] A recently failed target is tried last (cooldown) — never skipped outright
+- [x] `LlmChainExhaustedError` raised (and audited) only when every target fails
+- [x] `llm_failover_total` metric + WARN log per failover
+- [x] Unit tests cover each error class and the exhausted case
 
 ## Notes
 
