@@ -327,6 +327,9 @@ def test_default_plugins_composition():
         "tool_ledger",
         "guardrails",
         "resilience",
+        "call_budget",
+        "delegation_guard",
+        "repeat_guard",
         "metrics",
         "activity",
         "tool_output_cap",
@@ -353,6 +356,9 @@ def test_default_plugins_with_memory():
         "tool_ledger",
         "guardrails",
         "resilience",
+        "call_budget",
+        "delegation_guard",
+        "repeat_guard",
         "metrics",
         "activity",
         "memory",
@@ -388,10 +394,28 @@ def test_default_plugins_autonomy_opt_in():
 
 
 def test_default_plugins_output_cap_disabled():
-    """max_tool_result_bytes=0 drops the cap plugin."""
-    plugins = default_plugins(enable_tracing=False, max_tool_result_bytes=0)
+    """Both output budgets at 0 drop the cap plugin."""
+    plugins = default_plugins(enable_tracing=False, max_tool_result_bytes=0, max_run_tool_bytes=0)
     assert "tool_output_cap" not in [p.name for p in plugins]
     assert isinstance(plugins[-1], ErrorHandlerPlugin)
+
+
+def test_default_plugins_run_budgets_can_be_disabled(monkeypatch):
+    """Each run budget is dropped at 0, by argument or by env var."""
+    monkeypatch.setenv("ORRERY_MAX_TOOL_CALLS_PER_RUN", "0")
+    plugins = default_plugins(
+        enable_tracing=False, max_delegations_per_run=0, max_identical_failures=0
+    )
+    names = [p.name for p in plugins]
+    assert not {"call_budget", "delegation_guard", "repeat_guard"} & set(names)
+
+
+def test_default_plugins_rejects_a_malformed_budget(monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("ORRERY_MAX_TOOL_CALLS_PER_RUN", "lots")
+    with pytest.raises(ValueError, match="ORRERY_MAX_TOOL_CALLS_PER_RUN"):
+        default_plugins(enable_tracing=False)
 
 
 # ── The composed chain (not one plugin at a time) ─────────────────────

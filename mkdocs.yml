@@ -205,6 +205,7 @@ nav:
     - "AEP-024: Approval Audit Events": enhancements/aep-024-approval-audit-events.md
     - "AEP-025: Knowledge Retrieval": enhancements/aep-025-knowledge-retrieval.md
     - "AEP-026: Experience Capture & REX": enhancements/aep-026-experience-capture-rex.md
+    - "AEP-027: Per-Run Budgets": enhancements/aep-027-run-budgets.md
   - Project:
     - Changelog: CHANGELOG.md
     - Contributing: CONTRIBUTING.md

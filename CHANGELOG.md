@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-run budgets for tool use (AEP-027).** Every existing bound was per call: the breaker counts one tool's failures, and the output cap bounds one result's bytes. Nothing bounded a **run** (one agent in one ADK invocation: the root's turn, one specialist, or one Workflow node), where cost grows with the square of the length and loops made of *successful* calls slip past every per-call guard. Four budgets, each `0`-disableable:
+  - **`CallBudgetPlugin`** (`ORRERY_MAX_TOOL_CALLS_PER_RUN`, 50). From 70% the model is asked to converge, through a note appended to the request and never written into a tool result. At the limit, further calls return `CALL_BUDGET_EXHAUSTED`, so the run ends with an answer instead of mid-search.
+  - **`DelegationGuardPlugin`** (`ORRERY_MAX_DELEGATIONS_PER_RUN`, 4 calls to one specialist). Catches a coordinator re-delegating, with escalating wording, to a specialist that already answered.
+  - **`RepeatGuardPlugin`** (`ORRERY_REPEAT_GUARD_MAX_FAILURES`, 2). Refuses the third identical failure (same tool, arguments and digit-normalised error), then allows one half-open probe. A new error restarts the count.
+  - **Cumulative output budget** in `ToolOutputCapPlugin` (`ORRERY_MAX_RUN_TOOL_BYTES`, 8 MiB). The per-result cap shrinks to what remains of the run, so mid-sized results that each fit can no longer overflow the request together. Gate answers always pass through.
+  Refusals are neutral for the circuit breaker and recorded as refusals by `ToolLedgerPlugin`.
 - **Model-call retry and fallback chain (AEP-021)** (`core/orrery_core/agent/fallback.py`).
   - **Retry.** Tool calls had a circuit breaker and retries; the model call had neither, so one `503` from the provider failed the turn. `create_agent()` now attaches a retry policy to every agent: `ORRERY_LLM_RETRY_ATTEMPTS`, default 4 total tries on `408`/`429`/`5xx`, with exponential backoff and jitter. Gemini reads it natively and LiteLLM receives it as `num_retries`.
   - **Fallback chain.** `MODEL_FALLBACK_CHAIN` names models to fall back on when the primary stays unavailable longer than the retries last. The chain moves on for `404` (a retired model), `408`, `429`, `5xx`, timeouts and dropped connections. It **never** moves on for a `400`, which fails the same on every model and would only bill once per link, and **never** switches models after one has started answering.

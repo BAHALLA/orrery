@@ -90,15 +90,20 @@ _FAILURE_STATUSES = frozenset({"error"})
 #: whether the downstream service is up. Source of truth for each:
 #: ``STATUS_BLOCKED`` / ``STATUS_AWAITING_CONFIRMATION`` in
 #: ``plugins/autonomy_plugin.py``, ``access_denied`` in ``security/rbac.py``,
-#: ``confirmation_required`` in ``security/guardrails.py``. Duplicated as
-#: literals rather than imported to keep ``reliability`` free of a ``plugins``
-#: import cycle; ``test_resilience.py`` asserts they stay in sync.
+#: ``confirmation_required`` in ``security/guardrails.py``, and the three run
+#: budgets' refusals in ``plugins/call_budget_plugin.py``,
+#: ``plugins/repeat_guard_plugin.py`` and ``plugins/delegation_guard_plugin.py``.
+#: Duplicated as literals rather than imported to keep ``reliability`` free of a
+#: ``plugins`` import cycle; ``test_resilience.py`` asserts they stay in sync.
 _NEUTRAL_STATUSES = frozenset(
     {
         "BLOCKED",
         "AWAITING_CONFIRMATION",
         "access_denied",
         "confirmation_required",
+        "CALL_BUDGET_EXHAUSTED",
+        "REPEATED_FAILURE",
+        "DELEGATION_BUDGET_EXHAUSTED",
     }
 )
 
