@@ -27,6 +27,8 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--amber">P1</span> | [AEP-025](aep-025-knowledge-retrieval.md) | Pluggable Knowledge Retrieval | <span class="badge badge--green">completed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-022](aep-022-trajectory-capture.md) | Trajectory Capture & Eval Harvesting | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-023](aep-023-scheduled-tasks.md) | First-Class Scheduled Agent Tasks | <span class="badge badge--amber">in-progress</span> | Medium | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-028](aep-028-plan-approval.md) | Plan-Level Approval for Multi-Step Changes | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
+| <span class="badge badge--blue">P2</span> | [AEP-029](aep-029-answer-feedback.md) | User Feedback on Answers | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-026](aep-026-experience-capture-rex.md) | Experience Capture & REX Generation | <span class="badge badge--amber">proposed</span> | Medium-High | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--amber">proposed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--amber">proposed</span> | Low | Medium |
@@ -92,6 +94,8 @@ tool organization, and load/chaos coverage:
 - **AEP-022**: Trajectory capture — harvest real runs into eval scenarios (and a fine-tune corpus)
 - **AEP-023**: First-class scheduled agent tasks — recurring triage sweeps with persisted run history
 - **AEP-026**: Experience capture & REX — mine the platform's own incident history into reviewed runbooks
+- **AEP-028**: Plan-level approval — approve a declared multi-step change once, instead of a card per step, without widening authorization
+- **AEP-029**: User feedback on answers — 👍/👎 linked to the trace, feeding AEP-022's eval harvesting
 
 > **AEP-020 – 023** were identified by benchmarking Orrery against the mature
 > [Hermes agent architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture):
@@ -133,3 +137,4 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-08-22 | AEP-025: proposed → completed | Phase 1 (seams, chunking, sync, Elasticsearch/BM25, `search_knowledge` on the tool path) then phase 2 (provider-agnostic `resolve_embedder()`, a hybrid pgvector backend fusing semantic and lexical ranks because pure vector search misses exact identifiers, and a Confluence source that refuses to auto-discover spaces). Retrieval-quality evals remain the one open acceptance criterion. |
 | 2026-08-22 | AEP-024: proposed → completed | Four confirmation lifecycle events on the audit stream, four counters and a decision-latency histogram, plus a critical alert on non-requester approval attempts. No `confirmation_id` column was needed — `action_id` was already a uuid primary key. |
 | 2026-10-03 | AEP-027 added and completed (P1) | Every existing bound was per call (breaker: failures of one tool; output cap: bytes of one result). Nothing bounded a run, where cost grows quadratically and four loop shapes — runaway search, re-asking a specialist, identical retries, cumulative overflow — slip past every per-call guard. |
+| 2026-10-03 | AEP-028, AEP-029 added (P2) | Per-call approval degrades into approval fatigue on multi-step changes and remediation retries; a plan covering a closed set of `@confirm` tools fixes that without becoming a session bypass. Quality feedback had no channel, so AEP-022 had no signal for which runs to harvest. |

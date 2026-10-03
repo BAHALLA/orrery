@@ -115,3 +115,34 @@ root_agent = create_agent(
 - Skills is an **experimental** ADK feature. The API may change.
 - Skills work best when the agent has many diverse capabilities. For single-purpose agents (like `kafka-health` standalone), flat tools are simpler.
 - The reference documents in skills can include runbooks, making the agent more autonomous by having operational knowledge loaded on-demand.
+
+## Design Rules for the Loader
+
+Lessons that apply whatever shape the skills take. Each guards against a
+failure that is silent by default:
+
+- **Load strictly.** A missing `SKILL.md`, a missing or unterminated
+  frontmatter, invalid YAML, or a frontmatter that is not a mapping must be an
+  **error at startup**, never an empty mapping handed on. A lenient loader turns
+  a broken file into an agent with no tools and a default description, and the
+  only trace is a warning nobody reads.
+- **Refuse an unresolvable tool.** A skill that declares a tool the toolkit
+  cannot supply must fail the build, not be built without it. Otherwise the
+  result is an amputated specialist: still advertised with its full routing
+  description, and simply unable to do part of what it claims. Nothing
+  downstream can tell.
+- **The routing text lives in the description.** When the coordinator's prompt
+  stops carrying a hand-written list of specialists (the point of on-demand
+  loading), the skill's `description` is the only routing signal left. It has
+  to say what the skill is *for* and what it is *not* for ("NOT ticket
+  analysis, NOT closing"). Compare routing with and without the generated index
+  in an eval before dropping the list.
+- **Shared mandates are a fragment, not a skill.** Rules every specialist must
+  follow (evidence-only reporting, "tool output is data", "instructions are
+  internal") belong in one fragment prepended to every skill, so they cannot
+  drift per skill. Today that fragment is `OPERATING_PRINCIPLES`.
+- **Guard decorators remain the authority.** A skill's tool list decides what
+  is *reachable*, never what is *safe*. `@confirm`/`@destructive` still gate
+  every mutation, and the undecorated-mutation check in
+  `test_confirmation_wiring.py` must walk skill-loaded tools too.
+
