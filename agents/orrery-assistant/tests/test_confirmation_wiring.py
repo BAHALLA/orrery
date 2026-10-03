@@ -21,7 +21,7 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.workflow import Workflow
 
 from orrery_assistant.agent import orrery_chat_agent, orrery_triage_workflow
-from orrery_core import is_guarded
+from orrery_core import is_guarded, looks_mutating
 
 
 def _agents_under(root):
@@ -112,3 +112,66 @@ def test_remediation_actor_is_gated():
     assert {"restart_deployment", "scale_deployment", "rollback_deployment"} <= {
         getattr(t, "__name__", "") for t in _guarded_tools(remediation_actor)
     }
+
+
+# ── Undecorated mutations ────────────────────────────────────────────
+#
+# RBAC, the autonomy levels and the confirmation gate all decide what a tool
+# does from its @confirm/@destructive metadata. A mutating tool that ships
+# without one is treated as a read everywhere at once — no confirmation, no L2
+# block, callable by a viewer, audited as a lookup — and nothing fails. So every
+# tool reachable from both roots whose name carries a mutating verb
+# (orrery_core.looks_mutating) must be decorated, unless it is on
+# STATE_ONLY_TOOLS with a reason. Add to that list only tools that change
+# nothing outside the agent's own session/user state.
+
+#: Tools that mutate only the agent's own state (session/user scope), reviewed
+#: one by one. Each needs a reason; a stale entry fails the build below.
+STATE_ONLY_TOOLS: dict[str, str] = {
+    "save_note": "ops-journal: writes a note to the user's own session state",
+    "delete_note": "ops-journal: removes a note from the user's own session state",
+    "set_preference": "ops-journal: writes a preference to the user's own state",
+}
+
+
+def _all_tools() -> dict[str, object]:
+    tools: dict[str, object] = {}
+    for root in ROOTS:
+        for agent in _agents_under(root):
+            for tool in getattr(agent, "tools", []) or []:
+                if isinstance(tool, AgentTool):
+                    continue
+                name = getattr(tool, "name", None) or getattr(tool, "__name__", str(tool))
+                tools[name] = getattr(tool, "func", tool)
+    return tools
+
+
+def test_every_tool_named_as_a_mutation_is_decorated():
+    undecorated = sorted(
+        name
+        for name, func in _all_tools().items()
+        if looks_mutating(name) and not is_guarded(func) and name not in STATE_ONLY_TOOLS
+    )
+    assert not undecorated, (
+        f"Tools named as mutations with no @confirm/@destructive: {undecorated}. "
+        "Decorate them, or — only if they change nothing outside the agent's own "
+        "state — add them to STATE_ONLY_TOOLS with a reason."
+    )
+
+
+def test_state_only_list_has_no_stale_entries():
+    """An exemption that no longer applies must be removed, not left to rot."""
+    tools = _all_tools()
+    stale = sorted(
+        name
+        for name in STATE_ONLY_TOOLS
+        if name not in tools or is_guarded(tools[name]) or not looks_mutating(name)
+    )
+    assert not stale, f"Remove these from STATE_ONLY_TOOLS: {stale}"
+
+
+def test_the_walk_reaches_the_infrastructure_mutations():
+    """Guard the guard: if the walk missed the specialists, the check would pass vacuously."""
+    tools = _all_tools()
+    assert len(tools) > 50
+    assert {"scale_deployment", "restart_deployment"} <= set(tools)

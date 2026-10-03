@@ -67,6 +67,7 @@ from .security.auth import JWTConfig as JWTConfig
 from .security.auth import extract_role as extract_role
 from .security.auth import verify_token as verify_token
 from .security.auth import verify_token_async as verify_token_async
+from .security.classify import looks_mutating as looks_mutating
 from .security.confirmation_flow import approval_refusal as approval_refusal
 from .security.confirmation_flow import blocked_payload as blocked_payload
 from .security.confirmation_flow import hash_args as hash_args
