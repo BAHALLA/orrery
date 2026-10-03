@@ -47,6 +47,17 @@ async def delete_topic(name: str) -> dict:
 
 The `reason` string surfaces in the confirmation prompt and in the RBAC denial message, so write it in a way that helps the operator decide.
 
+**Forgetting the decorator fails the build.** Every gate reads the decorator, so
+an undecorated mutation is treated as a read *everywhere at once*: no
+confirmation, no L2 block, callable by a `viewer`, audited as a lookup.
+`test_confirmation_wiring.py` walks every tool on both roots and fails on any
+tool whose name carries a mutating verb (`delete_`, `scale_`, `kafka_alter_…`;
+see `orrery_core.looks_mutating`) without `@confirm`/`@destructive`. A name that
+starts with a read verb (`get_`, `list_`, `describe_`, …) is never flagged. The
+only way past the check is `STATE_ONLY_TOOLS`, a reviewed list of tools that
+change nothing outside the agent's own session/user state, each with a reason.
+A stale entry also fails the build.
+
 ## How enforcement happens
 
 Two independent callbacks fire before every tool call:
