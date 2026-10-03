@@ -206,6 +206,8 @@ nav:
     - "AEP-025: Knowledge Retrieval": enhancements/aep-025-knowledge-retrieval.md
     - "AEP-026: Experience Capture & REX": enhancements/aep-026-experience-capture-rex.md
     - "AEP-027: Per-Run Budgets": enhancements/aep-027-run-budgets.md
+    - "AEP-028: Plan-Level Approval": enhancements/aep-028-plan-approval.md
+    - "AEP-029: Answer Feedback": enhancements/aep-029-answer-feedback.md
   - Project:
     - Changelog: CHANGELOG.md
     - Contributing: CONTRIBUTING.md
