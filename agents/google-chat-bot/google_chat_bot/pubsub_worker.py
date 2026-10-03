@@ -16,8 +16,12 @@ Architecture
 * The callback parses the payload, hands it to the asyncio event loop
   via :func:`asyncio.run_coroutine_threadsafe`, and waits for the
   handler to finish before ``ack``-ing or ``nack``-ing.
-* Pub/Sub auto-extends the ack deadline while a callback is running, so
-  long-running agent turns are safe up to ``max_lease_duration``.
+* For MESSAGE and CARD_CLICKED the handler only *dispatches*: the agent
+  turn runs in a background task (bounded by
+  ``google_chat_turn_timeout_seconds``) and the message is acked once it
+  is scheduled. An acked turn is never redelivered, which is why shutdown
+  drains in-flight turns (:meth:`GoogleChatHandler.drain`) instead of
+  dropping them.
 * Replies are posted out-of-band via :class:`ChatClient.create_message`;
   Pub/Sub messages have no synchronous response channel of their own,
   so :func:`build_handler` is called with ``require_chat_client=True``.
@@ -309,6 +313,10 @@ async def run() -> None:
         except Exception:
             logger.exception("Error waiting for streaming pull to stop")
         subscriber.close()
+        # No new events can arrive now. Turns already acked are ours alone to
+        # finish — Pub/Sub will not redeliver them — so give them the grace
+        # period, and have the rest say what they changed before they stop.
+        await handler.drain(config.google_chat_shutdown_grace_seconds)
         # HealthServer runs as a daemon thread; process exit tears it down.
         logger.info("Pub/Sub worker stopped")
 

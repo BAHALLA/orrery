@@ -114,11 +114,15 @@ retention window is still short-circuited. The Helm chart **refuses to render** 
 worker with `replicaCount > 1` (or autoscaling on) while the backend is `memory`.
 
 > **Timeout alignment**
-> `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` bounds a single turn; the
-> subscriber's ack deadline is auto-extended while the callback runs, up
-> to the subscription's `message_retention_duration`. Keep the handler
-> timeout **less than or equal to** `message_retention_duration` (default
-> `3600s`) so a stuck turn is reclaimed before the message expires.
+> `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` bounds a single *dispatch*;
+> the subscriber's ack deadline is auto-extended while the callback runs, up
+> to the subscription's `message_retention_duration`. Keep it **less than or
+> equal to** `message_retention_duration` (default `3600s`).
+>
+> Agent turns (`MESSAGE`, `CARD_CLICKED`) are not bounded by it: the worker
+> acks once the turn is scheduled and the reply is posted later through the
+> Chat REST API. A turn is bounded by `GOOGLE_CHAT_TURN_TIMEOUT_SECONDS`
+> (default `600`) instead — see [Turn timeout and shutdown](google-chat.md#turn-timeout-and-shutdown).
 
 ## 4. Run the Worker
 

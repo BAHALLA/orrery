@@ -193,6 +193,11 @@ config:
   GOOGLE_CHAT_PUBSUB_PROJECT: ""
   GOOGLE_CHAT_PUBSUB_MAX_MESSAGES: "4"
   GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS: "600"
+  # One agent turn's wall-clock budget, and how long in-flight turns may
+  # finish on shutdown. Keep the grace (plus the worker's 30 s pull drain)
+  # under terminationGracePeriodSeconds.
+  GOOGLE_CHAT_TURN_TIMEOUT_SECONDS: "600"
+  GOOGLE_CHAT_SHUTDOWN_GRACE_SECONDS: "20"
 
 ## Secret values. Leave empty and set `existingSecret` to use a Secret
 ## managed out-of-band (External Secrets Operator, Sealed Secrets, Vault).

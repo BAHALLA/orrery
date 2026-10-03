@@ -33,6 +33,9 @@ correct sequence (each step sees the call before the next; ErrorHandler last):
 5. AuditPlugin         (records the attempt *before* the gates, so a call that
    is later denied still leaves an audit record; the outcome — including a
    gate's deny dict — is audited after the call)
+5b. ToolLedgerPlugin   (records executed guarded calls and gate refusals into a
+   ledger the caller armed — inert otherwise; ahead of the gates so it sees a
+   refused call start, and crosses the AgentTool boundary)
 6. AutonomyPlugin      (L2/L3/L4 process mode — optional, off unless configured;
    before the gates below so a tool the level forbids is refused rather than
    queued for an approval that cannot help it)
@@ -82,6 +85,13 @@ from .output_cap_plugin import DEFAULT_MAX_TOOL_RESULT_BYTES, ToolOutputCapPlugi
 from .pii_plugin import PIIRedactionPlugin
 from .resilience_plugin import ResiliencePlugin
 from .safety_plugin import SafetyScreenPlugin
+from .tool_ledger_plugin import (
+    LedgerEntry,
+    ToolLedger,
+    ToolLedgerPlugin,
+    current_tool_ledger,
+    tool_ledger_scope,
+)
 
 __all__ = [
     "AUTONOMY_LEVEL_STATE_KEY",
@@ -95,14 +105,19 @@ __all__ = [
     "GUARDED_STATE_KEYS",
     "GuardrailsPlugin",
     "IdentityStateGuardPlugin",
+    "LedgerEntry",
     "MemoryPlugin",
     "MetricsPlugin",
     "PIIRedactionPlugin",
     "ResiliencePlugin",
     "SafetyScreenPlugin",
+    "ToolLedger",
+    "ToolLedgerPlugin",
     "ToolOutputCapPlugin",
+    "current_tool_ledger",
     "default_plugins",
     "set_autonomy_level",
+    "tool_ledger_scope",
 ]
 
 logger = logging.getLogger("orrery.plugins")
@@ -265,6 +280,11 @@ def default_plugins(
     # denies the call (ADK's before-tool chain early-exits on the first
     # non-None return, so anything registered after a deny never runs).
     plugins.append(AuditPlugin(log_path=audit_log_path))
+
+    # Right after audit and ahead of the gates, for the same early-exit reason:
+    # the ledger has to see a call start to know a gate refused it rather than
+    # never being asked. Inert unless a caller armed a ledger for the run.
+    plugins.append(ToolLedgerPlugin())
 
     # Autonomy before RBAC/confirmation, for the same early-exit reason: the level
     # is a property of the *process*, so a tool the level forbids should be refused

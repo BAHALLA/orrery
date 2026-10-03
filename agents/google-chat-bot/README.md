@@ -107,7 +107,9 @@ Sessions are persisted in the shared Postgres store (same as Slack).
 | `GOOGLE_CHAT_PUBSUB_SUBSCRIPTION` | — | Subscription ID (Pub/Sub mode only) |
 | `GOOGLE_CHAT_PUBSUB_PROJECT` | — | Project hosting the subscription (Pub/Sub mode) |
 | `GOOGLE_CHAT_PUBSUB_MAX_MESSAGES` | `4` | Max concurrent callbacks (Pub/Sub mode) |
-| `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` | `600` | Per-turn timeout before nack |
+| `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` | `600` | Per-dispatch timeout before nack (turns run deferred; see below) |
+| `GOOGLE_CHAT_TURN_TIMEOUT_SECONDS` | `600` | Wall-clock budget for one agent turn (`0` disables); the progress card then lists changes already made |
+| `GOOGLE_CHAT_SHUTDOWN_GRACE_SECONDS` | `20` | On shutdown, how long in-flight turns may finish before they are stopped with a notice |
 | `GOOGLE_CHAT_PUBSUB_HEALTH_PORT` | `8080` | Health endpoints for the Pub/Sub worker |
 
 ## Testing

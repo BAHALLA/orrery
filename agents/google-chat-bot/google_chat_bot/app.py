@@ -167,6 +167,8 @@ async def lifespan(app: FastAPI):
     logger.info("Google Chat bot initialized (HTTP transport)")
     yield
     logger.info("Google Chat bot shutting down")
+    if _handler is not None:
+        await _handler.drain(config.google_chat_shutdown_grace_seconds)
 
 
 api = FastAPI(title="AI Agents Google Chat Bot", lifespan=lifespan)

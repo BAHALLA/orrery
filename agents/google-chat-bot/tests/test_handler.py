@@ -1066,3 +1066,181 @@ class TestThreadReplyDecisions:
         assert "Hello from agent" in message["text"]
         call_kwargs = mock_runner.run_async.call_args.kwargs
         assert call_kwargs["new_message"].parts[0].text == "approve"
+
+
+# ── Turn lifecycle: timeout, shutdown drain, empty turns ─────────────
+
+
+def _chat_client(name: str = "spaces/abc/messages/PROG-9") -> MagicMock:
+    client = MagicMock()
+    client.create_message = AsyncMock(return_value={"name": name})
+    client.update_message = AsyncMock(return_value={"name": name})
+    return client
+
+
+def _message_event(text: str = "scale the api") -> dict[str, Any]:
+    return {
+        "type": "MESSAGE",
+        "message": {"argumentText": text},
+        "user": {"email": "ops@example.com"},
+        "space": {"name": "spaces/abc"},
+    }
+
+
+def _hanging_runner(*, mutate: str | None = None) -> MagicMock:
+    """A runner that (optionally) records a guarded call, then never finishes.
+
+    The real ToolLedgerPlugin appends from inside the run; the stub does the
+    same thing through the ledger the handler armed for this turn.
+    """
+    import asyncio
+
+    from orrery_core import current_tool_ledger
+    from orrery_core.plugins import LedgerEntry
+
+    runner = MagicMock()
+
+    async def hang(*args, **kwargs):
+        if mutate:
+            ledger = current_tool_ledger()
+            assert ledger is not None, "the handler must arm a ledger for the turn"
+            ledger.entries.append(
+                LedgerEntry(tool=mutate, status="success", guarded=True, refused=False)
+            )
+        await asyncio.sleep(3600)
+        yield  # pragma: no cover
+
+    runner.run_async.side_effect = hang
+    return runner
+
+
+def _final_texts(client: MagicMock) -> list[str]:
+    calls = client.update_message.await_args_list + client.create_message.await_args_list
+    return [c.kwargs.get("text") or "" for c in calls]
+
+
+class TestTurnLifecycle:
+    @pytest.mark.asyncio
+    async def test_timeout_replaces_progress_with_what_already_changed(self, store):
+        config = GoogleChatBotConfig(
+            google_chat_operator_emails="ops@example.com",
+            google_chat_turn_timeout_seconds=0.05,
+        )
+        client = _chat_client()
+        handler = GoogleChatHandler(
+            gateway=AgentGateway.from_runner(_hanging_runner(mutate="scale_deployment")),
+            config=config,
+            store=store,
+            chat_client=client,
+        )
+        await handler.handle_event(_message_event())
+        for task in list(handler._background_tasks):
+            await task
+
+        texts = _final_texts(client)
+        notice = next(t for t in texts if "ran out of time" in t)
+        assert "`scale_deployment`" in notice
+        assert "before asking again" in notice
+
+    @pytest.mark.asyncio
+    async def test_timeout_with_no_change_says_nothing_was_changed(self, store):
+        config = GoogleChatBotConfig(google_chat_turn_timeout_seconds=0.05)
+        client = _chat_client()
+        handler = GoogleChatHandler(
+            gateway=AgentGateway.from_runner(_hanging_runner()),
+            config=config,
+            store=store,
+            chat_client=client,
+        )
+        await handler.handle_event(_message_event())
+        for task in list(handler._background_tasks):
+            await task
+
+        assert any("Nothing was changed" in t for t in _final_texts(client))
+
+    @pytest.mark.asyncio
+    async def test_drain_stops_a_running_turn_and_posts_a_notice(self, store):
+        config = GoogleChatBotConfig(google_chat_turn_timeout_seconds=0)
+        client = _chat_client()
+        handler = GoogleChatHandler(
+            gateway=AgentGateway.from_runner(_hanging_runner(mutate="restart_deployment")),
+            config=config,
+            store=store,
+            chat_client=client,
+        )
+        await handler.handle_event(_message_event())
+        import asyncio
+
+        await asyncio.sleep(0.05)  # let the turn start and record its call
+        tasks = list(handler._background_tasks)
+        await handler.drain(grace_seconds=0.01)
+
+        assert all(t.cancelled() for t in tasks)
+        notice = next(t for t in _final_texts(client) if "restarted while working" in t)
+        assert "`restart_deployment`" in notice
+
+    @pytest.mark.asyncio
+    async def test_drain_lets_a_quick_turn_finish(self, async_handler):
+        await async_handler.handle_event(_message_event("run triage"))
+        tasks = list(async_handler._background_tasks)
+        await async_handler.drain(grace_seconds=5)
+        assert all(t.done() and not t.cancelled() for t in tasks)
+
+    @pytest.mark.asyncio
+    async def test_inline_timeout_answers_in_place(self, store):
+        config = GoogleChatBotConfig(google_chat_turn_timeout_seconds=0.05)
+        handler = GoogleChatHandler(
+            gateway=AgentGateway.from_runner(_hanging_runner()),
+            config=config,
+            store=store,
+        )
+        response = await handler.handle_event(_message_event())
+        assert "ran out of time" in str(response)
+
+    @pytest.mark.asyncio
+    async def test_empty_turn_explains_itself_and_logs(self, config, store, caplog):
+        runner = MagicMock()
+
+        async def silent(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        runner.run_async.side_effect = silent
+        handler = GoogleChatHandler(
+            gateway=AgentGateway.from_runner(runner), config=config, store=store
+        )
+        with caplog.at_level("WARNING", logger="google_chat_bot.handler"):
+            response = await handler.handle_event(_message_event())
+
+        from google_chat_bot.handler import EMPTY_TURN_TEXT
+
+        assert EMPTY_TURN_TEXT in str(response)
+        assert "(no response)" not in str(response)
+        assert any("no text and no card" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_cards_without_text_get_a_sentence(self, config, store):
+        from google_chat_bot.confirmation import _push_card
+        from google_chat_bot.handler import CARDS_ONLY_TEXT
+
+        runner = MagicMock()
+
+        async def card_only(*args, **kwargs):
+            _push_card({"cardId": "confirm-1", "card": {}})
+            return
+            yield  # pragma: no cover
+
+        runner.run_async.side_effect = card_only
+        handler = GoogleChatHandler(
+            gateway=AgentGateway.from_runner(runner), config=config, store=store
+        )
+        result = await handler._run_agent(
+            session_id="s",
+            user_id="ops@example.com",
+            user_text="scale it",
+            user_role="operator",
+            space_name="spaces/abc",
+            thread_name=None,
+        )
+        assert result["text"] == CARDS_ONLY_TEXT
+        assert result["cardsV2"][0]["cardId"] == "confirm-1"
