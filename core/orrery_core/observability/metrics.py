@@ -79,6 +79,12 @@ LLM_TOKENS_TOTAL = Counter(
     ["agent", "direction"],
 )
 
+LLM_FAILOVER_TOTAL = Counter(
+    "orrery_llm_failover_total",
+    "Model calls moved to the next model in the fallback chain",
+    ["from_model", "to_model"],
+)
+
 CONTEXT_CACHE_EVENTS_TOTAL = Counter(
     "orrery_context_cache_events_total",
     "Context cache hit/miss events",
@@ -332,6 +338,16 @@ def track_llm_tokens(agent_name: str, input_tokens: int, output_tokens: int) -> 
     """
     LLM_TOKENS_TOTAL.labels(agent=agent_name, direction="input").inc(input_tokens)
     LLM_TOKENS_TOTAL.labels(agent=agent_name, direction="output").inc(output_tokens)
+
+
+def track_llm_failover(*, from_model: str, to_model: str) -> None:
+    """Record that a model call fell back to the next model in the chain.
+
+    A non-zero rate is a provider incident in progress; a steady one is a
+    primary that should be replaced. Labelled by model name — the chain is
+    configuration, so the label set is small and fixed.
+    """
+    LLM_FAILOVER_TOTAL.labels(from_model=from_model, to_model=to_model).inc()
 
 
 def track_cache_event(*, hit: bool) -> None:

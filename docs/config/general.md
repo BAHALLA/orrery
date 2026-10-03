@@ -69,6 +69,45 @@ OLLAMA_API_BASE=http://localhost:11434
 | **OpenAI** | [platform.openai.com](https://platform.openai.com/api-keys) | `OPENAI_API_KEY` |
 | **Ollama** | Install [Ollama](https://ollama.com/), run `ollama pull llama3` | N/A |
 
+### Model-call retry and fallback
+
+Tool calls have had a circuit breaker and retries for a long time; the model call
+itself now has two layers of its own ([AEP-021](../enhancements/aep-021-provider-fallback.md)):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_LLM_RETRY_ATTEMPTS` | `4` | **Total** tries per model call on `408`/`429`/`5xx`, with exponential backoff and jitter. `0` or `1` disables retrying. Applied to every agent: Gemini reads it natively, LiteLLM receives it as `num_retries`. |
+| `ORRERY_LLM_RETRY_INITIAL_DELAY` | `1` | First backoff, seconds. |
+| `ORRERY_LLM_RETRY_MAX_DELAY` | `30` | Backoff ceiling, seconds. |
+| `MODEL_FALLBACK_CHAIN` | unset | Comma-separated models tried in order after the primary. Same family as the primary: bare Gemini names for `MODEL_PROVIDER=gemini`, `provider/model` (or a bare name, prefixed with `MODEL_PROVIDER`) for LiteLLM. |
+| `MODEL_FALLBACK_COOLDOWN_SECONDS` | `30` | After a model fails, how long it is tried *last* instead of first. |
+
+The two layers answer different failures. **Retry** absorbs a blip on one model.
+**Fallback** covers a model that stays unavailable for longer than the retries
+last: retrying the same model harder does nothing when that model's capacity is
+what is gone.
+
+- **What moves the chain on:** `404` (a retired model does not come back), `408`,
+  `429`, `5xx`, timeouts and dropped connections. **Never `400`**, which fails
+  the same on every model, and never `401`/`403`, which are a configuration error.
+- **Never mid-answer:** once a model has started answering, the turn stays on
+  that model.
+- **One family per chain:** ADK formats tool-call history differently for
+  Gemini and for LiteLLM-routed models, so a chain that mixes them is refused
+  at startup rather than failing on its first failover.
+- **Cost of a dead primary:** retries run inside each link, so with a chain
+  configured, keep `ORRERY_LLM_RETRY_ATTEMPTS` modest (2–3).
+- **Observability:** `orrery_llm_failover_total{from_model,to_model}` counts
+  failovers, and each one logs a `WARNING`. Evals run against the primary only,
+  so keep chains within one capability tier.
+
+```bash
+# Gemini Pro, falling back to Flash when Pro is unavailable
+MODEL_NAME=gemini-3.6-pro
+MODEL_FALLBACK_CHAIN=gemini-3.6-flash
+ORRERY_LLM_RETRY_ATTEMPTS=3
+```
+
 ---
 
 ## Session & Memory Persistence

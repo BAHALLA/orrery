@@ -16,6 +16,7 @@ from google.adk.tools.base_tool import BaseTool
 from ..observability.log import setup_logging
 from ..security.guardrails import ACTOR_STATE_KEY
 from .config import DEFAULT_GEMINI_MODEL
+from .fallback import is_gemini_model, resolve_model_chain, resolve_retry_options
 
 logger = logging.getLogger("orrery.base")
 
@@ -126,10 +127,18 @@ def resolve_model() -> str | BaseLlm:
         MODEL_PROVIDER: "gemini" (default), "anthropic", "openai", "ollama", etc.
         MODEL_NAME: Model identifier (e.g., "gemini-2.5-pro", "anthropic/claude-sonnet-4-20250514").
         GEMINI_MODEL_VERSION: Legacy alias for MODEL_NAME when provider is gemini.
+        MODEL_FALLBACK_CHAIN: Optional comma-separated models to fall back on
+            when the primary is unavailable (see :mod:`orrery_core.agent.fallback`).
 
     Returns:
-        A model string for Gemini or a LiteLlm instance for other providers.
+        A model string for Gemini or a LiteLlm instance for other providers —
+        or a ``FallbackLlm`` over either when ``MODEL_FALLBACK_CHAIN`` is set.
     """
+    return resolve_model_chain(_resolve_primary_model())
+
+
+def _resolve_primary_model() -> str | BaseLlm:
+    """The single model ``MODEL_PROVIDER``/``MODEL_NAME`` name, without a chain."""
     provider = os.getenv("MODEL_PROVIDER", "gemini").lower()
 
     if provider == "gemini":
@@ -303,6 +312,29 @@ def resolve_planner() -> BasePlanner | None:
     return None
 
 
+def _generate_content_config(model: Any) -> Any | None:
+    """Per-agent ``GenerateContentConfig``: safety filters and the retry policy.
+
+    * Gemini content-safety filters (AEP-013) only for a Gemini model — LiteLLM
+      models ignore the genai safety settings, so attaching them there would be
+      misleading.
+    * The model-call retry policy (AEP-021) for every model: Gemini reads
+      ``http_options.retry_options`` natively and ADK's ``LiteLlm`` maps its
+      ``attempts`` onto LiteLLM's ``num_retries``.
+    """
+    safety = resolve_safety_config() if is_gemini_model(model) else None
+    retry = resolve_retry_options()
+    if safety is None and retry is None:
+        return None
+
+    from google.genai import types
+
+    config = safety if safety is not None else types.GenerateContentConfig()
+    if retry is not None:
+        config.http_options = types.HttpOptions(retry_options=retry)
+    return config
+
+
 def create_agent(
     *,
     name: str,
@@ -358,12 +390,9 @@ def create_agent(
     kwargs: dict[str, Any] = {
         "name": name,
         "model": resolved_model,
-        # Gemini content-safety filters (AEP-013). Only attached when the
-        # resolved model is a Gemini string — LiteLLM models ignore the
-        # genai config, so attaching it there would be misleading.
         **(
-            {"generate_content_config": safety_config}
-            if isinstance(resolved_model, str) and (safety_config := resolve_safety_config())
+            {"generate_content_config": content_config}
+            if (content_config := _generate_content_config(resolved_model))
             else {}
         ),
         "description": description,
