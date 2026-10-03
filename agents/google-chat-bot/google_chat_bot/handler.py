@@ -10,9 +10,11 @@ from orrery_core import (
     AgentGateway,
     AnyConfirmationStore,
     ConfirmationStore,
+    ToolLedger,
     approval_refusal,
     classify_decision,
     set_user_role,
+    tool_ledger_scope,
 )
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
@@ -32,6 +34,67 @@ logger = logging.getLogger("google_chat_bot.handler")
 # ~30 second synchronous budget and should be deferred to a background
 # task when a ``ChatClient`` is available.
 _LONG_RUNNING_EVENTS = {"MESSAGE", "CARD_CLICKED"}
+
+#: Seconds allowed to deliver the cut-short notice. The turn is already over
+#: budget (or the process is going down), so a best-effort courtesy gets a short,
+#: hard bound and can never become the thing that hangs.
+_CUT_SHORT_NOTICE_TIMEOUT_SECONDS = 10.0
+
+
+class TurnCutShort(Exception):
+    """An agent turn was stopped before it finished.
+
+    Attributes:
+        mutations: Guarded tools that ran — or were running — before the stop,
+            from the turn's :class:`~orrery_core.ToolLedger`.
+        reason: ``"timeout"`` (the turn exceeded its budget) or ``"shutdown"``
+            (the process is draining).
+    """
+
+    def __init__(self, mutations: list[str], reason: str) -> None:
+        super().__init__(f"turn cut short ({reason}); mutations={mutations}")
+        self.mutations = mutations
+        self.reason = reason
+
+
+def cut_short_text(mutations: list[str], reason: str) -> str:
+    """What to tell the thread when a turn was stopped mid-way.
+
+    The one fact the reader cannot reconstruct is what already went through:
+    asking again without knowing it is how a scale or a restart happens twice.
+    """
+    why = (
+        "I ran out of time on this one and stopped mid-way."
+        if reason == "timeout"
+        else "I was restarted while working on this and stopped mid-way."
+    )
+    lines = [f"⚠️ *{why}* Nothing is still running, and I will not retry it on my own."]
+    if mutations:
+        steps = "\n".join(f"• `{tool}`" for tool in dict.fromkeys(mutations))
+        lines.append(
+            "*Changes that went through (or may have) before I stopped:*\n"
+            f"{steps}\n\nCheck those before asking again, so nothing is done twice."
+        )
+    else:
+        lines.append("Nothing was changed — it stopped while still reading.")
+    lines.append("Ask again (ideally narrower) and I will pick it up from there.")
+    return "\n\n".join(lines)
+
+
+#: Reply when a turn produced neither text nor a confirmation card. Replaces a
+#: bare "(no response)", which told the reader nothing and logged nothing.
+EMPTY_TURN_TEXT = (
+    "🤔 I finished this turn without producing an answer — that is a fault on my "
+    "side, not something you did, and nothing was changed. Ask me again, ideally "
+    "narrower (one cluster, one namespace, one time window)."
+)
+
+#: Text placed above confirmation cards when the model raised a card without
+#: writing a sentence about it.
+CARDS_ONLY_TEXT = (
+    "⏸️ I stopped to ask before doing this — approve or deny on the card below "
+    "and I will carry on from there."
+)
 
 
 def wrap_for_addons(text: str, cards: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -158,7 +221,7 @@ class GoogleChatHandler:
                 logger.info("Deferring MESSAGE to background task")
                 self._spawn_background(self._handle_message_async(event))
                 return empty_ack()
-            return await self._handle_message(event)
+            return await self._answer_inline(self._handle_message(event))
 
         # Detect CARD_CLICKED.
         if event_type == "CARD_CLICKED" or common.get("invokedFunction") in (
@@ -171,7 +234,7 @@ class GoogleChatHandler:
                 logger.info("Deferring CARD_CLICKED to background task")
                 self._spawn_background(self._handle_card_click_async(event))
                 return empty_ack()
-            return await self._handle_card_click(event)
+            return await self._answer_inline(self._handle_card_click(event))
 
         # Detect ADDED_TO_SPACE — only when no message and no click.
         if event_type == "ADDED_TO_SPACE" or (chat.get("space") and not chat.get("messagePayload")):
@@ -186,6 +249,15 @@ class GoogleChatHandler:
         return self._wrap_for_addons("I'm not sure how to handle this event type.")
 
     # ── Internal helpers ─────────────────────────────────────────────
+
+    async def _answer_inline(self, turn: Any) -> dict[str, Any]:
+        """Await a synchronous-path turn, answering a cut-short one in place."""
+        try:
+            return await turn
+        except TurnCutShort as cut:
+            if cut.reason == "shutdown":
+                raise asyncio.CancelledError from cut
+            return self._wrap_for_addons(cut_short_text(cut.mutations, cut.reason))
 
     def _wrap_for_addons(
         self, text: str, cards: list[dict[str, Any]] | None = None
@@ -340,19 +412,50 @@ class GoogleChatHandler:
             state_delta.update(extra_state)
 
         cards, token = start_request_buffer()
+        ledger = ToolLedger()
+        timeout = self.config.google_chat_turn_timeout_seconds or None
         try:
             # Route the turn through the shared gateway pipeline. When a tracker
             # is present it observes each event for progressive card updates and
             # owns the collected text; otherwise the gateway's reply text is used.
-            reply = await self.gateway.run_in_session(
-                user_id=user_id,
-                session_id=session_id,
-                text=user_text,
-                state_delta=state_delta,
-                on_event=(tracker.consume if tracker is not None else None),
-            )
+            # The ledger records guarded calls made anywhere in the turn —
+            # including inside AgentTool specialists — so a turn stopped
+            # mid-way can say what it already changed.
+            with tool_ledger_scope(ledger):
+                async with asyncio.timeout(timeout) as budget:
+                    reply = await self.gateway.run_in_session(
+                        user_id=user_id,
+                        session_id=session_id,
+                        text=user_text,
+                        state_delta=state_delta,
+                        on_event=(tracker.consume if tracker is not None else None),
+                    )
             response_text = tracker.collected_text if tracker is not None else reply.text
             logger.info("Agent run complete. Collected %d characters of text.", len(response_text))
+        except TimeoutError as exc:
+            if not budget.expired():
+                logger.exception("Agent runner failed during turn")
+                raise
+            logger.warning(
+                "Turn exceeded %ss (session_id=%s); mutations so far: %s",
+                timeout,
+                session_id,
+                ledger.mutations(),
+            )
+            raise TurnCutShort(ledger.mutations(), reason="timeout") from exc
+        except asyncio.CancelledError as exc:
+            # Cancelled from outside — the process is draining. Withdraw the
+            # cancellation so the caller can still deliver one bounded notice;
+            # it re-raises CancelledError once that is done.
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+            logger.warning(
+                "Turn cancelled (session_id=%s); mutations so far: %s",
+                session_id,
+                ledger.mutations(),
+            )
+            raise TurnCutShort(ledger.mutations(), reason="shutdown") from exc
         except Exception:
             logger.exception("Agent runner failed during turn")
             raise
@@ -362,10 +465,16 @@ class GoogleChatHandler:
         reply: dict[str, Any] = {}
         if response_text:
             reply["text"] = response_text
+        elif cards:
+            reply["text"] = CARDS_ONLY_TEXT
         if cards:
             reply["cardsV2"] = cards
         if not reply:
-            reply["text"] = "(no response)"
+            logger.warning(
+                "Turn produced no text and no card (session_id=%s); replying with a stand-in",
+                session_id,
+            )
+            reply["text"] = EMPTY_TURN_TEXT
         return reply
 
     async def _post_async_reply(
@@ -395,6 +504,67 @@ class GoogleChatHandler:
             logger.info("Successfully posted async reply")
         except Exception:
             logger.exception("Failed to post async reply to %s", space_name)
+
+    async def _post_cut_short(
+        self,
+        cut: TurnCutShort,
+        space_name: str | None,
+        thread_name: str | None,
+        *,
+        message_name: str | None = None,
+    ) -> None:
+        """Replace the progress card with what the stopped turn left behind.
+
+        Bounded by :data:`_CUT_SHORT_NOTICE_TIMEOUT_SECONDS` and never raises:
+        it runs on the way out of a failure, and an exception here would
+        replace the original one with a worse one.
+        """
+        if not space_name:
+            return
+        try:
+            await asyncio.wait_for(
+                self._update_or_post(
+                    space_name=space_name,
+                    thread_name=thread_name,
+                    message_name=message_name,
+                    reply={"text": cut_short_text(cut.mutations, cut.reason)},
+                ),
+                timeout=_CUT_SHORT_NOTICE_TIMEOUT_SECONDS,
+            )
+        except BaseException:
+            logger.warning("Could not post the cut-short notice", exc_info=True)
+
+    async def _settle_cut_short(
+        self,
+        cut: TurnCutShort,
+        space_name: str | None,
+        thread_name: str | None,
+        *,
+        message_name: str | None = None,
+    ) -> None:
+        """Post the notice, then let a drain-time cancellation finish the task."""
+        await self._post_cut_short(cut, space_name, thread_name, message_name=message_name)
+        if cut.reason == "shutdown":
+            raise asyncio.CancelledError
+
+    async def drain(self, grace_seconds: float) -> None:
+        """Let in-flight background turns finish, then stop the rest.
+
+        Called on shutdown. A turn deferred to a background task has already
+        been acknowledged to its transport, so it will never be redelivered:
+        cancelling it silently would leave its thread staring at a progress
+        card forever. Turns still running after *grace_seconds* are cancelled,
+        and each posts what it had already changed before it goes.
+        """
+        tasks = set(self._background_tasks)
+        if not tasks:
+            return
+        logger.info("Draining %d in-flight turn(s), grace %.0fs", len(tasks), grace_seconds)
+        _, still_running = await asyncio.wait(tasks, timeout=grace_seconds)
+        for task in still_running:
+            task.cancel()
+        if still_running:
+            await asyncio.gather(*still_running, return_exceptions=True)
 
     async def _post_async_error(
         self,
@@ -507,6 +677,10 @@ class GoogleChatHandler:
                 message_name=progress_message_name,
                 reply={"text": combined_text, "cardsV2": result.get("cardsV2")},
             )
+        except TurnCutShort as cut:
+            await self._settle_cut_short(
+                cut, space_of(pending), thread_of(pending), message_name=progress_message_name
+            )
         except Exception:
             logger.exception("Async decision processing failed")
             await self._post_async_error(
@@ -553,7 +727,7 @@ class GoogleChatHandler:
             thread_name=thread_name,
         )
 
-        return self._wrap_for_addons(result.get("text", "(no response)"), result.get("cardsV2"))
+        return self._wrap_for_addons(result.get("text", EMPTY_TURN_TEXT), result.get("cardsV2"))
 
     async def _handle_message_async(self, event: dict[str, Any]) -> None:
         """Background-task counterpart to ``_handle_message``."""
@@ -628,6 +802,10 @@ class GoogleChatHandler:
                 tracker=tracker,
                 reply=result,
                 user_role=user_role,
+            )
+        except TurnCutShort as cut:
+            await self._settle_cut_short(
+                cut, space_name, thread_name, message_name=progress_message_name
             )
         except Exception:
             logger.exception("Async message processing failed")
@@ -755,7 +933,7 @@ class GoogleChatHandler:
         text = reply.get("text")
         cards_v2 = reply.get("cardsV2")
         if not text and not cards_v2:
-            text = "(no response)"
+            text = EMPTY_TURN_TEXT
 
         if message_name is not None:
             try:
@@ -1039,6 +1217,10 @@ class GoogleChatHandler:
                 thread_name=thread_name,
                 message_name=progress_message_name,
                 reply=reply_with_ack,
+            )
+        except TurnCutShort as cut:
+            await self._settle_cut_short(
+                cut, space_name, thread_name, message_name=progress_message_name
             )
         except Exception:
             logger.exception("Async run_remediation processing failed")

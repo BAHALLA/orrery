@@ -59,6 +59,17 @@ class GoogleChatBotConfig(AgentConfig):
     # thread attached. Set True only for HTTP-endpoint deployments.
     google_chat_interactive_buttons: bool = False
 
+    # Wall-clock budget for one agent turn (seconds; 0 disables). A deferred
+    # turn runs in a background task after its event was already acknowledged,
+    # so nothing else bounds it: without this, a wedged run leaves its thread on
+    # "Investigating…" forever. On expiry the progress card is replaced with a
+    # notice listing any guarded changes that went through before the stop.
+    google_chat_turn_timeout_seconds: float = 600
+
+    # On shutdown, how long in-flight turns get to finish before they are
+    # stopped (seconds). Keep it under the pod's terminationGracePeriodSeconds.
+    google_chat_shutdown_grace_seconds: float = 20
+
     # ── Pub/Sub transport ─────────────────────────────────────────────
     # When the bot lives in a private network (e.g. private GKE) that
     # Google Chat cannot reach over HTTP, configure the Chat app to
@@ -77,16 +88,17 @@ class GoogleChatBotConfig(AgentConfig):
     google_chat_pubsub_project: str | None = None
 
     # Maximum number of messages held concurrently by the subscriber.
-    # Each in-flight message keeps a callback thread busy, so this
-    # also bounds parallel agent runs. Tune alongside the subscription's
-    # ack-deadline and your CPU/memory budget.
+    # This bounds *dispatch*, not agent runs: MESSAGE and CARD_CLICKED events
+    # are handed to a background task and acknowledged straight away (the
+    # Chat REST client posts the reply later), so a run's duration is bounded
+    # by ``google_chat_turn_timeout_seconds``, not by this setting.
     google_chat_pubsub_max_messages: int = 4
 
     # Per-message handler timeout (seconds). Pub/Sub auto-extends the
     # ack deadline while a callback is running, but we still cap the
-    # individual handler so a wedged turn cannot pin a thread forever.
-    # Defaults to 10 minutes — long enough for multi-step remediation,
-    # short enough that a stuck run is reclaimed in reasonable time.
+    # individual handler so a wedged dispatch cannot pin a thread forever.
+    # Agent turns themselves run deferred and are bounded separately by
+    # ``google_chat_turn_timeout_seconds``.
     google_chat_pubsub_handler_timeout_seconds: int = 600
 
     # Idempotency guard. Pub/Sub is at-least-once, so a redelivered event

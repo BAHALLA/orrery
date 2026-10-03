@@ -52,6 +52,31 @@ Google Chat enforces a **~30 second synchronous budget** on webhook responses. I
 
 This mode is enabled by default (`GOOGLE_CHAT_ASYNC_RESPONSE=true`).
 
+### Turn timeout and shutdown
+
+A deferred turn runs in a background task after its event was already
+acknowledged (HTTP `200`, or the Pub/Sub ack), so nothing upstream will retry
+it and nothing upstream bounds it. Two settings close that gap:
+
+- **`GOOGLE_CHAT_TURN_TIMEOUT_SECONDS`** (default `600`, `0` disables) — the
+  wall-clock budget for one turn. On expiry the run is stopped and the progress
+  card is replaced with a notice instead of hanging on "Investigating…".
+- **`GOOGLE_CHAT_SHUTDOWN_GRACE_SECONDS`** (default `20`) — on `SIGTERM`, the
+  worker stops pulling, lets in-flight turns finish for this long, then stops
+  the rest. Each stopped turn posts the same notice before it goes.
+
+The notice states the one thing the reader cannot reconstruct: **which guarded
+changes already went through.** It comes from a per-turn tool ledger
+(`ToolLedgerPlugin`) that records every `@confirm`/`@destructive` call that got
+past the gates, including calls made inside specialist `AgentTool`s, and
+counts a call that was still running when the turn stopped as "may have
+happened". Without that list, "ask again" is how a scale or a restart runs
+twice.
+
+A turn that ends with no text at all now says so (and logs a `WARNING`), rather
+than posting a bare `(no response)`. One that raised an approval card without
+writing a sentence gets a short line pointing at the card.
+
 ### Progressive Cards
 
 For long-running investigations (incident triage, remediation loops), the bot streams progress live by updating a single message in place. The user sees the run evolve instead of staring at a blank thread for 60–120s.
