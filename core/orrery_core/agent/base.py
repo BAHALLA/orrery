@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import os
+import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -312,6 +314,49 @@ def resolve_planner() -> BasePlanner | None:
     return None
 
 
+#: Characters not allowed in a GCP resource label value, collapsed to ``-``.
+_UNSAFE_LABEL_CHARS = re.compile(r"[^a-z0-9_-]+")
+
+
+def _label_value(value: str) -> str:
+    """Coerce *value* into a valid GCP label value, or ``""`` if nothing is left.
+
+    Label values must be lowercase ``[a-z0-9_-]`` and at most 63 characters. A
+    malformed one is not rejected loudly — the API drops it, and with it the
+    attribution it was there to carry — so it is normalised here instead.
+    """
+    return _UNSAFE_LABEL_CHARS.sub("-", value.lower()).strip("-")[:63].strip("-")
+
+
+def resolve_cost_labels() -> dict[str, str]:
+    """Billing labels stamped on every Gemini request (Vertex AI only).
+
+    ADK already adds ``adk_agent_name`` to each request, which splits spend by
+    agent. These add the *deployment* dimensions, so one GCP bill can be split
+    across several Orrery installs (prod vs staging, team A vs team B):
+
+    * ``orrery_app`` — ``ORRERY_APP_LABEL`` (default ``orrery``);
+    * ``orrery_version`` — the installed ``orrery-core`` version;
+    * ``orrery_env`` — ``ORRERY_ENVIRONMENT``, omitted when unset.
+
+    ADK strips labels for the Gemini Developer API (AI Studio), which rejects
+    them, so they are safe to attach whatever the backend. ``ORRERY_COST_LABELS=
+    false`` turns them off.
+    """
+    if os.getenv("ORRERY_COST_LABELS", "").strip().lower() in ("0", "false", "no", "off"):
+        return {}
+    try:
+        version = importlib.metadata.version("orrery-core")
+    except importlib.metadata.PackageNotFoundError:
+        version = "unknown"
+    raw = {
+        "orrery_app": os.getenv("ORRERY_APP_LABEL", "") or "orrery",
+        "orrery_version": version,
+        "orrery_env": os.getenv("ORRERY_ENVIRONMENT", ""),
+    }
+    return {key: label for key, value in raw.items() if (label := _label_value(value))}
+
+
 def _generate_content_config(model: Any) -> Any | None:
     """Per-agent ``GenerateContentConfig``: safety filters and the retry policy.
 
@@ -321,10 +366,13 @@ def _generate_content_config(model: Any) -> Any | None:
     * The model-call retry policy (AEP-021) for every model: Gemini reads
       ``http_options.retry_options`` natively and ADK's ``LiteLlm`` maps its
       ``attempts`` onto LiteLLM's ``num_retries``.
+    * Billing labels (AEP-015) for a Gemini model — see :func:`resolve_cost_labels`.
     """
-    safety = resolve_safety_config() if is_gemini_model(model) else None
+    gemini = is_gemini_model(model)
+    safety = resolve_safety_config() if gemini else None
     retry = resolve_retry_options()
-    if safety is None and retry is None:
+    labels = resolve_cost_labels() if gemini else {}
+    if safety is None and retry is None and not labels:
         return None
 
     from google.genai import types
@@ -332,6 +380,8 @@ def _generate_content_config(model: Any) -> Any | None:
     config = safety if safety is not None else types.GenerateContentConfig()
     if retry is not None:
         config.http_options = types.HttpOptions(retry_options=retry)
+    if labels:
+        config.labels = labels
     return config
 
 

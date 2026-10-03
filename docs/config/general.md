@@ -101,6 +101,19 @@ what is gone.
   failovers, and each one logs a `WARNING`. Evals run against the primary only,
   so keep chains within one capability tier.
 
+### Billing labels (Vertex AI)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_APP_LABEL` | `orrery` | `orrery_app` label on every Gemini request. Set one per install to split a shared GCP bill. |
+| `ORRERY_ENVIRONMENT` | unset | `orrery_env` label (e.g. `prod`, `staging`). Omitted when unset. |
+| `ORRERY_COST_LABELS` | `true` | `false` disables the labels. |
+
+ADK already adds `adk_agent_name`, so billing splits per agent out of the box.
+These labels add the deployment dimensions. Values are normalised to GCP's
+label rules. The Gemini Developer API does not accept labels, and ADK strips
+them there.
+
 ```bash
 # Gemini Pro, falling back to Flash when Pro is unavailable
 MODEL_NAME=gemini-3.6-pro

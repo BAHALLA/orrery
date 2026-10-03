@@ -18,7 +18,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--amber">P1</span> | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | <span class="badge badge--green">completed</span> | Medium | High |
-| <span class="badge badge--amber">P1</span> | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | <span class="badge badge--amber">proposed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | <span class="badge badge--amber">in-progress</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-017](aep-017-runbooks-oncall.md) | Runbooks & On-Call Documentation | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-020](aep-020-context-compaction.md) | Conversation Context Compaction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-021](aep-021-provider-fallback.md) | LLM Provider Fallback Chain | <span class="badge badge--green">completed</span> | Low-Medium | High |
