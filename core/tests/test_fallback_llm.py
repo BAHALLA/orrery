@@ -286,3 +286,42 @@ def test_a_gemini_chain_keeps_the_safety_filters(monkeypatch):
     assert isinstance(agent.model, FallbackLlm)
     assert agent.generate_content_config is not None
     assert agent.generate_content_config.safety_settings
+
+
+# ── Billing labels (AEP-015) ─────────────────────────────────────────
+
+
+def test_gemini_agents_carry_deployment_labels(monkeypatch):
+    monkeypatch.setenv("MODEL_PROVIDER", "gemini")
+    monkeypatch.delenv("MODEL_FALLBACK_CHAIN", raising=False)
+    monkeypatch.delenv("ORRERY_COST_LABELS", raising=False)
+    monkeypatch.setenv("ORRERY_APP_LABEL", "Payments Team")
+    monkeypatch.setenv("ORRERY_ENVIRONMENT", "prod.eu-west1")
+    from orrery_core import create_agent
+
+    agent = create_agent(name="t", description="d", instruction="i", tools=[])
+    config = agent.generate_content_config
+    assert config is not None
+    labels = config.labels
+    assert labels is not None
+    assert labels["orrery_app"] == "payments-team"
+    assert labels["orrery_env"] == "prod-eu-west1"
+    assert labels["orrery_version"]
+
+
+def test_labels_can_be_turned_off_and_skip_unset_env(monkeypatch):
+    from orrery_core.agent.base import resolve_cost_labels
+
+    monkeypatch.delenv("ORRERY_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("ORRERY_COST_LABELS", raising=False)
+    assert "orrery_env" not in resolve_cost_labels()
+    monkeypatch.setenv("ORRERY_COST_LABELS", "false")
+    assert resolve_cost_labels() == {}
+
+
+def test_label_values_are_made_valid():
+    from orrery_core.agent.base import _label_value
+
+    assert _label_value("1.2.3+Local") == "1-2-3-local"
+    assert len(_label_value("x" * 100)) == 63
+    assert _label_value("***") == ""

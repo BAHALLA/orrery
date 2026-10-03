@@ -2,11 +2,32 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> |
 | **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | Medium (4-5 days) |
 | **Impact** | High |
 | **Dependencies** | AEP-010 (tracing) — soft, can ship independently |
+
+## Progress
+
+### Shipped: billing labels on every Gemini request
+
+The cheapest cost attribution there is runs in GCP billing itself. ADK already
+stamps `adk_agent_name` on every Vertex AI request, which splits spend per
+agent. `create_agent()` now adds the *deployment* dimensions, so one bill splits
+across installs as well: `orrery_app` (`ORRERY_APP_LABEL`, default `orrery`),
+`orrery_version` (the installed `orrery-core`) and `orrery_env`
+(`ORRERY_ENVIRONMENT`). Values are normalised to GCP's label rules (lowercase
+`[a-z0-9_-]`, ≤ 63 chars), because the API silently drops a malformed label
+along with the attribution it carried. ADK strips labels on the Gemini Developer
+API, which rejects them, so the labels are safe on either backend.
+`ORRERY_COST_LABELS=false` disables them.
+
+This covers Vertex spend only. The provider-agnostic dollar metric, the tenant
+dimension and the budgets below are still to do. Note that
+[AEP-027](aep-027-run-budgets.md) bounds a single run's *shape* (calls, bytes),
+which caps the "misbehaving loop" failure mode below but not a tenant's total
+spend.
 
 ## Gap Analysis
 
