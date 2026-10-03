@@ -112,6 +112,24 @@ make run-api SSO=1      # …with Keycloak SSO instead of a pasted token
 make run-triage         # Run the deterministic triage Workflow once (batch)
 ```
 
+### Scheduling the batch sweep
+
+`run_triage.py` is meant to be wrapped by cron or a Kubernetes `CronJob`, and
+its **exit code** is the signal to alert on:
+
+| Exit | Outcome | Meaning |
+|------|---------|---------|
+| `0` | `complete` | The sweep covered everything, whatever severity it found. |
+| `1` | `failed` | It raised, or produced no verdict. There is no result to trust. |
+| `2` | `incomplete` | It finished but was refused something it needed (a read denied by RBAC or the autonomy level, a run budget spent), or the verdict had to be inferred. The report may describe less than it appears to. |
+
+The last line on stdout is a one-line JSON summary: `severity`, `calls`,
+`coverage_holes` (the refused reads) and `awaiting_human` (the remediation
+actions stopped at the confirmation gate, which is the unattended path working
+as designed, not a failure). Refusals are read from `ToolLedgerPlugin`, because
+the health checks run inside graph nodes and specialists whose tool results
+never reach the runner's event stream.
+
 ### Persistent Mode
 
 By default (`adk web`), state resets on restart. Use persistent mode to keep `user:*`
