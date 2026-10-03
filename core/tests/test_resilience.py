@@ -434,6 +434,19 @@ class TestNeutralStatusesStayInSync:
         assert denial is not None, "expected RBAC to deny a viewer an admin tool"
         assert classify_tool_outcome(denial) is ToolOutcome.IGNORE
 
+    def test_run_budget_refusals_are_neutral(self):
+        """A budget refusal means the tool never ran: evidence in neither direction.
+
+        Counted as failures, every refused call would re-stamp the breaker and
+        could wedge a healthy tool's circuit open.
+        """
+        from orrery_core.plugins.call_budget_plugin import CALL_BUDGET_STATUS
+        from orrery_core.plugins.delegation_guard_plugin import DELEGATION_REFUSED_STATUS
+        from orrery_core.plugins.repeat_guard_plugin import REPEAT_REFUSED_STATUS
+
+        for status in (CALL_BUDGET_STATUS, DELEGATION_REFUSED_STATUS, REPEAT_REFUSED_STATUS):
+            assert classify_tool_outcome({"status": status}) is ToolOutcome.IGNORE
+
 
 # ── Regression: failures that never raise ────────────────────────────
 

@@ -1,4 +1,4 @@
-"""ToolOutputCapPlugin — bound a single tool result's size.
+"""ToolOutputCapPlugin — bound one tool result's size, and a whole run's worth.
 
 A tool that returns a very large payload (a chatty ``kubectl logs``, a wide
 Elasticsearch result, a long Prometheus range) would otherwise be appended
@@ -9,6 +9,19 @@ caps each tool result to a byte budget, trimming the largest string field(s) or
 the longest list of records (keeping whole elements, so the JSON stays valid)
 and leaving a clear marker so the model narrows its query — rather than letting
 one oversized result sink the conversation.
+
+**One result is not the quantity that overflows.** The request a run sends
+carries every tool result the run has collected, so ten results that each pass
+the per-result cap comfortably can still fail the run together — and since none
+of them was truncated, nothing in the logs says why. So there are two budgets,
+answering different questions: ``max_bytes`` asks *can the model use this one
+result*, ``max_run_bytes`` asks *is there room left in this run for it*. The
+second is charged per **run** — one agent's work in one invocation, see
+:mod:`orrery_core.plugins.run_scope` — which is the unit the request grows in: an ``AgentTool`` specialist has its own
+run, and its own context to overflow. As the run budget runs down, the
+per-result cap shrinks to what remains; once it is spent, a result is replaced
+by a short status telling the model to answer with what it has — a model handed
+a truncated payload with no explanation retries the same query.
 
 Registered **after** the observability plugins (audit/activity/metrics) because
 ADK's plugin chain early-exits on the first non-``None`` return: the cap only
@@ -26,6 +39,10 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from ..payload import text_volume
+from ..reliability.resilience import ToolOutcome, classify_tool_outcome
+from .run_scope import RunLedger, run_key
+
 logger = logging.getLogger("orrery.plugins")
 
 #: Default per-result cap (4 MiB). The Gemini/Vertex request limit is ~10 MiB and
@@ -36,6 +53,14 @@ logger = logging.getLogger("orrery.plugins")
 #: they can still approach the limit; if the 400 appears, lower this (e.g. 2 MiB)
 #: or make the cap adaptive on the request's *remaining* budget.
 DEFAULT_MAX_TOOL_RESULT_BYTES = 4 * 1024 * 1024
+
+#: Default budget for all tool results in one run (8 MiB): what the run's
+#: requests can carry in tool output and still leave room for the prompt,
+#: the history and the model's own turns under the ~10 MiB request limit.
+DEFAULT_MAX_RUN_TOOL_BYTES = 8 * 1024 * 1024
+
+#: The ``status`` the model sees once a run's output budget is spent.
+RUN_OUTPUT_BUDGET_STATUS = "RUN_OUTPUT_BUDGET_EXHAUSTED"
 
 
 def _serialized(result: Any) -> str:
@@ -175,11 +200,28 @@ def _shrink_dict(capped: dict[Any, Any], note: str, max_bytes: int) -> dict[Any,
 
 
 class ToolOutputCapPlugin(BasePlugin):
-    """Caps each tool result's size so one huge payload can't break the request."""
+    """Caps each tool result, and a run's total, so the request stays sendable.
 
-    def __init__(self, *, max_bytes: int = DEFAULT_MAX_TOOL_RESULT_BYTES) -> None:
+    Args:
+        max_bytes: Per-result cap. ``0`` disables it.
+        max_run_bytes: Budget for all results in one run. ``0`` disables it.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_bytes: int = DEFAULT_MAX_TOOL_RESULT_BYTES,
+        max_run_bytes: int = 0,
+    ) -> None:
         super().__init__(name="tool_output_cap")
         self._max_bytes = max_bytes
+        self._max_run_bytes = max_run_bytes
+        self._run_spent: RunLedger[list[int]] = RunLedger(lambda: [0])
+
+    def run_spent(self, run: str) -> int:
+        """Bytes (approximately) charged to *run* so far."""
+        entry = self._run_spent.peek(run)
+        return entry[0] if entry else 0
 
     async def after_tool_callback(
         self,
@@ -190,11 +232,50 @@ class ToolOutputCapPlugin(BasePlugin):
         result: Any,
     ) -> Any | None:
         """Replace an oversized tool result with a truncated one; else leave it."""
-        capped = cap_result(result, self._max_bytes)
+        run = run_key(tool_context) if self._max_run_bytes > 0 else ""
+        if run and classify_tool_outcome(result) is ToolOutcome.IGNORE:
+            # A gate's answer (approval needed, access denied, a budget refusal)
+            # is a few bytes the model must read verbatim: never charge or
+            # replace it.
+            run = ""
+        limit = self._max_bytes
+        remaining = 0
+        if run:
+            remaining = self._max_run_bytes - self.run_spent(run)
+            if remaining <= 0:
+                logger.warning(
+                    "run output budget spent: replaced result of '%s' (run=%s, budget=%d)",
+                    tool.name,
+                    run,
+                    self._max_run_bytes,
+                )
+                return {
+                    "status": RUN_OUTPUT_BUDGET_STATUS,
+                    "note": (
+                        f"This run has already collected about {self._max_run_bytes} "
+                        f"bytes of tool output, its limit, so the result of "
+                        f"'{tool.name}' was dropped. Answer with what you already "
+                        "have; if more data is truly needed, say which narrower "
+                        "query would get it."
+                    ),
+                }
+            limit = min(limit, remaining) if limit > 0 else remaining
+
+        capped = cap_result(result, limit)
         if capped is not None:
             logger.warning(
                 "capped oversized result from tool '%s' (limit %d bytes)",
                 tool.name,
-                self._max_bytes,
+                limit,
             )
+        if run:
+            entry = self._run_spent.get(run)
+            if capped is not None and limit == remaining:
+                # Cut to fit what was left of the run: the run is at its ceiling.
+                entry[0] = self._max_run_bytes
+            else:
+                # Charged cheaply (characters, not serialized bytes): the
+                # budget is a threshold, and measuring exactly would cost as
+                # much as serializing the result.
+                entry[0] += text_volume(capped if capped is not None else result)
         return capped

@@ -41,6 +41,13 @@ correct sequence (each step sees the call before the next; ErrorHandler last):
    queued for an approval that cannot help it)
 7. GuardrailsPlugin    (RBAC — blocks unauthorized calls)
 8. ResiliencePlugin    (circuit breaker — blocks calls to failing tools)
+8b. CallBudgetPlugin   (tool calls per run — warns the model at 70%, refuses
+    at the budget; ``ORRERY_MAX_TOOL_CALLS_PER_RUN``, default 50)
+8c. DelegationGuardPlugin (calls to one AgentTool specialist per run;
+    ``ORRERY_MAX_DELEGATIONS_PER_RUN``, default 4)
+8d. RepeatGuardPlugin  (refuses a call that already failed twice with identical
+    arguments and error, with one half-open probe;
+    ``ORRERY_REPEAT_GUARD_MAX_FAILURES``, default 2)
 9. MetricsPlugin       (timing + counters)
 10. ActivityPlugin     (session activity tracking)
 11. MemoryPlugin       (cross-session memory persistence)
@@ -76,13 +83,33 @@ from .autonomy_plugin import (
     AutonomyPlugin,
     set_autonomy_level,
 )
+from .call_budget_plugin import (
+    CALL_BUDGET_STATUS,
+    DEFAULT_MAX_TOOL_CALLS_PER_RUN,
+    CallBudgetPlugin,
+)
+from .delegation_guard_plugin import (
+    DEFAULT_MAX_DELEGATIONS_PER_RUN,
+    DELEGATION_REFUSED_STATUS,
+    DelegationGuardPlugin,
+)
 from .error_handler_plugin import ErrorHandlerPlugin
 from .guardrails_plugin import GuardrailsPlugin
 from .identity_guard_plugin import GUARDED_STATE_KEYS, IdentityStateGuardPlugin
 from .memory_plugin import MemoryPlugin
 from .metrics_plugin import MetricsPlugin
-from .output_cap_plugin import DEFAULT_MAX_TOOL_RESULT_BYTES, ToolOutputCapPlugin
+from .output_cap_plugin import (
+    DEFAULT_MAX_RUN_TOOL_BYTES,
+    DEFAULT_MAX_TOOL_RESULT_BYTES,
+    RUN_OUTPUT_BUDGET_STATUS,
+    ToolOutputCapPlugin,
+)
 from .pii_plugin import PIIRedactionPlugin
+from .repeat_guard_plugin import (
+    DEFAULT_MAX_IDENTICAL_FAILURES,
+    REPEAT_REFUSED_STATUS,
+    RepeatGuardPlugin,
+)
 from .resilience_plugin import ResiliencePlugin
 from .safety_plugin import SafetyScreenPlugin
 from .tool_ledger_plugin import (
@@ -96,11 +123,21 @@ from .tool_ledger_plugin import (
 __all__ = [
     "AUTONOMY_LEVEL_STATE_KEY",
     "AUTONOMY_LOCKED_STATE_KEY",
+    "CALL_BUDGET_STATUS",
+    "DEFAULT_MAX_DELEGATIONS_PER_RUN",
+    "DEFAULT_MAX_IDENTICAL_FAILURES",
+    "DEFAULT_MAX_RUN_TOOL_BYTES",
+    "DEFAULT_MAX_TOOL_CALLS_PER_RUN",
     "DEFAULT_MAX_TOOL_RESULT_BYTES",
+    "DELEGATION_REFUSED_STATUS",
+    "REPEAT_REFUSED_STATUS",
+    "RUN_OUTPUT_BUDGET_STATUS",
     "ActivityPlugin",
     "AuditPlugin",
     "AuthPlugin",
     "AutonomyPlugin",
+    "CallBudgetPlugin",
+    "DelegationGuardPlugin",
     "ErrorHandlerPlugin",
     "GUARDED_STATE_KEYS",
     "GuardrailsPlugin",
@@ -109,6 +146,7 @@ __all__ = [
     "MemoryPlugin",
     "MetricsPlugin",
     "PIIRedactionPlugin",
+    "RepeatGuardPlugin",
     "ResiliencePlugin",
     "SafetyScreenPlugin",
     "ToolLedger",
@@ -132,6 +170,20 @@ def _env_flag(name: str, *, default: bool) -> bool:
     if not raw:
         return default
     return raw in _TRUTHY
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read a non-negative integer env var; unset/empty falls back to *default*."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be >= 0 (0 disables), got {value}")
+    return value
 
 
 def _resolve_autonomy_level(autonomy_level: str | None) -> str | None:
@@ -168,6 +220,10 @@ def default_plugins(
     enable_pii_redaction: bool | None = None,
     redact_ips: bool | None = None,
     enable_identity_guard: bool = True,
+    max_tool_calls_per_run: int | None = None,
+    max_delegations_per_run: int | None = None,
+    max_identical_failures: int | None = None,
+    max_run_tool_bytes: int | None = None,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
@@ -222,6 +278,18 @@ def default_plugins(
             and authorization state (``IdentityStateGuardPlugin``). On by
             default; disable only in a test that needs to write those keys
             from a tool.
+        max_tool_calls_per_run: Tool calls one run (one ADK invocation — each
+            ``AgentTool`` specialist has its own) may make. ``None`` resolves
+            from ``ORRERY_MAX_TOOL_CALLS_PER_RUN`` (default 50); ``0`` disables.
+        max_delegations_per_run: Calls to one ``AgentTool`` specialist a run
+            may make. ``None`` resolves from ``ORRERY_MAX_DELEGATIONS_PER_RUN``
+            (default 4); ``0`` disables.
+        max_identical_failures: Identical failures (same tool, arguments and
+            error) before the next identical call is refused. ``None`` resolves
+            from ``ORRERY_REPEAT_GUARD_MAX_FAILURES`` (default 2); ``0`` disables.
+        max_run_tool_bytes: Budget for all tool output in one run. ``None``
+            resolves from ``ORRERY_MAX_RUN_TOOL_BYTES`` (default 8 MiB); ``0``
+            disables. Enforced by ``ToolOutputCapPlugin``.
     """
     if enable_tracing is None:
         enable_tracing = os.getenv("OTEL_TRACING_ENABLED", "").strip().lower() in {
@@ -302,12 +370,32 @@ def default_plugins(
 
     plugins.append(GuardrailsPlugin(role_policy=role_policy, mode=guardrail_mode))
 
-    plugins.extend(
-        [
-            resilience,
-            MetricsPlugin(circuit_breaker=resilience.circuit_breaker),
-        ]
-    )
+    plugins.append(resilience)
+
+    # The run budgets: after the authorization gates (a call RBAC refuses is not
+    # the run's to spend) and ahead of metrics. Each answers a different loop —
+    # too many calls, re-asking one specialist, repeating one failing call — and
+    # each returns a neutral status, so the breaker and the ledger see a refusal.
+    if calls := (
+        max_tool_calls_per_run
+        if max_tool_calls_per_run is not None
+        else _env_int("ORRERY_MAX_TOOL_CALLS_PER_RUN", DEFAULT_MAX_TOOL_CALLS_PER_RUN)
+    ):
+        plugins.append(CallBudgetPlugin(max_calls=calls))
+    if delegations := (
+        max_delegations_per_run
+        if max_delegations_per_run is not None
+        else _env_int("ORRERY_MAX_DELEGATIONS_PER_RUN", DEFAULT_MAX_DELEGATIONS_PER_RUN)
+    ):
+        plugins.append(DelegationGuardPlugin(max_per_agent=delegations))
+    if repeats := (
+        max_identical_failures
+        if max_identical_failures is not None
+        else _env_int("ORRERY_REPEAT_GUARD_MAX_FAILURES", DEFAULT_MAX_IDENTICAL_FAILURES)
+    ):
+        plugins.append(RepeatGuardPlugin(max_failures=repeats))
+
+    plugins.append(MetricsPlugin(circuit_breaker=resilience.circuit_breaker))
 
     if enable_activity_tracking:
         plugins.append(ActivityPlugin())
@@ -320,8 +408,15 @@ def default_plugins(
     # replacement for oversized results — so running it last keeps audit/
     # activity/metrics observing every call while still capping what the model
     # (and the next request) sees.
-    if max_tool_result_bytes > 0:
-        plugins.append(ToolOutputCapPlugin(max_bytes=max_tool_result_bytes))
+    run_bytes = (
+        max_run_tool_bytes
+        if max_run_tool_bytes is not None
+        else _env_int("ORRERY_MAX_RUN_TOOL_BYTES", DEFAULT_MAX_RUN_TOOL_BYTES)
+    )
+    if max_tool_result_bytes > 0 or run_bytes > 0:
+        plugins.append(
+            ToolOutputCapPlugin(max_bytes=max_tool_result_bytes, max_run_bytes=run_bytes)
+        )
 
     plugins.append(ErrorHandlerPlugin())
 

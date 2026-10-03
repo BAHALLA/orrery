@@ -152,6 +152,24 @@ The store has two backends, selected by `ORRERY_CONFIRMATION_BACKEND`:
 - `memory` (default) — process-local. Correct only for a **single replica**: a pending raised on pod A is invisible to the pod that receives the approval, and it dies with the pod on restart.
 - `postgres` — shares the handshake across replicas over the platform's existing `DATABASE_URL` (one `orrery_confirmations` table, created on startup; no new infrastructure) and survives restarts. The atomic consume is a single `DELETE … RETURNING`, so two replicas racing on the same approval cannot both win. **Required whenever any transport (HTTP front door, persistent runner, Slack bot, Chat Pub/Sub worker) runs more than one replica.** The gateway resolves the backend at startup and fails fast if `postgres` is selected without a usable `DATABASE_URL` — same contract as the session store.
 
+## Run budgets
+
+Guardrails decide *whether* a call may run. Run budgets decide *how many* may
+run. Each budget is charged per run (one ADK invocation: the root's turn, or
+one `AgentTool` specialist's), and each refuses with a status the model can read
+and act on. See [AEP-027](enhancements/aep-027-run-budgets.md) for the
+reasoning behind each budget.
+
+| Variable | Default | Bounds |
+|----------|---------|--------|
+| `ORRERY_MAX_TOOL_CALLS_PER_RUN` | `50` | Tool calls per run. From 70%, the model is asked to converge; at the limit, further calls return `CALL_BUDGET_EXHAUSTED`. |
+| `ORRERY_MAX_DELEGATIONS_PER_RUN` | `4` | Calls to **one** specialist per run (`DELEGATION_BUDGET_EXHAUSTED`). This stops a coordinator from arguing with a specialist that already answered. |
+| `ORRERY_REPEAT_GUARD_MAX_FAILURES` | `2` | Identical failures (same tool, arguments and error) before the next identical call returns `REPEATED_FAILURE`. One half-open probe follows. |
+| `ORRERY_MAX_RUN_TOOL_BYTES` | `8388608` | Tool output per run. The per-result cap shrinks to what remains, then results are replaced with `RUN_OUTPUT_BUDGET_EXHAUSTED`. Gate answers always pass through. |
+
+`0` disables any of them. Budget refusals are **neutral**: they never open a
+circuit, and `ToolLedgerPlugin` records them as refusals, not as calls that ran.
+
 ## Related config
 
 | Variable | Default | Purpose |
