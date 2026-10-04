@@ -2440,7 +2440,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "requests", marker = "extra == 'knowledge'", specifier = ">=2.34.2" },
     { name = "slowapi", marker = "extra == 'server'", specifier = ">=0.1.10" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.53.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.54.0" },
 ]
 provides-extras = ["postgres", "auth", "server", "kubernetes", "otel", "knowledge", "knowledge-pg"]
 
