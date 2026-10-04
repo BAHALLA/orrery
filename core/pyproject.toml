@@ -6,12 +6,12 @@ requires-python = ">=3.14"
 dependencies = [
     # [db] pulls sqlalchemy, which ADK 2.0 moved out of the base package into
     # an extra; runner.py imports DatabaseSessionService unconditionally.
-    "google-adk[eval,db]>=2.9.2",
+    "google-adk[eval,db]>=2.10.0",
     # ADK 2.2.0 transitively caps litellm at <1.86.0 (via
     # google-cloud-aiplatform[evaluation]); the workspace-root
     # override-dependencies in pyproject.toml lifts that cap. Keep this floor
     # in lockstep with that override.
-    "litellm>=1.103.0",
+    "litellm>=1.103.2",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "prometheus-client>=0.26.0",
@@ -36,15 +36,15 @@ postgres = [
 # but NOT required for AuthPlugin alone (e.g. when a transport like
 # Google Chat verifies tokens itself and writes _auth into state).
 auth = [
-    "pyjwt[crypto]>=2.15.0",
+    "pyjwt[crypto]>=2.15.1",
 ]
 # Install with: uv sync --extra server
 # Adds FastAPI + Uvicorn for the authenticated HTTP front door
 # (orrery_core.server). Includes the auth dependencies transitively.
 server = [
-    "pyjwt[crypto]>=2.15.0",
+    "pyjwt[crypto]>=2.15.1",
     "fastapi>=0.141.1",
-    "uvicorn[standard]>=0.53.0",
+    "uvicorn[standard]>=0.54.0",
     "slowapi>=0.1.10",
 ]
 # Install with: uv sync --extra kubernetes
