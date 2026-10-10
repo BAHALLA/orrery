@@ -86,7 +86,17 @@ FROM python:3.14-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084
 # whatever security archive is current at build time. That is the right way
 # round for a runtime image — a reproducible build of known-vulnerable bytes
 # is not the property worth keeping.
-RUN apt-get update && \
+#
+# The release build uses the GHA layer cache, and a RUN line whose text never
+# changes is a cache hit forever: the upgrade above ran once, baked in whatever
+# was current then, and every later build reused it — so a fix published after
+# that (libpcre2-8-0 +deb12u2, CVE-2026-103111) never reached the image and the
+# gate went red with the remedy already in the Dockerfile. Referencing a
+# per-day build arg invalidates this layer (and only the cheap COPYs after it)
+# once a day. Unset in local builds, where the plain cache semantics are fine.
+ARG SECURITY_UPDATES_DATE=
+RUN echo "security updates as of ${SECURITY_UPDATES_DATE:-local}" && \
+    apt-get update && \
     apt-get upgrade -y --no-install-recommends && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

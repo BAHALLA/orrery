@@ -79,6 +79,12 @@ jobs:
             org.opencontainers.image.description=AI-powered DevOps/SRE agent platform
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
+      # Busts the Dockerfile's `apt-get upgrade` layer once a day; without it
+      # the GHA cache replays a stale upgrade and new Debian fixes never land.
+      - name: Security-updates cache key
+        id: secdate
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@v7
@@ -89,6 +95,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            SECURITY_UPDATES_DATE=${{ steps.secdate.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: true
