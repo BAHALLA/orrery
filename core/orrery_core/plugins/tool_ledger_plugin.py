@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -110,7 +110,7 @@ _LEDGER: contextvars.ContextVar[ToolLedger | None] = contextvars.ContextVar(
 
 
 @contextmanager
-def tool_ledger_scope(ledger: ToolLedger | None = None) -> Iterator[ToolLedger]:
+def tool_ledger_scope(ledger: ToolLedger | None = None) -> Generator[ToolLedger]:
     """Arm a ledger for the code inside the block and yield it.
 
     Enter it in the task that runs the agent (``asyncio.create_task`` and

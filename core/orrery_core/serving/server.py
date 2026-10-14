@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -458,7 +458,7 @@ def create_app(
         )
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         # Size the pool the blocking tool layer runs on. Done here because it
         # needs the serving loop: asyncio's default executor is built from the
         # *host* CPU count, which in a container has nothing to do with the
