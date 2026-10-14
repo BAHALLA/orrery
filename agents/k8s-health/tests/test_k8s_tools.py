@@ -921,3 +921,100 @@ async def test_list_pods_accepts_set_based_selector(mock_api):
     mock_api.return_value.list_namespaced_pod.return_value = MagicMock(items=[])
     result = await list_pods(label_selector="env in (prod,staging),tier!=db")
     assert result["status"] == "success"
+
+
+# ── Typed client models (kubernetes>=37) ──────────────────────────────
+# The MagicMock helpers above can never return ``None`` for ``status`` or
+# ``spec``, but the real (Pydantic) models do whenever the server omits the
+# field — a just-created pod has no status yet. These use the real models.
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_list_pods_tolerates_a_pod_without_status_or_spec(mock_api):
+    from kubernetes import client
+
+    pod = client.V1Pod(metadata=client.V1ObjectMeta(name="fresh", namespace="default"))
+    mock_api.return_value.list_namespaced_pod.return_value = client.V1PodList(items=[pod])
+
+    result = await list_pods()
+
+    assert result["status"] == "success"
+    assert result["pods"][0] == {
+        "name": "fresh",
+        "namespace": "default",
+        "status": None,
+        "ready": "0/0",
+        "restarts": 0,
+        "node": None,
+        "age": "unknown",
+    }
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_describe_pod_tolerates_missing_spec_and_status(mock_api):
+    from kubernetes import client
+
+    mock_api.return_value.read_namespaced_pod.return_value = client.V1Pod(
+        metadata=client.V1ObjectMeta(name="fresh", namespace="default")
+    )
+
+    result = await describe_pod("fresh")
+
+    assert result["status"] == "success"
+    assert result["containers"] == []
+    assert result["phase"] is None
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_deployment_tools_tolerate_missing_status(mock_api):
+    from kubernetes import client
+
+    d = client.V1Deployment(
+        metadata=client.V1ObjectMeta(name="web", namespace="default"),
+        spec=client.V1DeploymentSpec(
+            replicas=2,
+            selector=client.V1LabelSelector(match_labels={"app": "web"}),
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(containers=[client.V1Container(name="c", image="nginx")])
+            ),
+        ),
+    )
+    mock_api.return_value.list_namespaced_deployment.return_value = client.V1DeploymentList(
+        items=[d]
+    )
+    mock_api.return_value.read_namespaced_deployment.return_value = d
+
+    listed = await list_deployments()
+    status = await get_deployment_status("web")
+
+    assert listed["deployments"][0]["replicas"] == "0/2"
+    assert listed["deployments"][0]["image"] == "nginx"
+    assert status["replicas"]["desired"] == 2
+    assert status["replicas"]["ready"] == 0
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._core_api")
+async def test_services_tolerate_missing_spec(mock_api):
+    from kubernetes import client
+
+    svc = client.V1Service(metadata=client.V1ObjectMeta(name="api", namespace="default"))
+    mock_api.return_value.list_namespaced_service.return_value = client.V1ServiceList(items=[svc])
+
+    result = await list_services()
+
+    assert result["services"][0]["name"] == "api"
+    assert result["services"][0]["ports"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("since", [300.0, "300", -5, True])
+async def test_get_pod_logs_rejects_non_integer_since_seconds(since):
+    """The typed client raises pydantic.ValidationError (not ApiException) on a
+    float or numeric string, so the tool must refuse it before calling out."""
+    result = await get_pod_logs("my-pod", since_seconds=since)
+    assert result["status"] == "error"
+    assert "since_seconds" in result["message"]

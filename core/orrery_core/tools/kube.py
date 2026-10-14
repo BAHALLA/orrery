@@ -92,27 +92,41 @@ class BoundedRESTClient(rest.RESTClientObject):
         super().__init__(configuration)
         self.default_timeout = timeout
 
-    def request(  # noqa: PLR0913 — mirrors the upstream signature
+    # Mirrors the upstream signature (kubernetes>=37, OpenAPI Generator v7:
+    # the query string is already in ``url`` and responses are never
+    # preloaded). ``test_kube.py`` drives this against a real socket, so a
+    # future signature change fails there rather than on every tool call.
+    def request(
         self,
         method: str,
         url: str,
-        query_params: Any = None,
         headers: Any = None,
         body: Any = None,
         post_params: Any = None,
-        _preload_content: bool = True,
         _request_timeout: Any = None,
-    ) -> Any:
+    ) -> rest.RESTResponse:
         return super().request(
             method,
             url,
-            query_params=query_params,
             headers=headers,
             body=body,
             post_params=post_params,
-            _preload_content=_preload_content,
             _request_timeout=_request_timeout or self.default_timeout,
         )
+
+
+def as_json_object(result: object) -> dict[str, Any]:
+    """Narrow a ``CustomObjectsApi`` result to the JSON object it is.
+
+    The typed client (kubernetes>=37) declares custom-object calls as
+    returning ``object``, because the schema is the CRD's, not the client's.
+    On the wire it is always a JSON object; anything else means the response
+    is not what the caller thinks it is, so fail loudly rather than reading
+    it as an empty resource.
+    """
+    if not isinstance(result, dict):
+        raise TypeError(f"expected a JSON object from the API, got {type(result).__name__}")
+    return result
 
 
 def _load_configuration(kubeconfig_path: str | None) -> client.Configuration:
