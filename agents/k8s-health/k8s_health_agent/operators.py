@@ -24,6 +24,7 @@ from orrery_core.security.validation import (
     validate_positive_int,
     validate_string,
 )
+from orrery_core.tools.kube import as_json_object
 
 from . import tools as _tools
 
@@ -134,7 +135,7 @@ async def _read_any_object(
             return None
         _, crd_ref = resolved
         api = _custom_objects_api()
-        return await asyncio.to_thread(
+        cr = await asyncio.to_thread(
             api.get_namespaced_custom_object,
             crd_ref.group,
             crd_ref.version,
@@ -142,6 +143,7 @@ async def _read_any_object(
             crd_ref.plural,
             name,
         )
+        return as_json_object(cr)
     except ApiException:
         logger.exception("Failed to read %s/%s '%s' in '%s'", api_version, kind, name, namespace)
         return None
@@ -228,7 +230,7 @@ async def list_custom_resources(
         return ToolResult.error(f"Failed to list resources: {e.reason}").to_dict()
 
     detector = default_registry.get_by_group(group)
-    items = result.get("items", [])
+    items = as_json_object(result).get("items", [])
     summaries: list[dict[str, Any]] = []
 
     for item in items:
@@ -287,8 +289,10 @@ async def describe_custom_resource(
 
     try:
         api = _custom_objects_api()
-        cr = await asyncio.to_thread(
-            api.get_namespaced_custom_object, group, version, namespace, plural, name
+        cr = as_json_object(
+            await asyncio.to_thread(
+                api.get_namespaced_custom_object, group, version, namespace, plural, name
+            )
         )
     except ApiException as e:
         return ToolResult.error(

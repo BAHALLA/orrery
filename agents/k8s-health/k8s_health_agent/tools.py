@@ -17,7 +17,7 @@ from orrery_core.security.validation import (
     validate_positive_int,
     validate_string,
 )
-from orrery_core.tools.kube import shared_api_client
+from orrery_core.tools.kube import as_json_object, shared_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -142,27 +142,26 @@ async def get_nodes() -> dict[str, Any]:
 
         node_list = []
         for node in nodes.items:
-            conditions = {c.type: c.status for c in (node.status.conditions or [])}
-            capacity = node.status.capacity or {}
+            meta = node.metadata or client.V1ObjectMeta()
+            status = node.status or client.V1NodeStatus()
+            node_info = status.node_info
+            conditions = {c.type: c.status for c in (status.conditions or [])}
+            capacity = status.capacity or {}
             node_list.append(
                 {
-                    "name": node.metadata.name,
+                    "name": meta.name,
                     "status": "Ready" if conditions.get("Ready") == "True" else "NotReady",
                     "roles": [
                         k.replace("node-role.kubernetes.io/", "")
-                        for k in (node.metadata.labels or {})
+                        for k in (meta.labels or {})
                         if k.startswith("node-role.kubernetes.io/")
                     ]
                     or ["<none>"],
                     "cpu": capacity.get("cpu"),
                     "memory": capacity.get("memory"),
                     "pods_capacity": capacity.get("pods"),
-                    "os_image": node.status.node_info.os_image
-                    if node.status.node_info
-                    else "unknown",
-                    "kubelet_version": node.status.node_info.kubelet_version
-                    if node.status.node_info
-                    else "unknown",
+                    "os_image": node_info.os_image if node_info else "unknown",
+                    "kubelet_version": node_info.kubelet_version if node_info else "unknown",
                 }
             )
 
@@ -194,7 +193,7 @@ async def list_pods(
 
     try:
         v1 = _core_api()
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if label_selector:
             kwargs["label_selector"] = label_selector
 
@@ -205,21 +204,23 @@ async def list_pods(
 
         pod_list = []
         for pod in pods.items:
-            container_statuses = pod.status.container_statuses or []
+            meta = pod.metadata or client.V1ObjectMeta()
+            status = pod.status or client.V1PodStatus()
+            container_statuses = status.container_statuses or []
             restarts = sum(cs.restart_count for cs in container_statuses)
             ready = sum(1 for cs in container_statuses if cs.ready)
             total = len(container_statuses)
 
             pod_list.append(
                 {
-                    "name": pod.metadata.name,
-                    "namespace": pod.metadata.namespace,
-                    "status": pod.status.phase,
+                    "name": meta.name,
+                    "namespace": meta.namespace,
+                    "status": status.phase,
                     "ready": f"{ready}/{total}",
                     "restarts": restarts,
-                    "node": pod.spec.node_name,
-                    "age": pod.metadata.creation_timestamp.isoformat()
-                    if pod.metadata.creation_timestamp
+                    "node": pod.spec.node_name if pod.spec else None,
+                    "age": meta.creation_timestamp.isoformat()
+                    if meta.creation_timestamp
                     else "unknown",
                 }
             )
@@ -248,9 +249,12 @@ async def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, A
     try:
         v1 = _core_api()
         pod = await asyncio.to_thread(v1.read_namespaced_pod, pod_name, namespace)
+        meta = pod.metadata or client.V1ObjectMeta()
+        spec = pod.spec or client.V1PodSpec(containers=[])
+        status = pod.status or client.V1PodStatus()
 
         containers = []
-        for c in pod.spec.containers:
+        for c in spec.containers:
             containers.append(
                 {
                     "name": c.name,
@@ -270,7 +274,7 @@ async def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, A
             )
 
         container_statuses = []
-        for cs in pod.status.container_statuses or []:
+        for cs in status.container_statuses or []:
             state = "unknown"
             if cs.state:
                 if cs.state.running:
@@ -290,17 +294,17 @@ async def describe_pod(pod_name: str, namespace: str = "default") -> dict[str, A
 
         conditions = [
             {"type": c.type, "status": c.status, "reason": c.reason}
-            for c in (pod.status.conditions or [])
+            for c in (status.conditions or [])
         ]
 
         return {
             "status": "success",
-            "name": pod.metadata.name,
-            "namespace": pod.metadata.namespace,
-            "phase": pod.status.phase,
-            "node": pod.spec.node_name,
-            "ip": pod.status.pod_ip,
-            "service_account": pod.spec.service_account_name,
+            "name": meta.name,
+            "namespace": meta.namespace,
+            "phase": status.phase,
+            "node": spec.node_name,
+            "ip": status.pod_ip,
+            "service_account": spec.service_account_name,
             "containers": containers,
             "container_statuses": container_statuses,
             "conditions": conditions,
@@ -334,6 +338,13 @@ async def get_pod_logs(
     if err := _validate_namespace(namespace):
         return err
     if err := validate_positive_int(tail_lines, "tail_lines", max_value=MAX_LOG_LINES):
+        return err
+    # The typed client (kubernetes>=37) validates call arguments strictly: a
+    # float or numeric string here raises pydantic.ValidationError, not
+    # ApiException, so it must be refused before the call is made.
+    if since_seconds is not None and (
+        err := validate_positive_int(since_seconds, "since_seconds", min_value=0)
+    ):
         return err
 
     try:
@@ -384,18 +395,20 @@ async def list_deployments(namespace: str = "default") -> dict[str, Any]:
 
         deploy_list = []
         for d in deploys.items:
+            meta = d.metadata or client.V1ObjectMeta()
+            status = d.status or client.V1DeploymentStatus()
+            pod_spec = d.spec.template.spec if d.spec else None
+            containers = pod_spec.containers if pod_spec else []
             deploy_list.append(
                 {
-                    "name": d.metadata.name,
-                    "namespace": d.metadata.namespace,
-                    "replicas": f"{d.status.ready_replicas or 0}/{d.spec.replicas or 0}",
-                    "up_to_date": d.status.updated_replicas or 0,
-                    "available": d.status.available_replicas or 0,
-                    "image": d.spec.template.spec.containers[0].image
-                    if d.spec.template.spec.containers
-                    else "unknown",
-                    "age": d.metadata.creation_timestamp.isoformat()
-                    if d.metadata.creation_timestamp
+                    "name": meta.name,
+                    "namespace": meta.namespace,
+                    "replicas": f"{status.ready_replicas or 0}/{d.spec.replicas if d.spec else 0}",
+                    "up_to_date": status.updated_replicas or 0,
+                    "available": status.available_replicas or 0,
+                    "image": containers[0].image if containers else "unknown",
+                    "age": meta.creation_timestamp.isoformat()
+                    if meta.creation_timestamp
                     else "unknown",
                 }
             )
@@ -424,23 +437,25 @@ async def get_deployment_status(name: str, namespace: str = "default") -> dict[s
     try:
         apps = _apps_api()
         d = await asyncio.to_thread(apps.read_namespaced_deployment, name, namespace)
+        meta = d.metadata or client.V1ObjectMeta()
+        status = d.status or client.V1DeploymentStatus()
 
         conditions = [
             {"type": c.type, "status": c.status, "reason": c.reason, "message": c.message}
-            for c in (d.status.conditions or [])
+            for c in (status.conditions or [])
         ]
 
         return {
             "status": "success",
-            "name": d.metadata.name,
-            "namespace": d.metadata.namespace,
-            "strategy": d.spec.strategy.type if d.spec.strategy else "unknown",
+            "name": meta.name,
+            "namespace": meta.namespace,
+            "strategy": d.spec.strategy.type if d.spec and d.spec.strategy else "unknown",
             "replicas": {
-                "desired": d.spec.replicas,
-                "ready": d.status.ready_replicas or 0,
-                "available": d.status.available_replicas or 0,
-                "updated": d.status.updated_replicas or 0,
-                "unavailable": d.status.unavailable_replicas or 0,
+                "desired": d.spec.replicas if d.spec else None,
+                "ready": status.ready_replicas or 0,
+                "available": status.available_replicas or 0,
+                "updated": status.updated_replicas or 0,
+                "unavailable": status.unavailable_replicas or 0,
             },
             "conditions": conditions,
         }
@@ -545,9 +560,8 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
         apps = _apps_api()
         # Read current revision
         d = await asyncio.to_thread(apps.read_namespaced_deployment, name, namespace)
-        current_revision = (d.metadata.annotations or {}).get(
-            "deployment.kubernetes.io/revision", "unknown"
-        )
+        annotations = (d.metadata.annotations if d.metadata else None) or {}
+        current_revision = annotations.get("deployment.kubernetes.io/revision", "unknown")
 
         # Trigger rollback by patching rollbackTo (uses last ReplicaSet)
         # In modern K8s, rollback is done via patching the deployment spec
@@ -711,8 +725,8 @@ async def list_namespaces() -> dict[str, Any]:
 
         ns_list = [
             {
-                "name": ns.metadata.name,
-                "status": ns.status.phase,
+                "name": ns.metadata.name if ns.metadata else None,
+                "status": ns.status.phase if ns.status else None,
             }
             for ns in namespaces.items
         ]
@@ -744,7 +758,7 @@ async def list_services(
 
     try:
         v1 = _core_api()
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if label_selector:
             kwargs["label_selector"] = label_selector
 
@@ -755,18 +769,20 @@ async def list_services(
 
         svc_list = []
         for svc in services.items:
+            meta = svc.metadata or client.V1ObjectMeta()
+            spec = svc.spec or client.V1ServiceSpec()
             ports = [
                 f"{p.port}/{p.protocol}" + (f"→{p.target_port}" if p.target_port else "")
-                for p in (svc.spec.ports or [])
+                for p in (spec.ports or [])
             ]
             svc_list.append(
                 {
-                    "name": svc.metadata.name,
-                    "namespace": svc.metadata.namespace,
-                    "type": svc.spec.type,
-                    "cluster_ip": svc.spec.cluster_ip,
+                    "name": meta.name,
+                    "namespace": meta.namespace,
+                    "type": spec.type,
+                    "cluster_ip": spec.cluster_ip,
                     "ports": ports,
-                    "selector": svc.spec.selector or {},
+                    "selector": spec.selector or {},
                 }
             )
         return {"status": "success", "services": svc_list, "count": len(svc_list)}
@@ -810,18 +826,20 @@ async def describe_service(service_name: str, namespace: str = "default") -> dic
         except ApiException:
             pass  # No Endpoints object — report zero backends rather than failing.
 
+        meta = svc.metadata or client.V1ObjectMeta()
+        spec = svc.spec or client.V1ServiceSpec()
         ports = [
             {"port": p.port, "protocol": p.protocol, "target_port": str(p.target_port)}
-            for p in (svc.spec.ports or [])
+            for p in (spec.ports or [])
         ]
         return {
             "status": "success",
             "service": {
-                "name": svc.metadata.name,
-                "namespace": svc.metadata.namespace,
-                "type": svc.spec.type,
-                "cluster_ip": svc.spec.cluster_ip,
-                "selector": svc.spec.selector or {},
+                "name": meta.name,
+                "namespace": meta.namespace,
+                "type": spec.type,
+                "cluster_ip": spec.cluster_ip,
+                "selector": spec.selector or {},
                 "ports": ports,
             },
             "endpoints": {
@@ -864,8 +882,8 @@ async def list_configmaps(namespace: str = "default") -> dict[str, Any]:
 
         cm_list = [
             {
-                "name": cm.metadata.name,
-                "namespace": cm.metadata.namespace,
+                "name": cm.metadata.name if cm.metadata else None,
+                "namespace": cm.metadata.namespace if cm.metadata else None,
                 "keys": sorted((cm.data or {}).keys()),
             }
             for cm in cms.items
@@ -903,8 +921,8 @@ async def get_configmap(name: str, namespace: str = "default") -> dict[str, Any]
                 data[key] = value
         return {
             "status": "success",
-            "name": cm.metadata.name,
-            "namespace": cm.metadata.namespace,
+            "name": cm.metadata.name if cm.metadata else name,
+            "namespace": cm.metadata.namespace if cm.metadata else namespace,
             "data": data,
             "binary_keys": sorted((cm.binary_data or {}).keys()),
         }
@@ -969,7 +987,7 @@ async def top_nodes() -> dict[str, Any]:
             api.list_cluster_custom_object, "metrics.k8s.io", "v1beta1", "nodes"
         )
         nodes = []
-        for item in result.get("items", []):
+        for item in as_json_object(result).get("items", []):
             usage = item.get("usage", {})
             nodes.append(
                 {
@@ -1018,7 +1036,7 @@ async def top_pods(namespace: str = "default") -> dict[str, Any]:
                 "pods",
             )
         pods = []
-        for item in result.get("items", []):
+        for item in as_json_object(result).get("items", []):
             cpu = 0
             mem = 0
             # A quantity the parser doesn't recognise must not read as zero

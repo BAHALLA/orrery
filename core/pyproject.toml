@@ -52,7 +52,7 @@ server = [
 # used by every agent that talks to a cluster. Not re-exported from
 # orrery_core, so the core itself never needs it.
 kubernetes = [
-    "kubernetes>=36.0.3",
+    "kubernetes>=37.0.0",
 ]
 # Install with: uv sync --extra otel
 # OpenTelemetry tracing: configure_tracing() + TracingPlugin export ADK's

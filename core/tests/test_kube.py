@@ -222,3 +222,92 @@ def test_invalid_timeout_never_means_no_timeout(monkeypatch, raw, caplog):
 
     assert kube.request_timeout()[1] == kube.DEFAULT_READ_TIMEOUT_SECONDS
     assert "not a positive number" in caplog.text
+
+
+# ── End to end: a responding API server ───────────────────────────────
+# The agent tool tests mock the generated API classes, so they never exercise
+# the transport. This drives a real call through BoundedRESTClient, the
+# client's query-string encoding and its (Pydantic, kubernetes>=37) response
+# deserialization, against a socket that speaks HTTP.
+
+
+class RecordingApiServer:
+    """Answers every GET with a canned JSON body and records the request line."""
+
+    def __init__(self, body: bytes) -> None:
+        import http.server
+
+        self.paths: list[str] = []
+        recorded = self.paths
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                recorded.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        self._httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self._httpd.server_address[1]
+        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+def test_typed_call_round_trips_through_the_bounded_client(tmp_path):
+    import json
+
+    body = json.dumps(
+        {
+            "kind": "PodList",
+            "apiVersion": "v1",
+            "metadata": {},
+            "items": [
+                {
+                    "metadata": {"name": "web-1", "namespace": "shop", "aFieldFromTheFuture": 1},
+                    "status": {"phase": "Running"},
+                },
+                # No status: what a just-created pod looks like.
+                {"metadata": {"name": "web-2", "namespace": "shop"}},
+            ],
+        }
+    ).encode()
+    server = RecordingApiServer(body)
+    try:
+        api = client.CoreV1Api(kube.shared_api_client(_kubeconfig(tmp_path, server.port)))
+        pods = api.list_namespaced_pod("shop", label_selector="app=web")
+    finally:
+        server.close()
+
+    assert server.paths == ["/api/v1/namespaces/shop/pods?labelSelector=app%3Dweb"]
+    assert [p.metadata.name for p in pods.items if p.metadata] == ["web-1", "web-2"]
+    assert pods.items[0].status is not None and pods.items[0].status.phase == "Running"
+    assert pods.items[1].status is None
+    # operators._typed_to_dict relies on to_dict() keeping snake_case keys.
+    assert "creation_timestamp" in pods.items[0].to_dict()["metadata"]
+
+
+def test_custom_object_round_trips_as_a_dict(tmp_path):
+    import json
+
+    server = RecordingApiServer(json.dumps({"items": [{"kind": "Kafka"}]}).encode())
+    try:
+        api = client.CustomObjectsApi(kube.shared_api_client(_kubeconfig(tmp_path, server.port)))
+        result = api.list_namespaced_custom_object("kafka.strimzi.io", "v1beta2", "ns", "kafkas")
+    finally:
+        server.close()
+
+    assert kube.as_json_object(result) == {"items": [{"kind": "Kafka"}]}
+
+
+@pytest.mark.parametrize("value", [None, [], "items", 3])
+def test_as_json_object_refuses_anything_but_a_dict(value):
+    with pytest.raises(TypeError, match="JSON object"):
+        kube.as_json_object(value)

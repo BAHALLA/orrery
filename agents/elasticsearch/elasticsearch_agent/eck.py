@@ -22,7 +22,7 @@ from kubernetes.client.rest import ApiException
 
 from orrery_core import AgentConfig, ToolResult, default_registry
 from orrery_core.security.validation import K8S_NAME_PATTERN, validate_string
-from orrery_core.tools.kube import shared_api_client
+from orrery_core.tools.kube import as_json_object, shared_api_client
 
 logger = logging.getLogger(__name__)
 
@@ -88,16 +88,17 @@ async def _list_cr(group: str, version: str, plural: str, namespace: str) -> lis
         result = await asyncio.to_thread(
             api.list_namespaced_custom_object, group, version, namespace, plural
         )
-    return result.get("items", []) or []
+    return as_json_object(result).get("items", []) or []
 
 
 async def _get_cr(
     group: str, version: str, plural: str, name: str, namespace: str
 ) -> dict[str, Any]:
     api = _custom_objects_api()
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         api.get_namespaced_custom_object, group, version, namespace, plural, name
     )
+    return as_json_object(result)
 
 
 def _summarize_es(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
