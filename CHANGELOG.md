@@ -54,6 +54,7 @@ If both are set, the new name wins.
 
 ### Fixed
 
+- **`make demo` crashed at startup when `DATABASE_URL` pointed at a Postgres that wasn't running.** The new agent-catalog store connected without the platform's database policy. Sessions and memory had fallen back to in-memory (as `ORRERY_DB_ALLOW_INMEMORY_FALLBACK` allowed), but the catalog raised. It now follows the same policy (fail fast by default, or warn and fall back when allowed), and `make demo` starts Postgres alongside Kafka.
 - **Impersonation trusted an unverified email.** The default user claim, `email`, now counts only when the token has `email_verified: true`; otherwise the subject is used. Where an identity provider lets users set their own address, a self-asserted email could otherwise have borrowed a colleague's Kubernetes or Elasticsearch permissions.
 - **A mistyped `ORRERY_IMPERSONATION` failed on the first Kubernetes call**; it now stops startup.
 - **The agent-catalog follower could die silently** on an unexpected error, leaving that replica serving a stale catalog until restart. It now logs and keeps polling.

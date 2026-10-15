@@ -326,9 +326,28 @@ def test_store_selection_follows_the_database_url():
 
     assert isinstance(create_catalog_store(None), InMemoryCatalogStore)
     assert isinstance(create_catalog_store("sqlite:///x.db"), InMemoryCatalogStore)
-    with patch("orrery_core.agent.catalog_store.PostgresCatalogStore") as pg:
+    with (
+        patch("orrery_core.persistence.db.database_reachable", return_value=True),
+        patch("orrery_core.agent.catalog_store.PostgresCatalogStore") as pg,
+    ):
         create_catalog_store("postgresql://u:p@db/orrery")
     pg.assert_called_once_with(db_url="postgresql://u:p@db/orrery")
+
+
+def test_unreachable_database_follows_the_session_store_policy(monkeypatch, caplog):
+    """Regression: `make demo` with DATABASE_URL set but Postgres down crashed on
+    the catalog although sessions and memory had (as configured) fallen back."""
+    from orrery_core.agent.catalog_store import create_catalog_store
+    from orrery_core.persistence.db import DatabaseUnavailableError
+
+    with patch("orrery_core.persistence.db.database_reachable", return_value=False):
+        monkeypatch.delenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", raising=False)
+        with pytest.raises(DatabaseUnavailableError, match="ORRERY_DB_ALLOW_INMEMORY_FALLBACK"):
+            create_catalog_store("postgresql://u:p@db/orrery")
+
+        monkeypatch.setenv("ORRERY_DB_ALLOW_INMEMORY_FALLBACK", "1")
+        assert isinstance(create_catalog_store("postgresql://u:p@db/orrery"), InMemoryCatalogStore)
+        assert "keeping admin edits in memory" in caplog.text
 
 
 @pytest.mark.asyncio
