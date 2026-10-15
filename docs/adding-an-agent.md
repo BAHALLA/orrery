@@ -197,6 +197,31 @@ when any of them is `@confirm`/`@destructive`. An unknown or ambiguous tool, or
 a name that collides with an existing agent, stops startup. Admins can see the
 result, with every tool's guard level, in the console's **Agents** tab.
 
+### Editing from the console {: #admin-editing }
+
+With `ORRERY_ADMIN_EDITING=true`, admins can do the same from the console's
+**Agents** tab, without a restart: switch specialists off, and compose, edit or
+remove declarative agents with a tool picker that shows each tool's guard level.
+
+- **The deployment stays the ceiling.** Only specialists the env allows can be
+  switched. An env-excluded one is shown as unavailable, and agents from
+  `ORRERY_AGENTS_CONFIG` are fixed (their names are reserved).
+- **Validated before saved.** The server builds the new agent tree first. One
+  that can't be built (an unknown tool, a name collision) is refused with a
+  422, and nothing changes.
+- **No lost edits.** Every save names the version it was edited from. If
+  someone else saved first, you get a 409 and reapply your change to the new
+  version, instead of a silent last-write-wins.
+- **Applies live, everywhere.** The edit is stored next to the sessions
+  (Postgres when `DATABASE_URL` is set). Turns already running finish on the
+  agents they started with; new turns use the new set. Other replicas pick the
+  change up within `ORRERY_CATALOG_POLL_SECONDS` (default 15).
+- **Audited.** Each save emits an `agent_catalog_updated` audit event with the
+  admin, the version, and what's switched off or added.
+
+Reading the catalog needs only the admin role. Writing also needs the
+deployment flag, which is off by default.
+
 ---
 
 ## 6. Testing

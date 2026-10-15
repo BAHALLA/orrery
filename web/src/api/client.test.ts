@@ -252,6 +252,8 @@ describe("API path coverage", () => {
       client.triage("s1"),
       client.me(),
       client.agents(),
+      client.catalog(),
+      client.updateCatalog({ version: 0, disabled_specialists: [], agents: [] }),
       client.selfTest(),
     ]);
 

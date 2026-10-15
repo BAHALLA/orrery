@@ -236,6 +236,10 @@ class AgentGateway:
     #: infers as non-optional and the two constructors disagree.
     session_service: BaseSessionService | None
 
+    #: The tree new turns run on. ``None`` only for a gateway built by
+    #: :meth:`from_runner` around a Runner whose app it cannot see.
+    root_agent: Agent | Workflow | None
+
     def __init__(
         self,
         *,
@@ -259,16 +263,41 @@ class AgentGateway:
             # backend (ORRERY_CONFIRMATION_BACKEND) now so a misconfigured
             # postgres backend fails at startup, not on the first guarded call.
             ensure_pending_confirmation_store()
+        # Kept so replace_root_agent() can rebuild an identical Runner around a
+        # new agent tree.
+        self._plugins = list(plugins or [])
+        self._memory_service = memory_service
+        self._context_cache_config = context_cache_config
+        self._events_compaction_config = events_compaction_config
+        self.root_agent = root_agent
+        self.runner = self._build_runner(root_agent)
+
+    def _build_runner(self, root_agent: Agent | Workflow) -> Runner:
         app = App(
-            name=app_name,
+            name=self.app_name,
             root_agent=root_agent,
-            plugins=list(plugins or []),
-            context_cache_config=context_cache_config,
-            events_compaction_config=events_compaction_config,
+            plugins=self._plugins,
+            context_cache_config=self._context_cache_config,
+            events_compaction_config=self._events_compaction_config,
         )
-        self.runner = Runner(
-            app=app, session_service=self.session_service, memory_service=memory_service
-        )
+        return Runner(app=app, session_service=self.sessions, memory_service=self._memory_service)
+
+    def replace_root_agent(self, root_agent: Agent | Workflow) -> None:
+        """Serve new turns from *root_agent*; turns already running are untouched.
+
+        A turn holds the Runner it started with (``run_in_session`` reads
+        ``self.runner`` once, at the start), so swapping the attribute changes
+        nothing for a turn in flight — it finishes on the tree it began on, and
+        the next one starts on the new tree. Sessions, memory and plugins are
+        shared, so a conversation simply continues with the new set of agents.
+
+        Only for gateways built with ``__init__``: one wrapped around an existing
+        Runner (:meth:`from_runner`) does not know how that Runner was made.
+        """
+        if not hasattr(self, "_plugins"):
+            raise RuntimeError("replace_root_agent() needs a gateway built by AgentGateway(...)")
+        self.runner = self._build_runner(root_agent)
+        self.root_agent = root_agent
 
     @classmethod
     def from_runner(
@@ -289,6 +318,7 @@ class AgentGateway:
         self = cls.__new__(cls)
         self.app_name = app_name
         self.runner = runner
+        self.root_agent = getattr(getattr(runner, "app", None), "root_agent", None)
         self.session_service = session_service
         self.resolver = session_resolver or MappedSessionResolver()
         self.verified_confirmation = verified_confirmation
@@ -341,7 +371,10 @@ class AgentGateway:
         if streaming:
             run_kwargs["run_config"] = RunConfig(streaming_mode=StreamingMode.SSE)
         reply = ""
-        async for event in self.runner.run_async(
+        # Read once: replace_root_agent() may swap self.runner mid-turn, and this
+        # turn must finish on the tree it started on.
+        runner = self.runner
+        async for event in runner.run_async(
             user_id=user_id,
             session_id=session_id,
             new_message=message,

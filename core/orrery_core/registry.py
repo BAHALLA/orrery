@@ -76,11 +76,13 @@ def _names(env: str) -> set[str]:
 
 
 def discover_specialists(
-    *, loader: Callable[[], Any] | None = None, record: bool = True
+    *, loader: Callable[[], Any] | None = None, record: bool = True, apply_env: bool = True
 ) -> list[Specialist]:
     """Every installed specialist, sorted by key, filtered by the env lists.
 
-    ``loader`` exists for tests; it returns the entry points to load.
+    ``apply_env=False`` skips the filtering — for the admin view, which shows
+    env-excluded specialists as unavailable rather than hiding them. ``loader``
+    exists for tests; it returns the entry points to load.
 
     Raises:
         ValueError: An env list names a specialist that is not installed, or an
@@ -89,7 +91,7 @@ def discover_specialists(
     eps = list((loader or (lambda: entry_points(group=ENTRY_POINT_GROUP)))())
     by_key = {ep.name: ep for ep in eps}
 
-    enabled, disabled = _names(ENABLED_ENV), _names(DISABLED_ENV)
+    enabled, disabled = (_names(ENABLED_ENV), _names(DISABLED_ENV)) if apply_env else (set(), set())
     if unknown := (enabled | disabled) - set(by_key):
         raise ValueError(
             f"{ENABLED_ENV}/{DISABLED_ENV} name specialists that are not installed: "

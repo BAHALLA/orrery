@@ -25,6 +25,7 @@ entrypoint — `make run-triage` — because a ``Workflow`` cannot be a sub-agen
 """
 
 import os
+from collections.abc import Sequence
 from typing import Any
 
 from google.adk import Workflow
@@ -85,7 +86,7 @@ from orrery_core import (
 )
 from orrery_core.agent.declarative import build_declarative_agents, load_agents_config
 from orrery_core.knowledge import knowledge_tool
-from orrery_core.registry import discover_specialists
+from orrery_core.registry import Specialist, discover_specialists
 
 load_agent_env(__file__)
 
@@ -117,11 +118,14 @@ _mcp_tools = _mcp_specialists()
 # being imported here one by one — a new specialist is an installed package,
 # not an edit to this file. Declarative agents (ORRERY_AGENTS_CONFIG) recombine
 # their tools; both are validated at import, so a bad config stops startup.
+#: Names no declarative agent may take.
+RESERVED_AGENT_NAMES = ("incident_triage_agent", "orrery_chat_agent")
 _specialists = discover_specialists()
+_file_agents_config = load_agents_config()
 _declarative_agents = build_declarative_agents(
-    load_agents_config(),
+    _file_agents_config,
     _specialists,
-    reserved_names=["incident_triage_agent", "orrery_chat_agent"],
+    reserved_names=RESERVED_AGENT_NAMES,
 )
 
 # Resolve once at import time so triage_summarizer + remediation share an instance.
@@ -382,8 +386,8 @@ _ROUTING_HINTS = {
 _ROUTING_ORDER = list(_ROUTING_HINTS)
 
 
-def _routing_lines() -> str:
-    agents = [s.agent for s in _specialists] + list(_declarative_agents)
+def _routing_lines(specialists: Sequence[Specialist], declarative_agents: Sequence[Any]) -> str:
+    agents = [s.agent for s in specialists] + list(declarative_agents)
     agents.sort(
         key=lambda a: (
             _ROUTING_ORDER.index(a.name) if a.name in _ROUTING_ORDER else len(_ROUTING_ORDER),
@@ -424,61 +428,73 @@ _KNOWLEDGE_INSTRUCTION = (
     )
 )
 
-orrery_chat_agent = create_agent(
-    name="orrery_chat_agent",
-    description="Conversational DevOps orchestrator that routes queries to specialist agents.",
-    planner=_planner,
-    mode="chat",
-    instruction=(
-        "You are the coordinator of a DevOps/SRE agent team. Route each request to the "
-        "ONE specialist that owns it; answer from what the specialist returns.\n\n"
-        "## Routing\n"
-        + _routing_lines()
-        + "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
-        "'run a triage', 'check all systems'). Never use it for a single-system "
-        "question — that costs five systems' worth of checks to answer one.\n\n"
-        "For a cross-system incident, delegate to the specialists one at a time in "
-        "cause-likelihood order and stop when the cause is found. Pass the specialist "
-        "everything it needs in your request (names, namespaces, time windows, prior "
-        "findings) — it cannot see the conversation.\n\n"
-        "## Answer fidelity\n"
-        "Report the specialist's findings faithfully: keep exact names, counts, and "
-        "statuses; never add conclusions the specialist's evidence doesn't support. If "
-        "a specialist reports an error or an unverified area, surface that as-is — "
-        "don't paper over it. Lead with the answer; keep it short.\n\n"
-        "**Confirmation rule (critical):** when a specialist returns a "
-        "`confirmation_required` result for a guarded action, relay that request to the "
-        "user and STOP. Do NOT call the specialist again in the same turn, and NEVER "
-        "fabricate or assume the user's approval — you cannot approve on their behalf. "
-        "Only when the user themselves replies with an explicit 'approve' (or 'deny') in a "
-        "later turn should you re-invoke the specialist to carry out (or drop) the exact "
-        "same action. A casual 'yes' is not an approval.\n\n"
-        "After a significant investigation, offer once to save findings via "
-        "ops_journal_agent.\n\n"
-        "## Past-incident recall (load_memory)\n"
-        "You have a `load_memory` tool that searches durable memory of earlier "
-        "sessions. Nothing from the past is loaded automatically — call it yourself "
-        "when past context would help. **When to call it:** before diagnosing a "
-        "reported problem, symptom, or alert (to check whether a similar incident "
-        "was seen before), or when the user references something earlier ('like last "
-        "time', 'the usual issue', 'again'). **When to skip it:** greetings, "
-        "capability questions, and simple one-off status checks ('is Kafka up?') — "
-        "don't spend a lookup there. **How to query:** pass a short, specific query "
-        "describing the system and symptom (e.g. 'Kafka consumer lag on orders "
-        "topic', 'K8s CrashLoopBackOff payment-service'), not the user's whole "
-        "message. Call it at most once per turn, then correlate with any genuine "
-        "match — cite it only when it actually fits; if nothing matches, proceed "
-        "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION + _MCP_INSTRUCTION
-    ),
-    tools=[
-        *(AgentTool(agent=s.agent) for s in _specialists),
-        *(AgentTool(agent=a) for a in _declarative_agents),
-        AgentTool(agent=incident_triage_agent),
-        LoadMemoryTool(),
-        *([_knowledge_tool] if _knowledge_tool is not None else []),
-        *_mcp_tools,
-    ],
-)
+
+def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequence[Any]) -> Any:
+    """The interactive coordinator over *specialists* and *declarative_agents*.
+
+    Built at import with the deployment's configured set, and again whenever an
+    admin edits the agent catalog (``orrery_assistant.admin``) — the routing
+    section is derived from exactly the agents passed in, so it never mentions
+    one the coordinator cannot reach.
+    """
+    return create_agent(
+        name="orrery_chat_agent",
+        description="Conversational DevOps orchestrator that routes queries to specialist agents.",
+        planner=_planner,
+        mode="chat",
+        instruction=(
+            "You are the coordinator of a DevOps/SRE agent team. Route each request to the "
+            "ONE specialist that owns it; answer from what the specialist returns.\n\n"
+            "## Routing\n"
+            + _routing_lines(specialists, declarative_agents)
+            + "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
+            "'run a triage', 'check all systems'). Never use it for a single-system "
+            "question — that costs five systems' worth of checks to answer one.\n\n"
+            "For a cross-system incident, delegate to the specialists one at a time in "
+            "cause-likelihood order and stop when the cause is found. Pass the specialist "
+            "everything it needs in your request (names, namespaces, time windows, prior "
+            "findings) — it cannot see the conversation.\n\n"
+            "## Answer fidelity\n"
+            "Report the specialist's findings faithfully: keep exact names, counts, and "
+            "statuses; never add conclusions the specialist's evidence doesn't support. If "
+            "a specialist reports an error or an unverified area, surface that as-is — "
+            "don't paper over it. Lead with the answer; keep it short.\n\n"
+            "**Confirmation rule (critical):** when a specialist returns a "
+            "`confirmation_required` result for a guarded action, relay that request to the "
+            "user and STOP. Do NOT call the specialist again in the same turn, and NEVER "
+            "fabricate or assume the user's approval — you cannot approve on their behalf. "
+            "Only when the user themselves replies with an explicit 'approve' (or 'deny') in a "
+            "later turn should you re-invoke the specialist to carry out (or drop) the exact "
+            "same action. A casual 'yes' is not an approval.\n\n"
+            "After a significant investigation, offer once to save findings via "
+            "ops_journal_agent.\n\n"
+            "## Past-incident recall (load_memory)\n"
+            "You have a `load_memory` tool that searches durable memory of earlier "
+            "sessions. Nothing from the past is loaded automatically — call it yourself "
+            "when past context would help. **When to call it:** before diagnosing a "
+            "reported problem, symptom, or alert (to check whether a similar incident "
+            "was seen before), or when the user references something earlier ('like last "
+            "time', 'the usual issue', 'again'). **When to skip it:** greetings, "
+            "capability questions, and simple one-off status checks ('is Kafka up?') — "
+            "don't spend a lookup there. **How to query:** pass a short, specific query "
+            "describing the system and symptom (e.g. 'Kafka consumer lag on orders "
+            "topic', 'K8s CrashLoopBackOff payment-service'), not the user's whole "
+            "message. Call it at most once per turn, then correlate with any genuine "
+            "match — cite it only when it actually fits; if nothing matches, proceed "
+            "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION + _MCP_INSTRUCTION
+        ),
+        tools=[
+            *(AgentTool(agent=s.agent) for s in specialists),
+            *(AgentTool(agent=a) for a in declarative_agents),
+            AgentTool(agent=incident_triage_agent),
+            LoadMemoryTool(),
+            *([_knowledge_tool] if _knowledge_tool is not None else []),
+            *_mcp_tools,
+        ],
+    )
+
+
+orrery_chat_agent = build_chat_agent(_specialists, _declarative_agents)
 
 
 # ── Deterministic routing nodes (used by orrery_triage_workflow) ──────

@@ -55,6 +55,8 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
     ) from exc
 
+from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, create_catalog_store
+from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
@@ -66,6 +68,8 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
+from .agent_admin import AgentAdmin
+from .catalog_service import CatalogService
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
 from .inventory import agent_inventory
@@ -128,6 +132,12 @@ class ServerConfig:
     docs_enabled: bool | None = None
     rate_limit_storage_uri: str = "memory://"
     csp_extra_origins: tuple[str, ...] = ()
+    #: Let admins change the agent catalog from the console (PUT /admin/catalog).
+    #: Off by default: reading the inventory is harmless, rewiring a running
+    #: coordinator from a browser is a capability a deployment opts into.
+    admin_editing: bool = False
+    #: How often each replica checks the catalog store for edits made elsewhere.
+    catalog_poll_seconds: float = 15.0
 
     @property
     def serve_docs(self) -> bool:
@@ -183,6 +193,9 @@ class ServerConfig:
             docs_enabled=(docs in ("1", "true", "yes")) if docs else None,
             rate_limit_storage_uri=os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
             or "memory://",
+            admin_editing=os.getenv("ORRERY_ADMIN_EDITING", "false").lower()
+            in ("1", "true", "yes"),
+            catalog_poll_seconds=float(os.getenv("ORRERY_CATALOG_POLL_SECONDS", "15")),
             csp_extra_origins=tuple(
                 o.strip() for o in os.getenv("ORRERY_CSP_EXTRA_ORIGINS", "").split(",") if o.strip()
             ),
@@ -220,6 +233,38 @@ class InventoryAgent(BaseModel):
 
 class AgentsResponse(BaseModel):
     agents: list[InventoryAgent]
+
+
+class CatalogSpecialist(BaseModel):
+    key: str
+    agent_name: str
+    description: str
+    source: str
+    available: bool
+
+
+class CatalogTool(BaseModel):
+    ref: str
+    specialist: str
+    guard: str
+    reason: str = ""
+
+
+class CatalogResponse(BaseModel):
+    editing_enabled: bool
+    catalog: AgentCatalog
+    #: The version this replica is serving (may briefly trail the store).
+    applied_version: int
+    specialists: list[CatalogSpecialist]
+    tools: list[CatalogTool]
+    file_agents: list[str]
+
+
+class CatalogUpdate(BaseModel):
+    #: The version the edit was made from — the optimistic-concurrency check.
+    version: int
+    disabled_specialists: list[str] = Field(default_factory=list)
+    agents: list[DeclarativeAgentConfig] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
@@ -372,6 +417,8 @@ def create_app(
     context_cache_config: ContextCacheConfig | None = None,
     events_compaction_config: MaybeCompactionConfig = UNSET,
     integration_probes: Sequence[IntegrationProbe] | None = None,
+    agent_admin: AgentAdmin | None = None,
+    catalog_store: CatalogStore | None = None,
 ) -> FastAPI:
     """Build a FastAPI app that serves *root_agent* over authenticated HTTP.
 
@@ -449,6 +496,16 @@ def create_app(
         verified_confirmation=True,
     )
 
+    # The admin-editable agent catalog, when the application supports one.
+    catalog: CatalogService | None = None
+    if agent_admin is not None:
+        catalog = CatalogService(
+            gateway=gateway,
+            admin=agent_admin,
+            store=catalog_store or create_catalog_store(cfg.database_url),
+            poll_seconds=cfg.catalog_poll_seconds,
+        )
+
     # Limits are declared per route below, where the cost actually differs — a
     # `/chat` turn buys tokens, `/confirmations/pending` is a cheap read the
     # console polls on a timer and must not be throttled into failure. Parsed
@@ -470,7 +527,13 @@ def create_app(
         # *host* CPU count, which in a container has nothing to do with the
         # quota the pod is limited to.
         configure_default_executor()
-        yield
+        if catalog is not None:
+            await catalog.start()
+        try:
+            yield
+        finally:
+            if catalog is not None:
+                await catalog.stop()
 
     api = FastAPI(
         title=f"{app_name} (orrery)",
@@ -858,9 +921,69 @@ def create_app(
                         InventoryTool(name=t.name, guard=t.guard, reason=t.reason) for t in a.tools
                     ],
                 )
-                for a in agent_inventory(root_agent)
+                # The tree being served now — an admin edit swaps it.
+                for a in agent_inventory(gateway.root_agent)
             ]
         )
+
+    def require_admin(auth: AuthContext) -> None:
+        if auth.role != "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+
+    def catalog_response(current: AgentCatalog) -> CatalogResponse:
+        assert agent_admin is not None and catalog is not None  # nosec B101 — guarded by caller
+        options = agent_admin.options()
+        return CatalogResponse(
+            editing_enabled=cfg.admin_editing,
+            catalog=current,
+            applied_version=catalog.applied_version,
+            specialists=[CatalogSpecialist(**vars(o)) for o in options.specialists],
+            tools=[CatalogTool(**vars(o)) for o in options.tools],
+            file_agents=options.file_agents,
+        )
+
+    @api.get("/admin/catalog", response_model=CatalogResponse)
+    async def get_catalog(
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> CatalogResponse:
+        """What an admin can switch and compose, and the catalog in force."""
+        require_admin(auth)
+        if catalog is None:
+            raise HTTPException(
+                status_code=404, detail="This deployment has no editable agent catalog"
+            )
+        return catalog_response(await catalog.current())
+
+    @api.put("/admin/catalog", response_model=CatalogResponse)
+    async def put_catalog(
+        body: CatalogUpdate,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> CatalogResponse:
+        """Replace the catalog. 409 if it changed since ``version``; 422 if it
+        cannot be built — in both cases nothing changes."""
+        require_admin(auth)
+        if catalog is None:
+            raise HTTPException(
+                status_code=404, detail="This deployment has no editable agent catalog"
+            )
+        if not cfg.admin_editing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Agent editing is disabled on this deployment (ORRERY_ADMIN_EDITING)",
+            )
+        proposed = AgentCatalog(disabled_specialists=body.disabled_specialists, agents=body.agents)
+        try:
+            stored = await catalog.update(
+                proposed, expected_version=body.version, actor=auth.subject
+            )
+        except CatalogConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"The catalog changed since you loaded it (now version {exc.current.version}). Reload and reapply your edit.",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return catalog_response(stored)
 
     @api.post(
         "/onboarding/selftest",

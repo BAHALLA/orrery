@@ -148,6 +148,52 @@ export interface AgentsResponse {
   agents: InventoryAgent[];
 }
 
+/** A declarative agent: a brief over existing tools (no new code). */
+export interface DeclarativeAgent {
+  name: string;
+  description: string;
+  instruction: string;
+  tools: string[];
+}
+
+/** The admin-editable agent set (GET/PUT /admin/catalog). */
+export interface AgentCatalog {
+  version: number;
+  disabled_specialists: string[];
+  agents: DeclarativeAgent[];
+  updated_by: string;
+  updated_at: number;
+}
+
+export interface CatalogResponse {
+  /** False unless the deployment sets ORRERY_ADMIN_EDITING. */
+  editing_enabled: boolean;
+  catalog: AgentCatalog;
+  applied_version: number;
+  specialists: {
+    key: string;
+    agent_name: string;
+    description: string;
+    source: string;
+    /** False when the deployment's env excludes it: shown, not switchable. */
+    available: boolean;
+  }[];
+  tools: {
+    ref: string;
+    specialist: string;
+    guard: Exclude<ToolGuard, "dynamic">;
+    reason: string;
+  }[];
+  /** Agents from ORRERY_AGENTS_CONFIG: fixed here, names reserved. */
+  file_agents: string[];
+}
+
+export interface CatalogUpdate {
+  version: number;
+  disabled_specialists: string[];
+  agents: DeclarativeAgent[];
+}
+
 /** One integration or connectivity check from the self-test. */
 export interface CheckResult {
   name: string;
