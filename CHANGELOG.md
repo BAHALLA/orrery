@@ -12,6 +12,21 @@ favour of `GOOGLE_GENAI_USE_ENTERPRISE`. The old name still works and only logs 
 `DeprecationWarning`, so rename it in your `.env` / Helm values when convenient.
 If both are set, the new name wins.
 
+### Added
+
+- **Streaming turns (AEP-009): `POST /chat/stream`** (`core/orrery_core/serving/sse.py`). It narrates a turn as Server-Sent Events: the session id first, then tool progress and the answer as it is written, then the complete reply. A slow tool no longer means a minute of silence. The turn runs in its own task, so a client that disconnects never cancels an agent mid-tool. `POST /chat` is unchanged.
+- **`ProgressPlugin`**: live tool-call progress, including calls made *inside* `AgentTool` specialists, which the Runner's event stream cannot show. It is armed per request by `progress_scope()` and inert otherwise, and it streams names and outcomes only, never arguments or results.
+- **Web console redesign.**
+  - Answers stream in, under a live trace of which specialists are being consulted and what each one is running; the trace folds into a one-line summary when done.
+  - Answers render as full-width documents in a reading column.
+  - Responsive layout: the history becomes a slide-out menu and the inspector a drawer on narrow screens.
+  - A light / system / dark switch.
+  - A welcome screen with starting questions.
+  - A clearer approval card that explains the risk level and shows how old the request is.
+  - An inline icon set replaces the emoji.
+  - Inline code no longer renders with literal backticks.
+  - The console falls back to `POST /chat` against a server without the stream route.
+
 ### Changed
 
 - **`create_agent()` wires the confirmation gate itself** (`core/orrery_core/agent/base.py`). Any agent holding an `@confirm`/`@destructive` tool now gets `require_confirmation()` appended to its `before_tool_callback`s, after the caller's own callbacks (so RBAC still refuses first), unless a gate is already present. Wired by hand, the gate was forgotten twice: the docker specialist, then `remediation_actor`. The six specialists no longer pass it explicitly. `require_confirmation()`, `dry_run()` and the Slack and Google Chat gates are marked with the new `mark_confirmation_gate()`, so none of them is doubled.

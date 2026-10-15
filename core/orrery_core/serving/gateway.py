@@ -30,8 +30,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from google.adk.agents import Agent
+from google.adk.agents import Agent, RunConfig
 from google.adk.agents.context_cache_config import ContextCacheConfig
+from google.adk.agents.run_config import StreamingMode
 from google.adk.apps import App
 from google.adk.apps.app import EventsCompactionConfig
 from google.adk.events import Event
@@ -321,24 +322,38 @@ class AgentGateway:
         text: str,
         state_delta: dict[str, Any] | None = None,
         on_event: EventHook | None = None,
+        streaming: bool = False,
     ) -> OutboundReply:
         """Run one turn against an already-resolved session.
 
         The low-level primitive for callers that manage their own session
         lifecycle (e.g. the CLI, or transports with bespoke session mapping).
+
+        With ``streaming=True`` the model is called in ADK's SSE mode: *on_event*
+        additionally sees **partial** events (``event.partial is True``) carrying
+        text as it is generated, each followed in the end by one aggregated,
+        non-partial event with the full text. The returned reply is built from
+        non-partial events only, so it is the same text either way.
         """
         message = types.Content(role="user", parts=[types.Part.from_text(text=text)])
         delta = self._turn_state_delta(text=text, user_id=user_id, state_delta=state_delta)
+        run_kwargs: dict[str, Any] = {}
+        if streaming:
+            run_kwargs["run_config"] = RunConfig(streaming_mode=StreamingMode.SSE)
         reply = ""
         async for event in self.runner.run_async(
             user_id=user_id,
             session_id=session_id,
             new_message=message,
             state_delta=delta or None,
+            **run_kwargs,
         ):
             if on_event is not None:
                 await on_event(event)
-            reply += extract_reply_text(event)
+            # `is True`, not truthiness: a partial chunk repeats in the final
+            # aggregated event, so counting both would print the answer twice.
+            if getattr(event, "partial", None) is not True:
+                reply += extract_reply_text(event)
         return OutboundReply(text=reply, session_id=session_id)
 
     def _turn_state_delta(
@@ -372,25 +387,50 @@ class AgentGateway:
             )
         return delta
 
-    async def run(self, msg: InboundMessage, *, on_event: EventHook | None = None) -> OutboundReply:
-        """Resolve *msg*'s conversation to a session and run one turn.
+    async def resolve_session(self, msg: InboundMessage) -> str:
+        """Map *msg*'s conversation to a session id, creating one if needed.
+
+        Split out of :meth:`run` for streaming transports, which tell the client
+        its session id *before* the turn runs — so a client that disconnects
+        mid-turn can still find the conversation the server finishes.
 
         Raises:
             RuntimeError: If the gateway has no session store — see
                 :attr:`sessions`.
         """
-        session_id = await self.resolver.resolve(
+        return await self.resolver.resolve(
             session_service=self.sessions,
             app_name=self.app_name,
             user_id=msg.user_id,
             key=msg.conversation_key,
         )
+
+    async def run(
+        self,
+        msg: InboundMessage,
+        *,
+        on_event: EventHook | None = None,
+        session_id: str | None = None,
+        streaming: bool = False,
+    ) -> OutboundReply:
+        """Resolve *msg*'s conversation to a session and run one turn.
+
+        Pass *session_id* when it was already resolved with
+        :meth:`resolve_session`; see :meth:`run_in_session` for *streaming*.
+
+        Raises:
+            RuntimeError: If the gateway has no session store — see
+                :attr:`sessions`.
+        """
+        if session_id is None:
+            session_id = await self.resolve_session(msg)
         return await self.run_in_session(
             user_id=msg.user_id,
             session_id=session_id,
             text=msg.text,
             state_delta=msg.state_delta,
             on_event=on_event,
+            streaming=streaming,
         )
 
     async def dispatch(self, adapter: ChannelAdapter, raw: Any) -> Any:
