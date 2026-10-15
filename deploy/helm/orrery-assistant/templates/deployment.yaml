@@ -39,6 +39,9 @@ spec:
         {{- include "orrery-assistant.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if include "orrery-assistant.mcpInlineConfig" . }}
+        checksum/mcp: {{ include (print $.Template.BasePath "/mcp-configmap.yaml") . | sha256sum }}
+        {{- end }}
         {{- if and (not .Values.existingSecret) .Values.secrets }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
@@ -111,6 +114,11 @@ spec:
               mountPath: {{ .Values.secretsVolume.mountPath }}
               readOnly: true
             {{- end }}
+            {{- if .Values.mcp.enabled }}
+            - name: mcp-config
+              mountPath: {{ .Values.mcp.mountPath }}
+              readOnly: true
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -125,6 +133,14 @@ spec:
         - name: orrery-secrets
           secret:
             secretName: {{ .Values.secretsVolume.secretName }}
+        {{- end }}
+        {{- if .Values.mcp.enabled }}
+        - name: mcp-config
+          configMap:
+            name: {{ include "orrery-assistant.mcpConfigMapName" . }}
+            items:
+              - key: mcp.yaml
+                path: mcp.yaml
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

@@ -24,6 +24,10 @@ class SlackBotConfig(AgentConfig):
     # Rate limiting for the /slack/events endpoint (per source IP).
     # Rate-limit notation, e.g. "60/minute" or "5/second" (parsed by `limits`).
     slack_rate_limit: str = "60/minute"
+    # Edit a status message in-thread while a slow turn runs (specialists
+    # consulted, tool calls). Needs the bot's chat:write scope, which posting
+    # replies already requires. SLACK_PROGRESS_UPDATES=false turns it off.
+    slack_progress_updates: bool = True
 
     # When running behind a reverse proxy (nginx ingress, GCP LB, ALB),
     # the connecting peer is the proxy, not the real client. Set this to

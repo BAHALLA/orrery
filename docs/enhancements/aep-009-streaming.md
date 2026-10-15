@@ -10,8 +10,7 @@
 
 ## Status (2026-10)
 
-**The web console path shipped.** The Slack and Google Chat transports are still
-open.
+**The web console and Slack paths shipped.** Google Chat is still open.
 
 - `POST /chat/stream` (`core/orrery_core/serving/sse.py`) narrates a turn as SSE:
   `session` first (so a client that drops can reload), then `progress`, `delta`
@@ -32,7 +31,12 @@ open.
 - The console renders a live per-specialist trace, then the answer as it is
   written (see [Web console](../integrations/web-console.md)).
 
-**Still open:** incremental Slack and Google Chat updates (Step 4), and a
+- **Slack** (Step 4) edits one in-thread status message while a slow turn
+  runs, using the same `ProgressPlugin` feed folded by
+  `orrery_core.serving.progress.ProgressTracker`. It leaves a one-line receipt
+  when the turn ends (`agents/slack-bot/slack_bot/progress.py`).
+
+**Still open:** Google Chat incremental updates (reuse `ProgressTracker`), and a
 provider-by-provider check of LiteLLM streaming (Claude/OpenAI). The gateway
 falls back to whole-answer delivery for any model that does not stream, so
 those providers already work; they just don't stream token by token yet.
@@ -138,7 +142,7 @@ async def handle_streaming_events(self, runner, session, message):
 
 - [x] Agent responses stream in real-time via SSE (`POST /chat/stream`)
 - [x] Parallel health check progress visible as each check completes (including calls inside specialists)
-- [ ] Slack bot posts incremental updates during long operations
+- [x] Slack bot posts incremental updates during long operations
 - [x] `ProgressPlugin` reports timing for each tool call
 - [x] No regression in final response quality (identical reply text, pinned by tests)
 - [ ] Streaming works with all LLM providers (Gemini, Claude, OpenAI)

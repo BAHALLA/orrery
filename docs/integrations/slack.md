@@ -50,6 +50,22 @@ make run-slack MODE=socket  # start the bot (Socket Mode, no public URL needed)
 
 Each thread is a separate conversation. Guarded tools (marked with `@confirm` or `@destructive`) post an Approve/Deny prompt before executing. Approvals are **requester-only** (only the user who triggered the action can approve; anyone can deny), one-shot, pinned to the exact tool arguments, and expire after 5 minutes. The handshake rides the shared platform confirmation store — set `ORRERY_CONFIRMATION_BACKEND=postgres` (with `DATABASE_URL`) to share pending approvals across bot replicas. See [Guardrails](../guardrails.md) for the full flow.
 
+## Live progress on slow turns
+
+A turn that takes more than a couple of seconds gets a **status message** in the
+thread, edited as the agent works. It lists each specialist consulted and its
+tool calls (⏳ running, ✅ done, ⚠️ failed, 🔒 awaiting approval or refused). When
+the turn ends, the status message becomes a one-line receipt, for example
+"✅ Kafka, Kubernetes · 4 tool calls · 7.2s", and the answer is posted below it
+as usual.
+
+Quick answers, and turns that call no tools, add nothing but the answer. Edits
+are throttled to one every two seconds, within Slack's `chat.update` rate tier.
+They use the `chat:write` scope the bot already needs. A failed edit is logged
+and never costs the answer. Set `SLACK_PROGRESS_UPDATES=false` to turn it off.
+
+Only names and outcomes are shown, never tool arguments or results.
+
 ## Role-Based Access Control
 
 The Slack bot maps Slack user IDs to RBAC roles. Add your user IDs to `agents/slack-bot/.env`:

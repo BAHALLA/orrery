@@ -1,0 +1,14 @@
+{{- if include "orrery-assistant.mcpInlineConfig" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "orrery-assistant.mcpConfigMapName" . }}
+  labels:
+    {{- include "orrery-assistant.labels" . | nindent 4 }}
+data:
+  # Read by orrery_core.tools.mcp (ORRERY_MCP_CONFIG). No secrets here: header
+  # values are named by env var (headers_from_env) and come from `secrets` /
+  # `existingSecret`, which the pod already loads.
+  mcp.yaml: |
+    {{- toYaml (dict "servers" .Values.mcp.servers) | nindent 4 }}
+{{- end }}

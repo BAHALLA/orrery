@@ -222,6 +222,27 @@ secrets:
 ## for production.
 existingSecret: ""
 
+## ── MCP servers (docs/integrations/mcp.md) ─────────────────────────
+## Each server becomes a gated specialist. Tools must be allowlisted, and any
+## tool you don't classify is treated as destructive (admin-only, approval).
+## Header secrets are NOT written here: `headers_from_env` names an env var,
+## and that var goes in `secrets` / `existingSecret` above.
+mcp:
+  enabled: false
+  mountPath: /etc/orrery/mcp
+  # Use a ConfigMap you manage (must contain an `mcp.yaml` key) instead of
+  # rendering `servers` below.
+  existingConfigMap: ""
+  servers: []
+  # - name: github
+  #   description: GitHub issues and pull requests for the platform repositories
+  #   transport: streamable_http
+  #   url: https://api.githubcopilot.com/mcp/
+  #   headers_from_env:
+  #     Authorization: GITHUB_MCP_AUTHORIZATION   # add this key to `secrets`
+  #   tools: [list_issues, get_issue, create_issue]
+  #   read_only: [list_issues, get_issue]
+
 ## ── Authentication (AEP-013) ───────────────────────────────────────
 ## JWT bearer-token verification for the HTTP front door. Required for
 ## any deployment that exposes orrery_core.server over HTTP — without it
