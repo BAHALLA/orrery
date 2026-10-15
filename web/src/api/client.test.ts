@@ -251,6 +251,7 @@ describe("API path coverage", () => {
       client.pendingConfirmation(),
       client.triage("s1"),
       client.me(),
+      client.agents(),
       client.selfTest(),
     ]);
 

@@ -68,6 +68,7 @@ from ..security.auth import (
 )
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
+from .inventory import agent_inventory
 from .onboarding import (
     IntegrationProbe,
     check_model_connectivity,
@@ -199,6 +200,26 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     session_id: str
     response: str
+
+
+class InventoryTool(BaseModel):
+    name: str
+    #: read | confirm | destructive | dynamic (an MCP toolset, classified per
+    #: tool at run time).
+    guard: str
+    reason: str = ""
+
+
+class InventoryAgent(BaseModel):
+    name: str
+    description: str
+    #: builtin | plugin | declarative | mcp
+    source: str
+    tools: list[InventoryTool]
+
+
+class AgentsResponse(BaseModel):
+    agents: list[InventoryAgent]
 
 
 class SessionSummary(BaseModel):
@@ -814,6 +835,31 @@ def create_app(
             model_provider=os.getenv("MODEL_PROVIDER", "gemini"),
             model_name=os.getenv("MODEL_NAME", ""),
             self_test_available=bool(probes),
+        )
+
+    @api.get("/admin/agents", response_model=AgentsResponse)
+    async def admin_agents(
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> AgentsResponse:
+        """Every specialist the coordinator can reach, with each tool's guard level.
+
+        Admin only: it maps exactly which tools are unguarded, which is a
+        reconnaissance aid for anyone probing what a lower role can still do.
+        """
+        if auth.role != "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+        return AgentsResponse(
+            agents=[
+                InventoryAgent(
+                    name=a.name,
+                    description=a.description,
+                    source=a.source,
+                    tools=[
+                        InventoryTool(name=t.name, guard=t.guard, reason=t.reason) for t in a.tools
+                    ],
+                )
+                for a in agent_inventory(root_agent)
+            ]
         )
 
     @api.post(

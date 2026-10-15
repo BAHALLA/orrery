@@ -447,6 +447,27 @@ describe("resilience and safety posture", () => {
             },
           );
         }
+        if (url.endsWith("/admin/agents")) {
+          return jsonResponse({
+            agents: [
+              {
+                name: "k8s_health_agent",
+                description: "Kubernetes",
+                source: "builtin",
+                tools: [
+                  { name: "list_pods", guard: "read", reason: "" },
+                  { name: "delete_pod", guard: "destructive", reason: "deletes a pod" },
+                ],
+              },
+              {
+                name: "github_mcp_agent",
+                description: "GitHub",
+                source: "mcp",
+                tools: [{ name: "github_*", guard: "dynamic", reason: "" }],
+              },
+            ],
+          });
+        }
         if (url.includes("/onboarding/selftest")) {
           return jsonResponse({
             ok: false,
@@ -482,6 +503,43 @@ describe("resilience and safety posture", () => {
 
     // The token says nothing about autonomy — only the server knows it.
     expect(await screen.findByTitle(/autonomy l3/i)).toHaveTextContent("L3");
+  });
+
+  it("shows admins the agent inventory with each tool's guard level", async () => {
+    stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }), {
+      subject: "alice",
+      role: "admin",
+      autonomy_level: null,
+      model_provider: "gemini",
+      model_name: "",
+      self_test_available: true,
+    });
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "alice", roles: ["admin"] }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /check my environment/i }));
+    await user.click(await screen.findByRole("tab", { name: /agents/i }));
+
+    const list = await screen.findByRole("list", { name: "Agents" });
+    expect(within(list).getByText("k8s_health_agent")).toBeInTheDocument();
+    expect(within(list).getByText("MCP")).toBeInTheDocument();
+    expect(within(list).getByText("delete_pod")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/destructive.*deletes a pod/i),
+    );
+  });
+
+  it("hides the agent inventory from non-admins", async () => {
+    stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));
+    localStorage.setItem(storageKeys.token, token);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /check my environment/i }));
+    await screen.findByRole("tab", { name: /system/i });
+
+    expect(screen.queryByRole("tab", { name: /agents/i })).not.toBeInTheDocument();
   });
 
   it("runs the environment check and names what to fix", async () => {

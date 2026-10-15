@@ -308,6 +308,9 @@ def create_mcp_agent(config: McpServerConfig, *, model: Any = None) -> LlmAgent:
         f"{OPERATING_PRINCIPLES}\n"
         f"{CONFIRMATION_RULE}"
     )
+    from ..registry import record_source
+
+    record_source(f"{config.name}_mcp_agent", "mcp")
     return create_agent(
         name=f"{config.name}_mcp_agent",
         description=config.description,
