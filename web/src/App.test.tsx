@@ -65,12 +65,96 @@ describe("App auth flow", () => {
     await user.type(screen.getByRole("textbox", { name: /message/i }), "and the lag?");
     await user.click(screen.getByRole("button", { name: /send/i }));
     await waitFor(() => {
-      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat"));
+      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat/stream"));
       expect(chatCalls).toHaveLength(2);
       expect(JSON.parse(String(chatCalls[1][1]?.body))).toMatchObject({ session_id: "s1" });
     });
     // Nothing about the conversation is written to disk.
     expect(localStorage.getItem("orrery.console.conversations")).toBeNull();
+  });
+
+  it("streams a turn: live trace of the specialists, then the answer once", async () => {
+    const frame = (event: string, data: unknown) =>
+      `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const step = (over: Record<string, unknown>) => ({
+      call_id: "c",
+      phase: "start",
+      agent: "orrery_chat_agent",
+      tool: "t",
+      delegation: false,
+      guarded: false,
+      outcome: null,
+      status: "",
+      elapsed_ms: null,
+      ...over,
+    });
+    const body = [
+      frame("session", { session_id: "s7" }),
+      frame("progress", step({ call_id: "d1", tool: "kafka_health_agent", delegation: true })),
+      frame(
+        "progress",
+        step({ call_id: "t1", agent: "kafka_health_agent", tool: "get_consumer_lag" }),
+      ),
+      frame(
+        "progress",
+        step({
+          call_id: "t1",
+          phase: "end",
+          agent: "kafka_health_agent",
+          tool: "get_consumer_lag",
+          outcome: "ok",
+          elapsed_ms: 120,
+        }),
+      ),
+      frame(
+        "progress",
+        step({
+          call_id: "d1",
+          phase: "end",
+          tool: "kafka_health_agent",
+          delegation: true,
+          outcome: "ok",
+          elapsed_ms: 900,
+        }),
+      ),
+      frame("delta", { text: "Lag is ", author: "orrery_chat_agent" }),
+      frame("delta", { text: "flat.", author: "orrery_chat_agent" }),
+      frame("message", { session_id: "s7", text: "Lag is flat." }),
+      frame("done", {}),
+    ].join("");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        const u = String(url);
+        if (u.endsWith("/chat/stream")) {
+          return new Response(body, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        if (u.includes("/activity")) return jsonResponse({ session_id: "s7", entries: [] });
+        if (u.includes("/confirmations/pending")) return jsonResponse({ pending: null });
+        if (u.includes("/triage"))
+          return jsonResponse({ session_id: "s7", severity: null, report: null });
+        return jsonResponse({ sessions: [] });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "kafka lag?");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    // The answer appears exactly once: the final message replaces the deltas
+    // rather than being appended to them.
+    expect(await screen.findByText("Lag is flat.")).toBeInTheDocument();
+    expect(screen.getAllByText("Lag is flat.")).toHaveLength(1);
+    // The finished trace folds into a summary naming who was consulted…
+    const summary = await screen.findByText("Kafka · 1 tool call");
+    // …and expands to the specialist's own tool call.
+    await user.click(summary);
+    expect(screen.getByText("get_consumer_lag")).toBeInTheDocument();
   });
 
   it("restores history from the server in a browser that has never seen it", async () => {
@@ -276,7 +360,7 @@ describe("App auth flow", () => {
     // the server-side requester-verified gate stays the authority.
     await user.click(screen.getByRole("button", { name: /approve/i }));
     await waitFor(() => {
-      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat"));
+      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat/stream"));
       const last = chatCalls[chatCalls.length - 1];
       expect(JSON.parse(String(last[1]?.body))).toMatchObject({ message: "approve" });
     });
@@ -304,9 +388,9 @@ describe("App auth flow", () => {
 
     await user.click(screen.getByRole("button", { name: /run triage/i }));
 
-    // The canned prompt went through the normal /chat flow.
+    // The canned prompt went through the normal chat flow.
     await waitFor(() => {
-      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat"));
+      const chatCalls = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/chat/stream"));
       expect(chatCalls).toHaveLength(1);
       expect(JSON.parse(String(chatCalls[0][1]?.body)).message).toMatch(/incident triage/i);
     });

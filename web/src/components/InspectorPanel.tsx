@@ -1,5 +1,6 @@
 import type { ActivityEntry, TriageResponse } from "../api/types";
 import type { SystemController } from "../system/useSystem";
+import { CloseIcon } from "./icons";
 import { SystemPanel } from "./SystemPanel";
 import { ToolCallsTable } from "./ToolCallsTable";
 import { TriageReport } from "./TriageReport";
@@ -19,14 +20,18 @@ interface Props {
  * of the chat column so the conversation stays clean. */
 export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }: Props) {
   const tabClass = (active: boolean) =>
-    `px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+    `px-3 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors focus-visible:outline-none focus-visible:text-brand-600 ${
       active
-        ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400"
+        ? "border-brand-600 text-brand-700 dark:text-brand-300 dark:border-brand-400"
         : "border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
     }`;
 
   return (
-    <aside className="flex w-96 shrink-0 flex-col border-l border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
+    // A drawer over the conversation below `xl`, a docked column from `xl` up.
+    <aside
+      aria-label="Inspector"
+      className="absolute inset-y-0 right-0 z-20 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl shadow-slate-900/20 xl:static xl:z-auto xl:w-96 xl:max-w-none xl:shrink-0 xl:shadow-none dark:border-slate-800 dark:bg-slate-900"
+    >
       <div className="flex items-center justify-between border-b border-slate-200 px-2 dark:border-slate-800">
         <div className="flex" role="tablist">
           <button
@@ -76,7 +81,7 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
           className="rounded p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           onClick={onClose}
         >
-          ✕
+          <CloseIcon />
         </button>
       </div>
       <div className="orrery-scroll min-h-0 flex-1 overflow-y-auto">

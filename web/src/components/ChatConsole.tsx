@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { Identity } from "../auth/token";
+import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
 import { ConfirmationPanel } from "./ConfirmationPanel";
+import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
@@ -16,7 +18,14 @@ interface Props {
   onSignOut: () => void;
 }
 
-/** The authenticated console: sidebar + chat column + inspector panel. */
+const headerButton = (active: boolean) =>
+  `inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+    active
+      ? "bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white"
+      : "text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+  }`;
+
+/** The authenticated console: sidebar + conversation column + inspector. */
 export function ChatConsole({ token, identity, onSignOut }: Props) {
   const conversations = useConversations(token);
   const chat = useChat(token, conversations);
@@ -24,6 +33,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
 
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("tools");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   // Surface a fresh triage verdict without the user hunting for it.
   const lastSeverity = useRef<string | null>(null);
@@ -36,6 +46,17 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     lastSeverity.current = sev;
   }, [chat.triage]);
 
+  // Escape closes whichever overlay is on top.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (navOpen) setNavOpen(false);
+      else if (inspectorOpen) setInspectorOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen, inspectorOpen]);
+
   const toggleInspector = (tab: InspectorTab) => {
     if (inspectorOpen && inspectorTab === tab) {
       setInspectorOpen(false);
@@ -45,20 +66,21 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     }
   };
 
-  const headerBtn = (active: boolean) =>
-    `rounded-lg px-2.5 py-1.5 text-sm font-medium ${
-      active
-        ? "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100"
-        : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-    }`;
+  // The reply being written, if any — drives the live status in the header.
+  // A streaming reply is always the newest message: nothing is appended after it.
+  const last = chat.messages.at(-1);
+  const live = last?.streaming ? last : undefined;
+  const liveSteps = live?.trace ? flatten(live.trace).length : 0;
 
   return (
-    <div className="flex h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="flex h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar
         conversations={conversations}
         identity={identity}
         me={system.me}
         isSending={chat.isSending}
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
         onNewChat={conversations.newConversation}
         onRunTriage={() => void chat.runTriage()}
         onOpenSystem={() => toggleInspector("system")}
@@ -66,45 +88,65 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+        <header className="flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80">
+          <button
+            type="button"
+            aria-label="Open menu"
+            onClick={() => setNavOpen(true)}
+            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden dark:hover:bg-slate-800"
+          >
+            <MenuIcon size={18} />
+          </button>
           <h2 className="min-w-0 flex-1 truncate font-medium text-slate-800 dark:text-slate-100">
             {conversations.active.title}
           </h2>
+          {live ? (
+            <span
+              role="status"
+              className="hidden items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 sm:inline-flex dark:bg-brand-950/60 dark:text-brand-200"
+            >
+              <OrbitSpinner />
+              Working{liveSteps ? ` · ${liveSteps} step${liveSteps === 1 ? "" : "s"}` : ""}
+            </span>
+          ) : null}
           <button
             type="button"
-            className={headerBtn(inspectorOpen && inspectorTab === "tools")}
+            className={headerButton(inspectorOpen && inspectorTab === "tools")}
             onClick={() => toggleInspector("tools")}
           >
-            Tool calls
+            <ActivityIcon />
+            <span className="sr-only sm:not-sr-only">Tool calls</span>
             {chat.activity.length > 0 ? (
-              <span className="ml-1.5 rounded-full bg-slate-200 px-1.5 text-xs tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+              <span className="rounded-full bg-slate-200 px-1.5 text-xs text-slate-600 tabular-nums dark:bg-slate-700 dark:text-slate-300">
                 {chat.activity.length}
               </span>
             ) : null}
           </button>
           <button
             type="button"
-            className={headerBtn(inspectorOpen && inspectorTab === "triage")}
+            className={headerButton(inspectorOpen && inspectorTab === "triage")}
             onClick={() => toggleInspector("triage")}
           >
+            <RadarIcon />
+            <span className="sr-only sm:not-sr-only">Triage</span>
             {chat.triage?.severity ? (
-              <span className="inline-flex items-center gap-1.5">
-                Triage
-                <span
-                  className={`rounded-full px-1.5 py-0.5 text-xs font-semibold uppercase ${severityBadge[chat.triage.severity]}`}
-                >
-                  {chat.triage.severity}
-                </span>
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold uppercase ${severityBadge[chat.triage.severity]}`}
+              >
+                {chat.triage.severity}
               </span>
-            ) : (
-              "Triage"
-            )}
+            ) : null}
           </button>
         </header>
 
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           <section className="flex min-w-0 flex-1 flex-col">
-            <MessageList messages={chat.messages} isSending={chat.isSending} />
+            <MessageList
+              messages={chat.messages}
+              isSending={chat.isSending}
+              onSuggest={(prompt) => void chat.send(prompt)}
+              onSweep={() => void chat.runTriage()}
+            />
 
             {chat.pending ? (
               <ConfirmationPanel
@@ -115,35 +157,37 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
             ) : null}
 
             {chat.error ? (
-              <div
-                role="alert"
-                className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
-              >
-                <span className="min-w-0">{chat.error.message}</span>
-                <span className="flex shrink-0 items-center gap-3">
-                  {chat.error.isAuth ? (
-                    <button type="button" className="font-medium underline" onClick={onSignOut}>
-                      Re-enter token
-                    </button>
-                  ) : chat.error.canRetry ? (
+              <div className="px-3 sm:px-6">
+                <div
+                  role="alert"
+                  className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300"
+                >
+                  <span className="min-w-0">{chat.error.message}</span>
+                  <span className="flex shrink-0 items-center gap-3">
+                    {chat.error.isAuth ? (
+                      <button type="button" className="font-medium underline" onClick={onSignOut}>
+                        Re-enter token
+                      </button>
+                    ) : chat.error.canRetry ? (
+                      <button
+                        type="button"
+                        className="font-medium underline disabled:opacity-50"
+                        disabled={chat.isSending}
+                        onClick={() => void chat.retry()}
+                      >
+                        Retry
+                      </button>
+                    ) : null}
                     <button
                       type="button"
-                      className="font-medium underline disabled:opacity-50"
-                      disabled={chat.isSending}
-                      onClick={() => void chat.retry()}
+                      aria-label="Dismiss error"
+                      className="rounded p-0.5 opacity-60 hover:opacity-100"
+                      onClick={chat.clearError}
                     >
-                      Retry
+                      <CloseIcon size={14} />
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    aria-label="Dismiss error"
-                    className="text-lg leading-none opacity-60 hover:opacity-100"
-                    onClick={chat.clearError}
-                  >
-                    ✕
-                  </button>
-                </span>
+                  </span>
+                </div>
               </div>
             ) : null}
 
@@ -156,14 +200,22 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           </section>
 
           {inspectorOpen ? (
-            <InspectorPanel
-              tab={inspectorTab}
-              onTab={setInspectorTab}
-              onClose={() => setInspectorOpen(false)}
-              activity={chat.activity}
-              triage={chat.triage}
-              system={system}
-            />
+            <>
+              {/* Below xl the inspector overlays the conversation as a drawer. */}
+              <div
+                aria-hidden="true"
+                onClick={() => setInspectorOpen(false)}
+                className="absolute inset-0 z-10 bg-slate-950/30 backdrop-blur-[1px] xl:hidden"
+              />
+              <InspectorPanel
+                tab={inspectorTab}
+                onTab={setInspectorTab}
+                onClose={() => setInspectorOpen(false)}
+                activity={chat.activity}
+                triage={chat.triage}
+                system={system}
+              />
+            </>
           ) : null}
         </div>
       </main>

@@ -20,6 +20,36 @@ export interface ChatResponse {
   response: string;
 }
 
+/**
+ * One edge of one tool call, streamed while a turn runs (ProgressStep server-side).
+ * Names and outcomes only — the server never streams tool arguments or results.
+ */
+export interface ProgressEvent {
+  /** Pairs a `start` with its `end`. */
+  call_id: string;
+  phase: "start" | "end";
+  /** The agent that made the call. */
+  agent: string;
+  /** The tool. For a delegation, the specialist being asked. */
+  tool: string;
+  /** Hands work to another agent; later steps whose `agent` is `tool` ran inside it. */
+  delegation: boolean;
+  /** `@confirm` / `@destructive`. */
+  guarded: boolean;
+  /** On `end`: ok, error (the tool reported failure) or refused (a gate answered). */
+  outcome: "ok" | "error" | "refused" | null;
+  status: string;
+  elapsed_ms: number | null;
+}
+
+/** The events POST /chat/stream emits (see core/orrery_core/serving/sse.py). */
+export type StreamEvent =
+  | { type: "session"; session_id: string }
+  | { type: "progress"; step: ProgressEvent }
+  | { type: "delta"; text: string; author: string }
+  | { type: "message"; session_id: string; text: string }
+  | { type: "error"; message: string; retryable: boolean };
+
 /** One of the caller's conversations, as GET /sessions lists it (no transcript). */
 export interface SessionSummary {
   session_id: string;
