@@ -191,3 +191,19 @@ groups:
           summary: "Under-replicated partitions on {{ $labels.topic }}"
           description: "Partition {{ $labels.partition }} of topic {{ $labels.topic }} is under-replicated."
           runbook_url: "https://bahalla.github.io/orrery/runbooks/"
+
+  # Infrastructure Orrery watches (not Orrery itself). Lag comes from
+  # kafka-exporter in the local stack; in production, point the same expression
+  # at whatever exports kafka_consumergroup_lag.
+  - name: kafka
+    rules:
+      - alert: KafkaConsumerGroupLagHigh
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag) > 1000
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer group {{ $labels.consumergroup }} is {{ $value }} messages behind on {{ $labels.topic }}"
+          description: "Lag above 1000 for 30s. Consumers are down, stuck, or slower than producers."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/kafka-consumer-lag/"
+

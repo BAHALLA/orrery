@@ -190,6 +190,33 @@ Follow these steps if you want to modify agents or contribute to the core librar
 
 ---
 
+## A real incident in one command: `make demo` {: #demo }
+
+```bash
+make install    # once
+make demo       # seeds the incident and opens the console on :8000
+```
+
+`make demo` starts Kafka, kafka-exporter, Prometheus and Alertmanager, then breaks
+them on purpose (`scripts/demo/seed.py`):
+
+- a consumer group, `orders-processor`, **5,100 messages behind** on the `orders` topic,
+  with no active members;
+- its worker, `orrery-demo-orders-worker`, under a 16 MiB memory limit it can't start in.
+  It is genuinely **OOM-killed** and restarted in a loop;
+- after ~30 s, the `KafkaConsumerGroupLagHigh` alert fires in Prometheus.
+
+It prints an **operator** token to paste into the console. Then ask:
+
+1. *"Why is the orders consumer lagging?"* The Kafka, Docker and observability
+   specialists work in parallel, and each tool call appears in the live trace as it runs.
+2. *"Fix it."* The fix is a mutation, so it stops at an approval card. Nothing changes
+   until you click **Approve**.
+
+Nothing is mocked: the agents diagnose what is really running, so this uses the LLM
+credentials in your `.env`. `make demo-reset` removes the topic, group and worker;
+`make down` stops the containers.
+
 ## Your First Interaction
 
 Once the platform is running, try these scenarios to see the agents in action:

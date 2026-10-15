@@ -18,6 +18,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from orrery_core import extract_reply_text
+from orrery_core.plugins.progress_plugin import ProgressStep
+from orrery_core.serving.progress import ProgressTracker as StepTracker
+from orrery_core.serving.progress import TrackedCall, agent_label
 
 from .cards import REMEDIATION_KEYS, SUBSYSTEMS, classify_status
 
@@ -56,6 +59,42 @@ class ProgressTracker:
         self.collected_text: str = ""
         # Full triage_report text once triage_summarizer writes it.
         self.triage_report: str | None = None
+        # Tool calls made anywhere in the turn — including inside AgentTool
+        # specialists, which the root's event stream (consume) never shows —
+        # fed by the ProgressPlugin via ``sink`` under progress_scope.
+        self.steps = StepTracker()
+        self._flushes: set[asyncio.Task[None]] = set()
+
+    def sink(self, step: ProgressStep) -> None:
+        """``progress_scope`` sink: fold a tool step in and schedule a flush.
+
+        Synchronous (the plugin calls it on the event loop), so the card update
+        is scheduled rather than awaited. While a specialist works the root
+        emits no events, so without this the card would sit still for the
+        whole delegation. The flush itself is debounced as usual.
+        """
+        self.steps.apply(step)
+        self._dirty = True
+        if step.phase == "end" and step.delegation:
+            self._pending_force = True  # a specialist finishing is worth showing now
+        try:
+            task = asyncio.get_running_loop().create_task(self._maybe_flush())
+        except RuntimeError:
+            return
+        self._flushes.add(task)
+        task.add_done_callback(self._flushes.discard)
+
+    def specialist_lines(self) -> list[str]:
+        """One line per specialist consulted, with its tool calls (Chat HTML)."""
+        lines = []
+        for call in self.steps.calls:
+            if call.delegation:
+                tools = ", ".join(_call_text(c) for c in call.children if not c.delegation)
+                head = f"{_STEP_ICON[call.state]} <b>{agent_label(call.tool)}</b>"
+                lines.append(f"{head} — {tools}" if tools else head)
+            else:
+                lines.append(_call_text(call))
+        return lines
 
     @property
     def elapsed_seconds(self) -> float:
@@ -129,6 +168,14 @@ class ProgressTracker:
                 await self._on_update(self)
             except Exception:
                 logger.exception("Final progress update callback failed")
+
+
+_STEP_ICON = {"running": "\u23f3", "ok": "\u2705", "error": "\u26a0\ufe0f", "refused": "\U0001f512"}
+
+
+def _call_text(call: TrackedCall) -> str:
+    timing = f" {call.elapsed_ms / 1000:.1f}s" if call.elapsed_ms is not None else ""
+    return f"{_STEP_ICON[call.state]} <i>{call.tool}</i>{timing}"
 
 
 def _safe_function_calls(event: Any) -> list[Any]:

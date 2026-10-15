@@ -10,7 +10,7 @@
 
 ## Status (2026-10)
 
-**The web console and Slack paths shipped.** Google Chat is still open.
+**Shipped on every transport** (console, Slack, Google Chat). Provider-specific token streaming is still to be checked.
 
 - `POST /chat/stream` (`core/orrery_core/serving/sse.py`) narrates a turn as SSE:
   `session` first (so a client that drops can reload), then `progress`, `delta`
@@ -36,8 +36,12 @@
   `orrery_core.serving.progress.ProgressTracker`. It leaves a one-line receipt
   when the turn ends (`agents/slack-bot/slack_bot/progress.py`).
 
-**Still open:** Google Chat incremental updates (reuse `ProgressTracker`), and a
-provider-by-provider check of LiteLLM streaming (Claude/OpenAI). The gateway
+- **Google Chat**: the existing "Investigating…" card now lists each specialist and
+  its tool calls from the same feed. Flushes are scheduled by the sink, because the
+  root emits no events while a specialist works.
+
+**Still open:** a provider-by-provider check of LiteLLM token streaming
+(Claude/OpenAI). Every transport already shows tool progress for any provider. The gateway
 falls back to whole-answer delivery for any model that does not stream, so
 those providers already work; they just don't stream token by token yet.
 

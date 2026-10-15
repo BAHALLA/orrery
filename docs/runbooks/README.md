@@ -24,6 +24,7 @@ you should expect, not abstract prose.
 | [Session DB unreachable](session-db-unreachable.md) | `OrreryDatabaseUnreachable` | critical |
 | [Remediation loop storm](remediation-loop-storm.md) | `OrreryRemediationStorm` | critical |
 | [Circuit breaker open](circuit-breaker-open.md) | `OrreryCircuitBreakerOpen` | warning |
+| [Kafka consumer lag](kafka-consumer-lag.md) | `KafkaConsumerGroupLagHigh` | warning |
 | [High tool error rate](high-tool-error-rate.md) | `OrreryHighToolErrorRate` | warning |
 | [High LLM spend](high-llm-spend.md) | `OrreryHighTokenBurn` | warning |
 | [Prompt injection detected](prompt-injection-detected.md) | `OrreryIndirectInjectionDetected`, `OrreryDirectInjectionAttempts` | warning |

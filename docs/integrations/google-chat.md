@@ -85,12 +85,13 @@ For long-running investigations (incident triage, remediation loops), the bot st
 
 -   **Current step** — the friendly label for the executing sub-agent (e.g. `Checking Kafka`, `Synthesizing findings`).
 -   **Tool breadcrumb** — the most recent tool call (`list_consumer_groups`, `get_pods`, …) so operators can see what the agent is doing right now.
+-   **Specialists at work**: one line per specialist consulted, with each of its tool calls and its state (⏳ running, ✅ done, ⚠️ failed, 🔒 awaiting approval or refused) and duration. This comes from the platform's `ProgressPlugin`, so it includes calls made *inside* a specialist, which the card used to go quiet during.
 -   **Subsystem chips** — one row per health-check subsystem that has reported in, with a severity icon inferred from the status text:
     -   ✅ `ok` · ⚠️ `warn` (yellow/degraded/lag) · ❌ `fail` (red/critical/crashloop) · ⏳ `pending`
 -   **Remediation panel** (when the remediation subgraph is running) — shows `remediation_action` → `verification_result` → `remediation_summary` as the act → verify → retry loop iterates.
 -   **Elapsed seconds** — visible forward-progress signal.
 
-Card updates are **debounced at 800ms** and **force-flushed** on each subsystem status write to balance liveness against Chat's update quota.
+Card updates are **debounced at 800ms** and **force-flushed** on each subsystem status write, and whenever a specialist finishes, to balance liveness against Chat's update quota.
 
 **Final result card (triage runs):**
 

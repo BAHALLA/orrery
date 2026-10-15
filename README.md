@@ -38,6 +38,11 @@
 </p>
 <p align="center"><sub>One question, five systems checked in parallel, one verdict — with the evidence kept alongside.</sub></p>
 
+<p align="center">
+  <img src="docs/images/console-demo.gif" alt="Asking why a Kafka consumer group is lagging: Orrery consults the Kafka and Docker specialists in parallel, streams their tool calls live, finds the worker OOM-killed in a loop, and proposes raising its memory limit — which waits on an approval card until the user approves." width="900">
+</p>
+<p align="center"><sub>Live: specialists consulted in parallel, every tool call visible, and nothing changes until you approve. (<code>make demo</code> runs this incident for real.)</sub></p>
+
 ## Why Orrery
 
 An alert tells you *that* something is wrong. Finding out *what* still means a human
@@ -80,7 +85,13 @@ GOOGLE_API_KEY=your-key docker compose --profile demo up -d
 ```
 
 From source: `make install && make up && make run-api`, then `make dev-token ROLE=admin` for a
-token to sign in with. `make help` lists every target. The
+token to sign in with. `make help` lists every target.
+
+**See it handle an incident in a minute:** `make install && make demo`. It breaks things on
+purpose on the local stack: a consumer group 5,100 messages behind, because its worker is
+OOM-killed in a loop. Then it opens the console. Ask *"Why is the orders consumer lagging?"*,
+then ask it to fix what it finds. Nothing is mocked: the agents find what is really there
+(uses the LLM credentials in your `.env`). `make demo-reset` cleans up. The
 [Getting Started guide](https://bahalla.github.io/orrery/getting-started/) covers providers,
 SSO, Slack and Google Chat.
 

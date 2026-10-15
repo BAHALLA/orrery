@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from typing import Any
 
 from orrery_core import (
@@ -16,6 +17,7 @@ from orrery_core import (
     set_user_role,
     tool_ledger_scope,
 )
+from orrery_core.plugins.progress_plugin import progress_scope
 from orrery_core.security.identity import CallerIdentity
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
@@ -435,7 +437,10 @@ class GoogleChatHandler:
             # The ledger records guarded calls made anywhere in the turn —
             # including inside AgentTool specialists — so a turn stopped
             # mid-way can say what it already changed.
-            with tool_ledger_scope(ledger):
+            # The progress scope feeds the card with tool calls made inside
+            # specialists too; entered here, in the task that runs the agent.
+            steps = progress_scope(tracker.sink) if tracker is not None else nullcontext()
+            with tool_ledger_scope(ledger), steps:
                 async with asyncio.timeout(timeout) as budget:
                     reply = await self.gateway.run_in_session(
                         user_id=user_id,
@@ -873,6 +878,7 @@ class GoogleChatHandler:
                 subsystem_chips=t.subsystem_chips,
                 remediation=t.remediation_state or None,
                 elapsed_seconds=t.elapsed_seconds,
+                specialists=t.specialist_lines(),
             )
             await chat_client.update_message(message_name, cards_v2=[card])
 
