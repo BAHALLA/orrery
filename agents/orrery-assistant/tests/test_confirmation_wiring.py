@@ -25,6 +25,7 @@ slot used to satisfy it while gating nothing.
 import pytest
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.tools.agent_tool import AgentTool
+from google.adk.tools.base_toolset import BaseToolset
 from google.adk.workflow import Workflow
 
 from orrery_assistant.agent import orrery_chat_agent, orrery_triage_workflow
@@ -56,10 +57,17 @@ def _agents_under(root):
 
 
 def _guarded_tools(agent):
+    """Guarded tools on *agent* — counting any toolset (MCP, OpenAPI) as guarded.
+
+    A toolset's tools and their guard levels exist only at run time, so it
+    cannot be shown safe statically; it must sit behind a gate like a known
+    ``@destructive`` tool does.
+    """
     return [
         getattr(tool, "func", tool)
         for tool in getattr(agent, "tools", []) or []
-        if not isinstance(tool, AgentTool) and is_guarded(getattr(tool, "func", tool))
+        if not isinstance(tool, AgentTool)
+        and (isinstance(tool, BaseToolset) or is_guarded(getattr(tool, "func", tool)))
     ]
 
 

@@ -14,6 +14,7 @@ from google.adk.agents.base_agent import BaseAgent
 from google.adk.models.base_llm import BaseLlm
 from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.base_toolset import BaseToolset
 
 from ..observability.log import setup_logging
 from ..security.guardrails import (
@@ -391,7 +392,7 @@ def _generate_content_config(model: Any) -> Any | None:
 
 
 def _with_confirmation_gate(
-    tools: Sequence[Callable[..., Any] | BaseTool],
+    tools: Sequence[Callable[..., Any] | BaseTool | BaseToolset],
     callbacks: Callable | list[Callable] | None,
 ) -> Callable | list[Callable] | None:
     """Append ``require_confirmation()`` when guarded tools would run ungated.
@@ -407,9 +408,12 @@ def _with_confirmation_gate(
     Appended *after* the caller's callbacks so an RBAC check ahead of it still
     refuses before anyone is asked to approve a call they could not make.
     """
-    if is_confirmation_gate(callbacks) or not any(
-        is_guarded(getattr(tool, "func", tool)) for tool in tools
-    ):
+    # A toolset (MCP, OpenAPI, …) resolves its tools — and their guard levels —
+    # only at run time, so it can't be shown to be read-only here: gate it.
+    may_be_guarded = any(
+        isinstance(tool, BaseToolset) or is_guarded(getattr(tool, "func", tool)) for tool in tools
+    )
+    if is_confirmation_gate(callbacks) or not may_be_guarded:
         return callbacks
     gate = require_confirmation()
     if callbacks is None:
@@ -422,7 +426,7 @@ def create_agent(
     name: str,
     description: str,
     instruction: str,
-    tools: Sequence[Callable[..., Any] | BaseTool],
+    tools: Sequence[Callable[..., Any] | BaseTool | BaseToolset],
     model: str | BaseLlm | None = None,
     planner: BasePlanner | None = None,
     sub_agents: Sequence[BaseAgent] | None = None,

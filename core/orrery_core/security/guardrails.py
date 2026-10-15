@@ -256,6 +256,25 @@ def destructive(reason: str = "") -> Callable:
     return decorator
 
 
+def set_guard(target: Any, level: str | None, reason: str = "") -> None:
+    """Attach (or with ``level=None`` clear) guard metadata on *target*.
+
+    ``@confirm``/``@destructive`` do this for a Python function at definition
+    time. Tools that have no function of their own — an MCP tool, discovered at
+    runtime — are labelled here instead, on the tool object, which is where
+    every gate looks when there is no ``func``.
+    """
+    if level not in (None, LEVEL_CONFIRM, LEVEL_DESTRUCTIVE):
+        raise ValueError(f"Unknown guard level {level!r}")
+    if level is None:
+        for attr in (_GUARD_LEVEL_ATTR, _GUARD_REASON_ATTR):
+            if hasattr(target, attr):
+                delattr(target, attr)
+        return
+    setattr(target, _GUARD_LEVEL_ATTR, level)
+    setattr(target, _GUARD_REASON_ATTR, reason)
+
+
 def get_guard_level(tool_or_func: Any) -> str | None:
     """Get the guardrail level of a tool or function."""
     func = getattr(tool_or_func, "func", tool_or_func)
@@ -339,9 +358,10 @@ def require_confirmation() -> Callable:
     """
 
     def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
-        func = getattr(tool, "func", None)
-        if func is None:
-            return None
+        # A FunctionTool keeps its guard metadata on the function; any other
+        # tool (an MCP tool) carries it on itself. Returning early for tools
+        # without a function let them run ungated whatever their guard level.
+        func = getattr(tool, "func", tool)
 
         level = get_guard_level(func)
         if level is None:
@@ -559,8 +579,11 @@ def dry_run() -> Callable:
     """
 
     def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
-        func = getattr(tool, "func", None)
-        if func is None or not is_guarded(func):
+        # A FunctionTool keeps its guard metadata on the function; any other
+        # tool (an MCP tool) carries it on itself. Returning early for tools
+        # without a function let them run ungated whatever their guard level.
+        func = getattr(tool, "func", tool)
+        if not is_guarded(func):
             return None
 
         reason = get_guard_reason(func)

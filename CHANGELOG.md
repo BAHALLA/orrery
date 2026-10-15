@@ -14,6 +14,7 @@ If both are set, the new name wins.
 
 ### Added
 
+- **MCP servers as gated specialists** (`orrery_core.tools.mcp`, `[mcp]` extra, `ORRERY_MCP_CONFIG`). Each configured server becomes a specialist on the chat root, with a required tool allowlist. Every tool is labelled with a guard level as it is discovered: your `read_only`/`destructive` classification wins; otherwise the server's hints apply, but only in the direction that raises protection unless `trust_annotations` is set. An undeclared tool is **destructive** (admin-only, approval-gated), the MCP spec's default. HTTP servers must use https, header secrets come from env vars, and stdio servers get no host environment. See `docs/integrations/mcp.md`.
 - **Streaming turns (AEP-009): `POST /chat/stream`** (`core/orrery_core/serving/sse.py`). It narrates a turn as Server-Sent Events: the session id first, then tool progress and the answer as it is written, then the complete reply. A slow tool no longer means a minute of silence. The turn runs in its own task, so a client that disconnects never cancels an agent mid-tool. `POST /chat` is unchanged.
 - **`ProgressPlugin`**: live tool-call progress, including calls made *inside* `AgentTool` specialists, which the Runner's event stream cannot show. It is armed per request by `progress_scope()` and inert otherwise, and it streams names and outcomes only, never arguments or results.
 - **Web console redesign.**
@@ -36,6 +37,8 @@ If both are set, the new name wins.
 - The root `google-adk` floor is `>=2.12.0`, matching `orrery-core`.
 
 ### Fixed
+
+- **Confirmation gates waved through tools without a Python function** (`require_confirmation`, `dry_run`, and the Slack and Google Chat gates). Each began with `if func is None: return None`, so any tool not built from a function ran ungated whatever its guard level. No shipped tool was affected (all are functions), but every MCP tool would have been. The gates now read guard metadata from the tool itself when there is no function, and `create_agent()` gates any agent holding a toolset.
 
 - **A 429 now carries `Retry-After`.** The web console already parsed it to say "retry in Ns", but the server never sent it, so users only saw "too many requests".
 - **A local `.env` with `OTEL_TRACING_ENABLED=true` no longer pollutes the test run.** The chat root builds its `App` during collection, before any fixture can unset the variable, so a real OTLP exporter started and wrote `localhost:4317` tracebacks over the end of every local run. A root `conftest.py` pins tracing off before collection.

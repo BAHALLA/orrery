@@ -146,9 +146,10 @@ def slack_confirmation(
     """
 
     def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
-        func = getattr(tool, "func", None)
-        if func is None:
-            return None
+        # A FunctionTool keeps its guard metadata on the function; any other
+        # tool (an MCP tool) carries it on itself. Returning early for tools
+        # without a function let them run ungated whatever their guard level.
+        func = getattr(tool, "func", tool)
 
         level = get_guard_level(func)
         if level is None:

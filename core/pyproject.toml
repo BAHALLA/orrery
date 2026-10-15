@@ -62,6 +62,14 @@ otel = [
     "opentelemetry-sdk>=1.42.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.42.1",
 ]
+# Install with: uv sync --extra mcp
+# Guarded MCP servers (orrery_core.tools.mcp): ADK's McpToolset plus the YAML
+# config loader. Imported lazily — a deployment without ORRERY_MCP_CONFIG
+# never loads the MCP SDK.
+mcp = [
+    "google-adk[mcp]>=2.12.0",
+    "pyyaml>=6.0.3",
+]
 # Install with: uv sync --extra knowledge
 # Elasticsearch-backed knowledge retrieval (AEP-025). Talks to the REST API
 # with requests in a worker thread, mirroring agents/elasticsearch — no
