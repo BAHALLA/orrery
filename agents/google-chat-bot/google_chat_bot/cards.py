@@ -219,6 +219,7 @@ def build_progress_card(
     subsystem_chips: dict[str, dict[str, str]],
     remediation: dict[str, str] | None = None,
     elapsed_seconds: float = 0.0,
+    specialists: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build the live "Investigating…" card.
 
@@ -232,6 +233,9 @@ def build_progress_card(
             for the remediation-loop panel. When None, no panel is shown.
         elapsed_seconds: Wall-clock time since the run started. Rendered
             in the footer to signal forward progress.
+        specialists: Pre-rendered lines, one per specialist consulted with its
+            tool calls (from the ProgressPlugin feed, so it includes work done
+            inside specialists). Omitted when None or empty.
     """
     header_text = "\U0001f50d Investigating…"
 
@@ -241,6 +245,10 @@ def build_progress_card(
     if current_tool:
         step_parts.append(f"<b>Tool:</b> <i>{current_tool}</i>")
     widgets.append({"textParagraph": {"text": " • ".join(step_parts)}})
+
+    if specialists:
+        widgets.append({"divider": {}})
+        widgets.append({"textParagraph": {"text": "<br>".join(specialists)}})
 
     if subsystem_chips:
         chip_lines: list[str] = []

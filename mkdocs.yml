@@ -157,6 +157,7 @@ nav:
       - "Session DB Unreachable": runbooks/session-db-unreachable.md
       - "Remediation Loop Storm": runbooks/remediation-loop-storm.md
       - "Circuit Breaker Open": runbooks/circuit-breaker-open.md
+      - "Kafka Consumer Lag": runbooks/kafka-consumer-lag.md
       - "High Tool Error Rate": runbooks/high-tool-error-rate.md
       - "High LLM Spend": runbooks/high-llm-spend.md
       - "Prompt Injection Detected": runbooks/prompt-injection-detected.md

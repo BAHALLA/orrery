@@ -1,16 +1,12 @@
-.PHONY: help \
-        install check fmt test test-web test-cov eval lint type-check ty clean \
-        lock lock-check knowledge-sync \
-        run-dev run-cli run-api run-web run-slack run-chat run-triage \
-        up down reset logs ps \
-        dev-token dev-token-reset \
-        docs docs-build docs-deploy \
-        web-build _console _dev-jwt-secret
-
 # One target per job. Variants are flags, not extra targets:
 #   make run-cli PERSIST=1     make run-api SSO=1
 #   make run-slack MODE=socket make run-chat MODE=pubsub
 #   make dev-token ROLE=viewer make up PROFILES=tracing
+
+# Every target is phony (none builds a file of its name). Derived from the
+# targets themselves, so a new one can't be forgotten here — the hand-kept list
+# this replaced had already drifted.
+.PHONY: $(shell sed -n 's/^\([a-z_][a-z0-9_-]*\):.*/\1/p' $(firstword $(MAKEFILE_LIST)))
 
 help: ## Show this help
 	@echo "Orrery — make <target>"
@@ -24,6 +20,17 @@ help: ## Show this help
 WEB_DIR        := web
 WEB_STATIC_DIR := core/orrery_core/serving/static
 ASSISTANT_DIR  := agents/orrery-assistant
+
+# Node is optional for Python-only contributors: web steps skip (with a note)
+# when npm is missing, instead of failing.
+HAVE_NPM := $(shell command -v npm 2>/dev/null)
+NO_NPM    = echo "▶ npm not found — skipped: $(1)"
+
+# The assistant's run targets all share this prefix.
+RUN := cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run
+
+# Quiet MkDocs' banner about its 2.0 plans in every docs command.
+export DISABLE_MKDOCS_2_WARNING := true
 
 # ── Local dev auth ─────────────────────────────────────
 # A persistent JWT secret for local-only work, stored outside the repo so it
@@ -43,11 +50,7 @@ SSO_CLIENT_ID := orrery-console
 
 install: ## Install everything (Python workspace + web console)
 	uv sync --all-extras
-	@if command -v npm >/dev/null 2>&1; then \
-		cd $(WEB_DIR) && npm ci; \
-	else \
-		echo "▶ npm not found — skipped the web console (Python-only setup)"; \
-	fi
+	@$(if $(HAVE_NPM),cd $(WEB_DIR) && npm ci,$(call NO_NPM,the web console))
 
 check: lock-check lint lint-workflows type-check test test-web ## Full gate: lockfile + lint + types + Python tests + web (mirrors CI)
 
@@ -68,7 +71,7 @@ lock: ## Regenerate uv.lock after editing pyproject.toml
 fmt: ## Auto-fix formatting and lint, Python and web
 	uv run ruff check --fix .
 	uv run ruff format .
-	@command -v npm >/dev/null 2>&1 && (cd $(WEB_DIR) && npm run format) || true
+	@$(if $(HAVE_NPM),cd $(WEB_DIR) && npm run format,$(call NO_NPM,web formatting))
 
 test: ## Run Python tests (excludes evals)
 	uv run pytest -v
@@ -83,11 +86,7 @@ test-cov: ## Run Python tests with a coverage report (htmlcov/ for the detail)
 	@echo "▶ Full report: htmlcov/index.html"
 
 test-web: ## Run the web console gate (lint + format + types + tests + build)
-	@if command -v npm >/dev/null 2>&1; then \
-		cd $(WEB_DIR) && npm run check; \
-	else \
-		echo "▶ npm not found — SKIPPING the web gate. CI still runs it."; \
-	fi
+	@$(if $(HAVE_NPM),cd $(WEB_DIR) && npm run check,$(call NO_NPM,the web gate — CI still runs it))
 
 eval: ## Run agent evaluation scenarios (requires LLM access)
 	uv run pytest -m eval -v
@@ -117,8 +116,6 @@ TY_SEARCH_PATHS := $(addprefix --extra-search-path ,core $(patsubst %/,%,$(dir $
 type-check: ## Type-check Python (ty)
 	uv run ty check $(TY_SEARCH_PATHS) .
 
-ty: type-check ## Alias for type-check
-
 # Trees `clean` must never walk into. node_modules is the important one: plenty
 # of npm packages ship their compiled output in a directory literally named
 # `build` (pretty-format, jwt-decode, …), so a bare `find . -name build -exec
@@ -141,10 +138,10 @@ clean: ## Remove caches and build artifacts (keeps .venv and node_modules)
 # `make run-slack`, so starting them by default would collide with local runs.
 # Pick your own set with:  make up PROFILES="tracing"
 PROFILES ?= tracing sso elastic
-COMPOSE_PROFILES := $(addprefix --profile ,$(PROFILES))
+COMPOSE  := docker compose $(addprefix --profile ,$(PROFILES))
 
 up: ## Start all containers (Kafka, Postgres + pgAdmin, observability, Keycloak, Elasticsearch)
-	docker compose $(COMPOSE_PROFILES) up -d
+	$(COMPOSE) up -d
 	@if echo "$(PROFILES)" | grep -qw sso; then \
 		echo "▶ Waiting for the Keycloak realm to import…"; \
 		ready=0; for i in $$(seq 1 60); do \
@@ -161,7 +158,7 @@ up: ## Start all containers (Kafka, Postgres + pgAdmin, observability, Keycloak,
 	@$(MAKE) --no-print-directory ps
 
 down: ## Stop all containers (volumes are kept)
-	docker compose $(COMPOSE_PROFILES) down
+	$(COMPOSE) down
 
 reset: ## Stop all containers AND delete their volumes (destroys local data)
 	@echo "▶ This deletes these volumes and everything in them:"
@@ -169,13 +166,13 @@ reset: ## Stop all containers AND delete their volumes (destroys local data)
 	@if [ "$(FORCE)" != "1" ]; then \
 		printf "▶ Type 'yes' to continue: "; read ans; [ "$$ans" = "yes" ] || { echo "Aborted."; exit 1; }; \
 	fi
-	docker compose $(COMPOSE_PROFILES) down -v
+	$(COMPOSE) down -v
 
 ps: ## Show running containers
-	@docker compose $(COMPOSE_PROFILES) ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}'
+	@$(COMPOSE) ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}'
 
 logs: ## Tail container logs (SERVICE=kafka to narrow)
-	docker compose $(COMPOSE_PROFILES) logs -f --tail=100 $(SERVICE)
+	$(COMPOSE) logs -f --tail=100 $(SERVICE)
 
 # ── Run ────────────────────────────────────────────────
 # The orchestrator composes every specialist agent (kafka / k8s / observability
@@ -183,14 +180,10 @@ logs: ## Tail container logs (SERVICE=kafka to narrow)
 # standalone. One target per surface.
 
 run-dev: ## Agent in the ADK Dev UI (no auth, developer tooling)
-	cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run adk web
+	$(RUN) adk web
 
 run-cli: ## Agent in the terminal (PERSIST=1 for a persistent store)
-ifeq ($(PERSIST),1)
-	cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run python run_persistent.py
-else
-	cd $(ASSISTANT_DIR) && ENABLE_METRICS_SERVER=true uv run adk run orrery_assistant
-endif
+	$(RUN) $(if $(filter 1,$(PERSIST)),python run_persistent.py,adk run orrery_assistant)
 
 run-triage: ## Run the deterministic triage Workflow once (batch / scheduled)
 	cd $(ASSISTANT_DIR) && uv run python run_triage.py
@@ -229,7 +222,7 @@ API_AUTH_ENV  := JWT_ALGORITHM=HS256 \
                  JWT_ISSUER=$(DEV_JWT_ISSUER)
 endif
 
-run-api: _dev-jwt-secret _console ## API front door + web console on :8000 (SSO=1 for Keycloak)
+run-api: _dev-jwt-secret web-build ## API front door + web console on :8000 (SSO=1 for Keycloak)
 ifeq ($(SSO),1)
 	@curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1 || \
 		{ echo "✗ Keycloak unreachable at $(SSO_ISSUER). Run: make up PROFILES=sso"; exit 1; }
@@ -237,40 +230,52 @@ ifeq ($(SSO),1)
 else
 	@echo "▶ http://localhost:8000 — mint a token in another terminal: make dev-token"
 endif
-	cd $(ASSISTANT_DIR) && \
-		AUTH_ENABLED=true \
-		$(API_AUTH_ENV) \
-		ENABLE_METRICS_SERVER=true \
-		ORRERY_WEB_CONSOLE_ENABLED=true \
-		uv run uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
+	$(RUN) env AUTH_ENABLED=true $(API_AUTH_ENV) ORRERY_WEB_CONSOLE_ENABLED=true \
+		uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
 
 run-slack: ## Slack bot on :3000 (MODE=socket for Socket Mode, no public URL)
-ifeq ($(MODE),socket)
-	cd agents/slack-bot && uv run python -m slack_bot
-else
-	cd agents/slack-bot && uv run uvicorn slack_bot.app:api --host 0.0.0.0 --port 3000
-endif
+	cd agents/slack-bot && uv run $(if $(filter socket,$(MODE)),python -m slack_bot,uvicorn slack_bot.app:api --host 0.0.0.0 --port 3000)
 
 run-chat: ## Google Chat bot on :3001 (MODE=pubsub for private-GKE Pub/Sub mode)
-ifeq ($(MODE),pubsub)
-	cd agents/google-chat-bot && uv run python -m google_chat_bot.pubsub_worker
-else
-	cd agents/google-chat-bot && uv run uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3001
-endif
+	cd agents/google-chat-bot && uv run $(if $(filter pubsub,$(MODE)),python -m google_chat_bot.pubsub_worker,uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3001)
 
-# Build the console into the package so the API can serve it. Node is optional
-# for Python-only contributors, so a missing npm warns instead of failing.
-_console:
-	@if command -v npm >/dev/null 2>&1; then \
-		(cd $(WEB_DIR) && $(WEB_BUILD_ENV) npm run build) && \
+web-build: ## Build the console into the package (run-api does this for you)
+	@$(if $(HAVE_NPM),\
+		cd $(WEB_DIR) && $(WEB_BUILD_ENV) npm run build && cd - >/dev/null && \
 		rm -rf $(WEB_STATIC_DIR) && mkdir -p $(WEB_STATIC_DIR) && \
 		cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/ && \
-		echo "▶ Console built into $(WEB_STATIC_DIR)"; \
-	else \
-		echo "▶ npm not found — serving whatever console bundle is already built"; \
-	fi
+		echo "▶ Console built into $(WEB_STATIC_DIR)",\
+		$(call NO_NPM,the console build — serving whatever bundle is already built))
 
-web-build: _console ## Build the console into the package without starting the API
+# ── Demo ───────────────────────────────────────────────
+# A real incident on the local stack, for showing Orrery in a minute: a consumer
+# group thousands of messages behind, because its worker is OOM-killed in a loop
+# (scripts/demo/seed.py). Nothing is mocked — the agents find what is there, so
+# this needs your LLM credentials in .env like any other run.
+DEMO_SERVICES := kafka kafka-exporter prometheus alertmanager
+
+demo: ## A seeded incident (Kafka lag + an OOM-looping worker) and the console on :8000
+	docker compose up -d $(DEMO_SERVICES)
+	uv run python scripts/demo/seed.py
+	@echo "▶ KafkaConsumerGroupLagHigh fires in Prometheus in ~30 s."
+	@echo "▶ Open http://localhost:8000 and paste this operator token:"
+	@$(MAKE) --no-print-directory dev-token ROLE=operator
+	@echo "▶ Then ask: \"Why is the orders consumer lagging?\" — and ask it to fix what it finds."
+	@$(MAKE) --no-print-directory run-api
+
+demo-reset: ## Remove the demo's seeded faults (the topic, group and worker)
+	uv run python scripts/demo/seed.py --reset
+
+# The README GIF: the real console and server, with a scripted model so the
+# recording is reproducible and free. Needs Google Chrome. The trap kills the
+# server's children too: `uv run` doesn't forward a kill to the Python process.
+demo-gif: web-build ## Re-record docs/images/console-demo.gif
+	@set -e; \
+	DATABASE_URL= OTEL_TRACING_ENABLED=false uv run python scripts/demo/scripted_server.py >/dev/null 2>&1 & \
+	server=$$!; trap 'pkill -P $$server 2>/dev/null; kill $$server 2>/dev/null' EXIT; \
+	for i in $$(seq 1 60); do curl -sf http://127.0.0.1:8100/healthz >/dev/null && break; sleep 0.5; done; \
+	cd scripts/demo && uv run --with pillow --with playwright==1.55.0 \
+		python record_gif.py --out ../../docs/images/console-demo.gif
 
 # ── Dev auth tokens ────────────────────────────────────
 
@@ -297,12 +302,12 @@ dev-token-reset: ## Regenerate the dev JWT secret (invalidates existing tokens)
 	@echo "Issuer:      $(DEV_JWT_ISSUER)"
 
 # ── Documentation ──────────────────────────────────────
+# Publishing is CI's job: the Docs workflow deploys GitHub Pages on every merge
+# to main. (A local `mkdocs gh-deploy` would push a gh-pages branch that the
+# Actions-based Pages deployment ignores — two publishers for one site.)
 
 docs: ## Serve the documentation site locally
-	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs serve
+	uv run mkdocs serve
 
-docs-build: ## Build the documentation site
-	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs build
-
-docs-deploy: ## Deploy documentation to GitHub Pages
-	DISABLE_MKDOCS_2_WARNING=true uv run mkdocs gh-deploy --force
+docs-build: ## Build the documentation site (strict, as CI does)
+	uv run mkdocs build --strict
