@@ -1,12 +1,13 @@
 # Orrery
 
-**SRE agents you can let near production.**
+**An on-call agent that investigates before it acts.**
 
-Autonomous DevOps & SRE agents that investigate, correlate and remediate — with a
-human gate on every destructive action. Specialists for Kafka, Kubernetes,
-Elasticsearch, Docker and Prometheus/Loki orbit a root coordinator that runs them in
-parallel and correlates what they find. Built on [Google ADK](https://google.github.io/adk-docs/),
-open source under MIT.
+When an alert fires, Orrery's specialists for Kafka, Kubernetes, Prometheus/Loki,
+Elasticsearch and Docker investigate in parallel, read your runbooks, propose a fix,
+and wait for *your* approval before touching anything. Approval comes from the
+verified person who asked, and hostile text in logs or annotations is neutralized,
+not obeyed. Built on [Google ADK](https://google.github.io/adk-docs/), open source
+under MIT.
 
 <figure markdown>
   ![Asking why a Kafka consumer group is lagging: Orrery consults the Kafka and Docker specialists in parallel, streams their tool calls live, finds the worker OOM-killed in a loop, and proposes raising its memory limit — which waits on an approval card until the user approves.](images/console-demo.gif)

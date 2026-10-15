@@ -7,10 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Read before upgrading:** `GOOGLE_GENAI_USE_VERTEXAI` is deprecated (ADK 2.12) in
-favour of `GOOGLE_GENAI_USE_ENTERPRISE`. The old name still works and only logs a
-`DeprecationWarning`, so rename it in your `.env` / Helm values when convenient.
-If both are set, the new name wins.
+## [0.6.0] - 2026-10-15
+
+A minor release that changes what Orrery feels like to use, and what it can be
+pointed at. Answers **stream**, under a live trace of every specialist and tool
+call, in the web console, Slack and Google Chat. The console is redesigned
+(responsive, light/dark, a welcome screen, a clearer approval card). **MCP
+servers** plug in behind the same RBAC, autonomy and approval gates, failing
+closed. Kubernetes and Elasticsearch calls can **act as the verified user**.
+Specialists are **discovered from installed packages**, new ones can be
+composed in YAML, and admins can switch or compose agents **from the console
+without a restart**. `make demo` runs a real incident end to end. Underneath:
+ADK 2.12 hygiene, slowapi replaced, and a CI hardening pass (SHA-pinned actions,
+least-privilege tokens, workflow linting).
+
+**Read before upgrading** — all new capabilities are opt-in; these can need action:
+
+- **`GOOGLE_GENAI_USE_VERTEXAI` → `GOOGLE_GENAI_USE_ENTERPRISE`.** The old name
+  still works but logs a deprecation warning (ADK 2.12); the new name wins when
+  both are set.
+- **`create_agent()` now attaches the confirmation gate itself** to any agent
+  holding a `@confirm`/`@destructive` tool or a toolset. Agents that already pass
+  `require_confirmation()` (or `dry_run()`) are unchanged; a custom gate should
+  be marked with `mark_confirmation_gate()`, or a second gate is added.
+- **Makefile:** `make ty` (use `make type-check`) and `make docs-deploy` (CI
+  publishes the docs) are gone.
+- **Opt-in flags, all off by default:** `ORRERY_IMPERSONATION` (grant the
+  service account `impersonate` first — see `docs/impersonation.md`),
+  `ORRERY_ADMIN_EDITING`, `ORRERY_MCP_CONFIG`; Slack impersonation needs the
+  `users:read` and `users:read.email` scopes.
 
 ### Added
 
@@ -18,7 +43,7 @@ If both are set, the new name wins.
 - **Google Chat shows specialists at work**: the live "Investigating…" card now lists each specialist consulted and its tool calls (from `ProgressPlugin`), including work inside specialists the card used to go quiet during.
 - **`KafkaConsumerGroupLagHigh`** alert rule, with a runbook.
 
-### Changed (Makefile)
+### Changed
 
 - `.PHONY` is derived from the targets, where it used to be hand-maintained and was missing `lint-workflows`. Repeated npm checks and run prefixes are consolidated, and `_console` is folded into `web-build`.
 - Removed `make ty` (use `make type-check`) and `make docs-deploy`: the Docs workflow publishes on every merge, and a local `gh-deploy` was a second, conflicting publisher. `make docs-build` is now strict, as in CI.
@@ -43,8 +68,6 @@ If both are set, the new name wins.
   - An inline icon set replaces the emoji.
   - Inline code no longer renders with literal backticks.
   - The console falls back to `POST /chat` against a server without the stream route.
-
-### Changed
 
 - **`create_agent()` wires the confirmation gate itself** (`core/orrery_core/agent/base.py`). Any agent holding an `@confirm`/`@destructive` tool now gets `require_confirmation()` appended to its `before_tool_callback`s, after the caller's own callbacks (so RBAC still refuses first), unless a gate is already present. Wired by hand, the gate was forgotten twice: the docker specialist, then `remediation_actor`. The six specialists no longer pass it explicitly. `require_confirmation()`, `dry_run()` and the Slack and Google Chat gates are marked with the new `mark_confirmation_gate()`, so none of them is doubled.
 - **The confirmation-wiring test checks for a real gate** (`agents/orrery-assistant/tests/test_confirmation_wiring.py`). It used to accept *any* `before_tool_callback`, so a metrics or RBAC callback in that slot satisfied it while gating nothing. It now requires a marked gate (`is_confirmation_gate`).
@@ -741,7 +764,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/BAHALLA/orrery/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/BAHALLA/orrery/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/BAHALLA/orrery/compare/v0.3.1...v0.4.0

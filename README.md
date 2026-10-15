@@ -7,11 +7,12 @@
 
 <h1 align="center">Orrery</h1>
 
-<p align="center"><strong>SRE agents you can let near production.</strong></p>
+<p align="center"><strong>An on-call agent that investigates before it acts.</strong></p>
 
 <p align="center">
-  Autonomous DevOps &amp; SRE agents that investigate, correlate and remediate —<br>
-  with a human gate on every destructive action.
+  When an alert fires, Orrery's specialists — Kafka, Kubernetes, Prometheus/Loki,
+  Elasticsearch, Docker —<br>investigate in parallel, read your runbooks, propose a fix,
+  and wait for <em>your</em> approval before touching anything.
 </p>
 
 <p align="center">
@@ -38,6 +39,23 @@
 </p>
 <p align="center"><sub>Live: specialists consulted in parallel, every tool call visible, and nothing changes until you approve. (<code>make demo</code> runs this incident for real.)</sub></p>
 
+```bash
+docker run --rm -p 8000:8000 -e GOOGLE_API_KEY=your-key ghcr.io/bahalla/orrery:latest
+```
+
+Then open <http://localhost:8000>. Works with Gemini, Claude, OpenAI, or a local Ollama model.
+
+- **Investigates, not just alerts.** Consumer lag, pod state, logs and metrics are checked in
+  parallel and correlated in one answer, with every tool call shown as it runs.
+- **Asks the right person.** Changes wait for approval from the *verified person who asked*: a
+  casual "ok", or a colleague's "approve", doesn't count.
+- **Injection-aware.** Hostile text inside a log line or a pod annotation is neutralized where it
+  lands, not obeyed, because it is also the evidence being diagnosed.
+- **Cites your runbooks.** Retrieved passages carry their source and their age, so a stale
+  procedure says it is stale.
+- **Closes the loop.** On the triage path, a fix is verified, and retried a bounded number of
+  times if it didn't work.
+
 ## Why Orrery
 
 An alert tells you *that* something is wrong. Finding out *what* still means a human
@@ -48,28 +66,19 @@ parallel, correlates what they find, and proposes or performs the fix.
 The name is the design: an orrery is a mechanical model of the solar system. Specialists
 orbit a coordinator, and every moving part is visible and accountable.
 
-What makes it safe enough to point at production:
+Beyond the approval gate and injection screening above, two more things make it safe enough
+to point at production:
 
-- **A human gate on every mutation.** Mutating and destructive tools stop and ask. Approval is
-  *requester-verified* — a deliberate word, from the same signed-in person who asked, after
-  the action existed. A casual "ok" or someone else's "approve" is refused.
 - **Two orthogonal axes of control.** RBAC answers *who* (viewer / operator / admin); an autonomy
   level answers *what this process may do* (L2 read-only → L4 confirmed-destructive).
-- **Prompt-injection screening in both directions.** An injected user message is blocked before
-  the model runs; injected text arriving *inside a tool result* (a pod annotation, a log line) is
-  neutralized in place, because that payload is also the evidence being diagnosed.
 - **An audit trail you can alert on.** Every tool call, and every confirmation raised, decided,
   refused or expired, is a structured log line and a Prometheus counter. Someone else trying to
   approve your action pages on-call.
 
 ## Quick start
 
-```bash
-docker run --rm -p 8000:8000 -e GOOGLE_API_KEY=your-key ghcr.io/bahalla/orrery:latest
-```
-
-Open <http://localhost:8000>. That is the web console with in-memory sessions and whichever
-provider you configured — Gemini, Claude, OpenAI, or a local Ollama model (no key needed).
+The one-liner at the top runs the web console with in-memory sessions and whichever provider
+you configured — Gemini, Claude, OpenAI, or a local Ollama model (no key needed).
 
 For the full local stack (Kafka, Postgres, Prometheus, Loki, Alertmanager, Elasticsearch) —
 still no clone required:
