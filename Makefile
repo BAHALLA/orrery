@@ -251,8 +251,9 @@ web-build: ## Build the console into the package (run-api does this for you)
 # A real incident on the local stack, for showing Orrery in a minute: a consumer
 # group thousands of messages behind, because its worker is OOM-killed in a loop
 # (scripts/demo/seed.py). Nothing is mocked — the agents find what is there, so
-# this needs your LLM credentials in .env like any other run.
-DEMO_SERVICES := kafka kafka-exporter prometheus alertmanager
+# this needs your LLM credentials in .env like any other run. Postgres is in the
+# list because a typical .env points DATABASE_URL at it.
+DEMO_SERVICES := postgres kafka kafka-exporter prometheus alertmanager
 
 demo: ## A seeded incident (Kafka lag + an OOM-looping worker) and the console on :8000
 	docker compose up -d $(DEMO_SERVICES)

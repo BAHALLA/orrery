@@ -167,9 +167,34 @@ class PostgresCatalogStore:
 
 
 def create_catalog_store(db_url: str | None) -> CatalogStore:
-    """Postgres when ``db_url`` is a PostgreSQL URL, in-memory otherwise."""
-    from ..persistence.db import is_postgres_url
+    """Postgres when ``db_url`` is a PostgreSQL URL, in-memory otherwise.
 
-    if db_url and is_postgres_url(db_url):
+    Follows the session store's policy for an unreachable database (see
+    ``persistence.db``): fail fast by default, or — with
+    ``ORRERY_DB_ALLOW_INMEMORY_FALLBACK`` — warn and keep the catalog in memory,
+    so a local run that tolerates a missing Postgres for sessions doesn't crash
+    on the catalog instead.
+    """
+    from ..persistence.db import (
+        _FALLBACK_ENV,
+        DatabaseUnavailableError,
+        _inmemory_fallback_allowed,
+        database_reachable,
+        is_postgres_url,
+    )
+
+    if not (db_url and is_postgres_url(db_url)):
+        return InMemoryCatalogStore()
+    if database_reachable(db_url):
         return PostgresCatalogStore(db_url=db_url)
+    if not _inmemory_fallback_allowed():
+        raise DatabaseUnavailableError(
+            "PostgreSQL agent-catalog store unavailable (database unreachable). Fix the "
+            f"database connection, or set {_FALLBACK_ENV}=1 to keep the catalog in memory "
+            "(local dev only)."
+        )
+    logger.warning(
+        "PostgreSQL agent-catalog store unavailable — keeping admin edits in memory "
+        "(lost on restart, not shared across replicas)."
+    )
     return InMemoryCatalogStore()
