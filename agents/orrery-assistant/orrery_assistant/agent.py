@@ -24,6 +24,7 @@ entrypoint — `make run-triage` — because a ``Workflow`` cannot be a sub-agen
                   └─("resolved")▶ final_report
 """
 
+import os
 from typing import Any
 
 from google.adk import Workflow
@@ -97,6 +98,23 @@ load_agent_env(__file__)
 # nothing back, which is worse than not offering it at all — so the tool and
 # the instruction section that documents it both appear only when configured.
 _knowledge_tool = knowledge_tool()
+
+
+def _mcp_specialists() -> list[AgentTool]:
+    """One specialist per MCP server in ``ORRERY_MCP_CONFIG``; none when unset.
+
+    Imported only when configured, so a deployment without MCP never needs the
+    ``[mcp]`` extra. A configured-but-broken file raises: starting without the
+    servers (or the guards) the operator declared would be worse than failing.
+    """
+    if not os.getenv("ORRERY_MCP_CONFIG", "").strip():
+        return []
+    from orrery_core.tools.mcp import mcp_specialist_tools
+
+    return list(mcp_specialist_tools())
+
+
+_mcp_tools = _mcp_specialists()
 
 # Resolve once at import time so triage_summarizer + remediation share an instance.
 _planner = resolve_planner()
@@ -338,6 +356,18 @@ incident_triage_agent = create_agent(
 # `load_memory` recalls what *this platform* did before; `search_knowledge`
 # returns what *humans wrote* — different sources, and the model needs to be
 # told when each is the right one or it will reach for whichever it saw last.
+_MCP_INSTRUCTION = (
+    ""
+    if not _mcp_tools
+    else (
+        "\n\n## External tool servers (MCP)\n"
+        "These specialists front MCP servers the operators connected: "
+        + ", ".join(f"`{t.agent.name}`" for t in _mcp_tools)
+        + ". Route to one only for its own system, as its description says. "
+        "Their tools follow the same approval rules as every other specialist."
+    )
+)
+
 _KNOWLEDGE_INSTRUCTION = (
     ""
     if _knowledge_tool is None
@@ -410,7 +440,7 @@ orrery_chat_agent = create_agent(
         "topic', 'K8s CrashLoopBackOff payment-service'), not the user's whole "
         "message. Call it at most once per turn, then correlate with any genuine "
         "match — cite it only when it actually fits; if nothing matches, proceed "
-        "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION
+        "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION + _MCP_INSTRUCTION
     ),
     tools=[
         AgentTool(agent=kafka_agent),
@@ -422,6 +452,7 @@ orrery_chat_agent = create_agent(
         AgentTool(agent=incident_triage_agent),
         LoadMemoryTool(),
         *([_knowledge_tool] if _knowledge_tool is not None else []),
+        *_mcp_tools,
     ],
 )
 

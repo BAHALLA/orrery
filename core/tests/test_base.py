@@ -265,3 +265,51 @@ class TestCreateAgentConfirmationGate:
         callbacks = self._agent([change_thing], before_tool_callback=[metrics]).before_tool_callback
         assert callbacks[0] is metrics
         assert is_confirmation_gate(callbacks)
+
+    def test_a_toolset_is_gated_because_its_tools_are_unknown_until_run_time(self):
+        """An MCP/OpenAPI toolset can't be shown read-only at construction."""
+        from google.adk.tools.base_toolset import BaseToolset
+
+        from orrery_core import is_confirmation_gate
+
+        class Toolset(BaseToolset):
+            async def get_tools(self, readonly_context=None):
+                return []
+
+        agent = self._agent([Toolset()])
+
+        assert is_confirmation_gate(agent.before_tool_callback)
+
+
+def test_gates_honour_guard_metadata_on_a_tool_without_a_function():
+    """Regression: dry_run / require_confirmation returned early when `func` was
+    missing, so a labelled MCP tool ran ungated."""
+    from unittest.mock import MagicMock
+
+    from orrery_core import dry_run, require_confirmation, set_guard
+
+    tool = MagicMock(spec=["name"])
+    tool.name = "delete_repository"
+    set_guard(tool, "destructive", "deletes a repository")
+    ctx = MagicMock()
+    ctx.state = {}
+
+    assert dry_run()(tool=tool, args={}, tool_context=ctx)["status"] == "dry_run"
+    assert (
+        require_confirmation()(tool=tool, args={}, tool_context=ctx)["status"]
+        == "confirmation_required"
+    )
+
+
+def test_set_guard_validates_and_clears():
+    from unittest.mock import MagicMock
+
+    from orrery_core import get_guard_level, set_guard
+
+    tool = MagicMock(spec=["name"])
+    set_guard(tool, "confirm", "x")
+    assert get_guard_level(tool) == "confirm"
+    set_guard(tool, None)
+    assert get_guard_level(tool) is None
+    with pytest.raises(ValueError):
+        set_guard(tool, "maybe")

@@ -46,6 +46,10 @@ server = [
 otel = [
     "orrery-core[otel]",
 ]
+# Install with: uv sync --extra mcp
+mcp = [
+    "orrery-core[mcp]",
+]
 
 [tool.uv.sources]
 orrery-core = { workspace = true }

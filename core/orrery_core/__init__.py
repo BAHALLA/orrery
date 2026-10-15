@@ -101,6 +101,7 @@ from .security.guardrails import is_guarded as is_guarded
 from .security.guardrails import latest_pending_for_scope as latest_pending_for_scope
 from .security.guardrails import mark_confirmation_gate as mark_confirmation_gate
 from .security.guardrails import require_confirmation as require_confirmation
+from .security.guardrails import set_guard as set_guard
 from .security.rbac import NamespaceScopeGuard as NamespaceScopeGuard
 from .security.rbac import Role as Role
 from .security.rbac import RolePolicy as RolePolicy

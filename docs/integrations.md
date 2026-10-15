@@ -5,8 +5,8 @@ Orrery is designed to be interface-agnostic. A single agent runner can be expose
 ## Current Integrations
 
 ### 1. Web Console (Operator Portal)
-The product UI: chat, a tool-call timeline, Approve/Deny for guarded actions, a triage view, and a first-run environment check.
-- **Features**: Server-resolved role + autonomy badge, per-system triage chips derived from recorded tool calls, stop/retry on a turn, and a read-only self-test that names which integrations are wired and what to configure when one is not.
+The product UI: streaming answers with a live trace of each specialist's tool calls, Approve/Deny for guarded actions, a triage view, and a first-run environment check.
+- **Features**: Responsive (works on a phone), light/dark themes, server-resolved role + autonomy badge, per-system triage chips derived from recorded tool calls, stop/retry on a turn, and a read-only self-test that names which integrations are wired and what to configure when one is not.
 - **Best For**: Operators running incidents, and anyone evaluating the platform for the first time.
 - **Run Command**: `make run-api` (builds the bundle and serves it at `:8000`; off unless `ORRERY_WEB_CONSOLE_ENABLED=true`).
 - **Setup Guide**: [Web Console Reference](integrations/web-console.md)
@@ -36,6 +36,12 @@ A headless interface for terminal-based interactions and CI/CD automation.
 - **Best For**: Scripted diagnostics and automated remediation triggers.
 - **Run Commands**: `make run-cli` (ephemeral REPL via `adk run`) or `make run-cli PERSIST=1` (session store + memory + health probes via `run_persistent()`).
 - **Entry point**: [`core.runner.run_persistent`](core/README.md) — this is also what the production container runs.
+
+### 6. MCP servers (tool sources, not a frontend)
+Connect any Model Context Protocol server, and each one becomes a specialist the coordinator can route to, behind the same RBAC, autonomy, confirmation and audit gates as the built-in tools.
+- **Fail-closed**: a required tool allowlist; anything you don't classify is treated as destructive (admin-only, approval-gated) until you do.
+- **Enable**: `uv sync --extra mcp` and `ORRERY_MCP_CONFIG=/path/to/mcp.yaml`.
+- **Setup Guide**: [MCP Servers](integrations/mcp.md)
 
 ---
 
