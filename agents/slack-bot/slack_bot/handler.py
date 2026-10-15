@@ -7,6 +7,8 @@ import logging
 from typing import Any
 
 from orrery_core import AgentGateway, progress_scope, set_user_role
+from orrery_core.security.identity import CallerIdentity, enabled_systems
+from orrery_core.serving.session_cache import BoundedSessionCache
 
 from .config import SlackBotConfig
 from .formatting import chunk_message, md_to_mrkdwn
@@ -37,6 +39,36 @@ class SlackAgentHandler:
         self.session_map = session_map
         self.channel_ref = channel_ref
         self._config = config or SlackBotConfig()
+        # Slack user id -> email, for impersonation. Bounded: a long-lived bot
+        # sees an open-ended set of users.
+        self._emails: BoundedSessionCache[str] = BoundedSessionCache(10_000)
+
+    async def _identity(self, user_id: str, say: Any) -> CallerIdentity | None:
+        """The sender as downstream systems know them, when impersonation is on.
+
+        Slack's signed event vouches for the user *id*; Kubernetes and
+        Elasticsearch know people by email, which ``users.info`` returns given
+        the ``users:read.email`` scope. Looked up only when
+        ``ORRERY_IMPERSONATION`` is set, and cached. A failed lookup yields no
+        identity — impersonating systems then refuse the call rather than run
+        it as the bot's service account.
+        """
+        if not enabled_systems():
+            return None
+        if (email := self._emails.get(user_id)) is None:
+            client = getattr(say, "client", None)
+            try:
+                info = await client.users_info(user=user_id) if client is not None else None
+                email = ((info or {}).get("user") or {}).get("profile", {}).get("email") or ""
+            except Exception:
+                logger.warning(
+                    "Could not resolve the Slack user's email (users:read.email scope?)",
+                    exc_info=True,
+                )
+                email = ""
+            if email:
+                self._emails.set(user_id, email)
+        return CallerIdentity(subject=user_id, username=email) if email else None
 
     async def handle_message(
         self,
@@ -99,6 +131,7 @@ class SlackAgentHandler:
                     session_id=session_id,
                     text=text,
                     state_delta=turn_state,
+                    identity=await self._identity(user_id, say),
                 )
         except Exception:
             logger.exception("Agent runner error")

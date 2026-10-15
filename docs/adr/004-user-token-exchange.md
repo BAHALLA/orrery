@@ -1,0 +1,59 @@
+# ADR-004: Per-user tokens for systems that can't impersonate
+
+**Status:** Proposed · **Date:** 2026-10-15 · **Related:** [Acting as the user](../impersonation.md)
+
+## Context
+
+[Impersonation](../impersonation.md) makes Kubernetes and Elasticsearch calls
+act as the requesting user. Other systems have no such header: Kafka
+authenticates the *connection* (SASL/OAUTHBEARER), Grafana and many MCP servers
+take a bearer token, and a token minted for Orrery is the wrong audience for
+any of them.
+
+Forwarding the user's own console token is not an option. It is scoped to
+Orrery's audience, and passing it on would let any downstream system replay it
+against Orrery.
+
+## Decision
+
+Use **OAuth 2.0 Token Exchange (RFC 8693)** at the identity provider (Keycloak
+supports it), on demand, per user and per target:
+
+1. The front door keeps the verified *subject token* for the turn, in the same
+   turn-scoped context as `CallerIdentity`. It is never written to session
+   state, and never visible to tools or the model.
+2. A credential broker exchanges it for a short-lived token with the target's
+   **audience** and minimum **scope**. Results are cached per `(user, target)`
+   until shortly before expiry, in memory only.
+3. Clients ask the broker at call time:
+   - **Kafka**: an `oauth_cb` callback that returns the user's token, with one
+     producer/admin client **per user** (SASL authenticates the connection, not
+     the request), LRU-bounded;
+   - **MCP servers**: the existing `header_provider` hook on `McpToolset`;
+   - **HTTP integrations**: an `Authorization` header in the shared session
+     helpers, the same choke points impersonation uses.
+4. Fail-closed exactly as impersonation: no subject token, failed exchange, or
+   a target without an exchange policy means the call is refused.
+
+## Consequences
+
+- An IdP round-trip on the first call per user and target. The cache makes the
+  rest free.
+- Kafka moves from one shared client to a per-user pool. This is the largest
+  change, and it needs load testing (AEP-016).
+- The subject token has to reach the server. The console already sends it on
+  every request. Slack and Google Chat don't hold user OAuth tokens, so those
+  transports keep impersonation (where available) and the service account
+  elsewhere. Linking chat users to IdP sessions is a separate piece of work.
+- Refresh tokens are never stored. A user whose token has expired re-authenticates
+  in the console, the same as for any other call.
+
+## Alternatives considered
+
+- **Forward the user's token as is.** Rejected: wrong audience, and it can be replayed.
+- **Store per-user long-lived credentials.** Rejected: that's a credential vault
+  Orrery would have to secure, rotate and audit.
+- **ADK's tool authentication (`AuthConfig`).** It suits interactive OAuth
+  consent per tool, and stores tokens in session state. Rejected for platform
+  integrations for that reason. It may still fit user-consented third-party
+  tools later.

@@ -68,6 +68,7 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
+from ..security.identity import identity_from_claims
 from .agent_admin import AgentAdmin
 from .catalog_service import CatalogService
 from .events import build_transcript
@@ -672,6 +673,9 @@ def create_app(
             conversation_key=body.session_id or "",
             channel="http",
             state_delta=state_delta,
+            # From the verified token only. Anonymous mode has no person behind
+            # it, so impersonating systems refuse (fail-closed).
+            identity=identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None,
         )
 
     @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])

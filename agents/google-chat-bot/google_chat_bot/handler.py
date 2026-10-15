@@ -16,6 +16,7 @@ from orrery_core import (
     set_user_role,
     tool_ledger_scope,
 )
+from orrery_core.security.identity import CallerIdentity
 
 from .cards import build_error_card, build_progress_card, build_triage_result_card
 from .chat_client import ChatClient
@@ -39,6 +40,19 @@ _LONG_RUNNING_EVENTS = {"MESSAGE", "CARD_CLICKED"}
 #: budget (or the process is going down), so a best-effort courtesy gets a short,
 #: hard bound and can never become the thing that hangs.
 _CUT_SHORT_NOTICE_TIMEOUT_SECONDS = 10.0
+
+
+def _caller(email: str) -> CallerIdentity | None:
+    """The verified Chat sender, for systems that act as the user.
+
+    ``user_id`` is always an email Google vouched for — the sender's, or the
+    original requester's when an approval resumes a turn — except the
+    ``"unknown"`` placeholder for an event without one, which must never be
+    impersonated: impersonating systems refuse a turn with no identity instead.
+    """
+    if not email or email == "unknown" or "@" not in email:
+        return None
+    return CallerIdentity(subject=email, username=email)
 
 
 class TurnCutShort(Exception):
@@ -429,6 +443,7 @@ class GoogleChatHandler:
                         text=user_text,
                         state_delta=state_delta,
                         on_event=(tracker.consume if tracker is not None else None),
+                        identity=_caller(user_id),
                     )
             response_text = tracker.collected_text if tracker is not None else reply.text
             logger.info("Agent run complete. Collected %d characters of text.", len(response_text))
