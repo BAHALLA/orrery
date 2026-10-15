@@ -34,11 +34,6 @@
 <br>
 
 <p align="center">
-  <img src="docs/images/web-console-triage.png" alt="The Orrery web console after a full incident triage: a Critical verdict, per-system findings for Kafka, Elasticsearch, Alertmanager, Docker and Kubernetes, and the evidence kept in a side panel." width="900">
-</p>
-<p align="center"><sub>One question, five systems checked in parallel, one verdict — with the evidence kept alongside.</sub></p>
-
-<p align="center">
   <img src="docs/images/console-demo.gif" alt="Asking why a Kafka consumer group is lagging: Orrery consults the Kafka and Docker specialists in parallel, streams their tool calls live, finds the worker OOM-killed in a loop, and proposes raising its memory limit — which waits on an approval card until the user approves." width="900">
 </p>
 <p align="center"><sub>Live: specialists consulted in parallel, every tool call visible, and nothing changes until you approve. (<code>make demo</code> runs this incident for real.)</sub></p>
@@ -113,6 +108,17 @@ is a plugin applied once to all of them.
 
 ## Highlights
 
+- **Watch it work** — answers stream in under a live trace of every specialist consulted and each
+  tool it runs, in the console, Slack and Google Chat alike.
+- **Bring your own tools, safely** — connect any MCP server; its tools pass the same RBAC,
+  autonomy and approval gates, and anything you haven't classified is treated as destructive.
+  [MCP servers →](https://bahalla.github.io/orrery/integrations/mcp/)
+- **Acts as the person who asked** — Kubernetes and Elasticsearch calls carry the verified user,
+  so their own permissions and audit logs apply on top of Orrery's.
+  [Impersonation →](https://bahalla.github.io/orrery/impersonation/)
+- **Agents without a release** — specialists are discovered from installed packages; admins
+  compose new ones from existing tools, or switch them off, from the console, live.
+  [Adding an agent →](https://bahalla.github.io/orrery/adding-an-agent/)
 - **Reads your runbooks, not just your clusters** — opt-in retrieval over the docs your team wrote
   (filesystem, git, Confluence → Elasticsearch BM25 or hybrid pgvector). Every passage cites its
   source and its age. [Knowledge retrieval →](https://bahalla.github.io/orrery/knowledge/)
@@ -129,7 +135,7 @@ is a plugin applied once to all of them.
   Chat. The confirmation and RBAC rules are identical on every one.
 - **Observable by design** — Prometheus metrics, OpenTelemetry traces with log↔trace correlation,
   and a `runbook_url` on every alert rule pointing at an
-  [on-call runbook](https://bahalla.github.io/orrery/runbooks/) for operating Orrery itself.
+  [on-call runbook](https://bahalla.github.io/orrery/runbooks/).
 - **Production deployment** — Helm chart with HPA, PDB, network policies, Postgres-backed sessions and
   approvals, signed multi-arch images with SBOMs. [Deployment →](https://bahalla.github.io/orrery/deployment/)
 

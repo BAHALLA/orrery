@@ -100,3 +100,23 @@ def test_anyone_else_is_refused():
     assert client.get("/admin/agents", headers=_bearer("operator")).status_code == 403
     assert client.get("/admin/agents", headers=_bearer("viewer")).status_code == 403
     assert client.get("/admin/agents").status_code == 401
+
+
+def test_a_toolset_is_listed_as_dynamic():
+    """An MCP toolset's tools exist only at run time; say so instead of guessing."""
+    from google.adk.tools.base_toolset import BaseToolset
+
+    class Toolset(BaseToolset):
+        async def get_tools(self, readonly_context=None):
+            return []
+
+    toolset = Toolset()
+    toolset.tool_name_prefix = "github"
+    root = LlmAgent(
+        name="root",
+        model="gemini-x",
+        tools=[AgentTool(agent=LlmAgent(name="gh", model="gemini-x", tools=[toolset]))],
+    )
+
+    (entry,) = agent_inventory(root)
+    assert [(t.name, t.guard) for t in entry.tools] == [("github_*", "dynamic")]

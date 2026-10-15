@@ -319,3 +319,42 @@ def test_only_admins_and_only_when_enabled():
         assert client.get("/admin/catalog", headers=_bearer("admin")).status_code == 200
         refused = client.put("/admin/catalog", headers=_bearer("admin"), json={"version": 0})
         assert refused.status_code == 403 and "ORRERY_ADMIN_EDITING" in refused.json()["detail"]
+
+
+def test_store_selection_follows_the_database_url():
+    from orrery_core.agent.catalog_store import create_catalog_store
+
+    assert isinstance(create_catalog_store(None), InMemoryCatalogStore)
+    assert isinstance(create_catalog_store("sqlite:///x.db"), InMemoryCatalogStore)
+    with patch("orrery_core.agent.catalog_store.PostgresCatalogStore") as pg:
+        create_catalog_store("postgresql://u:p@db/orrery")
+    pg.assert_called_once_with(db_url="postgresql://u:p@db/orrery")
+
+
+@pytest.mark.asyncio
+async def test_the_follow_loop_survives_an_unexpected_error(caplog):
+    """A dead follower would leave a replica on a stale catalog, silently."""
+    store = InMemoryCatalogStore()
+    service, gateway = _service(store)
+    service._poll_seconds = 0.01
+    calls = 0
+    real_sync = service._sync
+
+    async def flaky_sync() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("store hiccup")
+        await real_sync()
+
+    service._sync = flaky_sync  # type: ignore[method-assign]
+    task = asyncio.create_task(service._follow())
+    store.save(AgentCatalog(disabled_specialists=["k8s"]), expected_version=0, actor="bob")
+    for _ in range(100):
+        if service.applied_version == 1:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+
+    assert calls >= 2 and service.applied_version == 1
+    assert "retrying next poll" in caplog.text

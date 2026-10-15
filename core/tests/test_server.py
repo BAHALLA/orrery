@@ -1032,7 +1032,13 @@ def test_chat_turn_runs_as_the_verified_caller(monkeypatch, mock_session):
         )
         app = create_app(root_agent=MagicMock(name="root"), app_name="t", plugins=[], config=config)
     token = _hs256(
-        {"sub": "u-9", "email": "ana@example.com", "aud": "orrery", "exp": time.time() + 60}
+        {
+            "sub": "u-9",
+            "email": "ana@example.com",
+            "email_verified": True,
+            "aud": "orrery",
+            "exp": time.time() + 60,
+        }
     )
 
     TestClient(app).post(

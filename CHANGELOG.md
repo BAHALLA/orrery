@@ -54,6 +54,9 @@ If both are set, the new name wins.
 
 ### Fixed
 
+- **Impersonation trusted an unverified email.** The default user claim, `email`, now counts only when the token has `email_verified: true`; otherwise the subject is used. Where an identity provider lets users set their own address, a self-asserted email could otherwise have borrowed a colleague's Kubernetes or Elasticsearch permissions.
+- **A mistyped `ORRERY_IMPERSONATION` failed on the first Kubernetes call**; it now stops startup.
+- **The agent-catalog follower could die silently** on an unexpected error, leaving that replica serving a stale catalog until restart. It now logs and keeps polling.
 - **Confirmation gates waved through tools without a Python function** (`require_confirmation`, `dry_run`, and the Slack and Google Chat gates). Each began with `if func is None: return None`, so any tool not built from a function ran ungated whatever its guard level. No shipped tool was affected (all are functions), but every MCP tool would have been. The gates now read guard metadata from the tool itself when there is no function, and `create_agent()` gates any agent holding a toolset.
 
 - **A 429 now carries `Retry-After`.** The web console already parsed it to say "retry in Ns", but the server never sent it, so users only saw "too many requests".

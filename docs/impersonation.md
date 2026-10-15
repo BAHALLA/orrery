@@ -43,7 +43,7 @@ from session state, which tools can write:
 
 | Surface | Identity |
 |---|---|
-| Web console / HTTP API | the JWT: user from `ORRERY_IMPERSONATE_USER_CLAIM`, groups from `ORRERY_IMPERSONATE_GROUPS_CLAIM`. Anonymous mode (`AUTH_ENABLED=false`) has none, so impersonating calls are refused. |
+| Web console / HTTP API | the JWT: user from `ORRERY_IMPERSONATE_USER_CLAIM`, groups from `ORRERY_IMPERSONATE_GROUPS_CLAIM`. An `email` counts only with `email_verified: true`; otherwise the subject is used, so a self-asserted address can never borrow a colleague's permissions. Anonymous mode (`AUTH_ENABLED=false`) has none, so impersonating calls are refused. |
 | Google Chat | the sender's email from the signed event (on an approval, the original requester's) |
 | Slack | the signed event's user id, resolved to an email through `users.info`. Needs the **`users:read.email`** scope. If the lookup fails there is no identity, and calls are refused. |
 | CLI (`make run-cli`) | none: set `ORRERY_IMPERSONATION_FALLBACK=service` for local use |

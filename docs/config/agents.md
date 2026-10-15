@@ -23,6 +23,8 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | **slack-bot** | `SLACK_SIGNING_SECRET` | — | Request signing secret |
 | **slack-bot** | `SLACK_ADMIN_USERS` | — | Comma-separated Slack user IDs with `admin` role |
 | **slack-bot** | `SLACK_OPERATOR_USERS` | — | Comma-separated Slack user IDs with `operator` role |
+| **slack-bot** | `SLACK_RATE_LIMIT` | `60/minute` | Per-IP limit on `/slack/events` |
+| **slack-bot** | `SLACK_PROGRESS_UPDATES` | `true` | Edit an in-thread status message while slow turns run ([details](../integrations/slack.md#live-progress-on-slow-turns)) |
 | **google-chat** | `GOOGLE_CHAT_AUDIENCE` | — | Token audience (must match bot URL) |
 | **google-chat** | `GOOGLE_CHAT_ADMIN_EMAILS` | — | Comma-separated emails with `admin` role |
 | **google-chat** | `GOOGLE_CHAT_OPERATOR_EMAILS` | — | Comma-separated emails with `operator` role |
