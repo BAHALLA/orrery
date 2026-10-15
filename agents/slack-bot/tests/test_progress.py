@@ -155,3 +155,35 @@ async def test_progress_can_be_turned_off():
     await _send(_handler(_runner(delay=0.15), progress_updates=False), say)
 
     assert _texts(say) == ["Lag is flat."]
+
+
+# ── Impersonation: the sender's email, resolved only when needed ──────
+
+
+@pytest.mark.asyncio
+async def test_identity_is_looked_up_only_when_impersonation_is_on(monkeypatch):
+    handler = _handler(_runner(delay=0, with_tools=False))
+    say = _say()
+    say.client.users_info = AsyncMock(
+        return_value={"user": {"profile": {"email": "ana@example.com"}}}
+    )
+
+    monkeypatch.delenv("ORRERY_IMPERSONATION", raising=False)
+    assert await handler._identity("U1", say) is None
+    say.client.users_info.assert_not_called()
+
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "kubernetes")
+    identity = await handler._identity("U1", say)
+    assert identity is not None and identity.username == "ana@example.com"
+    await handler._identity("U1", say)
+    say.client.users_info.assert_awaited_once()  # cached
+
+
+@pytest.mark.asyncio
+async def test_a_failed_lookup_means_no_identity(monkeypatch):
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "kubernetes")
+    handler = _handler(_runner(delay=0, with_tools=False))
+    say = _say()
+    say.client.users_info = AsyncMock(side_effect=RuntimeError("missing_scope"))
+
+    assert await handler._identity("U1", say) is None

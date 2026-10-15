@@ -12,12 +12,14 @@ module scope so Keep-Alive works across calls.
 from __future__ import annotations
 
 import asyncio
+import json as json_lib
 import logging
 from typing import Any
 
 import requests
 
 from orrery_core import AgentConfig, ToolResult
+from orrery_core.security.identity import ImpersonationRequired, elasticsearch_headers
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
     validate_positive_int,
@@ -71,22 +73,45 @@ def _get_session() -> requests.Session:
     return _session
 
 
+def _refused(reason: str) -> requests.Response:
+    """The 403 Elasticsearch would give, so tools report it like any HTTP error."""
+    resp = requests.Response()
+    resp.status_code = 403
+    resp.headers["Content-Type"] = "application/json"
+    resp._content = json_lib.dumps(
+        {"error": {"type": "impersonation_required", "reason": reason}}
+    ).encode()
+    return resp
+
+
 async def _http_get(path: str, params: dict | None = None) -> requests.Response:
+    # Run as the turn's verified caller when ORRERY_IMPERSONATION includes
+    # elasticsearch (orrery_core.security.identity).
+    try:
+        headers = elasticsearch_headers()
+    except ImpersonationRequired as exc:
+        return _refused(str(exc))
     session = _get_session()
     return await asyncio.to_thread(
         session.get,
         f"{_config.elasticsearch_url}{path}",
         params=params,
+        headers=headers or None,
         timeout=_config.elasticsearch_http_timeout,
     )
 
 
 async def _http_post(path: str, json: dict | None = None) -> requests.Response:
+    try:
+        headers = elasticsearch_headers()
+    except ImpersonationRequired as exc:
+        return _refused(str(exc))
     session = _get_session()
     return await asyncio.to_thread(
         session.post,
         f"{_config.elasticsearch_url}{path}",
         json=json,
+        headers=headers or None,
         timeout=_config.elasticsearch_http_timeout,
     )
 

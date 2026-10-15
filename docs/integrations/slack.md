@@ -66,6 +66,14 @@ and never costs the answer. Set `SLACK_PROGRESS_UPDATES=false` to turn it off.
 
 Only names and outcomes are shown, never tool arguments or results.
 
+## Acting as the user
+
+With [impersonation](../impersonation.md) enabled (`ORRERY_IMPERSONATION`), the
+bot resolves each sender's email through `users.info` so that Kubernetes and
+Elasticsearch see the person. Add the **`users:read`** and **`users:read.email`**
+bot scopes. Without them the lookup fails, and calls to impersonating systems
+are refused rather than made as the bot.
+
 ## Role-Based Access Control
 
 The Slack bot maps Slack user IDs to RBAC roles. Add your user IDs to `agents/slack-bot/.env`:

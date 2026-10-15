@@ -51,6 +51,7 @@ from orrery_core import (
     set_user_role,
     tool_ledger_scope,
 )
+from orrery_core.security.identity import service_scope
 
 load_agent_env(__file__)
 
@@ -87,7 +88,10 @@ async def main() -> SweepOutcome:
     ledger = ToolLedger()
     error: BaseException | None = None
     try:
-        with tool_ledger_scope(ledger):
+        # Nobody asked for this sweep: it acts as the platform's own service
+        # account even where ORRERY_IMPERSONATION makes interactive turns act
+        # as their user (and would otherwise refuse a turn with no user).
+        with tool_ledger_scope(ledger), service_scope():
             async for event in runner.run_async(
                 user_id="batch", session_id=session.id, new_message=msg
             ):

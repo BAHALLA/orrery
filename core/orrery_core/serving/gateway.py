@@ -25,6 +25,7 @@ pass an ``on_event`` callback to observe each runner event as it arrives.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -51,6 +52,7 @@ from ..security.guardrails import (
     classify_decision,
     ensure_pending_confirmation_store,
 )
+from ..security.identity import CallerIdentity, caller_scope
 from .events import extract_reply_text
 from .session_cache import DEFAULT_MAX_SESSION_MAPPINGS, BoundedSessionCache
 
@@ -86,6 +88,10 @@ class InboundMessage:
     channel: str
     state_delta: dict[str, Any] = field(default_factory=dict)
     raw: Any = None
+    #: The transport's *verified* caller, for systems that act on their behalf
+    #: (``ORRERY_IMPERSONATION``). Set only from what the transport itself
+    #: verified — a JWT, a signed chat event — never from message content.
+    identity: CallerIdentity | None = None
 
 
 @dataclass
@@ -353,6 +359,7 @@ class AgentGateway:
         state_delta: dict[str, Any] | None = None,
         on_event: EventHook | None = None,
         streaming: bool = False,
+        identity: CallerIdentity | None = None,
     ) -> OutboundReply:
         """Run one turn against an already-resolved session.
 
@@ -374,19 +381,24 @@ class AgentGateway:
         # Read once: replace_root_agent() may swap self.runner mid-turn, and this
         # turn must finish on the tree it started on.
         runner = self.runner
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=message,
-            state_delta=delta or None,
-            **run_kwargs,
-        ):
-            if on_event is not None:
-                await on_event(event)
-            # `is True`, not truthiness: a partial chunk repeats in the final
-            # aggregated event, so counting both would print the answer twice.
-            if getattr(event, "partial", None) is not True:
-                reply += extract_reply_text(event)
+        # The verified caller, for the whole turn — every tool call, including
+        # those inside AgentTool specialists and to_thread workers, sees it.
+        # Without one, an enclosing scope (service_scope for batch runs) stands.
+        scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
+        with scope:
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=message,
+                state_delta=delta or None,
+                **run_kwargs,
+            ):
+                if on_event is not None:
+                    await on_event(event)
+                # `is True`, not truthiness: a partial chunk repeats in the final
+                # aggregated event, so counting both would print the answer twice.
+                if getattr(event, "partial", None) is not True:
+                    reply += extract_reply_text(event)
         return OutboundReply(text=reply, session_id=session_id)
 
     def _turn_state_delta(
@@ -464,6 +476,7 @@ class AgentGateway:
             state_delta=msg.state_delta,
             on_event=on_event,
             streaming=streaming,
+            identity=msg.identity,
         )
 
     async def dispatch(self, adapter: ChannelAdapter, raw: Any) -> Any:

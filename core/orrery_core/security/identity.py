@@ -1,0 +1,182 @@
+"""Who a downstream call is made *for* — the turn's verified caller.
+
+Orrery's RBAC decides whether a tool may run. Impersonation goes one step
+further: the call itself reaches the target system *as the person who asked*,
+so the system's own permissions apply too — Kubernetes RBAC, Elasticsearch
+roles. The service account keeps its credentials; it only says on whose behalf
+it is calling (``Impersonate-User`` / ``es-security-runas-user``), which the
+target authorizes separately.
+
+**Where the identity lives.** In a ``ContextVar`` the gateway sets from the
+transport's *verified* identity for the duration of a turn — never in session
+state, which tools can write, and never from anything the model produced.
+Contexts copy into ``asyncio.to_thread`` workers and into ``AgentTool``
+sub-runs, so every tool call in the turn sees it.
+
+**Fail-closed.** With impersonation enabled for a system
+(``ORRERY_IMPERSONATION=kubernetes,elasticsearch``), a call to it that has no
+verified caller is refused — unless the code path explicitly declares it acts as
+the platform itself (:func:`service_scope`, used by the unattended triage run),
+or the deployment opts into falling back to the service account
+(``ORRERY_IMPERSONATION_FALLBACK=service``).
+"""
+
+from __future__ import annotations
+
+import contextvars
+import logging
+import os
+import re
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Literal
+
+logger = logging.getLogger("orrery.identity")
+
+System = Literal["kubernetes", "elasticsearch"]
+
+IMPERSONATION_ENV = "ORRERY_IMPERSONATION"
+FALLBACK_ENV = "ORRERY_IMPERSONATION_FALLBACK"
+USER_CLAIM_ENV = "ORRERY_IMPERSONATE_USER_CLAIM"
+GROUPS_CLAIM_ENV = "ORRERY_IMPERSONATE_GROUPS_CLAIM"
+
+#: Header values must be a single line of printable characters: an identity
+#: carrying CR/LF would let a crafted claim inject headers.
+_SAFE = re.compile(r"^[\x21-\x7e][\x20-\x7e]{0,253}$")
+
+
+@dataclass(frozen=True)
+class CallerIdentity:
+    """A verified person, as downstream systems should see them."""
+
+    subject: str
+    #: What target systems know the person as (email by default).
+    username: str
+    groups: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Scope:
+    identity: CallerIdentity | None
+    #: True only inside :func:`service_scope`: no person is behind this work.
+    as_service: bool = False
+
+
+_SCOPE: contextvars.ContextVar[_Scope | None] = contextvars.ContextVar(
+    "orrery_caller", default=None
+)
+
+
+class ImpersonationRequired(PermissionError):
+    """A call to an impersonating system had no verified caller to act as."""
+
+
+def enabled_systems() -> frozenset[str]:
+    raw = os.getenv(IMPERSONATION_ENV, "")
+    systems = frozenset(s.strip().lower() for s in raw.split(",") if s.strip())
+    if unknown := systems - {"kubernetes", "elasticsearch"}:
+        raise ValueError(f"{IMPERSONATION_ENV}: unknown systems {sorted(unknown)}")
+    return systems
+
+
+def _fallback_to_service() -> bool:
+    return os.getenv(FALLBACK_ENV, "").strip().lower() == "service"
+
+
+@contextmanager
+def caller_scope(identity: CallerIdentity | None) -> Generator[None]:
+    """Make *identity* the caller for everything inside the block."""
+    token = _SCOPE.set(_Scope(identity=identity))
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
+@contextmanager
+def service_scope() -> Generator[None]:
+    """Declare that the work inside acts as the platform, not for a person.
+
+    For unattended runs (the scheduled triage sweep). Calls go out with the
+    service account's own permissions, which is the point: nobody asked.
+    """
+    token = _SCOPE.set(_Scope(identity=None, as_service=True))
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
+def current_caller() -> CallerIdentity | None:
+    scope = _SCOPE.get()
+    return scope.identity if scope else None
+
+
+def acting_identity(system: System) -> CallerIdentity | None:
+    """The identity to impersonate for a call to *system*, or ``None`` for the
+    service account. Raises :class:`ImpersonationRequired` when the system
+    impersonates and there is nobody verified to act as."""
+    if system not in enabled_systems():
+        return None
+    scope = _SCOPE.get()
+    if scope is not None and scope.identity is not None:
+        return scope.identity
+    if (scope is not None and scope.as_service) or _fallback_to_service():
+        return None
+    raise ImpersonationRequired(
+        f"{system} calls act as the requesting user ({IMPERSONATION_ENV}), "
+        "and this request has no verified user identity"
+    )
+
+
+def _safe(value: str, what: str) -> str:
+    if not _SAFE.match(value):
+        raise ImpersonationRequired(f"refusing to impersonate: unsafe {what} {value!r}")
+    return value
+
+
+def kubernetes_headers() -> list[tuple[str, str]]:
+    """``Impersonate-User`` / ``Impersonate-Group`` for the current caller.
+
+    A list of pairs, not a dict: Kubernetes takes one ``Impersonate-Group``
+    header per group.
+    """
+    identity = acting_identity("kubernetes")
+    if identity is None:
+        return []
+    headers = [("Impersonate-User", _safe(identity.username, "username"))]
+    headers += [("Impersonate-Group", _safe(g, "group")) for g in identity.groups]
+    return headers
+
+
+def elasticsearch_headers() -> dict[str, str]:
+    identity = acting_identity("elasticsearch")
+    if identity is None:
+        return {}
+    return {"es-security-runas-user": _safe(identity.username, "username")}
+
+
+def _claim(claims: Mapping[str, Any], path: str) -> Any:
+    value: Any = claims
+    for part in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(part)
+    return value
+
+
+def identity_from_claims(subject: str, claims: Mapping[str, Any]) -> CallerIdentity:
+    """Build the caller from verified JWT claims.
+
+    ``ORRERY_IMPERSONATE_USER_CLAIM`` (default ``email``, falling back to the
+    subject) names the user; ``ORRERY_IMPERSONATE_GROUPS_CLAIM`` (default
+    ``groups``) the groups — dotted paths, like ``JWT_ROLE_CLAIM``.
+    """
+    user = _claim(claims, os.getenv(USER_CLAIM_ENV, "email") or "email")
+    groups = _claim(claims, os.getenv(GROUPS_CLAIM_ENV, "groups") or "groups")
+    return CallerIdentity(
+        subject=subject,
+        username=user if isinstance(user, str) and user else subject,
+        groups=tuple(g for g in groups if isinstance(g, str)) if isinstance(groups, list) else (),
+    )

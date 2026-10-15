@@ -34,7 +34,10 @@ from typing import Any
 
 from kubernetes import client, config
 from kubernetes.client import rest
+from urllib3 import HTTPHeaderDict
 from urllib3.util.retry import Retry
+
+from ..security.identity import ImpersonationRequired, kubernetes_headers
 
 logger = logging.getLogger("orrery.kube")
 
@@ -108,11 +111,36 @@ class BoundedRESTClient(rest.RESTClientObject):
         return super().request(
             method,
             url,
-            headers=headers,
+            headers=_with_impersonation(headers),
             body=body,
             post_params=post_params,
             _request_timeout=_request_timeout or self.default_timeout,
         )
+
+
+def _with_impersonation(headers: Any) -> Any:
+    """Add ``Impersonate-User`` / ``Impersonate-Group`` for the turn's caller.
+
+    Every Kubernetes call funnels through :class:`BoundedRESTClient`, so this is
+    the one place impersonation has to happen (see
+    :mod:`orrery_core.security.identity`). A refusal is raised as the 403 the
+    API server would give, which every tool already turns into an error result.
+
+    ``HTTPHeaderDict`` because Kubernetes takes one ``Impersonate-Group`` header
+    *per group*: urllib3 writes each added value as its own header line, where a
+    plain dict could only hold one (or a comma-joined value the API server would
+    read as a single group named "a, b").
+    """
+    try:
+        extra = kubernetes_headers()
+    except ImpersonationRequired as exc:
+        raise rest.ApiException(status=403, reason=str(exc)) from exc
+    if not extra:
+        return headers
+    merged = HTTPHeaderDict(headers or {})
+    for name, value in extra:
+        merged.add(name, value)
+    return merged
 
 
 def as_json_object(result: object) -> dict[str, Any]:

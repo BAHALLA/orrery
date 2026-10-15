@@ -1002,3 +1002,41 @@ def test_single_replica_may_use_per_process_state(monkeypatch, patched_runner):
         plugins=[],
         config=ServerConfig(auth_enabled=False, database_url=None),
     )
+
+
+def test_chat_turn_runs_as_the_verified_caller(monkeypatch, mock_session):
+    """The HTTP front door hands the token's identity to the turn."""
+    from orrery_core.security.identity import current_caller
+
+    seen = []
+
+    async def run_async(**_):
+        seen.append(current_caller())
+        event = MagicMock()
+        event.content.parts = [MagicMock(text="ok", thought=None)]
+        event.partial = None
+        yield event
+
+    runner = MagicMock(run_async=run_async)
+    sessions = MagicMock()
+    sessions.create_session = AsyncMock(return_value=mock_session)
+    sessions.get_session = AsyncMock(return_value=None)
+    with (
+        patch("orrery_core.serving.gateway.Runner", return_value=runner),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.server.create_session_service", return_value=sessions),
+    ):
+        config = ServerConfig(
+            auth_enabled=True,
+            jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+        )
+        app = create_app(root_agent=MagicMock(name="root"), app_name="t", plugins=[], config=config)
+    token = _hs256(
+        {"sub": "u-9", "email": "ana@example.com", "aud": "orrery", "exp": time.time() + 60}
+    )
+
+    TestClient(app).post(
+        "/chat", json={"message": "hi"}, headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert seen[0].subject == "u-9" and seen[0].username == "ana@example.com"
