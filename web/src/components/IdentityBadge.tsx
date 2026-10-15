@@ -1,5 +1,6 @@
 import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
+import { LogOutIcon } from "./icons";
 
 interface Props {
   identity: Identity | null;
@@ -22,7 +23,7 @@ const roleTitle: Record<Identity["role"], string> = {
 
 const roleBadge: Record<Identity["role"], string> = {
   viewer: "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300",
-  operator: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+  operator: "bg-brand-100 text-brand-700 dark:bg-brand-950 dark:text-brand-300",
   admin: "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300",
 };
 
@@ -37,36 +38,47 @@ export function IdentityBadge({ identity, me, onSignOut }: Props) {
   // browser's reading of a signature it cannot check.
   const role = me?.role ?? identity.role;
   const autonomy = me?.autonomy_level ?? null;
+  const initial = identity.subject.trim().charAt(0).toUpperCase() || "?";
   return (
-    <div role="status" className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
+    <div role="status" className="flex items-center gap-2.5">
+      <span
+        aria-hidden="true"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-semibold text-white"
+      >
+        {initial}
+      </span>
+      <div className="min-w-0 flex-1">
         <span
-          className="min-w-0 flex-1 truncate text-sm text-slate-700 dark:text-slate-200"
+          className="block truncate text-sm font-medium text-slate-800 dark:text-slate-100"
           title={identity.subject}
         >
           {identity.subject}
         </span>
-        <span
-          className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${roleBadge[role]}`}
-          title={roleTitle[role]}
-        >
-          {role}
-        </span>
-        {autonomy ? (
+        <span className="mt-0.5 flex items-center gap-1">
           <span
-            className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300"
-            title={autonomyTitle[autonomy] ?? `Autonomy ${autonomy}`}
+            className={`rounded px-1.5 py-px text-[10px] font-semibold uppercase ${roleBadge[role]}`}
+            title={roleTitle[role]}
           >
-            {autonomy}
+            {role}
           </span>
-        ) : null}
+          {autonomy ? (
+            <span
+              className="rounded bg-slate-200 px-1.5 py-px text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+              title={autonomyTitle[autonomy] ?? `Autonomy ${autonomy}`}
+            >
+              {autonomy}
+            </span>
+          ) : null}
+        </span>
       </div>
       <button
         type="button"
         onClick={onSignOut}
-        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        aria-label="Sign out"
+        title="Sign out"
+        className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-200"
       >
-        Sign out
+        <LogOutIcon />
       </button>
     </div>
   );

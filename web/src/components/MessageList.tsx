@@ -2,10 +2,16 @@ import { useEffect, useRef } from "react";
 import type { ChatMessage } from "../chat/types";
 import { AgentMarkdown } from "./AgentMarkdown";
 import { CopyButton } from "./CopyButton";
+import { OrreryMark } from "./OrreryMark";
+import { RunTrace } from "./RunTrace";
+import { Welcome } from "./Welcome";
 
 interface Props {
   messages: ChatMessage[];
   isSending: boolean;
+  /** Send a suggested prompt from the empty state. */
+  onSuggest: (prompt: string) => void;
+  onSweep: () => void;
 }
 
 function formatTime(at: number): string {
@@ -15,95 +21,101 @@ function formatTime(at: number): string {
 /** How far from the bottom still counts as "following along" (px). */
 const STICK_THRESHOLD = 80;
 
+function UserMessage({ m }: { m: ChatMessage }) {
+  return (
+    <div className="group flex flex-col items-end gap-1">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 text-white shadow-sm sm:max-w-[75%]">
+        <p className="whitespace-pre-wrap break-words">{m.text}</p>
+      </div>
+      <div className="flex items-center gap-1.5 px-1 text-xs text-slate-400 dark:text-slate-500">
+        <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
+        <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+          <CopyButton value={m.text} label="Copy the message" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function AssistantMessage({ m }: { m: ChatMessage }) {
+  const live = m.streaming === true;
+  return (
+    <article className="group flex gap-3" aria-busy={live}>
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white ring-1 ring-slate-900/5 dark:bg-slate-800">
+        <OrreryMark className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+          <span className="font-semibold text-slate-700 dark:text-slate-200">Orrery</span>
+          <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
+          {m.text && !live ? (
+            <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+              <CopyButton value={m.text} label="Copy the reply" />
+            </span>
+          ) : null}
+        </div>
+        {m.trace ? <RunTrace trace={m.trace} live={live} durationMs={m.durationMs} /> : null}
+        {m.text ? (
+          <div className={live ? "orrery-caret" : undefined}>
+            <AgentMarkdown text={m.text} />
+          </div>
+        ) : null}
+        {m.interrupted ? (
+          <p className="mt-2 text-xs text-slate-500 italic dark:text-slate-400">
+            Stopped before the answer arrived. The server keeps working — reopen this conversation
+            in a moment to read it.
+          </p>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 /**
  * Scrolling transcript. Follows the newest message *only while the reader is
  * already at the bottom* — scrolling up to re-read an earlier answer while a
  * multi-specialist sweep is still landing must not yank them back down.
+ *
+ * Assistant replies render as full-width documents rather than chat bubbles:
+ * they are reports with tables and code, and a bubble squeezed them into a
+ * column too narrow to read either.
  */
-export function MessageList({ messages, isSending }: Props) {
+export function MessageList({ messages, isSending, onSuggest, onSweep }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
-  const handleScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottom.current = distance <= STICK_THRESHOLD;
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD;
   };
 
   useEffect(() => {
     if (!stickToBottom.current) return;
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
   }, [messages, isSending]);
 
   if (messages.length === 0 && !isSending) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-slate-500 dark:text-slate-400">
-        <p className="max-w-md">
-          Ask about the health of your Kafka, Kubernetes, Elasticsearch, or Docker estate.
-        </p>
-        <p className="text-sm">
-          e.g. <em>“What's the health of my Kafka cluster?”</em>
-        </p>
-      </div>
-    );
+    return <Welcome onSuggest={onSuggest} onSweep={onSweep} />;
   }
 
   return (
     <div
-      ref={scrollRef}
       onScroll={handleScroll}
-      className="orrery-scroll flex flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-6"
+      className="orrery-scroll flex-1 overflow-y-auto"
       role="log"
       aria-label="Conversation transcript"
       aria-live="polite"
     >
-      {messages.map((m) => {
-        const isUser = m.role === "user";
-        return (
-          <div
-            key={m.id}
-            className={`group flex max-w-2xl flex-col gap-1 ${isUser ? "items-end self-end" : "items-start self-start"}`}
-          >
-            <div className="flex items-center gap-2 px-1 text-xs text-slate-400 dark:text-slate-500">
-              <span className="font-medium text-slate-500 dark:text-slate-400">
-                {isUser ? "You" : "Orrery"}
-              </span>
-              <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
-              {/* Hover *or* keyboard focus — an action that only appears on
-                  hover is unreachable without a pointer. */}
-              <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
-                <CopyButton value={m.text} label={`Copy the ${isUser ? "message" : "reply"}`} />
-              </span>
-            </div>
-            <div
-              className={
-                isUser
-                  ? "rounded-2xl rounded-tr-sm bg-blue-600 px-4 py-2.5 text-white"
-                  : "rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-slate-800 dark:bg-slate-800 dark:text-slate-100"
-              }
-            >
-              {isUser ? (
-                <p className="whitespace-pre-wrap">{m.text}</p>
-              ) : (
-                <AgentMarkdown text={m.text} />
-              )}
-            </div>
-          </div>
-        );
-      })}
-      {isSending ? (
-        <div
-          className="flex items-center gap-1.5 self-start rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-3 dark:bg-slate-800"
-          aria-label="Orrery is thinking"
-        >
-          <span className="orrery-dot h-2 w-2 rounded-full bg-slate-400" />
-          <span className="orrery-dot h-2 w-2 rounded-full bg-slate-400" />
-          <span className="orrery-dot h-2 w-2 rounded-full bg-slate-400" />
-        </div>
-      ) : null}
-      <div ref={endRef} />
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
+        {messages.map((m) =>
+          m.role === "user" ? (
+            <UserMessage key={m.id} m={m} />
+          ) : (
+            <AssistantMessage key={m.id} m={m} />
+          ),
+        )}
+        <div ref={endRef} />
+      </div>
     </div>
   );
 }

@@ -92,6 +92,7 @@ type ConversationsAction =
   | { type: "select"; id: string }
   | { type: "delete"; id: string; fallback: Conversation }
   | { type: "patch"; patch: ConversationPatch; at: number }
+  | { type: "patchById"; id: string; patch: ConversationPatch; at: number }
   | { type: "hydrate"; listed: Conversation[] }
   | { type: "transcript"; id: string; title: string; messages: ChatMessage[] };
 
@@ -124,9 +125,11 @@ function reducer(state: ConversationsState, action: ConversationsAction): Conver
         activeId: state.activeId === action.id ? mostRecent(next).id : state.activeId,
       };
     }
-    case "patch": {
+    case "patch":
+    case "patchById": {
+      const target = action.type === "patch" ? state.activeId : action.id;
       const list = state.list.map((c) => {
-        if (c.id !== state.activeId) return c;
+        if (c.id !== target) return c;
         const delta = typeof action.patch === "function" ? action.patch(c) : action.patch;
         return { ...c, ...delta, updatedAt: action.at };
       });
@@ -178,6 +181,10 @@ export interface ConversationsController {
   /** Merge a partial update into the active conversation (bumps updatedAt).
    * Accepts an updater so async callers always read the freshest transcript. */
   patchActive: (patch: ConversationPatch) => void;
+  /** Like {@link patchActive}, but for a named conversation — for writes that
+   * arrive asynchronously (a streamed reply) and must land on the conversation
+   * that asked, even if the user has since switched to another. */
+  patchConversation: (id: string, patch: ConversationPatch) => void;
 }
 
 /**
@@ -302,6 +309,12 @@ export function useConversations(token: string | null): ConversationsController 
     [],
   );
 
+  const patchConversation = useCallback(
+    (id: string, patch: ConversationPatch) =>
+      dispatch({ type: "patchById", id, patch, at: Date.now() }),
+    [],
+  );
+
   const sorted = useMemo(() => [...list].sort((a, b) => b.updatedAt - a.updatedAt), [list]);
 
   return {
@@ -313,6 +326,7 @@ export function useConversations(token: string | null): ConversationsController 
     newConversation,
     selectConversation,
     deleteConversation,
+    patchConversation,
     patchActive,
   };
 }

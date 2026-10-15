@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from "../api/client";
 import type { ActivityEntry, PendingConfirmation, TriageResponse } from "../api/types";
 import type { ConversationsController } from "../conversations/useConversations";
 import { NEW_CONVERSATION_TITLE } from "../conversations/types";
+import { applyProgress } from "./trace";
 import type { ChatError, ChatMessage } from "./types";
 
 let idCounter = 0;
@@ -66,7 +67,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   // can replay it without the user retyping — the composer clears on send.
   const lastSentRef = useRef<string | null>(null);
 
-  const { active, activeId, patchActive } = conv;
+  const { active, activeId, patchConversation } = conv;
   const messages = active.messages;
   const sessionId = active.sessionId;
 
@@ -151,41 +152,93 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
       const text = raw.trim();
       if (!text || isSending) return;
 
+      // The conversation this send belongs to. Every write below names it, so a
+      // reply still landing after the user switched away goes to the thread
+      // that asked — never into whichever one happens to be on screen.
+      const forConversation = activeId;
+      const patch = (fn: Parameters<typeof patchConversation>[1]) =>
+        patchConversation(forConversation, fn);
+      const replyId = nextId();
+      const startedAt = Date.now();
+      const patchReply = (fn: (m: ChatMessage) => Partial<ChatMessage>) =>
+        patch((c) => ({
+          messages: c.messages.map((m) => (m.id === replyId ? { ...m, ...fn(m) } : m)),
+        }));
+
       setError(null);
       // On a retry the message is already in the transcript — appending it
       // again would show the user's question twice for one failed turn.
-      if (!options.replay) {
-        const userMessage: ChatMessage = { id: nextId(), role: "user", text, at: Date.now() };
-        patchActive((c) => ({
-          messages: [...c.messages, userMessage],
-          title: c.title === NEW_CONVERSATION_TITLE ? titleFrom(text) : c.title,
-        }));
-      }
+      const placeholder: ChatMessage = {
+        id: replyId,
+        role: "assistant",
+        text: "",
+        at: startedAt,
+        trace: [],
+        streaming: true,
+      };
+      patch((c) => ({
+        messages: options.replay
+          ? [...c.messages, placeholder]
+          : [...c.messages, { id: nextId(), role: "user", text, at: startedAt }, placeholder],
+        title: c.title === NEW_CONVERSATION_TITLE ? titleFrom(text) : c.title,
+      }));
       lastSentRef.current = text;
       setIsSending(true);
 
       const controller = new AbortController();
       abortRef.current = controller;
-      // The conversation this send belongs to, so a reply that lands after the
-      // user has moved on doesn't repaint the inspector for the wrong one.
-      const forConversation = activeId;
+
+      // Drop the placeholder if nothing ever arrived, otherwise keep what did —
+      // a half-written answer or a trace of what ran is still worth reading.
+      const settleUnfinished = () =>
+        patch((c) => ({
+          messages: c.messages.flatMap((m) => {
+            if (m.id !== replyId) return [m];
+            if (!m.text && !m.trace?.length) return [];
+            return [{ ...m, streaming: false, interrupted: true }];
+          }),
+        }));
 
       try {
-        const res = await client.chat(
+        const res = await client.chatStream(
           { message: text, session_id: sessionId },
           {
             signal: controller.signal,
+            onEvent: (event) => {
+              switch (event.type) {
+                case "session":
+                  // Recorded as soon as the server names it: if the stream drops
+                  // now, reopening the conversation finds the finished turn.
+                  patch({ sessionId: event.session_id });
+                  break;
+                case "progress":
+                  patchReply((m) => ({ trace: applyProgress(m.trace ?? [], event.step) }));
+                  break;
+                case "delta":
+                  patchReply((m) => ({ text: m.text + event.text }));
+                  break;
+                case "message":
+                  // Authoritative: replaces whatever the deltas assembled.
+                  patchReply(() => ({ text: event.text }));
+                  break;
+                case "error":
+                  break; // surfaced by chatStream as a thrown ApiError
+              }
+            },
           },
         );
-        patchActive((c) => ({
-          sessionId: res.session_id,
-          messages: [
-            ...c.messages,
-            { id: nextId(), role: "assistant", text: res.response, at: Date.now() },
-          ],
+        patch({ sessionId: res.session_id });
+        patchReply(() => ({
+          text: res.response,
+          streaming: false,
+          durationMs: Date.now() - startedAt,
         }));
         await refreshSidePanes(res.session_id, forConversation);
       } catch (err) {
+        settleUnfinished();
+        // The user moved to another conversation (which aborts this request):
+        // the error belongs to a thread no longer on screen, so say nothing.
+        if (activeIdRef.current !== forConversation) return;
         // A user-initiated stop is not a failure — say so, and leave the
         // message retryable rather than showing a red error for their own click.
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -216,10 +269,10 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
         }
       } finally {
         setIsSending(false);
-        abortRef.current = null;
+        if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [client, sessionId, activeId, isSending, patchActive, refreshSidePanes],
+    [client, sessionId, activeId, isSending, patchConversation, refreshSidePanes],
   );
 
   // The decision is a plain chat message: the requester-verified gate on the

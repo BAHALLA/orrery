@@ -5,11 +5,14 @@ import type {
   ChatResponse,
   MeResponse,
   PendingResponse,
+  ProgressEvent,
   SelfTestResponse,
   SessionResponse,
   SessionsResponse,
+  StreamEvent,
   TriageResponse,
 } from "./types";
+import { readSse } from "./sse";
 
 /** A typed API error carrying the HTTP status so callers can branch on 401 etc. */
 export class ApiError extends Error {
@@ -44,6 +47,12 @@ interface RequestOptions {
   signal?: AbortSignal;
   /** Override the inferred verb. Only DELETE needs this (no body, not a GET). */
   method?: "DELETE";
+}
+
+interface StreamOptions {
+  signal?: AbortSignal;
+  /** Called for every event, in order, as it arrives. */
+  onEvent: (event: StreamEvent) => void;
 }
 
 /**
@@ -117,6 +126,92 @@ export class ApiClient {
     return this.request<ChatResponse>("/chat", req, options);
   }
 
+  /**
+   * Send one chat turn and narrate it as it runs (POST /chat/stream, SSE).
+   *
+   * Resolves with the same {@link ChatResponse} {@link chat} would, once the
+   * turn is over; `onEvent` sees the session id, tool progress and answer text
+   * along the way. Degrades instead of failing against a server that can't
+   * stream: a 404 (no such route) falls back to {@link chat}, and a JSON answer
+   * (a proxy or test double that ignored the stream) is taken as the reply.
+   */
+  async chatStream(req: ChatRequest, { signal, onEvent }: StreamOptions): Promise<ChatResponse> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
+
+    let res: Response;
+    try {
+      res = await fetch(`${config.apiBaseUrl}/chat/stream`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(req),
+        signal: signal ?? null,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      throw new ApiError(0, "Network error — is the server reachable?");
+    }
+
+    if (res.status === 404) return this.chat(req, signal ? { signal } : {});
+    if (!res.ok) {
+      throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
+    }
+
+    const contentType = res.headers.get("Content-Type") ?? "";
+    if (!contentType.includes("text/event-stream") || !res.body) {
+      const reply = (await res.json()) as ChatResponse;
+      onEvent({ type: "session", session_id: reply.session_id });
+      onEvent({ type: "message", session_id: reply.session_id, text: reply.response });
+      return reply;
+    }
+
+    let sessionId = req.session_id ?? "";
+    let final: ChatResponse | null = null;
+    for await (const frame of readSse(res.body)) {
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(frame.data) as Record<string, unknown>;
+      } catch {
+        continue; // a malformed frame is skipped, not fatal to the turn
+      }
+      switch (frame.event) {
+        case "session":
+          sessionId = str(data.session_id, sessionId);
+          onEvent({ type: "session", session_id: sessionId });
+          break;
+        case "progress":
+          onEvent({ type: "progress", step: data as unknown as ProgressEvent });
+          break;
+        case "delta":
+          onEvent({ type: "delta", text: str(data.text, ""), author: str(data.author, "") });
+          break;
+        case "message":
+          final = { session_id: str(data.session_id, sessionId), response: str(data.text, "") };
+          onEvent({ type: "message", session_id: final.session_id, text: final.response });
+          break;
+        case "error":
+          // Status 502: the server answered, the turn behind it failed. Retryable
+          // by the same rule as any 5xx, which is what the server says it is.
+          throw new ApiError(502, str(data.message, "The agent failed."));
+        case "done":
+          break;
+      }
+    }
+
+    if (final === null) {
+      // The stream ended without an answer: the connection dropped mid-turn.
+      // The server keeps working, so the conversation will have the reply.
+      throw new ApiError(
+        0,
+        "The connection dropped before the answer arrived. Reopen the conversation in a moment to see it.",
+      );
+    }
+    return final;
+  }
+
   /** The caller's conversations, newest first. No transcripts — see {@link session}. */
   sessions(options?: RequestOptions): Promise<SessionsResponse> {
     return this.request<SessionsResponse>("/sessions", undefined, options);
@@ -171,6 +266,11 @@ export class ApiClient {
   selfTest(options?: RequestOptions): Promise<SelfTestResponse> {
     return this.request<SelfTestResponse>("/onboarding/selftest", {}, options);
   }
+}
+
+/** A string field from a parsed frame, or `fallback` when it is missing or not a string. */
+function str(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
 }
 
 /** Parse `Retry-After` (delta-seconds or an HTTP date) into whole seconds. */

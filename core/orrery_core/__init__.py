@@ -43,6 +43,8 @@ from .plugins import IdentityStateGuardPlugin as IdentityStateGuardPlugin
 from .plugins import MemoryPlugin as MemoryPlugin
 from .plugins import MetricsPlugin as MetricsPlugin
 from .plugins import PIIRedactionPlugin as PIIRedactionPlugin
+from .plugins import ProgressPlugin as ProgressPlugin
+from .plugins import ProgressStep as ProgressStep
 from .plugins import ResiliencePlugin as ResiliencePlugin
 from .plugins import SafetyScreenPlugin as SafetyScreenPlugin
 from .plugins import ToolLedger as ToolLedger
@@ -50,6 +52,7 @@ from .plugins import ToolLedgerPlugin as ToolLedgerPlugin
 from .plugins import ToolOutputCapPlugin as ToolOutputCapPlugin
 from .plugins import current_tool_ledger as current_tool_ledger
 from .plugins import default_plugins as default_plugins
+from .plugins import progress_scope as progress_scope
 from .plugins import set_autonomy_level as set_autonomy_level
 from .plugins import tool_ledger_scope as tool_ledger_scope
 from .reliability.error_handlers import graceful_model_error as graceful_model_error
