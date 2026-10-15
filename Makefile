@@ -99,10 +99,15 @@ lint: ## Lint Python (ruff check + format check)
 # Pinned for the same reason CI pins its actions: a linter that changes between
 # runs changes verdicts. Bump both here; CI reads them from this target.
 ACTIONLINT_VERSION ?= 1.7.12.25
+SHELLCHECK_VERSION ?= 0.11.0.1
 ZIZMOR_VERSION ?= 1.31.0
 
 lint-workflows: ## Lint GitHub Actions workflows (actionlint + zizmor security audit)
-	uvx --from actionlint-py==$(ACTIONLINT_VERSION) actionlint .github/workflows/*.yml
+	@# shellcheck is installed alongside, not taken from the host: actionlint
+	@# silently skips its `run:` checks when shellcheck is absent, which is how a
+	@# local run passed while CI (whose runner ships shellcheck) failed.
+	uvx --with shellcheck-py==$(SHELLCHECK_VERSION) --from actionlint-py==$(ACTIONLINT_VERSION) \
+		actionlint .github/workflows/*.yml
 	uvx zizmor==$(ZIZMOR_VERSION) --offline --min-severity low .github/workflows/
 
 # Derived from the workspace members (core + every agents/* with a pyproject),

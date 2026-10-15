@@ -122,15 +122,17 @@ jobs:
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          images=""
-          for tag in ${TAGS}; do
-            images+="${tag}@${DIGEST} "
-          done
+          # TAGS is newline-separated (metadata-action); an array keeps each
+          # ref one argument without relying on unquoted word splitting.
+          images=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && images+=("${tag}@${DIGEST}")
+          done <<< "${TAGS}"
           # Sigstore (Fulcio/Rekor) intermittently drops the stream with an
           # HTTP/2 INTERNAL_ERROR; signing is idempotent, so retry with backoff
           # rather than failing a release on a transient upstream blip.
           for attempt in 1 2 3 4; do
-            cosign sign --yes ${images} && exit 0
+            cosign sign --yes "${images[@]}" && exit 0
             echo "::warning::cosign sign attempt ${attempt} failed; retrying"
             sleep $((attempt * 15))
           done
