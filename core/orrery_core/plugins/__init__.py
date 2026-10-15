@@ -36,6 +36,9 @@ correct sequence (each step sees the call before the next; ErrorHandler last):
 5b. ToolLedgerPlugin   (records executed guarded calls and gate refusals into a
    ledger the caller armed — inert otherwise; ahead of the gates so it sees a
    refused call start, and crosses the AgentTool boundary)
+5c. ProgressPlugin     (streams tool start/end — names and outcomes, never
+   arguments — to a sink the caller armed; inert otherwise; same placement
+   and AgentTool reasoning as the ledger)
 6. AutonomyPlugin      (L2/L3/L4 process mode — optional, off unless configured;
    before the gates below so a tool the level forbids is refused rather than
    queued for an approval that cannot help it)
@@ -105,6 +108,7 @@ from .output_cap_plugin import (
     ToolOutputCapPlugin,
 )
 from .pii_plugin import PIIRedactionPlugin
+from .progress_plugin import ProgressPlugin, ProgressStep, progress_scope
 from .repeat_guard_plugin import (
     DEFAULT_MAX_IDENTICAL_FAILURES,
     REPEAT_REFUSED_STATUS,
@@ -146,6 +150,8 @@ __all__ = [
     "MemoryPlugin",
     "MetricsPlugin",
     "PIIRedactionPlugin",
+    "ProgressPlugin",
+    "ProgressStep",
     "RepeatGuardPlugin",
     "ResiliencePlugin",
     "SafetyScreenPlugin",
@@ -154,6 +160,7 @@ __all__ = [
     "ToolOutputCapPlugin",
     "current_tool_ledger",
     "default_plugins",
+    "progress_scope",
     "set_autonomy_level",
     "tool_ledger_scope",
 ]
@@ -353,6 +360,9 @@ def default_plugins(
     # the ledger has to see a call start to know a gate refused it rather than
     # never being asked. Inert unless a caller armed a ledger for the run.
     plugins.append(ToolLedgerPlugin())
+    # Same placement, same reason: a streaming transport shows a refused call
+    # as refused, which it can only do if it saw the call start.
+    plugins.append(ProgressPlugin())
 
     # Autonomy before RBAC/confirmation, for the same early-exit reason: the level
     # is a property of the *process*, so a tool the level forbids should be refused

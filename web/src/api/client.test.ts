@@ -241,6 +241,9 @@ describe("API path coverage", () => {
     const client = new ApiClient("tok");
     await Promise.all([
       client.chat({ message: "x" }),
+      // A JSON answer is accepted as the reply (see chatStream), so this
+      // resolves against the same canned `{}` and still makes exactly one call.
+      client.chatStream({ message: "x" }, { onEvent: () => {} }),
       client.sessions(),
       client.session("s1"),
       client.deleteSession("s1"),
@@ -306,5 +309,109 @@ describe("non-JSON responses", () => {
   it("still accepts a valid JSON body sent without a JSON content type", async () => {
     mockFetch(async () => new Response(JSON.stringify({ role: "admin" }), { status: 200 }));
     await expect(new ApiClient("tok").me()).resolves.toEqual({ role: "admin" });
+  });
+});
+
+function sseResponse(frames: string[]): Response {
+  return new Response(frames.join(""), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+const frame = (event: string, data: unknown) =>
+  `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+describe("ApiClient.chatStream", () => {
+  it("narrates the turn and resolves with the final reply", async () => {
+    mockFetch(async () =>
+      sseResponse([
+        frame("session", { session_id: "s9" }),
+        ": keepalive\n\n",
+        frame("progress", { call_id: "c1", phase: "start", agent: "root", tool: "get_nodes" }),
+        frame("delta", { text: "All ", author: "root" }),
+        frame("delta", { text: "good", author: "root" }),
+        frame("message", { session_id: "s9", text: "All good." }),
+        frame("done", {}),
+      ]),
+    );
+    const events: string[] = [];
+
+    const res = await new ApiClient("tok").chatStream(
+      { message: "nodes?" },
+      { onEvent: (e) => events.push(e.type === "delta" ? `delta:${e.text}` : e.type) },
+    );
+
+    expect(res).toEqual({ session_id: "s9", response: "All good." });
+    expect(events).toEqual(["session", "progress", "delta:All ", "delta:good", "message"]);
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(String(url)).toMatch(/\/chat\/stream$/);
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    expect(init.headers.Accept).toBe("text/event-stream");
+  });
+
+  it("turns an error event into a retryable ApiError", async () => {
+    mockFetch(async () =>
+      sseResponse([
+        frame("session", { session_id: "s9" }),
+        frame("error", { message: "The agent hit an error.", retryable: true }),
+        frame("done", {}),
+      ]),
+    );
+
+    const err = await new ApiClient("tok")
+      .chatStream({ message: "x" }, { onEvent: () => {} })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).message).toBe("The agent hit an error.");
+    expect((err as ApiError).isRetryable).toBe(true);
+  });
+
+  it("falls back to POST /chat on a server without the stream route", async () => {
+    mockFetch(async (url) =>
+      String(url).endsWith("/chat/stream")
+        ? new Response("not found", { status: 404 })
+        : new Response(JSON.stringify({ session_id: "s1", response: "old server" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+    );
+
+    const res = await new ApiClient("tok").chatStream({ message: "x" }, { onEvent: () => {} });
+
+    expect(res.response).toBe("old server");
+  });
+
+  it("reports a stream that ended without an answer as a dropped connection", async () => {
+    mockFetch(async () => sseResponse([frame("session", { session_id: "s9" })]));
+
+    const err = await new ApiClient("tok")
+      .chatStream({ message: "x" }, { onEvent: () => {} })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(0);
+    expect((err as ApiError).message).toMatch(/connection dropped/i);
+  });
+
+  it("passes a rate limit through with its Retry-After", async () => {
+    mockFetch(
+      async () =>
+        new Response(
+          JSON.stringify({ error: "rate_limited", detail: "30 per 1 minute exceeded" }),
+          {
+            status: 429,
+            headers: { "Retry-After": "12", "Content-Type": "application/json" },
+          },
+        ),
+    );
+
+    const err = (await new ApiClient("tok")
+      .chatStream({ message: "x" }, { onEvent: () => {} })
+      .catch((e: unknown) => e)) as ApiError;
+
+    expect(err.isRateLimited).toBe(true);
+    expect(err.retryAfter).toBe(12);
   });
 });

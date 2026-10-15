@@ -33,7 +33,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--amber">proposed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--amber">proposed</span> | Low | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-008](aep-008-skills.md) | Skills-Based Tool Organization | <span class="badge badge--amber">proposed</span> | Medium | Medium |
-| <span class="badge badge--blue">P2</span> | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | <span class="badge badge--amber">proposed</span> | High | Medium |
+| <span class="badge badge--blue">P2</span> | [AEP-009](aep-009-streaming.md) | Streaming & Real-Time Agent Responses | <span class="badge badge--amber">in-progress</span> | High | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-019](aep-019-web-console.md) | Web Console for Onboarding & Operator Usage | <span class="badge badge--green">completed</span> | High | Medium-High |
 | <span class="badge badge--grey">P3</span> | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | <span class="badge badge--amber">proposed</span> | Medium | Medium |

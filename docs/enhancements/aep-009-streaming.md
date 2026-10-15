@@ -2,11 +2,40 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High (5-7 days) |
 | **Impact** | Medium |
 | **Dependencies** | None |
+
+## Status (2026-10)
+
+**The web console path shipped.** The Slack and Google Chat transports are still
+open.
+
+- `POST /chat/stream` (`core/orrery_core/serving/sse.py`) narrates a turn as SSE:
+  `session` first (so a client that drops can reload), then `progress`, `delta`
+  and `message`, and `done` last. Keepalive comments cover long tool calls.
+- `ProgressPlugin` (`core/orrery_core/plugins/progress_plugin.py`) is the
+  "Step 2" below, with one correction to the original sketch. Progress comes
+  from a plugin armed per request through a ContextVar, not from
+  `on_event_callback`. `AgentTool` runs each specialist in its own Runner and
+  consumes its events, so the root's event stream shows a whole triage sweep as
+  one opaque call per specialist. A plugin is inherited by the sub-Runner and
+  sees the specialist's own tool calls. It streams names and outcomes only,
+  never arguments or results.
+- `AgentGateway.run(..., streaming=True)` runs ADK in `StreamingMode.SSE`. The
+  reply is built from non-partial events only, so a streamed turn returns the
+  same text as a plain one.
+- The turn runs in its own task, so a client that disconnects never cancels an
+  agent mid-tool.
+- The console renders a live per-specialist trace, then the answer as it is
+  written (see [Web console](../integrations/web-console.md)).
+
+**Still open:** incremental Slack and Google Chat updates (Step 4), and a
+provider-by-provider check of LiteLLM streaming (Claude/OpenAI). The gateway
+falls back to whole-answer delivery for any model that does not stream, so
+those providers already work; they just don't stream token by token yet.
 
 ## Gap Analysis
 
@@ -107,11 +136,11 @@ async def handle_streaming_events(self, runner, session, message):
 
 ## Acceptance Criteria
 
-- [ ] Agent responses stream in real-time via SSE
-- [ ] Parallel health check progress visible as each check completes
+- [x] Agent responses stream in real-time via SSE (`POST /chat/stream`)
+- [x] Parallel health check progress visible as each check completes (including calls inside specialists)
 - [ ] Slack bot posts incremental updates during long operations
-- [ ] `ProgressPlugin` logs timing for each tool call
-- [ ] No regression in final response quality
+- [x] `ProgressPlugin` reports timing for each tool call
+- [x] No regression in final response quality (identical reply text, pinned by tests)
 - [ ] Streaming works with all LLM providers (Gemini, Claude, OpenAI)
 
 ## Notes

@@ -47,7 +47,7 @@ from google.adk.workflow import Workflow
 try:
     from fastapi import Depends, FastAPI, HTTPException, Request, status
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, StreamingResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel, Field
 except ImportError as exc:  # pragma: no cover — covered by the install-extra path
@@ -77,6 +77,7 @@ from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
+from .sse import stream_turn
 
 logger = logging.getLogger("orrery.server")
 
@@ -568,11 +569,8 @@ def create_app(
             content={"status": "ready" if result.ready else "not_ready", "checks": result.checks},
         )
 
-    @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])
-    async def chat(
-        body: ChatRequest,
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> ChatResponse:
+    def inbound(body: ChatRequest, auth: AuthContext) -> InboundMessage:
+        """The turn both chat endpoints run: identity and title in state_delta."""
         # Identity travels in state_delta each turn (applied before the agent
         # runs), so a long-lived session always inherits the latest verified
         # role and AuthPlugin resolves RBAC from it.
@@ -584,15 +582,45 @@ def create_app(
         # the console renders as its placeholder.)
         if not body.session_id:
             state_delta[_CONVERSATION_TITLE_KEY] = _conversation_title(body.message)
-        msg = InboundMessage(
+        return InboundMessage(
             text=body.message,
             user_id=auth.subject,
             conversation_key=body.session_id or "",
             channel="http",
             state_delta=state_delta,
         )
-        reply = await gateway.run(msg)
+
+    @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])
+    async def chat(
+        body: ChatRequest,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> ChatResponse:
+        reply = await gateway.run(inbound(body, auth))
         return ChatResponse(session_id=reply.session_id, response=reply.text)
+
+    # Same request, same rate limit (one bucket: a streamed turn costs what a
+    # plain one does), narrated as Server-Sent Events — see `sse.py` for the
+    # event vocabulary. POST, not GET, so the message never lands in a URL or
+    # an access log; the console reads it with fetch(), not EventSource.
+    @api.post("/chat/stream", dependencies=[Depends(chat_rate_limit)])
+    async def chat_stream(
+        body: ChatRequest,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> StreamingResponse:
+        msg = inbound(body, auth)
+        # Resolved before the response starts, so a session-store failure is a
+        # real HTTP error instead of an `error` event behind a 200.
+        session_id = await gateway.resolve_session(msg)
+        return StreamingResponse(
+            stream_turn(gateway, msg, session_id=session_id),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                # nginx (ingress-nginx included) buffers proxied responses by
+                # default, which would deliver the whole stream at the end.
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @api.get("/sessions", response_model=SessionsResponse)
     async def list_sessions(

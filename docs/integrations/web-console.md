@@ -153,17 +153,46 @@ stops it.
 
 ## What you get
 
-### Chat with a visible tool timeline
+### Streaming answers with a live trace
+
+Each turn is sent to `POST /chat/stream` and narrated as it runs (AEP-009).
+Above the answer, a live trace shows which specialists are being consulted and
+each one's own tool calls as they start and finish, with durations and outcome:
+✓ done, ⚠ failed, 🔒 waiting for approval or refused. That includes calls made
+*inside* a specialist, which the Runner's own event stream cannot show. The
+answer then streams in as the model writes it. When the turn ends, the trace
+folds into a one-line summary ("Kafka, Kubernetes · 4 tool calls · 7.2s") that
+expands on click.
+
+The trace carries **names and outcomes only**. Tool arguments and results are
+never streamed to the browser: they are attacker-reachable text and can hold
+credentials.
+
+The console falls back cleanly against an older server. A `404` on
+`/chat/stream` retries the turn on `POST /chat`.
+
+### Tool-call timeline
 
 The **Tool calls** tab lists every recorded call — which specialist, which tool,
-which arguments, what status — so a multi-agent sweep reads as orchestration
-rather than an opaque paragraph. While a turn is in flight the timeline is
-polled every 2.5 s, so specialists appear as they finish. (Token-by-token
-streaming is AEP-009; until then, this is the progress signal.)
+which arguments, what status — from the session's activity log. It is the full
+record, where the live trace is the at-a-glance view.
 
 A turn can be **stopped**. A triage sweep fans out to five specialists and can
 run for a minute; the Stop button abandons the wait. The server keeps working —
-this stops the client waiting, it does not cancel the run.
+this stops the client waiting, it does not cancel the run. Whatever had already
+streamed stays on screen, and reopening the conversation shows the final answer.
+
+### Layout and themes
+
+The conversation is a centred reading column. Answers render full width as
+documents, because they are reports with tables and code. On narrow screens the
+history becomes a slide-out menu and the inspector a drawer, so the console
+works on a phone. A light / system / dark switch sits in the sidebar footer and
+is remembered per browser. `/` focuses the composer, and `Esc` closes an open
+menu or drawer.
+
+A new conversation opens on a few starting questions, one per specialist, plus
+a full health sweep.
 
 A failed turn offers **Retry**, which replays the same message without
 duplicating it in the transcript. A rate-limited turn says so, with the wait.
@@ -245,7 +274,8 @@ package.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /chat` | One conversation turn (rate limited per caller). |
+| `POST /chat/stream` | One conversation turn as Server-Sent Events: `session`, `progress`, `delta`, `message`, `error`, `done`. Same rate limit as `/chat`. |
+| `POST /chat` | One conversation turn as a single JSON reply. The console's fallback, and the endpoint for scripted clients. |
 | `GET /sessions` | The caller's conversations, newest first — the sidebar's history. No transcripts. |
 | `GET /session/{id}` | One conversation with its transcript, rebuilt from the stored events. |
 | `DELETE /session/{id}` | Delete one of the caller's conversations. |
