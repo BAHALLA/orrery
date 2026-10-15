@@ -1,5 +1,4 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.security.guardrails import require_confirmation
 
 from .strimzi import (
     approve_kafka_rebalance,
@@ -99,5 +98,4 @@ root_agent = create_agent(
         restart_kafka_connector,
         get_mirrormaker2_status,
     ],
-    before_tool_callback=require_confirmation(),
 )

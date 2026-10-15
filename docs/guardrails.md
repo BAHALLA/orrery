@@ -77,19 +77,28 @@ See [ADR-001 § Plugin execution order](adr/001-rbac.md#plugin-execution-order) 
 
 ## Why confirmation is wired at the agent level (not the plugin)
 
-`GuardrailsPlugin` in its default `"confirm"` mode only does RBAC — it does **not** attach a confirmation gate. Confirmation is wired per-agent:
+`GuardrailsPlugin` in its default `"confirm"` mode only does RBAC — it does **not** attach a confirmation gate. Confirmation is an agent `before_tool_callback`, and `create_agent()` attaches it **automatically** to any agent holding an `@confirm`/`@destructive` tool:
 
 ```python
-from orrery_core import create_agent, require_confirmation
+from orrery_core import create_agent
 
 root_agent = create_agent(
     name="my_agent",
     ...,
-    before_tool_callback=require_confirmation(),
+    tools=[get_status, restart_service],  # restart_service is @confirm
 )
+# root_agent.before_tool_callback is require_confirmation()
 ```
 
 Rationale: confirmation needs to work identically whether the agent is called as a sub-agent via `AgentTool`, run standalone in `adk web`, or invoked from a custom integration. Attaching it at the agent level guarantees that regardless of how the tool is reached, the same gate fires once.
+
+It used to be wired by hand in each agent, and two agents shipped without it (the docker specialist, then `remediation_actor`). Making it the default removes the step that was forgotten. The rules:
+
+- **Your callbacks come first.** `before_tool_callback=authorize()` becomes `[authorize(), require_confirmation()]`, so RBAC refuses before anyone is asked to approve a call they could not make.
+- **An existing gate is not doubled.** `require_confirmation()`, `dry_run()` and the Slack / Google Chat gates are marked with `mark_confirmation_gate()`; when one is already present, nothing is added. A custom gate should be marked the same way.
+- **Read-only agents get no callback at all.**
+
+`agents/orrery-assistant/tests/test_confirmation_wiring.py` remains as a backstop: it walks both roots and fails on any agent whose guarded tools are not behind a *marked* gate. (An unmarked callback, such as a metrics hook, no longer satisfies it.)
 
 ## Overriding the default role for a specific tool
 
@@ -132,7 +141,7 @@ Both bots run the same two-phase handshake over the **shared platform confirmati
 - **Slack** (`agents/slack-bot/slack_bot/confirmation.py`) — Block Kit Approve/Deny buttons; the refusal message renders the requester as an `<@id>` mention.
 - **Google Chat** (`agents/google-chat-bot/google_chat_bot/confirmation.py`) — Card v2 whose decision channel is transport-dependent: reply **approve**/**deny** in the card's thread (default; the only channel that works over Pub/Sub, where button clicks can't complete their synchronous round-trip), or inline Approve/Deny buttons on HTTP deployments (`GOOGLE_CHAT_INTERACTIVE_BUTTONS=true`). Both channels carry the decider's verified email.
 
-Sub-agents keep their per-agent `require_confirmation()` as a fallback for guarded tools reached without going through the root. `apply_chat_confirmation()` walks the agent tree and overrides every LlmAgent's `before_tool_callback` so guarded tools on sub-agents post a Card v2 too instead of falling back to the text prompt.
+Sub-agents keep the `require_confirmation()` that `create_agent()` gave them as a fallback for guarded tools reached without going through the root. `apply_chat_confirmation()` walks the agent tree and overrides every LlmAgent's `before_tool_callback` so guarded tools on sub-agents post a Card v2 too instead of falling back to the text prompt.
 
 ### Dry-run mode
 

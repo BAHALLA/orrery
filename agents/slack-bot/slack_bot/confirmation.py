@@ -37,6 +37,7 @@ from orrery_core import (
     get_guard_level,
     get_guard_reason,
     hash_args,
+    mark_confirmation_gate,
     raise_pending,
     wire_before_tool_callback,
 )
@@ -203,7 +204,7 @@ def slack_confirmation(
             notice="A Slack approval button has been sent. Waiting for user response.",
         )
 
-    return callback
+    return mark_confirmation_gate(callback)
 
 
 #: The agent-tree walker (sub_agents + AgentTool + Workflow graph nodes) is

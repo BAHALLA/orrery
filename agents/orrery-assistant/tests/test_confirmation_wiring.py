@@ -13,6 +13,13 @@ in the ``orrery_triage_workflow`` graph, which no ``AgentTool`` edge reaches, so
 it stayed invisible here while ``scale_deployment`` ran unattended on the batch
 path. The walker now covers workflow nodes too — a root that is not enumerated
 is a root that is not protected.
+
+``create_agent()`` now appends the gate itself whenever an agent holds a guarded
+tool, so this is a backstop rather than the only line of defence: it still
+catches an agent built without ``create_agent()``, or a gate replaced after
+construction. It checks for a *marked* gate (``is_confirmation_gate``), not
+merely for some ``before_tool_callback`` — a metrics or RBAC callback in that
+slot used to satisfy it while gating nothing.
 """
 
 import pytest
@@ -21,7 +28,7 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.workflow import Workflow
 
 from orrery_assistant.agent import orrery_chat_agent, orrery_triage_workflow
-from orrery_core import is_guarded, looks_mutating
+from orrery_core import is_confirmation_gate, is_guarded, looks_mutating
 
 
 def _agents_under(root):
@@ -64,7 +71,8 @@ def _ungated(root):
     return [
         (agent.name, sorted(getattr(t, "__name__", str(t)) for t in guarded))
         for agent in _agents_under(root)
-        if (guarded := _guarded_tools(agent)) and not getattr(agent, "before_tool_callback", None)
+        if (guarded := _guarded_tools(agent))
+        and not is_confirmation_gate(getattr(agent, "before_tool_callback", None))
     ]
 
 
@@ -72,8 +80,8 @@ def _ungated(root):
 def test_every_agent_with_guarded_tools_wires_a_before_tool_gate(root):
     assert not _ungated(root), (
         "Agents exposing @confirm/@destructive tools without a "
-        f"before_tool_callback confirmation gate: {_ungated(root)}. "
-        "Wire before_tool_callback=require_confirmation() in their create_agent()."
+        f"confirmation gate: {_ungated(root)}. Build them with create_agent() (which "
+        "wires require_confirmation()), or mark a custom gate with mark_confirmation_gate()."
     )
 
 
@@ -96,7 +104,7 @@ def test_docker_specialist_is_gated():
     """The specific regression: docker's destructive tools ran unconfirmed."""
     from docker_agent.agent import root_agent as docker_root
 
-    assert docker_root.before_tool_callback is not None
+    assert is_confirmation_gate(docker_root.before_tool_callback)
     assert any(getattr(t, "__name__", "") == "remove_image" for t in _guarded_tools(docker_root))
 
 
@@ -108,7 +116,7 @@ def test_remediation_actor_is_gated():
     """
     from orrery_assistant.remediation import remediation_actor
 
-    assert remediation_actor.before_tool_callback is not None
+    assert is_confirmation_gate(remediation_actor.before_tool_callback)
     assert {"restart_deployment", "scale_deployment", "rollback_deployment"} <= {
         getattr(t, "__name__", "") for t in _guarded_tools(remediation_actor)
     }

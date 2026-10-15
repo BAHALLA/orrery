@@ -1,5 +1,4 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.security.guardrails import require_confirmation
 
 from .tools import (
     docker_compose_status,
@@ -73,8 +72,4 @@ root_agent = create_agent(
         prune_images,
         prune_containers,
     ],
-    # Human-in-the-loop gate for @confirm/@destructive tools (stop/restart/
-    # remove). Every specialist with guarded tools must wire this — the
-    # GuardrailsPlugin enforces RBAC only, not confirmation.
-    before_tool_callback=require_confirmation(),
 )

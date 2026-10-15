@@ -66,7 +66,7 @@ runner = Runner(
 |-------|--------|-------------|
 | — | `TracingPlugin` | OpenTelemetry span enrichment. Prepended only when tracing is enabled (`enable_tracing` / `OTEL_TRACING_ENABLED`) |
 | — | `AuthPlugin` | Applies the verified JWT role each turn. Added only when `enable_auth=True` |
-| 1 | `GuardrailsPlugin` | RBAC (`authorize()`) + confirmation gate (`require_confirmation()` or `dry_run()`) + `ensure_default_role()` |
+| 1 | `GuardrailsPlugin` | RBAC (`authorize()`) + optional global `dry_run()` + `ensure_default_role()`. Per-tool confirmation is not here: `create_agent()` attaches `require_confirmation()` to each agent with a guarded tool |
 | 2 | `ResiliencePlugin` | Per-tool circuit breaker |
 | 3 | `MetricsPlugin` | Prometheus metrics (tool counts, latency, errors, circuit breaker state) |
 | 4 | `AuditPlugin` | Structured audit logging for every tool invocation |
@@ -505,7 +505,7 @@ Base fields (inherited by all configs):
 |-------|---------|---------|-------------|
 | `model_provider` | `"gemini"` | `MODEL_PROVIDER` | LLM backend (`gemini`, `anthropic`, `openai`, `ollama`, ...) |
 | `model_name` | `"gemini-3.6-flash"` | `MODEL_NAME` | Model identifier |
-| `google_genai_use_vertexai` | `True` | `GOOGLE_GENAI_USE_VERTEXAI` | Use Vertex AI or AI Studio (Gemini only) |
+| `google_genai_use_vertexai` | `True` | `GOOGLE_GENAI_USE_ENTERPRISE` (deprecated alias: `GOOGLE_GENAI_USE_VERTEXAI`) | Use Vertex AI or AI Studio (Gemini only) |
 | `google_cloud_project` | `None` | `GOOGLE_CLOUD_PROJECT` | GCP project (Vertex AI only) |
 | `google_cloud_location` | `None` | `GOOGLE_CLOUD_LOCATION` | GCP region (Vertex AI only) |
 | `google_api_key` | `None` | `GOOGLE_API_KEY` | AI Studio API key (Gemini only) |

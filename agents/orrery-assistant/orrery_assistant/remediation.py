@@ -107,7 +107,9 @@ remediation_actor = create_agent(
         log_operation,
     ],
     # Every mutating call passes a confirmation gate, same as the interactive
-    # specialists. On an unattended run (no transport to answer) a guarded tool
+    # specialists. create_agent() would wire this anyway (it gates any agent
+    # holding a guarded tool); it is spelled out here because this is the root
+    # that runs with nobody in the conversation. On an unattended run (no transport to answer) a guarded tool
     # returns ``confirmation_required`` and the loop reports what it *would* do
     # instead of doing it — the actor's instruction covers that outcome.
     before_tool_callback=require_confirmation(),

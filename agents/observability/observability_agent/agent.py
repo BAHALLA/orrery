@@ -1,5 +1,4 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.security.guardrails import require_confirmation
 
 from .tools import (
     create_silence,
@@ -81,5 +80,4 @@ root_agent = create_agent(
         create_silence,
         delete_silence,
     ],
-    before_tool_callback=require_confirmation(),
 )

@@ -64,9 +64,9 @@ RBAC runs **before** the confirmation gate by design ([ADR-001 § Plugin executi
 Vertex AI calls need `gcloud auth application-default login` **and** the project ID set:
 ```bash
 export GOOGLE_CLOUD_PROJECT=your-project
-export GOOGLE_GENAI_USE_VERTEXAI=TRUE
+export GOOGLE_GENAI_USE_ENTERPRISE=TRUE
 ```
-If you're using AI Studio instead, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and `GOOGLE_API_KEY=…`.
+If you're using AI Studio instead, set `GOOGLE_GENAI_USE_ENTERPRISE=FALSE` and `GOOGLE_API_KEY=…`.
 
 ### `429 Resource exhausted` / quota errors
 Hot loop in the remediation subgraph? Check `MAX_REMEDIATION_ITERATIONS` (defaults to 3), enforced by `verify_route` in `agents/orrery-assistant/orrery_assistant/remediation.py`. For Gemini, enable context caching ([`CONTEXT_CACHE_MIN_LENGTH`](config/general.md#context-caching)) — it reduces input tokens per call dramatically for tool-heavy agents.
@@ -109,7 +109,7 @@ Both `make run-dev` (ADK Dev UI) and `docker compose --profile demo up -d` bind 
 ## Confirmation flow
 
 ### Guarded tool runs without asking for confirmation
-- Is the agent running under `default_plugins()`? `GuardrailsPlugin` handles RBAC, but confirmation is wired at the **agent level** via `before_tool_callback=require_confirmation()`. If you're building a new agent, see [Adding a new agent → Wiring](adding-an-agent.md#wiring).
+- Was the agent built with `create_agent()`? `GuardrailsPlugin` handles RBAC, but confirmation is an **agent-level** `before_tool_callback` that `create_agent()` attaches automatically when a tool is guarded. An agent constructed directly as `LlmAgent(...)` does not get it, and neither does one whose `before_tool_callback` was replaced after construction with an unmarked callback. See [Adding a new agent → Wiring](adding-an-agent.md#wiring).
 - Is the tool actually decorated? `@confirm("reason")` and `@destructive("reason")` both attach the metadata the callback reads.
 
 ### Confirmation loops / agent keeps asking

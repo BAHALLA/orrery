@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Read before upgrading:** `GOOGLE_GENAI_USE_VERTEXAI` is deprecated (ADK 2.12) in
+favour of `GOOGLE_GENAI_USE_ENTERPRISE`. The old name still works and only logs a
+`DeprecationWarning`, so rename it in your `.env` / Helm values when convenient.
+If both are set, the new name wins.
+
+### Changed
+
+- **`create_agent()` wires the confirmation gate itself** (`core/orrery_core/agent/base.py`). Any agent holding an `@confirm`/`@destructive` tool now gets `require_confirmation()` appended to its `before_tool_callback`s, after the caller's own callbacks (so RBAC still refuses first), unless a gate is already present. Wired by hand, the gate was forgotten twice: the docker specialist, then `remediation_actor`. The six specialists no longer pass it explicitly. `require_confirmation()`, `dry_run()` and the Slack and Google Chat gates are marked with the new `mark_confirmation_gate()`, so none of them is doubled.
+- **The confirmation-wiring test checks for a real gate** (`agents/orrery-assistant/tests/test_confirmation_wiring.py`). It used to accept *any* `before_tool_callback`, so a metrics or RBAC callback in that slot satisfied it while gating nothing. It now requires a marked gate (`is_confirmation_gate`).
+- **Rate limiting no longer uses slowapi** (`core/orrery_core/serving/rate_limit.py`). slowapi's last release calls `asyncio.iscoroutinefunction`, which Python 3.16 removes. The replacement is a small layer over `limits`, the library slowapi wrapped. Limits are FastAPI route dependencies, so `/chat` and the self-test key on the verified subject directly instead of through `request.state`. Configuration (`ORRERY_*_RATE_LIMIT`, `ORRERY_RATE_LIMIT_STORAGE_URI`, `SLACK_RATE_LIMIT`) and the 429 body are unchanged.
+- **`GOOGLE_GENAI_USE_ENTERPRISE` replaces `GOOGLE_GENAI_USE_VERTEXAI`** in `.env.example`, `docker-compose.yml`, the Helm values and the docs. `AgentConfig` reads both, preferring the new name as google-genai does. A new `orrery_core.vertex_ai_enabled()` mirrors the client's resolution, and the eval suites use it instead of six copies of the old check.
+- The root `google-adk` floor is `>=2.12.0`, matching `orrery-core`.
+
+### Fixed
+
+- **A 429 now carries `Retry-After`.** The web console already parsed it to say "retry in Ns", but the server never sent it, so users only saw "too many requests".
+- **A local `.env` with `OTEL_TRACING_ENABLED=true` no longer pollutes the test run.** The chat root builds its `App` during collection, before any fixture can unset the variable, so a real OTLP exporter started and wrote `localhost:4317` tracebacks over the end of every local run. A root `conftest.py` pins tracing off before collection.
+
+### Security
+
+- **CI: every third-party action is pinned to a commit SHA** (Dependabot keeps the pins current, as one grouped weekly PR). Tags are mutable, and these jobs run with tokens that can push images, sign them, and publish releases.
+- **CI: least-privilege tokens.** `ci.yml` and `docs.yml` default to `contents: read`. `release.yml` no longer grants `contents`/`packages`/`id-token`/`security-events: write` to every job: each job asks only for what it uses. Read-only checkouts set `persist-credentials: false`.
+- **CI: script injection in the Dependabot relock workflow.** The PR title was interpolated into a `run:` script with `${{ }}`, so shell metacharacters in it would have executed with a token that can push to the repo. It now passes through `env:`. The job also keys on the PR *author* rather than the spoofable `github.actor`.
+- **CI: new `Workflow Lint` job** (`make lint-workflows`): actionlint plus the zizmor security audit, both pinned, so these regressions fail the build. `bandit` and `cyclonedx-bom` are pinned too, and `npm ci` runs with `--ignore-scripts`.
+
+### CI
+
+- Superseded PR runs are cancelled. Every job has a timeout, the uv cache is keyed on `uv.lock`, and syncs use `--locked`.
+- **Docs build on PRs.** `mkdocs build --strict` used to run for the first time after merge, so a broken link failed the Pages deploy on main. Only `main` deploys, and only the deploy job holds `pages`/`id-token` write.
+
 ## [0.5.0] - 2026-10-10
 
 A minor release: the agent now bounds its own runs (per-run tool budgets,

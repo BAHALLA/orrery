@@ -16,7 +16,7 @@ dependencies = [
     "ops-journal",
     "slack-bot",
     "google-chat-bot",
-    "google-adk>=2.11.0",
+    "google-adk>=2.12.0",
     "litellm>=1.104.2",
 ]
 
@@ -157,7 +157,6 @@ filterwarnings = [
     # (scoped to google.adk.features) does not cover it.
     "ignore:\\[EXPERIMENTAL\\] (EventsCompactionConfig|BaseEventsSummarizer).*:UserWarning",
     "ignore:.*_UnionGenericAlias.*:DeprecationWarning:google.genai.types",
-    "ignore:.*asyncio.iscoroutinefunction.*:DeprecationWarning:slowapi.extension",
     # Third-party deprecations we don't control (ADK internal agent-config base
     # class; Starlette TestClient's httpx shim used by fastapi.testclient).
     "ignore:BaseAgentConfig is deprecated.*:DeprecationWarning",

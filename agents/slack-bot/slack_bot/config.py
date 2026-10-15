@@ -22,7 +22,7 @@ class SlackBotConfig(AgentConfig):
     slack_db_url: str = ""
 
     # Rate limiting for the /slack/events endpoint (per source IP).
-    # Format is slowapi-compatible, e.g. "60/minute" or "5/second".
+    # Rate-limit notation, e.g. "60/minute" or "5/second" (parsed by `limits`).
     slack_rate_limit: str = "60/minute"
 
     # When running behind a reverse proxy (nginx ingress, GCP LB, ALB),

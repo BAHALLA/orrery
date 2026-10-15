@@ -80,14 +80,14 @@ async def delete_resource(name: str) -> dict:
 
 ## 3. Wire Up the Agent {: #wiring }
 
-In `agent.py`, use the `create_agent` factory. To enable the interactive confirmation flow for guarded tools, pass `require_confirmation()` to `before_tool_callback`.
+In `agent.py`, use the `create_agent` factory. If any of your tools is `@confirm`/`@destructive`, `create_agent()` wires the confirmation gate (`require_confirmation()`) for you — there is nothing to remember. Pass `dry_run()` instead to rehearse guarded calls without running them, or put an RBAC callback first with `before_tool_callback=[authorize(), require_confirmation()]` to control the order.
 
 !!! info "Why this isn't a plugin"
     `GuardrailsPlugin` (from `default_plugins()`) handles RBAC globally, but confirmation is wired at the agent level so it works uniformly when the agent is run standalone in `adk web`, called as an `AgentTool` sub-agent, or driven by a custom integration. For the full reasoning, see [Guardrails & RBAC](guardrails.md#why-confirmation-is-wired-at-the-agent-level-not-the-plugin).
 
 ```python
 # agents/my-agent/my_agent/agent.py
-from orrery_core import create_agent, load_agent_env, require_confirmation
+from orrery_core import create_agent, load_agent_env
 from .tools import get_status, update_resource, delete_resource
 
 # Load local .env file
@@ -102,9 +102,9 @@ root_agent = create_agent(
     1. Always check status before updating.
     2. Provide concise summaries of actions.
     """,
+    # update_resource/delete_resource are @confirm/@destructive, so
+    # create_agent() attaches require_confirmation() automatically.
     tools=[get_status, update_resource, delete_resource],
-    # GATE: Enable the confirmation mechanism for @confirm/@destructive tools
-    before_tool_callback=require_confirmation(),
 )
 ```
 

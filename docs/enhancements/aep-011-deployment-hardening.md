@@ -173,6 +173,13 @@ limiter = Limiter(key_func=get_remote_address)
 async def run_agent(request: Request): ...
 ```
 
+> **Superseded (2026-10):** `slowapi` was replaced by
+> `orrery_core.serving.rate_limit`, a small layer over `limits` (the library
+> slowapi wraps). Its last release calls `asyncio.iscoroutinefunction`, removed
+> in Python 3.16, and its decorator keys a limit before FastAPI resolves
+> authentication. Limits are now route dependencies keyed on the verified
+> subject, and a 429 carries `Retry-After`.
+
 ### Step 6: Helm Chart
 
 ```
@@ -210,7 +217,7 @@ deploy/
 - [x] CD pipeline: Docker image build + push to GHCR on merge to main (`.github/workflows/docker-publish.yml`, multi-arch amd64/arm64, SBOM + provenance attestation)
 - [x] Kubernetes manifests with probes, resource limits, rolling update (`deploy/k8s/` — deployment, service, HPA, PDB, NetworkPolicy, RBAC-scoped ServiceAccount)
 - [x] PostgreSQL session service for multi-instance (`runner.py` honors `DATABASE_URL`; `postgres` extra in `core/pyproject.toml` adds `asyncpg`/`psycopg2-binary`; Slack bot updated via `SlackBotConfig.resolve_db_url()`)
-- [x] Rate limiting on HTTP endpoints (`slowapi` on the Slack bot `/slack/events` webhook, configurable via `SLACK_RATE_LIMIT`)
+- [x] Rate limiting on HTTP endpoints (originally `slowapi`, now `orrery_core.serving.rate_limit` over `limits`; on the Slack bot `/slack/events` webhook, configurable via `SLACK_RATE_LIMIT`)
 - [x] Helm chart with configurable values (`deploy/helm/orrery-assistant/` — deployment, service, configmap, secret, HPA, PDB, NetworkPolicy, ingress, NOTES)
 - [x] HPA (Horizontal Pod Autoscaler) configuration (CPU 70%, memory 80%, 2-6 replicas, scale-up rate-limited to protect LLM spend)
 - [x] Root `.env.example` with all required/optional variables documented

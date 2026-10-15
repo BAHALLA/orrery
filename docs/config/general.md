@@ -20,13 +20,17 @@ The platform supports multiple LLM providers through [LiteLLM](https://docs.lite
 MODEL_PROVIDER=gemini
 MODEL_NAME=gemini-2.5-pro
 # Either Vertex AI:
-GOOGLE_GENAI_USE_VERTEXAI=TRUE
+GOOGLE_GENAI_USE_ENTERPRISE=TRUE
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
 # Or AI Studio:
-GOOGLE_GENAI_USE_VERTEXAI=FALSE
+GOOGLE_GENAI_USE_ENTERPRISE=FALSE
 GOOGLE_API_KEY=your-api-key
 ```
+
+`GOOGLE_GENAI_USE_ENTERPRISE` replaces `GOOGLE_GENAI_USE_VERTEXAI`, which ADK
+2.12 deprecated. The old name still works (ADK logs a `DeprecationWarning`); if
+both are set, `GOOGLE_GENAI_USE_ENTERPRISE` wins, as it does in google-genai.
 </details>
 
 <details>

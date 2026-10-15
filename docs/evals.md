@@ -20,7 +20,7 @@ uv run pytest agents/kafka-health/tests/ -m eval     # one agent
 ```
 
 `make eval` needs LLM credentials — the same ones the agents use. With Vertex AI
-that's `GOOGLE_GENAI_USE_VERTEXAI=TRUE` + `GOOGLE_CLOUD_PROJECT` and working
+that's `GOOGLE_GENAI_USE_ENTERPRISE=TRUE` + `GOOGLE_CLOUD_PROJECT` and working
 [ADC](https://cloud.google.com/docs/authentication/application-default-credentials);
 with the Gemini API it's `GOOGLE_API_KEY`. Without any, the eval **skips** (it
 does not fail), so `make test` stays credential-free.

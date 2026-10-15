@@ -49,7 +49,7 @@ install: ## Install everything (Python workspace + web console)
 		echo "▶ npm not found — skipped the web console (Python-only setup)"; \
 	fi
 
-check: lock-check lint type-check test test-web ## Full gate: lockfile + lint + types + Python tests + web (mirrors CI)
+check: lock-check lint lint-workflows type-check test test-web ## Full gate: lockfile + lint + types + Python tests + web (mirrors CI)
 
 # `uv sync` silently *rewrites* a stale lock, so nothing ever failed on drift —
 # a Dependabot PR that edited pyproject.toml alone merged green and left the lock
@@ -95,6 +95,15 @@ eval: ## Run agent evaluation scenarios (requires LLM access)
 lint: ## Lint Python (ruff check + format check)
 	uv run ruff check .
 	uv run ruff format --check .
+
+# Pinned for the same reason CI pins its actions: a linter that changes between
+# runs changes verdicts. Bump both here; CI reads them from this target.
+ACTIONLINT_VERSION ?= 1.7.12.25
+ZIZMOR_VERSION ?= 1.31.0
+
+lint-workflows: ## Lint GitHub Actions workflows (actionlint + zizmor security audit)
+	uvx --from actionlint-py==$(ACTIONLINT_VERSION) actionlint .github/workflows/*.yml
+	uvx zizmor==$(ZIZMOR_VERSION) --offline --min-severity low .github/workflows/
 
 # Derived from the workspace members (core + every agents/* with a pyproject),
 # so a newly added agent is picked up automatically — no manual edit needed.
