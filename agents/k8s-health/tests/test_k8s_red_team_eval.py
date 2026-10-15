@@ -52,6 +52,7 @@ from orrery_core import (
     is_guarded,
     load_agent_env,
     set_user_role,
+    vertex_ai_enabled,
 )
 from orrery_core.tools.kube import clear_client_cache
 
@@ -81,10 +82,7 @@ def _has_llm_credentials() -> bool:
         return True
     if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
         return True
-    return bool(
-        os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() == "TRUE"
-        and os.getenv("GOOGLE_CLOUD_PROJECT")
-    )
+    return vertex_ai_enabled() and bool(os.getenv("GOOGLE_CLOUD_PROJECT"))
 
 
 class _CallRecorder(BasePlugin):

@@ -177,3 +177,91 @@ class TestResolvePlanner:
         self._clean_env(monkeypatch)
         monkeypatch.setenv("ORRERY_PLANNER", "PLAN_REACT")
         assert isinstance(resolve_planner(), PlanReActPlanner)
+
+
+# ── create_agent(): confirmation gate wired by default ───────────────
+
+
+class TestCreateAgentConfirmationGate:
+    """An agent holding a guarded tool is gated without having to ask.
+
+    Two shipped agents (the docker specialist, then ``remediation_actor``) once
+    omitted ``require_confirmation()`` and ran guarded tools unconfirmed.
+    """
+
+    @staticmethod
+    def _tools():
+        from orrery_core import confirm
+
+        async def read_thing() -> dict:
+            return {}
+
+        @confirm("changes a thing")
+        async def change_thing() -> dict:
+            return {}
+
+        return read_thing, change_thing
+
+    @staticmethod
+    def _agent(tools, **kwargs):
+        from orrery_core import create_agent
+
+        return create_agent(
+            name="t", description="d", instruction="i", tools=tools, model="gemini-x", **kwargs
+        )
+
+    def test_guarded_tool_gets_the_gate(self):
+        from orrery_core import is_confirmation_gate
+
+        read_thing, change_thing = self._tools()
+        agent = self._agent([read_thing, change_thing])
+
+        assert is_confirmation_gate(agent.before_tool_callback)
+
+    def test_read_only_agent_gets_no_callback(self):
+        read_thing, _ = self._tools()
+
+        assert self._agent([read_thing]).before_tool_callback is None
+
+    def test_gate_is_appended_after_caller_callbacks(self):
+        """RBAC ahead of the gate refuses before anyone is asked to approve."""
+        from orrery_core import authorize, is_confirmation_gate
+
+        _, change_thing = self._tools()
+        rbac = authorize()
+        agent = self._agent([change_thing], before_tool_callback=rbac)
+
+        callbacks = agent.before_tool_callback
+        assert isinstance(callbacks, list)
+        assert callbacks[0] is rbac
+        assert is_confirmation_gate(callbacks[-1])
+        assert len(callbacks) == 2
+
+    def test_an_explicit_gate_is_not_doubled(self):
+        from orrery_core import require_confirmation
+
+        _, change_thing = self._tools()
+        gate = require_confirmation()
+
+        assert self._agent([change_thing], before_tool_callback=gate).before_tool_callback is gate
+
+    def test_dry_run_counts_as_the_gate(self):
+        """A dry-run agent must not also prompt for confirmation."""
+        from orrery_core import dry_run
+
+        _, change_thing = self._tools()
+        gate = dry_run()
+
+        assert self._agent([change_thing], before_tool_callback=gate).before_tool_callback is gate
+
+    def test_unmarked_callback_is_not_mistaken_for_a_gate(self):
+        from orrery_core import is_confirmation_gate
+
+        _, change_thing = self._tools()
+
+        def metrics(**_):
+            return None
+
+        callbacks = self._agent([change_thing], before_tool_callback=[metrics]).before_tool_callback
+        assert callbacks[0] is metrics
+        assert is_confirmation_gate(callbacks)

@@ -14,7 +14,7 @@ import pytest
 from google.adk.evaluation.agent_evaluator import AgentEvaluator
 
 import observability_agent.tools as _tools_mod
-from orrery_core import load_agent_env
+from orrery_core import load_agent_env, vertex_ai_enabled
 
 EVAL_DIR = os.path.join(os.path.dirname(__file__), "evals")
 
@@ -27,10 +27,7 @@ def _has_llm_credentials() -> bool:
         return True
     if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
         return True
-    return bool(
-        os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").upper() == "TRUE"
-        and os.getenv("GOOGLE_CLOUD_PROJECT")
-    )
+    return vertex_ai_enabled() and bool(os.getenv("GOOGLE_CLOUD_PROJECT"))
 
 
 @pytest.fixture(autouse=True)
@@ -233,7 +230,7 @@ async def test_agent_eval():
     if not _has_llm_credentials():
         pytest.skip(
             "Agent eval requires Gemini credentials: set GOOGLE_API_KEY / "
-            "GEMINI_API_KEY, or configure Vertex AI via GOOGLE_GENAI_USE_VERTEXAI=TRUE "
+            "GEMINI_API_KEY, or configure Vertex AI via GOOGLE_GENAI_USE_ENTERPRISE=TRUE "
             "+ GOOGLE_CLOUD_PROJECT in the agent's .env."
         )
 

@@ -1,5 +1,4 @@
 from orrery_core import create_agent, load_agent_env
-from orrery_core.security.guardrails import require_confirmation
 
 from .tools import (
     add_team_bookmark,
@@ -56,7 +55,4 @@ root_agent = create_agent(
         add_team_bookmark,
         list_team_bookmarks,
     ],
-    # Gates the @confirm tools (add_team_bookmark). Wired per agent rather than
-    # as a plugin so it also holds inside AgentTool sub-sessions and `adk web`.
-    before_tool_callback=require_confirmation(),
 )

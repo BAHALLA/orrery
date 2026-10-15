@@ -1,5 +1,4 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.security.guardrails import require_confirmation
 
 from .operators import (
     describe_custom_resource,
@@ -119,5 +118,4 @@ root_agent = create_agent(
         describe_workload,
         get_operator_events,
     ],
-    before_tool_callback=require_confirmation(),
 )

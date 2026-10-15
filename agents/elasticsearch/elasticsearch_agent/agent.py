@@ -1,5 +1,4 @@
 from orrery_core import OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.security.guardrails import require_confirmation
 
 from .eck import (
     describe_eck_cluster,
@@ -101,5 +100,4 @@ root_agent = create_agent(
         describe_kibana,
         get_eck_operator_events,
     ],
-    before_tool_callback=require_confirmation(),
 )

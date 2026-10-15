@@ -19,10 +19,18 @@ updates:
         update-types: ["minor", "patch"]
         exclude-patterns:
           - "google-adk"
+  # Actions are pinned to commit SHAs (with the release in a trailing comment),
+  # so Dependabot is what keeps them current — it rewrites both. Grouped into
+  # one weekly PR: with SHA pins every patch release is a diff, and a PR per
+  # action would mean a CI run per action.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

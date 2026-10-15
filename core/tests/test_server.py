@@ -739,6 +739,19 @@ def test_chat_is_rate_limited(patched_runner):
     blocked = client.post("/chat", json={"message": "hi"}, headers=headers)
     assert blocked.status_code == 429
     assert blocked.json()["error"] == "rate_limited"
+    # The console renders "retry in Ns" from this; without it the user only
+    # learns "too many requests" with no idea how long to wait.
+    assert int(blocked.headers["Retry-After"]) >= 1
+
+
+def test_rate_limit_runs_after_authentication(patched_runner):
+    """An unauthenticated caller gets 401, never a 429 charged to a shared key —
+    the limit is keyed on the verified subject, so it cannot run before auth."""
+    client = TestClient(_limited_app(patched_runner))
+
+    for _ in range(4):
+        assert client.post("/chat", json={"message": "hi"}).status_code == 401
+    assert client.post("/chat", json={"message": "hi"}, headers=_bearer()).status_code == 200
 
 
 def test_rate_limit_is_per_credential_not_per_ip(patched_runner):

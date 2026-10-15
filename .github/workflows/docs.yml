@@ -1,57 +1,78 @@
 name: Docs
 
+# Builds on every PR that touches the docs, deploys only from main. The PR
+# build exists because `mkdocs build --strict` used to run for the first time
+# *after* merge — a broken link or a missing nav entry then failed the Pages
+# deploy on main, where nobody was watching.
 on:
   push:
     branches: [main]
-    paths:
+    paths: &docs_paths
       - 'docs/**'
-      - 'agents/**/README.md'
-      - 'core/README.md'
+      # The API reference is generated from docstrings (mkdocstrings), and the
+      # agent READMEs are pulled in as pages — so code under either root counts.
+      - 'core/**'
+      - 'agents/**'
       - 'mkdocs.yml'
-      - '.github/workflows/**'
+      - '.github/workflows/docs.yml'
       - 'CHANGELOG.md'
       - 'CONTRIBUTING.md'
       - 'SECURITY.md'
       - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths: *docs_paths
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # git-revision-date plugins read history
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Set up Python
-        run: uv python install 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --locked
 
       - name: Build documentation
         run: uv run mkdocs build --strict
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ./site
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
+    # Only the deploy job can publish; the build above never holds these.
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

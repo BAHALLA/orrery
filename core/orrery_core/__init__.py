@@ -10,6 +10,7 @@ from .agent.base import resolve_safety_config as resolve_safety_config
 from .agent.config import DEFAULT_GEMINI_MODEL as DEFAULT_GEMINI_MODEL
 from .agent.config import AgentConfig as AgentConfig
 from .agent.config import load_config as load_config
+from .agent.config import vertex_ai_enabled as vertex_ai_enabled
 from .agent.prompts import CONFIRMATION_RULE as CONFIRMATION_RULE
 from .agent.prompts import OPERATING_PRINCIPLES as OPERATING_PRINCIPLES
 from .concurrency import configure_default_executor as configure_default_executor
@@ -91,9 +92,11 @@ from .security.guardrails import destructive as destructive
 from .security.guardrails import dry_run as dry_run
 from .security.guardrails import get_guard_level as get_guard_level
 from .security.guardrails import get_guard_reason as get_guard_reason
+from .security.guardrails import is_confirmation_gate as is_confirmation_gate
 from .security.guardrails import is_destructive as is_destructive
 from .security.guardrails import is_guarded as is_guarded
 from .security.guardrails import latest_pending_for_scope as latest_pending_for_scope
+from .security.guardrails import mark_confirmation_gate as mark_confirmation_gate
 from .security.guardrails import require_confirmation as require_confirmation
 from .security.rbac import NamespaceScopeGuard as NamespaceScopeGuard
 from .security.rbac import Role as Role

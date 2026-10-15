@@ -278,6 +278,39 @@ def is_guarded(tool_or_func: Any) -> bool:
     return get_guard_level(tool_or_func) is not None
 
 
+# ── Confirmation-gate markers ──────────────────────────────────────────
+#
+# ``create_agent()`` wires ``require_confirmation()`` onto any agent that holds
+# a guarded tool, unless a gate is already among its ``before_tool_callback``s.
+# "Is this callback a gate?" cannot be answered by identity (every factory
+# call returns a new closure) or by "is there any callback at all" (a metrics
+# or RBAC callback is not a gate — that weaker check is how an ungated agent
+# could still pass review), so each gate factory marks what it returns.
+
+_CONFIRMATION_GATE_ATTR = "_orrery_confirmation_gate"
+
+
+def mark_confirmation_gate[F: Callable[..., Any]](callback: F) -> F:
+    """Mark *callback* as a confirmation gate for guarded tools.
+
+    Apply it to every ``before_tool_callback`` that decides whether an
+    ``@confirm``/``@destructive`` call may run — ``require_confirmation()``,
+    ``dry_run()``, and the transport gates (Slack, Google Chat). A transport
+    gate that forgets it still works, but ``create_agent()`` will not see it
+    and adds ``require_confirmation()`` alongside.
+    """
+    setattr(callback, _CONFIRMATION_GATE_ATTR, True)
+    return callback
+
+
+def is_confirmation_gate(callback: Callable[..., Any] | list[Callable[..., Any]] | None) -> bool:
+    """Whether *callback* — or any callback in a list of them — is a gate."""
+    if callback is None:
+        return False
+    callbacks = callback if isinstance(callback, list) else [callback]
+    return any(getattr(cb, _CONFIRMATION_GATE_ATTR, False) for cb in callbacks)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────
 
 #: Alias kept for callers/tests that predate ``confirmation_flow.hash_args``.
@@ -298,11 +331,11 @@ def require_confirmation() -> Callable:
     ``_CONFIRMATION_TTL`` seconds.  A retry with different arguments or
     an expired confirmation will re-prompt.
 
-    Usage in create_agent():
-        create_agent(
-            ...,
-            before_tool_callback=require_confirmation(),
-        )
+    ``create_agent()`` wires this automatically onto any agent with a guarded
+    tool, so agents do not pass it themselves. Pass it explicitly only to
+    control its position among other ``before_tool_callback``s:
+
+        create_agent(..., before_tool_callback=[authorize(), require_confirmation()])
     """
 
     def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
@@ -360,7 +393,7 @@ def require_confirmation() -> Callable:
         }
         return _confirmation_prompt(tool=tool, func=func, args=args, level=level, strict=False)
 
-    return callback
+    return mark_confirmation_gate(callback)
 
 
 def _handle_strict(
@@ -540,4 +573,4 @@ def dry_run() -> Callable:
             ),
         }
 
-    return callback
+    return mark_confirmation_gate(callback)

@@ -45,7 +45,7 @@ server = [
     "pyjwt[crypto]>=2.15.1",
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.54.0",
-    "slowapi>=0.1.10",
+    "limits>=5.8.0",
 ]
 # Install with: uv sync --extra kubernetes
 # The shared, timeout-bounded Kubernetes API client (orrery_core.tools.kube)

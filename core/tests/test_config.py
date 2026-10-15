@@ -5,7 +5,12 @@ from typing import Any, cast
 
 import pytest
 
-from orrery_core.agent.config import DEFAULT_GEMINI_MODEL, AgentConfig, load_config
+from orrery_core.agent.config import (
+    DEFAULT_GEMINI_MODEL,
+    AgentConfig,
+    load_config,
+    vertex_ai_enabled,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +20,7 @@ def _clear_env(monkeypatch):
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
     monkeypatch.delenv("MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("MODEL_NAME", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
@@ -41,6 +47,42 @@ def test_agent_config_from_env(monkeypatch):
     assert config.google_cloud_project == "my-project"
     assert config.google_api_key is None
     assert config.google_genai_use_vertexai is False
+
+
+def test_agent_config_reads_the_enterprise_spelling(monkeypatch):
+    """ADK 2.12 deprecated GOOGLE_GENAI_USE_VERTEXAI for GOOGLE_GENAI_USE_ENTERPRISE."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "FALSE")
+
+    assert AgentConfig(_env_file=None).google_genai_use_vertexai is False
+
+
+def test_enterprise_spelling_wins_over_the_deprecated_one(monkeypatch):
+    """Same precedence as google-genai, so config never disagrees with the client."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "TRUE")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+
+    assert AgentConfig(_env_file=None).google_genai_use_vertexai is True
+    assert vertex_ai_enabled() is True
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, False),
+        ({"GOOGLE_GENAI_USE_ENTERPRISE": "true"}, True),
+        ({"GOOGLE_GENAI_USE_ENTERPRISE": "1"}, True),
+        # google-genai accepts only true/1 — "yes" routes to the Gemini API.
+        ({"GOOGLE_GENAI_USE_ENTERPRISE": "yes"}, False),
+        ({"GOOGLE_GENAI_USE_VERTEXAI": "TRUE"}, True),
+        # Set-but-false on the new name decides; the old name is not consulted.
+        ({"GOOGLE_GENAI_USE_ENTERPRISE": "false", "GOOGLE_GENAI_USE_VERTEXAI": "true"}, False),
+    ],
+)
+def test_vertex_ai_enabled_mirrors_google_genai(monkeypatch, env, expected):
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    assert vertex_ai_enabled() is expected
 
 
 def test_subclass_config(monkeypatch):

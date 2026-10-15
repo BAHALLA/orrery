@@ -37,6 +37,7 @@ from orrery_core import (
     get_guard_level,
     get_guard_reason,
     hash_args,
+    mark_confirmation_gate,
     raise_pending,
     wire_before_tool_callback,
 )
@@ -209,4 +210,4 @@ def google_chat_confirmation(
         )
         return blocked_payload(tool.name, level=level, reason=reason, notice=notice)
 
-    return callback
+    return mark_confirmation_gate(callback)

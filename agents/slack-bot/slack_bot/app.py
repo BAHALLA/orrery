@@ -10,13 +10,9 @@ import logging
 import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Request
 from slack_bolt.adapter.fastapi.async_handler import AsyncSlackRequestHandler
 from slack_bolt.async_app import AsyncApp
-from slowapi import Limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from orrery_core import (
     AgentGateway,
@@ -25,6 +21,11 @@ from orrery_core import (
     create_events_compaction_config,
     create_session_service,
     default_plugins,
+)
+from orrery_core.serving.rate_limit import (
+    RateLimiter,
+    install_rate_limit_handler,
+    parse_rate,
 )
 
 from .config import SlackBotConfig
@@ -51,6 +52,10 @@ store = create_confirmation_store()
 session_map = SessionMap()
 
 
+def _peer_address(request: Request) -> str:
+    return request.client.host if request.client else "127.0.0.1"
+
+
 def _client_ip(request: Request) -> str:
     """Return the caller's IP, honoring ``X-Forwarded-For`` when trusted.
 
@@ -67,15 +72,15 @@ def _client_ip(request: Request) -> str:
     """
     hops = config.slack_trusted_proxy_hops
     if hops <= 0:
-        return get_remote_address(request)
+        return _peer_address(request)
 
     forwarded = request.headers.get("x-forwarded-for")
     if not forwarded:
-        return get_remote_address(request)
+        return _peer_address(request)
 
     chain = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
     if not chain:
-        return get_remote_address(request)
+        return _peer_address(request)
     # Index from the right: hops=1 → chain[-1], hops=2 → chain[-2], ...
     # Clamp to the available length so a misconfigured hops value still
     # yields a deterministic key (the left-most known entry).
@@ -86,7 +91,13 @@ def _client_ip(request: Request) -> str:
 # Per-IP rate limiter for the public Slack webhook. Slack retries on 429
 # with backoff, so limiting here protects the LLM backend without dropping
 # legitimate events. Rate is configurable via SLACK_RATE_LIMIT env var.
-limiter = Limiter(key_func=_client_ip, default_limits=[config.slack_rate_limit])
+limiter = RateLimiter()
+_slack_limit = parse_rate(config.slack_rate_limit)
+
+
+async def _slack_rate_limit(request: Request) -> None:
+    limiter.hit(_slack_limit, f"ip:{_client_ip(request)}")
+
 
 # Mutable ref updated per-message so the confirmation callback
 # knows where to post buttons.
@@ -312,23 +323,11 @@ async def handle_deny(ack, action, say, body):
 # ── FastAPI app ───────────────────────────────────────────────────────
 
 api = FastAPI(title="DevOps Slack Bot", lifespan=lifespan)
-api.state.limiter = limiter
-
-
-def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
-    detail = getattr(exc, "detail", str(exc))
-    return JSONResponse(
-        status_code=429,
-        content={"error": "rate_limited", "detail": str(detail)},
-    )
-
-
-api.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+install_rate_limit_handler(api)
 slack_handler = AsyncSlackRequestHandler(bolt_app)
 
 
-@api.post("/slack/events")
-@limiter.limit(config.slack_rate_limit)
+@api.post("/slack/events", dependencies=[Depends(_slack_rate_limit)])
 async def slack_events(request: Request):
     """Slack Events API and interactivity endpoint."""
     return await slack_handler.handle(request)

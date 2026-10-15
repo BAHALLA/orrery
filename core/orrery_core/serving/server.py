@@ -50,9 +50,6 @@ try:
     from fastapi.responses import JSONResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel, Field
-    from slowapi import Limiter
-    from slowapi.errors import RateLimitExceeded
-    from slowapi.util import get_remote_address
 except ImportError as exc:  # pragma: no cover — covered by the install-extra path
     raise ImportError(
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
@@ -76,6 +73,7 @@ from .onboarding import (
     check_model_connectivity,
     run_probes,
 )
+from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
@@ -429,28 +427,14 @@ def create_app(
         verified_confirmation=True,
     )
 
-    # Rate limit per *caller*, not per IP: behind an ingress every user shares a
-    # source address, so an IP key would let one noisy client throttle everyone.
-    # A `/chat` turn buys LLM tokens and can fan out to every specialist plus a
-    # triage sweep, so an unbounded endpoint means one leaked credential is
-    # unbounded spend.
-    #
-    # The key is the *verified* subject, stamped onto the request by
-    # `auth_dependency` (FastAPI resolves dependencies before the handler that
-    # slowapi wraps, so it is always present by the time this runs). Keying on
-    # the raw token instead would hand out a fresh quota on every refresh, and
-    # keying on an unverified `sub` would let a caller mint buckets at will.
-    def rate_limit_key(request: Request) -> str:
-        subject = getattr(request.state, "auth_subject", None)
-        return f"sub:{subject}" if subject else "ip:" + get_remote_address(request)
-
-    # No `default_limits`: slowapi only applies those through `SlowAPIMiddleware`,
-    # which this app does not install, so the argument read as blanket coverage
-    # while doing nothing. Limits are declared per route below, where the cost
-    # actually differs — a `/chat` turn buys tokens, `/confirmations/pending` is a
-    # cheap read the console polls on a timer and must not be throttled into
-    # failure.
-    limiter = Limiter(key_func=rate_limit_key, storage_uri=cfg.rate_limit_storage_uri)
+    # Limits are declared per route below, where the cost actually differs — a
+    # `/chat` turn buys tokens, `/confirmations/pending` is a cheap read the
+    # console polls on a timer and must not be throttled into failure. Parsed
+    # here so a malformed limit or storage URI fails at startup, not on the
+    # first request.
+    limiter = RateLimiter(cfg.rate_limit_storage_uri)
+    chat_limit = parse_rate(cfg.chat_rate_limit)
+    selftest_limit = parse_rate(cfg.selftest_rate_limit)
     if cfg.rate_limit_storage_uri.startswith("memory://") and os.getenv(MULTI_REPLICA_ENV):
         logger.warning(
             "Rate limits are counted per replica (ORRERY_RATE_LIMIT_STORAGE_URI=memory://): "
@@ -475,15 +459,7 @@ def create_app(
     )
     if not cfg.serve_docs:
         logger.info("Interactive /docs disabled (set ORRERY_DOCS_ENABLED=true to serve it)")
-    api.state.limiter = limiter
-
-    def _rate_limited(_request: Request, exc: Exception) -> JSONResponse:
-        detail = getattr(exc, "detail", "rate limit exceeded")
-        return JSONResponse(
-            status_code=429, content={"error": "rate_limited", "detail": str(detail)}
-        )
-
-    api.add_exception_handler(RateLimitExceeded, _rate_limited)
+    install_rate_limit_handler(api)
 
     # Registered before CORS so its headers are on every response, including
     # CORS preflights and errors.
@@ -519,17 +495,11 @@ def create_app(
         request: Request,
         credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008 — FastAPI dependency pattern
     ) -> AuthContext:
-        """Resolve the bearer token into an ``AuthContext`` or raise 401.
-
-        Also stamps the verified subject on the request so the rate limiter can
-        key on identity rather than source address.
-        """
+        """Resolve the bearer token into an ``AuthContext`` or raise 401."""
         if not cfg.auth_enabled:
             # Anonymous mode — pin to viewer so RBAC still gates writes.
             host = request.client.host if request.client else "unknown"
-            anonymous = AuthContext(subject=f"anonymous:{host}", role="viewer", claims={})
-            request.state.auth_subject = anonymous.subject
-            return anonymous
+            return AuthContext(subject=f"anonymous:{host}", role="viewer", claims={})
 
         if credentials is None or credentials.scheme.lower() != "bearer":
             raise HTTPException(
@@ -539,9 +509,7 @@ def create_app(
             )
 
         try:
-            context = await verify_token_async(credentials.credentials, cfg.jwt)
-            request.state.auth_subject = context.subject
-            return context
+            return await verify_token_async(credentials.credentials, cfg.jwt)
         except AuthUnavailableError as exc:
             # The IdP's key set is unreachable. Not the caller's fault and not
             # something a new token fixes — say "try again", not "bad token",
@@ -559,6 +527,27 @@ def create_app(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
+
+    # Rate limit per *caller*, not per IP: behind an ingress every user shares a
+    # source address, so an IP key would let one noisy client throttle everyone.
+    # A `/chat` turn buys LLM tokens and can fan out to every specialist plus a
+    # triage sweep, so an unbounded endpoint means one leaked credential is
+    # unbounded spend.
+    #
+    # The key is the *verified* subject: these depend on `auth_dependency`, so
+    # FastAPI authenticates first (and only once per request — dependencies are
+    # cached). Keying on the raw token instead would hand out a fresh quota on
+    # every refresh, and keying on an unverified `sub` would let a caller mint
+    # buckets at will. In anonymous mode the subject embeds the client address.
+    async def chat_rate_limit(
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> None:
+        limiter.hit(chat_limit, f"sub:{auth.subject}")
+
+    async def selftest_rate_limit(
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> None:
+        limiter.hit(selftest_limit, f"sub:{auth.subject}")
 
     @api.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -579,10 +568,8 @@ def create_app(
             content={"status": "ready" if result.ready else "not_ready", "checks": result.checks},
         )
 
-    @api.post("/chat", response_model=ChatResponse)
-    @limiter.limit(cfg.chat_rate_limit)
+    @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])
     async def chat(
-        request: Request,  # noqa: ARG001 — slowapi resolves the limiter key from it
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> ChatResponse:
@@ -801,10 +788,12 @@ def create_app(
             self_test_available=bool(probes),
         )
 
-    @api.post("/onboarding/selftest", response_model=SelfTestResponse)
-    @limiter.limit(cfg.selftest_rate_limit)
+    @api.post(
+        "/onboarding/selftest",
+        response_model=SelfTestResponse,
+        dependencies=[Depends(selftest_rate_limit)],
+    )
     async def selftest(
-        request: Request,  # noqa: ARG001 — slowapi resolves the limiter key from it
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> SelfTestResponse:
         """Check the model provider and every wired integration (AEP-019 M3).

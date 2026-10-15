@@ -6,9 +6,11 @@ Config values are loaded from environment variables and .env files.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: The model used when neither MODEL_NAME nor GEMINI_MODEL_VERSION is set.
@@ -18,6 +20,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #: Keep this on a GA model and review it when Google publishes deprecations
 #: (https://ai.google.dev/gemini-api/docs/deprecations).
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
+#: google-genai's switch between the Gemini API and Vertex AI. The second name
+#: is the deprecated spelling (ADK warns on it since 2.12); both are still read,
+#: and when both are set the first wins — the same precedence google-genai uses.
+VERTEX_AI_ENV_VARS = ("GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI")
+
+
+def vertex_ai_enabled() -> bool:
+    """Whether google-genai will send Gemini calls to Vertex AI.
+
+    Mirrors the client's own resolution — the first of :data:`VERTEX_AI_ENV_VARS`
+    that is *set* decides, and only ``true``/``1`` enable it — so a check made
+    here cannot disagree with where the request actually goes.
+    """
+    for name in VERTEX_AI_ENV_VARS:
+        raw = os.environ.get(name)
+        if raw is not None:
+            return raw.strip().lower() in ("true", "1")
+    return False
 
 
 class AgentConfig(BaseSettings):
@@ -60,7 +81,12 @@ class AgentConfig(BaseSettings):
     model_name: str = DEFAULT_GEMINI_MODEL
 
     # Google AI / Vertex AI settings (used when model_provider=gemini)
-    google_genai_use_vertexai: bool = True
+    # GOOGLE_GENAI_USE_ENTERPRISE, falling back to the deprecated
+    # GOOGLE_GENAI_USE_VERTEXAI (see VERTEX_AI_ENV_VARS).
+    google_genai_use_vertexai: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(*VERTEX_AI_ENV_VARS, "google_genai_use_vertexai"),
+    )
     google_cloud_project: str | None = None
     google_cloud_location: str | None = None
     google_api_key: str | None = None

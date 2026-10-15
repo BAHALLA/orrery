@@ -16,7 +16,12 @@ from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 
 from ..observability.log import setup_logging
-from ..security.guardrails import ACTOR_STATE_KEY
+from ..security.guardrails import (
+    ACTOR_STATE_KEY,
+    is_confirmation_gate,
+    is_guarded,
+    require_confirmation,
+)
 from .config import DEFAULT_GEMINI_MODEL
 from .fallback import is_gemini_model, resolve_model_chain, resolve_retry_options
 
@@ -385,6 +390,33 @@ def _generate_content_config(model: Any) -> Any | None:
     return config
 
 
+def _with_confirmation_gate(
+    tools: Sequence[Callable[..., Any] | BaseTool],
+    callbacks: Callable | list[Callable] | None,
+) -> Callable | list[Callable] | None:
+    """Append ``require_confirmation()`` when guarded tools would run ungated.
+
+    RBAC and the autonomy levels are plugins and apply everywhere; the
+    human-in-the-loop gate is an *agent* callback, because it must also work
+    inside ``AgentTool`` sub-sessions and bare ``adk web``, which no plugin
+    registration reaches. That made it the one safety property an agent could
+    silently omit — and two did (the docker specialist, then
+    ``remediation_actor``, which let an unattended triage run rescale a
+    deployment). Wiring it here turns "remember the gate" into the default.
+
+    Appended *after* the caller's callbacks so an RBAC check ahead of it still
+    refuses before anyone is asked to approve a call they could not make.
+    """
+    if is_confirmation_gate(callbacks) or not any(
+        is_guarded(getattr(tool, "func", tool)) for tool in tools
+    ):
+        return callbacks
+    gate = require_confirmation()
+    if callbacks is None:
+        return gate
+    return [*callbacks, gate] if isinstance(callbacks, list) else [callbacks, gate]
+
+
 def create_agent(
     *,
     name: str,
@@ -416,7 +448,12 @@ def create_agent(
             for orchestration agents — tool-leaf agents do not benefit.
         before_tool_callback: Called before each tool execution. Return a dict
             to skip the tool (e.g., for guardrails), or None to proceed.
-            Use guardrails.require_confirmation() or guardrails.dry_run().
+            When any of ``tools`` is ``@confirm``/``@destructive`` and none of
+            these callbacks is a confirmation gate (see
+            ``guardrails.mark_confirmation_gate``), ``require_confirmation()``
+            is appended — so an agent with guarded tools is gated by default
+            rather than by remembering to ask. Pass ``dry_run()`` (or another
+            marked gate) to use a different gate instead.
         after_tool_callback: Called after each tool execution. Return a dict
             to override the result, or None to keep it.
             Use audit.audit_logger() for structured logging.
@@ -460,6 +497,7 @@ def create_agent(
         kwargs["planner"] = planner
     if sub_agents:
         kwargs["sub_agents"] = list(sub_agents)
+    before_tool_callback = _with_confirmation_gate(tools, before_tool_callback)
     if before_tool_callback:
         kwargs["before_tool_callback"] = before_tool_callback
     if after_tool_callback:

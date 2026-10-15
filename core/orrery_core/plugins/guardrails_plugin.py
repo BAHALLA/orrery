@@ -18,8 +18,9 @@ class GuardrailsPlugin(BasePlugin):
     """Enforces RBAC and optional dry-run gates globally.
 
     RBAC is always enforced. Tool confirmation is handled at the agent level
-    via ``before_tool_callback=require_confirmation()`` so it works in all
-    execution contexts (ADK web UI, CLI runner, AgentTool sub-agents).
+    — ``create_agent()`` attaches ``require_confirmation()`` to any agent with
+    a guarded tool — so it works in all execution contexts (ADK web UI, CLI
+    runner, AgentTool sub-agents).
 
     Also ensures a default viewer role on untrusted sessions via
     ``before_agent_callback``.
@@ -46,8 +47,8 @@ class GuardrailsPlugin(BasePlugin):
 
             self._gate = _dry_run_factory()
         else:
-            # Confirmation is handled at the agent level via
-            # before_tool_callback=require_confirmation(), not here.
+            # Confirmation is handled at the agent level (create_agent()
+            # attaches require_confirmation()), not here.
             self._gate = None
 
         self._ensure_role = ensure_default_role()

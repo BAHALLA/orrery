@@ -40,23 +40,30 @@ jobs:
     # Dependabot's own PRs only. A human who edits pyproject.toml is told to run
     # `make lock` by the failing gate; silently rewriting someone's branch is a
     # worse experience than a clear error.
-    if: github.actor == 'dependabot[bot]'
+    #
+    # Keyed on the PR's *author*, not `github.actor`: the actor is whoever
+    # caused this particular event, so a re-run or a push by someone else onto
+    # a Dependabot branch would satisfy an actor check while not being
+    # Dependabot's change at all.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Job-level env, because the `secrets` context is not available in a
     # step-level `if:` — resolving it here is what makes the check below legal.
     env:
       HAS_RELOCK_TOKEN: ${{ secrets.DEPENDABOT_RELOCK_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v7
+      # Credentials stay persisted on purpose: the commit step below pushes with
+      # them, and this job uploads no artifacts they could leak through.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked]
         with:
           ref: ${{ github.head_ref }}
           token: ${{ secrets.DEPENDABOT_RELOCK_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Set up Python
-        run: uv python install 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
 
       - name: Relock if the lockfile drifted
         id: relock
@@ -71,11 +78,17 @@ jobs:
 
       - name: Commit the lockfile
         if: steps.relock.outputs.changed == 'true'
+        env:
+          # Through the environment, never `${{ }}` inside `run:` — expression
+          # text is pasted into the script *before* the shell parses it, so a
+          # title containing `"; curl … | sh; "` would execute, with a token
+          # that can push to this repo.
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add uv.lock
-          git commit -m "chore(deps): relock uv.lock for ${{ github.event.pull_request.title }}"
+          git commit -m "chore(deps): relock uv.lock for ${PR_TITLE}"
           git push
 
       - name: Warn when checks will not re-run on their own

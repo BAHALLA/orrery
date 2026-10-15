@@ -57,12 +57,12 @@ correct sequence (each step sees the call before the next; ErrorHandler last):
 13. ErrorHandlerPlugin (graceful error recovery — must be last)
 
 Note what is *not* here: per-tool confirmation. ``GuardrailsPlugin`` enforces RBAC
-only; the human-in-the-loop gate for ``@confirm``/``@destructive`` tools is wired
-per agent as ``before_tool_callback=require_confirmation()``, because it must also
-work inside AgentTool sub-sessions and bare ``adk web``. That makes it the one
-safety property a new agent can silently omit — see
-``agents/orrery-assistant/tests/test_confirmation_wiring.py``, the structural
-guard that fails the build when an agent with guarded tools has no gate.
+only; the human-in-the-loop gate for ``@confirm``/``@destructive`` tools is an
+agent ``before_tool_callback``, because it must also work inside AgentTool
+sub-sessions and bare ``adk web``. ``create_agent()`` attaches it automatically to
+any agent holding a guarded tool, and
+``agents/orrery-assistant/tests/test_confirmation_wiring.py`` fails the build on
+any agent that still ends up ungated (one built without ``create_agent()``).
 """
 
 from __future__ import annotations

@@ -1,11 +1,9 @@
 """Tests for the FastAPI/Slack app endpoints."""
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
-from slowapi import Limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+
+from orrery_core.serving.rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 
 
 class TestHealthEndpoint:
@@ -41,28 +39,29 @@ class TestHealthEndpoint:
 
 class TestRateLimiting:
     def test_rate_limit_exceeded(self):
-        """Test that excessive requests trigger a 429 Too Many Requests."""
+        """Excessive requests get a 429 with a Retry-After Slack can back off on.
+
+        Same wiring as ``slack_bot.app``: the limit is a route dependency keyed
+        on the client address (that module needs live Slack credentials at
+        import, so the pattern is exercised here on a bare app).
+        """
         app = FastAPI()
-        limiter = Limiter(key_func=get_remote_address, default_limits=["1/minute"])
-        app.state.limiter = limiter
+        limiter = RateLimiter()
+        limit = parse_rate("1/minute")
+        install_rate_limit_handler(app)
 
-        def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
-            return JSONResponse(status_code=429, content={"error": "rate_limited"})
+        async def per_ip(request: Request) -> None:
+            limiter.hit(limit, f"ip:{request.client.host if request.client else ''}")
 
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
-
-        @app.get("/test")
-        @limiter.limit("1/minute")
-        async def test_route(request: Request):
+        @app.post("/slack/events", dependencies=[Depends(per_ip)])
+        async def slack_events():
             return {"status": "ok"}
 
         client = TestClient(app)
 
-        # First request should pass
-        response = client.get("/test")
-        assert response.status_code == 200
+        assert client.post("/slack/events").status_code == 200
 
-        # Second request should be rate limited
-        response = client.get("/test")
+        response = client.post("/slack/events")
         assert response.status_code == 429
-        assert response.json() == {"error": "rate_limited"}
+        assert response.json()["error"] == "rate_limited"
+        assert int(response.headers["Retry-After"]) >= 1

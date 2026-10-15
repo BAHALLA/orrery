@@ -7,18 +7,43 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Read-only by default; a job that needs more asks for it. Without this block
+# every job inherits the repository's default token scope, which may be write.
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the run on its previous head — cancel it rather
+# than queue behind it. Pushes to main are never cancelled: each one is a
+# distinct commit whose result is the record of what landed.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Third-party actions are pinned to a commit SHA, with the release in a trailing
+# comment that Dependabot keeps current. A tag is mutable — whoever controls the
+# action's repository can repoint it — and these jobs run with this repo's token.
+env:
+  # Tools run through `uvx` are pinned for the same reason the lockfile exists:
+  # an unpinned scanner can change verdicts (or be swapped) between two runs.
+  BANDIT_VERSION: "1.9.4"
+  CYCLONEDX_BOM_VERSION: "7.5.0"
+
 jobs:
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Set up Python
-        run: uv python install 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       # Must run BEFORE `uv sync`: sync silently rewrites a stale lock, which is
       # why drift never failed a build. A pip-ecosystem Dependabot PR edited
@@ -27,7 +52,7 @@ jobs:
         run: make lock-check
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --locked
 
       - name: Lint (ruff check + format check)
         run: make lint
@@ -37,20 +62,41 @@ jobs:
         # so a new agent is picked up automatically — no CI edit needed.
         run: make type-check
 
+  workflows:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
+
+      # actionlint catches broken expressions and shell; zizmor catches the
+      # security mistakes (template injection, spoofable bot checks, unpinned
+      # actions, over-broad tokens) that a working workflow can still carry.
+      - name: actionlint + zizmor
+        run: make lint-workflows
+
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Gates on known CVEs introduced by dependency changes (AEP-014). The
     # action is diff-based: PR events diff base...head automatically; push
     # events diff the previous main commit (github.event.before) against the
     # pushed one. workflow_dispatch has no diff to compare, so it skips.
     if: github.event_name != 'workflow_dispatch'
-    permissions:
-      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
           base-ref: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -71,17 +117,21 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Set up Python
-        run: uv python install 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Bandit check
-        run: uvx --python 3.14 bandit -r agents/ core/ -ll
+        run: uvx --python 3.14 "bandit==${BANDIT_VERSION}" -r agents/ core/ -ll
 
       # CycloneDX SBOM of the locked Python graph (AEP-014) — kept as a build
       # artifact so any CI run's dependency set can be audited after the fact.
@@ -89,16 +139,17 @@ jobs:
       - name: Generate Python SBOM (CycloneDX)
         run: |
           uv export --frozen --no-dev --format requirements-txt -o requirements-sbom.txt
-          uvx cyclonedx-py requirements requirements-sbom.txt -o sbom-python.cdx.json
+          uvx --from "cyclonedx-bom==${CYCLONEDX_BOM_VERSION}" cyclonedx-py \
+            requirements requirements-sbom.txt -o sbom-python.cdx.json
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom-python
           path: sbom-python.cdx.json
 
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           # Render the Helm chart against a K8s version that satisfies its
           # kubeVersion (>=1.25.0); the Trivy default of 1.20.0 skips the
@@ -116,17 +167,21 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Set up Python
-        run: uv python install 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --locked
 
       - name: Run tests
         run: make test
@@ -134,18 +189,23 @@ jobs:
   web:
     name: Web Console
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
-        run: cd web && npm ci
+        # --ignore-scripts: no dependency gets to run install hooks on the
+        # runner. Nothing in the console's tree needs one to build.
+        run: cd web && npm ci --ignore-scripts
 
       - name: Check (lint + format + typecheck + test + build)
         # Same target contributors run locally — the web gate is defined once.
@@ -163,18 +223,22 @@ jobs:
   eval:
     name: Agent Evaluation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-eval')
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-
-      - name: Set up Python
-        run: uv python install 3.14
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --locked
 
       - name: Run evaluations
         env:

@@ -319,10 +319,10 @@ services:
     environment:
       # ── LLM provider (pick one) ──────────────────────────────────
       # Option 1: Google AI Studio (default)
-      GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
+      GOOGLE_GENAI_USE_ENTERPRISE: "FALSE"
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       # Option 2: Vertex AI (uncomment and set these instead)
-      # GOOGLE_GENAI_USE_VERTEXAI: "TRUE"
+      # GOOGLE_GENAI_USE_ENTERPRISE: "TRUE"
       # GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       # GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-us-central1}
       # Option 3: Any LiteLLM provider (anthropic, openai, ollama, ...)
@@ -381,7 +381,7 @@ services:
 
       MODEL_PROVIDER: ${MODEL_PROVIDER:-gemini}
       MODEL_NAME: ${MODEL_NAME:-}
-      GOOGLE_GENAI_USE_VERTEXAI: "FALSE"
+      GOOGLE_GENAI_USE_ENTERPRISE: "FALSE"
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
