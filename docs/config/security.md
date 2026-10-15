@@ -220,6 +220,18 @@ GEMINI_SAFETY_THRESHOLD=BLOCK_MEDIUM_AND_ABOVE  # default: BLOCK_ONLY_HIGH
 
 ---
 
+## Acting as the user (impersonation)
+
+Kubernetes and Elasticsearch calls can carry the verified requester, so those systems'
+own permissions apply too. Full guide: [Acting as the user](../impersonation.md).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_IMPERSONATION` | unset | `kubernetes`, `elasticsearch`, or both. Unset: everything runs as the service account. A typo stops startup. |
+| `ORRERY_IMPERSONATE_USER_CLAIM` | `email` | Claim naming the user (dotted path). `email` is used only when `email_verified` is `true`; otherwise the subject is used. |
+| `ORRERY_IMPERSONATE_GROUPS_CLAIM` | `groups` | Claim listing the user's groups (dotted path). |
+| `ORRERY_IMPERSONATION_FALLBACK` | unset | `service` uses the service account when no user is known. A rollout aid; leave unset afterwards, so unknown callers are refused. |
+
 ## What this does **not** cover (intentionally)
 
 - **Vault / GCP Secret Manager / AWS Secrets Manager adapters** —

@@ -172,8 +172,19 @@ def identity_from_claims(subject: str, claims: Mapping[str, Any]) -> CallerIdent
     ``ORRERY_IMPERSONATE_USER_CLAIM`` (default ``email``, falling back to the
     subject) names the user; ``ORRERY_IMPERSONATE_GROUPS_CLAIM`` (default
     ``groups``) the groups — dotted paths, like ``JWT_ROLE_CLAIM``.
+
+    An ``email`` is used only when the token says it is **verified**
+    (``email_verified: true``). A signature proves the IdP issued the token, not
+    that the address belongs to the person: where users can set their own
+    email, an unverified one would let them claim a colleague's and be
+    impersonated as that colleague. Without verification the subject is used —
+    which Kubernetes and Elasticsearch won't know, so the call is denied by the
+    target rather than run as the wrong person.
     """
-    user = _claim(claims, os.getenv(USER_CLAIM_ENV, "email") or "email")
+    user_claim = os.getenv(USER_CLAIM_ENV, "email") or "email"
+    user = _claim(claims, user_claim)
+    if user_claim == "email" and claims.get("email_verified") is not True:
+        user = None
     groups = _claim(claims, os.getenv(GROUPS_CLAIM_ENV, "groups") or "groups")
     return CallerIdentity(
         subject=subject,

@@ -9,8 +9,8 @@ parallel and correlates what they find. Built on [Google ADK](https://google.git
 open source under MIT.
 
 <figure markdown>
-  ![The Orrery web console after a full incident triage. The agent reports a Critical verdict: Kafka and Elasticsearch healthy, a TargetDown alert firing in Alertmanager, two unhealthy Docker containers, and the Kubernetes check unverified. The side panel keeps the recorded verdict and the per-system findings behind it.](images/web-console-triage.png)
-  <figcaption>One question, five systems checked in parallel, one verdict — with the evidence for it kept alongside.</figcaption>
+  ![Asking why a Kafka consumer group is lagging: Orrery consults the Kafka and Docker specialists in parallel, streams their tool calls live, finds the worker OOM-killed in a loop, and proposes raising its memory limit — which waits on an approval card until the user approves.](images/console-demo.gif)
+  <figcaption>Specialists consulted in parallel, every tool call visible, and nothing changes until you approve. <code>make demo</code> runs this incident for real.</figcaption>
 </figure>
 
 ## Pick your path

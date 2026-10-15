@@ -223,6 +223,30 @@ Compactions are exposed as the `orrery_context_compaction_total` Prometheus coun
 
 ---
 
+## Agents
+
+Which specialists the coordinator can delegate to, and how to add your own. See
+[Adding an agent](../adding-an-agent.md).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_SPECIALISTS` | all installed | Comma-separated entry-point keys to run (e.g. `kafka,k8s`). An unknown key stops startup. |
+| `ORRERY_DISABLED_SPECIALISTS` | unset | Keys to leave out. |
+| `ORRERY_AGENTS_CONFIG` | unset | YAML file of [declarative agents](../adding-an-agent.md#declarative) built from existing tools. |
+| `ORRERY_ADMIN_EDITING` | `false` | Let admins switch specialists and compose agents from the console ([details](../adding-an-agent.md#admin-editing)). |
+| `ORRERY_CATALOG_POLL_SECONDS` | `15` | How often each replica checks for catalog edits made through another one. |
+| `ORRERY_MCP_CONFIG` | unset | YAML file of [MCP servers](../integrations/mcp.md) to expose as gated specialists. Needs the `[mcp]` extra. |
+
+## HTTP front door
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_CHAT_RATE_LIMIT` | `30/minute` | Per-user limit on `/chat` and `/chat/stream` (one shared bucket). |
+| `ORRERY_SELFTEST_RATE_LIMIT` | `10/minute` | Per-user limit on the environment self-test. |
+| `ORRERY_RATE_LIMIT_STORAGE_URI` | `memory://` | Counter storage. `memory://` counts per replica; `redis://host:6379` shares counters. |
+
+A refused request is a `429` with `Retry-After`, which the console shows as "retry in Ns".
+
 ## Distributed Tracing
 
 OpenTelemetry tracing follows a single request *through* the agent hierarchy so you can attribute latency and localize failures. It is an opt-in extra (`uv sync --extra otel`), **off by default**, and driven entirely by the env vars below — `default_plugins()` reads `OTEL_TRACING_ENABLED` automatically, so one flag turns it on across every transport.

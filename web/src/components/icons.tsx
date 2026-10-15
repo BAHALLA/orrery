@@ -54,13 +54,6 @@ export const MenuIcon = (p: IconProps) => (
   </Icon>
 );
 
-export const PanelLeftIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <rect x="3" y="4" width="18" height="16" rx="2" />
-    <path d="M9 4v16" />
-  </Icon>
-);
-
 export const SendIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M5 12h13M12 5l7 7-7 7" />
@@ -149,13 +142,6 @@ export const ChevronIcon = (p: IconProps) => (
 export const LogOutIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />
-  </Icon>
-);
-
-export const ClockIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <circle cx="12" cy="12" r="9" />
-    <path d="M12 7v5l3 2" />
   </Icon>
 );
 

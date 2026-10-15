@@ -52,7 +52,7 @@ from ..security.guardrails import (
     classify_decision,
     ensure_pending_confirmation_store,
 )
-from ..security.identity import CallerIdentity, caller_scope
+from ..security.identity import CallerIdentity, caller_scope, enabled_systems
 from .events import extract_reply_text
 from .session_cache import DEFAULT_MAX_SESSION_MAPPINGS, BoundedSessionCache
 
@@ -260,6 +260,9 @@ class AgentGateway:
         session_resolver: SessionResolver | None = None,
         verified_confirmation: bool = False,
     ) -> None:
+        # Fail at boot, not on the first Kubernetes call, on a mistyped
+        # ORRERY_IMPERSONATION (every transport builds a gateway).
+        enabled_systems()
         self.app_name = app_name
         self.session_service = session_service or create_session_service(db_url)
         self.resolver: SessionResolver = session_resolver or MappedSessionResolver()

@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Any
 
 from google.adk.agents import LlmAgent
-from google.adk.agents.base_agent import BaseAgent
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.base_toolset import BaseToolset
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -162,9 +161,3 @@ def build_declarative_agents(
     if agents:
         logger.info("Declarative agents enabled: %s", ", ".join(a.name for a in agents))
     return agents
-
-
-def describe_agent(agent: BaseAgent) -> str:
-    """One line for logs: the agent and its tool names."""
-    names = [_tool_name(t) or type(t).__name__ for t in getattr(agent, "tools", None) or []]
-    return f"{agent.name}: {', '.join(names)}"

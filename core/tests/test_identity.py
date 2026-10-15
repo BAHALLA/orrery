@@ -98,13 +98,41 @@ def test_a_crafted_identity_cannot_inject_headers(monkeypatch):
 
 
 def test_identity_from_claims(monkeypatch):
-    claims = {"email": "bob@example.com", "realm": {"groups": ["sre"]}}
+    claims = {"email": "bob@example.com", "email_verified": True, "realm": {"groups": ["sre"]}}
 
     assert identity_from_claims("sub-1", claims).username == "bob@example.com"
     assert identity_from_claims("sub-1", {}).username == "sub-1"  # falls back to the subject
 
     monkeypatch.setenv("ORRERY_IMPERSONATE_GROUPS_CLAIM", "realm.groups")
     assert identity_from_claims("sub-1", claims).groups == ("sre",)
+
+
+@pytest.mark.parametrize("verified", [False, None, "true"])
+def test_an_unverified_email_is_never_impersonated(verified):
+    """Where users can set their own email, an unverified one could claim a
+    colleague's address. Fall back to the subject, which targets won't know."""
+    claims = {"email": "admin@example.com"}
+    if verified is not None:
+        claims["email_verified"] = verified
+
+    assert identity_from_claims("sub-1", claims).username == "sub-1"
+
+
+def test_a_non_email_user_claim_needs_no_verification_flag(monkeypatch):
+    monkeypatch.setenv("ORRERY_IMPERSONATE_USER_CLAIM", "preferred_username")
+
+    assert identity_from_claims("sub-1", {"preferred_username": "bob"}).username == "bob"
+
+
+def test_a_mistyped_system_fails_when_the_gateway_is_built(monkeypatch):
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "kubernetis")
+
+    with (
+        patch("orrery_core.serving.gateway.App"),
+        patch("orrery_core.serving.gateway.Runner"),
+        pytest.raises(ValueError, match="kubernetis"),
+    ):
+        AgentGateway(app_name="t", root_agent=MagicMock(), plugins=[], session_service=MagicMock())
 
 
 @pytest.mark.asyncio

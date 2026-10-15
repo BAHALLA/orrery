@@ -104,6 +104,25 @@ def test_missing_header_secret_fails_at_construction(monkeypatch):
         GuardedMcpToolset(cfg)
 
 
+def test_http_server_gets_its_headers_from_the_environment(monkeypatch):
+    monkeypatch.setenv("INV_TOKEN", "Bearer s3cret")
+    cfg = _config(
+        transport="streamable_http",
+        command=None,
+        args=[],
+        url="https://mcp.example/mcp",
+        headers_from_env={"Authorization": "INV_TOKEN"},
+    )
+
+    from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+
+    params = GuardedMcpToolset(cfg)._connection_params
+
+    assert isinstance(params, StreamableHTTPConnectionParams)
+    assert params.url == "https://mcp.example/mcp"
+    assert params.headers == {"Authorization": "Bearer s3cret"}
+
+
 def test_no_config_file_means_no_servers(monkeypatch):
     monkeypatch.delenv("ORRERY_MCP_CONFIG", raising=False)
 

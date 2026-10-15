@@ -116,4 +116,9 @@ class CatalogService:
     async def _follow(self) -> None:
         while True:
             await asyncio.sleep(self._poll_seconds)
-            await self._sync()
+            # One bad poll must not end the loop: a dead follower leaves this
+            # replica serving a stale catalog, silently, until it restarts.
+            try:
+                await self._sync()
+            except Exception:
+                logger.exception("Agent catalog sync failed; retrying next poll")
