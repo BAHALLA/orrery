@@ -530,6 +530,111 @@ describe("resilience and safety posture", () => {
     );
   });
 
+  it("lets an admin switch a specialist off and compose an agent, then saves both", async () => {
+    let version = 0;
+    const puts: unknown[] = [];
+    const catalogBody = () => ({
+      editing_enabled: true,
+      applied_version: version,
+      catalog: { version, disabled_specialists: [], agents: [], updated_by: "", updated_at: 0 },
+      specialists: [
+        {
+          key: "docker",
+          agent_name: "docker_agent",
+          description: "",
+          source: "builtin",
+          available: true,
+        },
+        {
+          key: "k8s",
+          agent_name: "k8s_health_agent",
+          description: "",
+          source: "builtin",
+          available: true,
+        },
+      ],
+      tools: [
+        { ref: "list_pods", specialist: "k8s", guard: "read", reason: "" },
+        { ref: "scale_deployment", specialist: "k8s", guard: "confirm", reason: "scales" },
+      ],
+      file_agents: [],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/catalog") && init?.method === "PUT") {
+          puts.push(JSON.parse(String(init.body)));
+          if (puts.length > 1) {
+            return new Response(
+              JSON.stringify({
+                detail:
+                  "The catalog changed since you loaded it (now version 2). Reload and reapply your edit.",
+              }),
+              { status: 409 },
+            );
+          }
+          version = 1;
+          return jsonResponse(catalogBody());
+        }
+        if (url.endsWith("/admin/catalog")) return jsonResponse(catalogBody());
+        if (url.endsWith("/admin/agents")) return jsonResponse({ agents: [] });
+        if (url.endsWith("/me")) {
+          return jsonResponse({
+            subject: "alice",
+            role: "admin",
+            autonomy_level: null,
+            model_provider: "gemini",
+            model_name: "",
+            self_test_available: true,
+          });
+        }
+        return jsonResponse({
+          sessions: [],
+          entries: [],
+          pending: null,
+          severity: null,
+          report: null,
+        });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "alice", roles: ["admin"] }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /check my environment/i }));
+    await user.click(await screen.findByRole("tab", { name: /agents/i }));
+    await user.click(await screen.findByRole("switch", { name: "Enable docker" }));
+
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    const form = screen.getByRole("form", { name: "Agent editor" });
+    await user.type(within(form).getByLabelText("Name"), "scaler");
+    await user.type(within(form).getByLabelText(/^Description/), "Scales workloads on request");
+    await user.type(within(form).getByLabelText("Instruction"), "Check, then scale.");
+    await user.click(within(form).getByRole("checkbox", { name: /scale_deployment/ }));
+    await user.click(within(form).getByRole("button", { name: "Keep agent" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByText(/saved as version 1/i)).toBeInTheDocument();
+    expect(puts[0]).toEqual({
+      version: 0,
+      disabled_specialists: ["docker"],
+      agents: [
+        {
+          name: "scaler",
+          description: "Scales workloads on request",
+          instruction: "Check, then scale.",
+          tools: ["scale_deployment"],
+        },
+      ],
+    });
+
+    // A concurrent edit elsewhere: the save is refused and the reason shown.
+    await user.click(screen.getByRole("switch", { name: "Enable k8s" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed since you loaded it/i);
+  });
+
   it("hides the agent inventory from non-admins", async () => {
     stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));
     localStorage.setItem(storageKeys.token, token);

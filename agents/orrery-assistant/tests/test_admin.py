@@ -1,0 +1,71 @@
+"""The chat root's admin builder: env is the ceiling, the catalog narrows and adds."""
+
+from __future__ import annotations
+
+import pytest
+
+from orrery_assistant.admin import ChatAgentAdmin
+from orrery_core import base_instruction, is_confirmation_gate
+from orrery_core.agent.catalog_store import AgentCatalog
+from orrery_core.agent.declarative import DeclarativeAgentConfig
+
+
+def _delegates(root) -> list[str]:
+    return [t.agent.name for t in root.tools if hasattr(t, "agent")]
+
+
+def test_options_list_every_specialist_and_the_tool_catalogue():
+    options = ChatAgentAdmin().options()
+
+    assert {s.key for s in options.specialists} >= {"docker", "k8s", "kafka"}
+    refs = {t.ref: t for t in options.tools}
+    assert refs["get_consumer_lag"].guard == "read"
+    assert refs["scale_deployment"].guard == "confirm"
+
+
+def test_switching_a_specialist_off_removes_it_from_tools_and_routing():
+    root = ChatAgentAdmin().build(AgentCatalog(disabled_specialists=["docker"]))
+
+    assert "docker_agent" not in _delegates(root)
+    assert "**docker_agent**" not in str(base_instruction(root))
+    assert "kafka_health_agent" in _delegates(root)
+
+
+def test_a_catalog_agent_is_added_and_gated_by_its_tools():
+    agent = DeclarativeAgentConfig(
+        name="scaler",
+        description="Scales workloads when asked",
+        instruction="Check the deployment, then scale it.",
+        tools=["get_deployment_status", "scale_deployment"],
+    )
+    root = ChatAgentAdmin().build(AgentCatalog(agents=[agent]))
+
+    (scaler,) = [
+        t.agent for t in root.tools if getattr(t, "agent", None) and t.agent.name == "scaler"
+    ]
+    assert is_confirmation_gate(scaler.before_tool_callback)
+    assert "**scaler**: Scales workloads when asked" in str(base_instruction(root))
+
+
+@pytest.mark.parametrize(
+    ("catalog", "message"),
+    [
+        (AgentCatalog(disabled_specialists=["nope"]), "does not run"),
+        (
+            AgentCatalog(
+                agents=[
+                    DeclarativeAgentConfig(
+                        name="incident_triage_agent",
+                        description="Shadow the triage agent",
+                        instruction="Do the triage.",
+                        tools=["list_pods"],
+                    )
+                ]
+            ),
+            "collides",
+        ),
+    ],
+)
+def test_invalid_catalogs_are_refused(catalog, message):
+    with pytest.raises(ValueError, match=message):
+        ChatAgentAdmin().build(catalog)

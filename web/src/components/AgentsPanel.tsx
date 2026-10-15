@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ToolGuard } from "../api/types";
 import type { SystemController } from "../system/useSystem";
+import { AgentCatalogEditor } from "./AgentCatalogEditor";
 
 interface Props {
   system: SystemController;
@@ -34,11 +35,16 @@ const sourceLabel: Record<string, string> = {
  * there.
  */
 export function AgentsPanel({ system }: Props) {
-  const { agents, agentsError, loadAgents } = system;
+  const { agents, agentsError, loadAgents, catalog, loadCatalog, saveCatalog } = system;
+  const [savedVersion, setSavedVersion] = useState<number | null>(null);
 
   useEffect(() => {
     if (agents === null) void loadAgents();
   }, [agents, loadAgents]);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
   if (agentsError) {
     return (
@@ -56,10 +62,42 @@ export function AgentsPanel({ system }: Props) {
 
   return (
     <div className="flex flex-col gap-3 p-4">
+      {catalog?.editing_enabled ? (
+        <>
+          {savedVersion === catalog.catalog.version ? (
+            <p role="status" className="text-xs text-emerald-600 dark:text-emerald-400">
+              Saved as version {savedVersion} — new turns use these agents.
+            </p>
+          ) : null}
+          <AgentCatalogEditor
+            key={catalog.catalog.version}
+            catalog={catalog}
+            onSave={async (update) => {
+              const error = await saveCatalog(update);
+              if (!error) setSavedVersion(update.version + 1);
+              return error;
+            }}
+          />
+          <h3 className="mt-2 text-xs font-semibold tracking-wide text-slate-500 uppercase dark:text-slate-400">
+            Being served now
+          </h3>
+        </>
+      ) : null}
       <p className="text-xs text-slate-500 dark:text-slate-400">
         {agents.length} agent{agents.length === 1 ? "" : "s"} the coordinator can delegate to.
-        Enable or disable them with <code>ORRERY_SPECIALISTS</code>, add your own in{" "}
-        <code>ORRERY_AGENTS_CONFIG</code>.
+        {catalog?.editing_enabled ? null : (
+          <>
+            {" "}
+            Enable or disable them with <code>ORRERY_SPECIALISTS</code>, add your own in{" "}
+            <code>ORRERY_AGENTS_CONFIG</code>
+            {catalog ? (
+              <>
+                , or set <code>ORRERY_ADMIN_EDITING=true</code> to edit them here
+              </>
+            ) : null}
+            .
+          </>
+        )}
       </p>
       <ul className="flex flex-col gap-3" aria-label="Agents">
         {agents.map((a) => (

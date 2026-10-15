@@ -2,6 +2,8 @@ import { config } from "../config";
 import type {
   ActivityResponse,
   AgentsResponse,
+  CatalogResponse,
+  CatalogUpdate,
   ChatRequest,
   ChatResponse,
   MeResponse,
@@ -46,8 +48,8 @@ export class ApiError extends Error {
 
 interface RequestOptions {
   signal?: AbortSignal;
-  /** Override the inferred verb. Only DELETE needs this (no body, not a GET). */
-  method?: "DELETE";
+  /** Override the inferred verb: DELETE (no body, not a GET) or PUT (a body, not a POST). */
+  method?: "DELETE" | "PUT";
 }
 
 interface StreamOptions {
@@ -268,6 +270,16 @@ export class ApiClient {
     return this.request<AgentsResponse>("/admin/agents", undefined, options);
   }
 
+  /** The admin-editable agent catalog and what it may contain (admin only). */
+  catalog(options?: RequestOptions): Promise<CatalogResponse> {
+    return this.request<CatalogResponse>("/admin/catalog", undefined, options);
+  }
+
+  /** Replace the catalog. 409 if it changed since `version`, 422 if it can't be built. */
+  updateCatalog(update: CatalogUpdate, options?: RequestOptions): Promise<CatalogResponse> {
+    return this.request<CatalogResponse>("/admin/catalog", update, { ...options, method: "PUT" });
+  }
+
   /** Run the first-run environment check (model + each wired integration). */
   selfTest(options?: RequestOptions): Promise<SelfTestResponse> {
     return this.request<SelfTestResponse>("/onboarding/selftest", {}, options);
@@ -296,6 +308,16 @@ async function extractError(res: Response): Promise<string> {
     if (data && typeof data === "object" && "detail" in data) {
       const { detail } = data;
       if (typeof detail === "string") return detail;
+      // FastAPI request validation: a list of {loc, msg}. Name the fields, so
+      // "agents → 0 → name: …" says what to fix instead of "Unprocessable Entity".
+      if (Array.isArray(detail)) {
+        const messages = detail.flatMap((d: unknown) => {
+          if (!d || typeof d !== "object" || !("msg" in d) || typeof d.msg !== "string") return [];
+          const loc = "loc" in d && Array.isArray(d.loc) ? d.loc.filter((x) => x !== "body") : [];
+          return [loc.length ? `${loc.join(" → ")}: ${d.msg}` : d.msg];
+        });
+        if (messages.length) return messages.join("; ");
+      }
     }
   } catch {
     // fall through to status text

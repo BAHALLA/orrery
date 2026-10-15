@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiClient, ApiError } from "../api/client";
-import type { InventoryAgent, MeResponse, SelfTestResponse } from "../api/types";
+import type {
+  CatalogResponse,
+  CatalogUpdate,
+  InventoryAgent,
+  MeResponse,
+  SelfTestResponse,
+} from "../api/types";
 
 export interface SystemController {
   /** The server's own view of the caller — null until it loads. */
@@ -15,6 +21,11 @@ export interface SystemController {
   agents: InventoryAgent[] | null;
   agentsError: string | null;
   loadAgents: () => Promise<void>;
+  /** The editable catalog (admin); null until loaded or when unsupported. */
+  catalog: CatalogResponse | null;
+  loadCatalog: () => Promise<void>;
+  /** Save an edit. Resolves to an error message, or null on success. */
+  saveCatalog: (update: CatalogUpdate) => Promise<string | null>;
 }
 
 /** Turn a failure into something that tells the operator what to do about it. */
@@ -95,6 +106,30 @@ export function useSystem(token: string | null): SystemController {
     }
   }, [client]);
 
+  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
+
+  const loadCatalog = useCallback(async () => {
+    try {
+      setCatalog(await client.catalog());
+    } catch {
+      setCatalog(null); // no editable catalog here (404) — the inventory still shows
+    }
+  }, [client]);
+
+  const saveCatalog = useCallback(
+    async (update: CatalogUpdate) => {
+      try {
+        setCatalog(await client.updateCatalog(update));
+        setAgents((await client.agents()).agents); // the tree being served changed
+        return null;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) void loadCatalog();
+        return describeApiError(err, "Could not save the agent catalog.");
+      }
+    },
+    [client, loadCatalog],
+  );
+
   const runSelfTest = useCallback(async () => {
     if (isChecking) return;
     setIsChecking(true);
@@ -118,5 +153,8 @@ export function useSystem(token: string | null): SystemController {
     agents,
     agentsError,
     loadAgents,
+    catalog,
+    loadCatalog,
+    saveCatalog,
   };
 }

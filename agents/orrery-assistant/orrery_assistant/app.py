@@ -1,3 +1,4 @@
+from orrery_assistant.admin import ChatAgentAdmin
 from orrery_assistant.agent import root_agent
 from orrery_assistant.probes import default_probes
 from orrery_core import create_memory_service, default_plugins
@@ -17,4 +18,7 @@ api = create_app(
     # Powers the console's first-run self-test: which integrations are actually
     # wired. Core stays agent-agnostic, so the probe list is supplied here.
     integration_probes=default_probes(),
+    # Lets admins switch specialists and compose declarative agents from the
+    # console (writes need ORRERY_ADMIN_EDITING=true); stored next to sessions.
+    agent_admin=ChatAgentAdmin(),
 )
