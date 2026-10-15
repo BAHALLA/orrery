@@ -107,3 +107,23 @@ wins (backwards compatible), otherwise persistence.backend.
 {{- define "orrery-assistant.confirmationBackend" -}}
 {{- index .Values.config "ORRERY_CONFIRMATION_BACKEND" | default .Values.persistence.backend -}}
 {{- end }}
+
+{{/*
+MCP servers file: rendered from .Values.mcp.servers, or an existing ConfigMap
+holding an `mcp.yaml` key. Fails the render on an enabled-but-empty config —
+starting without the tools (and guards) the operator meant to declare is worse
+than not starting.
+*/}}
+{{- define "orrery-assistant.mcpInlineConfig" -}}
+{{- if and .Values.mcp.enabled (not .Values.mcp.existingConfigMap) -}}
+{{- if not .Values.mcp.servers -}}
+{{- fail "mcp.enabled is true but mcp.servers is empty and mcp.existingConfigMap is unset. Declare at least one server, or point existingConfigMap at a ConfigMap with an mcp.yaml key." -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- define "orrery-assistant.mcpConfigMapName" -}}
+{{- .Values.mcp.existingConfigMap | default (printf "%s-mcp" (include "orrery-assistant.fullname" .)) -}}
+{{- end -}}
+

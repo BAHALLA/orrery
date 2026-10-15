@@ -116,5 +116,25 @@ appear in the live trace under their specialist.
 - **stdio servers run as child processes of the agent**, one per specialist.
   For anything long-lived or shared, prefer a remote server over
   `streamable_http`.
-- On Kubernetes, mount the config file and the header secrets the way the
-  chart mounts other secrets, and set `ORRERY_MCP_CONFIG` to the mounted path.
+- **Helm:** declare servers under `mcp.servers` (or point
+  `mcp.existingConfigMap` at a ConfigMap with an `mcp.yaml` key) and set
+  `mcp.enabled: true`. The chart renders the file into a ConfigMap, mounts it
+  read-only at `mcp.mountPath`, sets `ORRERY_MCP_CONFIG`, and rolls the pods
+  when it changes. Put the env vars named in `headers_from_env` in `secrets:` /
+  `existingSecret`, which the pod already loads. Enabling MCP with no servers
+  fails the render. The published image includes the `[mcp]` extra.
+
+  ```yaml
+  secrets:
+    GITHUB_MCP_AUTHORIZATION: "Bearer <token>"   # or via existingSecret
+  mcp:
+    enabled: true
+    servers:
+      - name: github
+        description: GitHub issues and pull requests for the platform repos
+        transport: streamable_http
+        url: https://api.githubcopilot.com/mcp/
+        headers_from_env: {Authorization: GITHUB_MCP_AUTHORIZATION}
+        tools: [list_issues, get_issue]
+        read_only: [list_issues, get_issue]
+  ```

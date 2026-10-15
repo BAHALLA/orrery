@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
-from orrery_core import AgentGateway, set_user_role
+from orrery_core import AgentGateway, progress_scope, set_user_role
 
 from .config import SlackBotConfig
 from .formatting import chunk_message, md_to_mrkdwn
+from .progress import SlackProgress
 from .session_map import SessionMap
 
 logger = logging.getLogger("slack_bot.handler")
@@ -82,14 +84,22 @@ class SlackAgentHandler:
         turn_state: dict[str, object] = {}
         set_user_role(turn_state, role)
 
-        # Run the turn through the shared gateway pipeline.
+        # Run the turn through the shared gateway pipeline. A slow turn gets a
+        # status message edited as specialists work (see progress.py); the
+        # progress scope is entered here, in the task that runs the agent, so
+        # it reaches every specialist's sub-Runner.
+        progress = SlackProgress(say=say, channel=channel, thread_ts=thread_ts)
         try:
-            reply = await self.gateway.run_in_session(
-                user_id=user_id,
-                session_id=session_id,
-                text=text,
-                state_delta=turn_state,
-            )
+            async with contextlib.AsyncExitStack() as stack:
+                if self._config.slack_progress_updates and progress.enabled:
+                    await stack.enter_async_context(progress)
+                    stack.enter_context(progress_scope(progress.sink))
+                reply = await self.gateway.run_in_session(
+                    user_id=user_id,
+                    session_id=session_id,
+                    text=text,
+                    state_delta=turn_state,
+                )
         except Exception:
             logger.exception("Agent runner error")
             await say(

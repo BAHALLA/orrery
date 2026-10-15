@@ -42,8 +42,9 @@ RUN mkdir -p core/orrery_core && touch core/orrery_core/__init__.py && \
 # `--extra postgres` pulls in the Postgres driver used by the session store.
 # `--extra server` pulls in FastAPI, Uvicorn, and PyJWT for the authenticated HTTP front door.
 # `--extra otel` pulls in OpenTelemetry so OTEL_TRACING_ENABLED works in the image.
+# `--extra mcp` pulls in the MCP SDK so ORRERY_MCP_CONFIG works in the image.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen --extra postgres --extra server --extra otel
+    uv sync --no-dev --frozen --extra postgres --extra server --extra otel --extra mcp
 
 # Copy actual source code
 COPY core/ core/
@@ -51,7 +52,7 @@ COPY agents/ agents/
 
 # Reinstall workspace packages with real source
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --no-dev --frozen --extra postgres --extra server --extra otel
+    uv sync --no-dev --frozen --extra postgres --extra server --extra otel --extra mcp
 
 # ── Web console build stage (AEP-019) ─────────────────────────────────
 # Builds the React SPA to a static bundle. An isolated Node toolchain — no
