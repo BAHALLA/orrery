@@ -284,6 +284,7 @@ package.
 | `GET /confirmations/pending` | The caller's own pending guarded action, for rendering. |
 | `GET /me` | Server-resolved role, active autonomy level, configured model. |
 | `POST /onboarding/selftest` | Model connectivity + integration probes. |
+| `GET /admin/agents` | **Admin only.** Every specialist the coordinator can reach, its source (built-in / plugin / declarative / MCP) and each tool's guard level — the **Agents** tab. |
 
 Session-scoped endpoints pin `user_id` to the verified subject, so another
 user's session id resolves to a plain 404 — indistinguishable from one that

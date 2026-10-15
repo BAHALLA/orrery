@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiClient, ApiError } from "../api/client";
-import type { MeResponse, SelfTestResponse } from "../api/types";
+import type { InventoryAgent, MeResponse, SelfTestResponse } from "../api/types";
 
 export interface SystemController {
   /** The server's own view of the caller — null until it loads. */
@@ -11,6 +11,10 @@ export interface SystemController {
   isChecking: boolean;
   error: string | null;
   runSelfTest: () => Promise<void>;
+  /** Agent inventory for the admin view; null until loaded. */
+  agents: InventoryAgent[] | null;
+  agentsError: string | null;
+  loadAgents: () => Promise<void>;
 }
 
 /** Turn a failure into something that tells the operator what to do about it. */
@@ -79,6 +83,18 @@ export function useSystem(token: string | null): SystemController {
     };
   }, [client, token]);
 
+  const [agents, setAgents] = useState<InventoryAgent[] | null>(null);
+  const [agentsError, setAgentsError] = useState<string | null>(null);
+
+  const loadAgents = useCallback(async () => {
+    setAgentsError(null);
+    try {
+      setAgents((await client.agents()).agents);
+    } catch (err) {
+      setAgentsError(describeApiError(err, "Could not load the agent inventory."));
+    }
+  }, [client]);
+
   const runSelfTest = useCallback(async () => {
     if (isChecking) return;
     setIsChecking(true);
@@ -92,5 +108,15 @@ export function useSystem(token: string | null): SystemController {
     }
   }, [client, isChecking]);
 
-  return { me, meError, selfTest, isChecking, error, runSelfTest };
+  return {
+    me,
+    meError,
+    selfTest,
+    isChecking,
+    error,
+    runSelfTest,
+    agents,
+    agentsError,
+    loadAgents,
+  };
 }

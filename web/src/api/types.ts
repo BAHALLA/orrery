@@ -131,6 +131,23 @@ export interface MeResponse {
   self_test_available: boolean;
 }
 
+/** How a tool is gated. `dynamic`: an MCP toolset, classified per tool at run time. */
+export type ToolGuard = "read" | "confirm" | "destructive" | "dynamic";
+
+/** One agent the coordinator can delegate to (GET /admin/agents). */
+export interface InventoryAgent {
+  name: string;
+  description: string;
+  /** builtin | plugin | declarative | mcp */
+  source: string;
+  tools: { name: string; guard: ToolGuard; reason: string }[];
+}
+
+/** GET /admin/agents response (admin only). */
+export interface AgentsResponse {
+  agents: InventoryAgent[];
+}
+
 /** One integration or connectivity check from the self-test. */
 export interface CheckResult {
   name: string;

@@ -143,10 +143,59 @@ Add your new agent to the root `pyproject.toml` workspace members:
 members = ["core", "agents/*"]
 ```
 
-Then install the workspace:
+Then **register the agent with the coordinator** through an entry point in
+your package's `pyproject.toml`. There's no edit to `orrery_assistant/agent.py`:
+the chat root discovers specialists from installed packages.
+
+```toml
+[project.entry-points."orrery.specialists"]
+my_service = "my_agent.agent:root_agent"
+```
+
+Then install the workspace (entry points are package metadata, so re-sync after
+adding one):
 ```bash
 make install
 ```
+
+The key (`my_service`) is what operators use to switch the specialist off and on:
+`ORRERY_SPECIALISTS=kafka,my_service` runs only those, and
+`ORRERY_DISABLED_SPECIALISTS=my_service` runs everything else. An unknown key in
+either list stops startup. The coordinator's routing prompt lists only the
+active specialists, describing yours by its `description`, so write that for
+the model.
+
+A package **outside** this repository can register a specialist the same way;
+`pip install` it next to Orrery and it appears, labelled *plugin* in the admin
+view.
+
+---
+
+## No code at all: declarative agents {: #declarative }
+
+If what you need is a narrower brief over tools that already exist, such as a
+capacity planner or a first responder, you don't need a package. List it in the
+file named by `ORRERY_AGENTS_CONFIG`:
+
+```yaml
+agents:
+  - name: capacity_planner
+    description: Answers "do we have headroom?" across Kubernetes and Kafka
+    instruction: |
+      Compare current usage with limits. Lead with the tightest resource.
+    tools: [top_nodes, top_pods, get_consumer_lag]
+  - name: first_responder
+    description: First look at a paging alert, before anyone changes anything
+    instruction: Check events, then the alerts, then the affected workload.
+    tools: [k8s.get_events, get_active_alerts]   # qualify names two specialists share
+```
+
+The tools come from the catalogue of every installed specialist's tools, so a
+declarative agent can only recombine code that has already been reviewed. Each
+tool keeps its own guard level, and `create_agent()` adds the confirmation gate
+when any of them is `@confirm`/`@destructive`. An unknown or ambiguous tool, or
+a name that collides with an existing agent, stops startup. Admins can see the
+result, with every tool's guard level, in the console's **Agents** tab.
 
 ---
 

@@ -34,13 +34,11 @@ from google.adk.tools.load_memory_tool import LoadMemoryTool
 from google.adk.tools.tool_context import ToolContext
 from google.adk.workflow import JoinNode
 
-from docker_agent.agent import root_agent as docker_agent_root
 from docker_agent.tools import (
     docker_compose_status,
     get_container_stats,
     list_containers,
 )
-from elasticsearch_agent.agent import root_agent as elasticsearch_agent
 from elasticsearch_agent.eck import list_eck_clusters
 from elasticsearch_agent.tools import (
     get_cluster_health as es_get_cluster_health,
@@ -51,28 +49,24 @@ from elasticsearch_agent.tools import (
 from elasticsearch_agent.tools import (
     list_indices as es_list_indices,
 )
-from k8s_health_agent.agent import root_agent as k8s_agent
 from k8s_health_agent.tools import (
     get_cluster_info,
     get_events,
     get_nodes,
     list_pods,
 )
-from kafka_health_agent.agent import root_agent as kafka_agent
 from kafka_health_agent.tools import (
     get_consumer_lag,
     get_kafka_cluster_health,
     list_consumer_groups,
     list_kafka_topics,
 )
-from observability_agent.agent import root_agent as observability_agent
 from observability_agent.tools import (
     get_active_alerts,
     get_prometheus_alerts,
     get_prometheus_targets,
     query_prometheus,
 )
-from ops_journal_agent.agent import root_agent as journal_agent
 from ops_journal_agent.tools import log_operation, save_note
 from orrery_assistant.remediation import (
     remediation_actor,
@@ -89,7 +83,9 @@ from orrery_core import (
     load_agent_env,
     resolve_planner,
 )
+from orrery_core.agent.declarative import build_declarative_agents, load_agents_config
 from orrery_core.knowledge import knowledge_tool
+from orrery_core.registry import discover_specialists
 
 load_agent_env(__file__)
 
@@ -115,6 +111,18 @@ def _mcp_specialists() -> list[AgentTool]:
 
 
 _mcp_tools = _mcp_specialists()
+
+# Specialists come from the registry (entry points in each agent package),
+# filtered by ORRERY_SPECIALISTS / ORRERY_DISABLED_SPECIALISTS, rather than
+# being imported here one by one — a new specialist is an installed package,
+# not an edit to this file. Declarative agents (ORRERY_AGENTS_CONFIG) recombine
+# their tools; both are validated at import, so a bad config stops startup.
+_specialists = discover_specialists()
+_declarative_agents = build_declarative_agents(
+    load_agents_config(),
+    _specialists,
+    reserved_names=["incident_triage_agent", "orrery_chat_agent"],
+)
 
 # Resolve once at import time so triage_summarizer + remediation share an instance.
 _planner = resolve_planner()
@@ -356,6 +364,35 @@ incident_triage_agent = create_agent(
 # `load_memory` recalls what *this platform* did before; `search_knowledge`
 # returns what *humans wrote* — different sources, and the model needs to be
 # told when each is the right one or it will reach for whichever it saw last.
+# Curated routing hints for the built-in specialists. The routing section lists
+# only the specialists that are actually active, so disabling one never leaves
+# the coordinator a tool it can't call; anything without a hint here (a plugin,
+# a declarative agent) is described by its own `description`.
+_ROUTING_HINTS = {
+    "kafka_health_agent": "Kafka cluster health, topics, consumer groups, lag, "
+    "Strimzi CRs, connectors, MirrorMaker.",
+    "k8s_health_agent": "Kubernetes cluster info, nodes, pods, deployments, logs, "
+    "events, operators/CRs, scaling, restarts, rollbacks, patches.",
+    "observability_agent": "Prometheus metrics/alerts, Loki logs, Alertmanager silences.",
+    "elasticsearch_agent": "Elasticsearch health, indices, shards, ILM, snapshots, ECK CRs.",
+    "docker_agent": "Docker containers, logs, stats, compose status.",
+    "ops_journal_agent": "notes, past findings, activity, preferences, bookmarks.",
+}
+# The order the coordinator has always seen them in; others follow, sorted.
+_ROUTING_ORDER = list(_ROUTING_HINTS)
+
+
+def _routing_lines() -> str:
+    agents = [s.agent for s in _specialists] + list(_declarative_agents)
+    agents.sort(
+        key=lambda a: (
+            _ROUTING_ORDER.index(a.name) if a.name in _ROUTING_ORDER else len(_ROUTING_ORDER),
+            a.name,
+        )
+    )
+    return "".join(f"- **{a.name}**: {_ROUTING_HINTS.get(a.name, a.description)}\n" for a in agents)
+
+
 _MCP_INSTRUCTION = (
     ""
     if not _mcp_tools
@@ -396,17 +433,8 @@ orrery_chat_agent = create_agent(
         "You are the coordinator of a DevOps/SRE agent team. Route each request to the "
         "ONE specialist that owns it; answer from what the specialist returns.\n\n"
         "## Routing\n"
-        "- **kafka_health_agent**: Kafka cluster health, topics, consumer groups, lag, "
-        "Strimzi CRs, connectors, MirrorMaker.\n"
-        "- **k8s_health_agent**: Kubernetes cluster info, nodes, pods, deployments, logs, "
-        "events, operators/CRs, scaling, restarts, rollbacks, patches.\n"
-        "- **observability_agent**: Prometheus metrics/alerts, Loki logs, Alertmanager "
-        "silences.\n"
-        "- **elasticsearch_agent**: Elasticsearch health, indices, shards, ILM, snapshots, "
-        "ECK CRs.\n"
-        "- **docker_agent**: Docker containers, logs, stats, compose status.\n"
-        "- **ops_journal_agent**: notes, past findings, activity, preferences, bookmarks.\n"
-        "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
+        + _routing_lines()
+        + "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
         "'run a triage', 'check all systems'). Never use it for a single-system "
         "question — that costs five systems' worth of checks to answer one.\n\n"
         "For a cross-system incident, delegate to the specialists one at a time in "
@@ -443,12 +471,8 @@ orrery_chat_agent = create_agent(
         "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION + _MCP_INSTRUCTION
     ),
     tools=[
-        AgentTool(agent=kafka_agent),
-        AgentTool(agent=k8s_agent),
-        AgentTool(agent=observability_agent),
-        AgentTool(agent=elasticsearch_agent),
-        AgentTool(agent=docker_agent_root),
-        AgentTool(agent=journal_agent),
+        *(AgentTool(agent=s.agent) for s in _specialists),
+        *(AgentTool(agent=a) for a in _declarative_agents),
         AgentTool(agent=incident_triage_agent),
         LoadMemoryTool(),
         *([_knowledge_tool] if _knowledge_tool is not None else []),

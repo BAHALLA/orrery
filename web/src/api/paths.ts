@@ -24,4 +24,5 @@ export const API_PREFIXES = [
   "/readyz",
   "/me",
   "/onboarding",
+  "/admin",
 ] as const;

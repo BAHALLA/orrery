@@ -1,6 +1,7 @@
 import { config } from "../config";
 import type {
   ActivityResponse,
+  AgentsResponse,
   ChatRequest,
   ChatResponse,
   MeResponse,
@@ -260,6 +261,11 @@ export class ApiClient {
   /** The server's own view of the caller: resolved role, autonomy level, model. */
   me(options?: RequestOptions): Promise<MeResponse> {
     return this.request<MeResponse>("/me", undefined, options);
+  }
+
+  /** Every specialist the coordinator can reach, with tool guard levels (admin only). */
+  agents(options?: RequestOptions): Promise<AgentsResponse> {
+    return this.request<AgentsResponse>("/admin/agents", undefined, options);
   }
 
   /** Run the first-run environment check (model + each wired integration). */

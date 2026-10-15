@@ -10,6 +10,13 @@ dependencies = [
     "kubernetes>=37.0.0",
 ]
 
+
+# Registers this agent with the coordinator's specialist registry
+# (orrery_core.registry). ORRERY_SPECIALISTS / ORRERY_DISABLED_SPECIALISTS
+# select which registered specialists a deployment runs.
+[project.entry-points."orrery.specialists"]
+kafka = "kafka_health_agent.agent:root_agent"
+
 [tool.uv.sources]
 orrery-core = { workspace = true }
 

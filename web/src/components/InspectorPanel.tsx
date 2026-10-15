@@ -1,11 +1,12 @@
 import type { ActivityEntry, TriageResponse } from "../api/types";
 import type { SystemController } from "../system/useSystem";
+import { AgentsPanel } from "./AgentsPanel";
 import { CloseIcon } from "./icons";
 import { SystemPanel } from "./SystemPanel";
 import { ToolCallsTable } from "./ToolCallsTable";
 import { TriageReport } from "./TriageReport";
 
-export type InspectorTab = "tools" | "triage" | "system";
+export type InspectorTab = "tools" | "triage" | "system" | "agents";
 
 interface Props {
   tab: InspectorTab;
@@ -74,6 +75,18 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
               </span>
             ) : null}
           </button>
+          {/* Admins only — and the server enforces it; this only hides the tab. */}
+          {system.me?.role === "admin" ? (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "agents"}
+              className={tabClass(tab === "agents")}
+              onClick={() => onTab("agents")}
+            >
+              Agents
+            </button>
+          ) : null}
         </div>
         <button
           type="button"
@@ -89,6 +102,8 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
           <ToolCallsTable entries={activity} />
         ) : tab === "system" ? (
           <SystemPanel system={system} />
+        ) : tab === "agents" ? (
+          <AgentsPanel system={system} />
         ) : triage ? (
           <TriageReport triage={triage} activity={activity} />
         ) : (
