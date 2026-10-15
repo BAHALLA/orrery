@@ -19,16 +19,17 @@ export default defineConfig({
     // deterministic and fail the build on anything unexpectedly large.
     outDir: "dist",
     sourcemap: true,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         // The markdown pipeline (react-markdown + remark/rehype + lowlight's
         // grammars) is most of the bundle and changes only when those packages
         // do. Splitting it keeps the app chunk small and lets the browser cache
         // the vendor chunk across console releases instead of re-downloading a
         // single ~650 kB file every time.
-        // Vite 8 bundles with Rolldown, whose grouping API is `advancedChunks`
-        // (the object form of Rollup's `manualChunks` is rejected there).
-        advancedChunks: {
+        // Vite 8 bundles with Rolldown, whose grouping API is
+        // `output.codeSplitting` (it replaced `advancedChunks`, which still
+        // works but warns; Rollup's object-form `manualChunks` is rejected).
+        codeSplitting: {
           groups: [
             {
               name: "markdown",
