@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-16
+
+A patch release. The published image can now sign in through any OIDC
+provider without being rebuilt, and the Kafka specialist's consumer-group
+check works again.
+
 ### Added
 
 - **Web console SSO without rebuilding the image.** The front door serves the
@@ -787,7 +793,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/BAHALLA/orrery/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/BAHALLA/orrery/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/BAHALLA/orrery/compare/v0.4.0...v0.4.1
