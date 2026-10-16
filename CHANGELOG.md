@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Web console SSO without rebuilding the image.** The front door serves the
+  console's OIDC settings at runtime from `/console-config.js`, which
+  `index.html` loads before the app. They come from `ORRERY_CONSOLE_OIDC_ISSUER`,
+  `_CLIENT_ID`, `_SCOPE` and `_ROLE_CLAIM` (which defaults to `JWT_ROLE_CLAIM`).
+  Before this, SSO existed only as `VITE_OIDC_*` values baked in at build time,
+  so the published image always shipped the paste-a-token gate. Build-time values
+  still work, and the runtime ones win. The console issuer's origin joins the CSP
+  allow-list. `make run-api SSO=1` now uses the runtime path, so one bundle
+  serves both modes.
+
 ## [0.6.0] - 2026-10-15
 
 A minor release that changes what Orrery feels like to use, and what it can be

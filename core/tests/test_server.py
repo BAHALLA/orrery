@@ -15,6 +15,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from orrery_core.security.auth import AUTH_STATE_KEY, JWTConfig  # noqa: E402
+from orrery_core.serving.console_config import ConsoleConfig  # noqa: E402
 from orrery_core.serving.server import ServerConfig, create_app  # noqa: E402
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -1046,3 +1047,63 @@ def test_chat_turn_runs_as_the_verified_caller(monkeypatch, mock_session):
     )
 
     assert seen[0].subject == "u-9" and seen[0].username == "ana@example.com"
+
+
+# ── Runtime console config (/console-config.js) ─────────────────────
+
+
+@pytest.fixture
+def console_bundle(tmp_path):
+    (tmp_path / "index.html").write_text("<!doctype html><title>Console</title>", encoding="utf-8")
+    # The dev stub the build copies from web/public: the route must shadow it.
+    (tmp_path / "console-config.js").write_text(
+        "window.__ORRERY_CONSOLE_CONFIG__ = {};", encoding="utf-8"
+    )
+    return tmp_path
+
+
+def _console_app(bundle, **cfg):
+    with patch("orrery_core.serving.server._static_dir", return_value=bundle):
+        return create_app(
+            root_agent=MagicMock(),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig(auth_enabled=False, jwt=JWTConfig(secret="x"), **cfg),
+        )
+
+
+def test_console_config_js_route_serves_the_environment_not_the_bundled_stub(
+    patched_runner, console_bundle
+):
+    app = _console_app(
+        console_bundle,
+        web_console_enabled=True,
+        console=ConsoleConfig(
+            oidc_issuer="https://id.example/realms/r", oidc_client_id="orrery-lab"
+        ),
+    )
+    r = TestClient(app).get("/console-config.js")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/javascript")
+    assert r.headers["cache-control"] == "no-store"
+    assert '"clientId":"orrery-lab"' in r.text
+    assert '"issuer":"https://id.example/realms/r"' in r.text
+    assert "window.__ORRERY_CONSOLE_CONFIG__ = {};" not in r.text, (
+        "the bundled stub must be shadowed"
+    )
+
+
+def test_console_config_js_no_route_without_the_console(patched_runner, console_bundle):
+    app = _console_app(console_bundle, web_console_enabled=False)
+    assert TestClient(app).get("/console-config.js").status_code == 404
+
+
+def test_console_config_js_csp_lets_the_console_reach_its_issuer(patched_runner, console_bundle):
+    app = _console_app(
+        console_bundle,
+        web_console_enabled=True,
+        console=ConsoleConfig(oidc_issuer="https://sso.example.org/realms/lab"),
+    )
+    csp = TestClient(app).get("/").headers["content-security-policy"]
+    connect = next(d for d in csp.split(";") if d.strip().startswith("connect-src"))
+    assert "https://sso.example.org" in connect

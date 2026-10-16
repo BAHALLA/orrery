@@ -13,3 +13,17 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/**
+ * Set by `/console-config.js` (served by the front door from its
+ * `ORRERY_CONSOLE_OIDC_*` environment) before the app loads. Every field is
+ * optional; an absent one falls back to the build-time `VITE_*` value.
+ */
+interface OrreryRuntimeConfig {
+  oidc?: { issuer?: string; clientId?: string; scope?: string };
+  roleClaim?: string;
+}
+
+interface Window {
+  __ORRERY_CONSOLE_CONFIG__?: OrreryRuntimeConfig;
+}

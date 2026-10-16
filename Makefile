@@ -203,19 +203,18 @@ run-web: ## Web console dev server with HMR (Vite :5173, proxies the API on :800
 
 # `run-api` serves the console at / as well, so it is the one command for
 # "the product". SSO=1 swaps the pasted-token gate for Keycloak (needs `make up`
-# with the sso profile), which changes both the console build and how the server
-# verifies tokens — hence the paired blocks below.
+# with the sso profile). The console reads its OIDC settings at runtime from
+# /console-config.js, so the same bundle serves both modes: SSO=1 only changes
+# the server's environment.
 ifeq ($(SSO),1)
-WEB_BUILD_ENV := VITE_OIDC_ISSUER=$(SSO_ISSUER) \
-                 VITE_OIDC_CLIENT_ID=$(SSO_CLIENT_ID) \
-                 VITE_OIDC_ROLE_CLAIM=realm_access.roles
-API_AUTH_ENV  := JWT_ALGORITHM=RS256 \
+API_AUTH_ENV  := ORRERY_CONSOLE_OIDC_ISSUER=$(SSO_ISSUER) \
+                 ORRERY_CONSOLE_OIDC_CLIENT_ID=$(SSO_CLIENT_ID) \
+                 JWT_ALGORITHM=RS256 \
                  JWT_JWKS_URL=$(SSO_ISSUER)/protocol/openid-connect/certs \
                  JWT_AUDIENCE=$(SSO_CLIENT_ID) \
                  JWT_ISSUER=$(SSO_ISSUER) \
                  JWT_ROLE_CLAIM=realm_access.roles
 else
-WEB_BUILD_ENV :=
 API_AUTH_ENV  := JWT_ALGORITHM=HS256 \
                  JWT_SECRET=$$(cat $(DEV_JWT_SECRET_FILE)) \
                  JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
@@ -241,7 +240,7 @@ run-chat: ## Google Chat bot on :3001 (MODE=pubsub for private-GKE Pub/Sub mode)
 
 web-build: ## Build the console into the package (run-api does this for you)
 	@$(if $(HAVE_NPM),\
-		cd $(WEB_DIR) && $(WEB_BUILD_ENV) npm run build && cd - >/dev/null && \
+		cd $(WEB_DIR) && npm run build && cd - >/dev/null && \
 		rm -rf $(WEB_STATIC_DIR) && mkdir -p $(WEB_STATIC_DIR) && \
 		cp -R $(WEB_DIR)/dist/. $(WEB_STATIC_DIR)/ && \
 		echo "▶ Console built into $(WEB_STATIC_DIR)",\
