@@ -117,7 +117,8 @@ def _make_admin_client() -> MagicMock:
             desc = MagicMock()
             desc.group_id = gid
             desc.state = "Stable"
-            desc.protocol_type = "consumer"
+            desc.type = "CLASSIC"
+            desc.partition_assignor = "range"
             desc.is_simple_consumer_group = False
             m1 = MagicMock()
             m1.member_id = "member-1"
