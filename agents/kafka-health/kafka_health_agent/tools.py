@@ -97,6 +97,11 @@ async def update_kafka_partitions(topic_name: str, new_total_partitions: int) ->
         }
 
 
+def _enum_name(value: object) -> str:
+    """``ConsumerGroupType.CLASSIC`` -> ``"CLASSIC"``; plain strings pass through."""
+    return getattr(value, "name", None) or str(value)
+
+
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
 async def get_kafka_cluster_health() -> dict[str, Any]:
     """Checks the health of the Kafka cluster.
@@ -332,7 +337,13 @@ async def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
                     {
                         "group_id": desc.group_id,
                         "state": str(desc.state),
-                        "protocol_type": desc.protocol_type,
+                        # confluent-kafka 2.x describes the group with `type`
+                        # (classic vs the KIP-848 consumer protocol) and
+                        # `partition_assignor`; there is no `protocol_type`, and
+                        # reading it raised for every group, so the "does it
+                        # have live members?" check never answered.
+                        "group_type": _enum_name(desc.type),
+                        "partition_assignor": desc.partition_assignor or None,
                         "is_simple_consumer_group": desc.is_simple_consumer_group,
                         "members": members,
                     }

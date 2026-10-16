@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allow-list. `make run-api SSO=1` now uses the runtime path, so one bundle
   serves both modes.
 
+### Fixed
+
+- **`describe_consumer_groups` answered nothing.** It read `protocol_type`,
+  which confluent-kafka 2.x's `ConsumerGroupDescription` doesn't have, so every
+  group came back as an error. The question that tells an outage from a slow
+  consumer ("does the lagging group have live members?") therefore never got
+  an answer, `make demo`'s incident included. It now reports `group_type`
+  (classic or the KIP-848 consumer protocol) and `partition_assignor`. The test
+  builds the real class instead of a `MagicMock`, which had accepted the
+  missing attribute.
+
 ## [0.6.0] - 2026-10-15
 
 A minor release that changes what Orrery feels like to use, and what it can be

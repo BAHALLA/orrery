@@ -6,7 +6,8 @@ All Kafka API calls are mocked — no real broker needed.
 from unittest.mock import MagicMock, patch
 
 import pytest
-from confluent_kafka import KafkaException
+from confluent_kafka import ConsumerGroupState, ConsumerGroupType, KafkaException, Node
+from confluent_kafka.admin import ConsumerGroupDescription
 
 import kafka_health_agent.tools as _tools_mod
 from kafka_health_agent.tools import (
@@ -335,12 +336,17 @@ async def test_describe_consumer_groups_success(mock_admin):
     member.host = "10.0.0.1"
     member.assignment.topic_partitions = [tp]
 
-    desc = MagicMock()
-    desc.group_id = "group-a"
-    desc.state = "Stable"
-    desc.protocol_type = "consumer"
-    desc.is_simple_consumer_group = False
-    desc.members = [member]
+    # The real class, not a MagicMock: a mock accepts any attribute name, which
+    # is how reading a nonexistent `protocol_type` shipped with green tests.
+    desc = ConsumerGroupDescription(
+        group_id="group-a",
+        is_simple_consumer_group=False,
+        members=[member],
+        partition_assignor="range",
+        state=ConsumerGroupState.STABLE,
+        coordinator=Node(1, "kafka", 9092),
+        type=ConsumerGroupType.CLASSIC,
+    )
 
     future = MagicMock()
     future.result.return_value = desc
@@ -349,8 +355,12 @@ async def test_describe_consumer_groups_success(mock_admin):
     result = await describe_consumer_groups(["group-a"])
     assert result["status"] == "success"
     assert len(result["groups"]) == 1
-    assert result["groups"][0]["group_id"] == "group-a"
-    assert len(result["groups"][0]["members"]) == 1
+    group = result["groups"][0]
+    assert "error" not in group
+    assert group["group_id"] == "group-a"
+    assert group["group_type"] == "CLASSIC"
+    assert group["partition_assignor"] == "range"
+    assert len(group["members"]) == 1
 
 
 @pytest.mark.asyncio
