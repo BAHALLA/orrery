@@ -230,14 +230,46 @@ elasticsearch_health_checker = create_agent(
     output_key="elasticsearch_status",
 )
 
-# Fan-out/fan-in tuple: all five run in parallel, JoinNode waits for all.
-HEALTH_CHECKERS = (
-    kafka_health_checker,
-    k8s_health_checker,
-    docker_health_checker,
-    observability_health_checker,
-    elasticsearch_health_checker,
-)
+# What a health sweep checks, per specialist key: the system's name, the read
+# tools the conversational sweep calls, and the batch workflow's checker. Both
+# sweeps take only the specialists that are enabled, so switching one off (env
+# or admin catalog) also keeps its tools out of every sweep. They used to be
+# fixed lists, and a "full health sweep" called Docker and Kubernetes tools on
+# deployments that had disabled those specialists.
+_TRIAGE_SYSTEMS: dict[str, tuple[str, list[Any], Any]] = {
+    "kafka": (
+        "Kafka",
+        [get_kafka_cluster_health, list_kafka_topics, list_consumer_groups, get_consumer_lag],
+        kafka_health_checker,
+    ),
+    "k8s": ("Kubernetes", [get_cluster_info, get_nodes, get_events, list_pods], k8s_health_checker),
+    "docker": (
+        "Docker",
+        [list_containers, get_container_stats, docker_compose_status],
+        docker_health_checker,
+    ),
+    "observability": (
+        "Observability (Prometheus/Alertmanager)",
+        [get_prometheus_targets, get_prometheus_alerts, get_active_alerts, query_prometheus],
+        observability_health_checker,
+    ),
+    "elasticsearch": (
+        "Elasticsearch",
+        [es_get_cluster_health, es_list_indices, es_get_shard_allocation, list_eck_clusters],
+        elasticsearch_health_checker,
+    ),
+}
+
+
+def triage_systems(specialists: Sequence[Specialist]) -> list[str]:
+    """Keys of the sweepable systems among *specialists*, in sweep order."""
+    keys = {s.key for s in specialists}
+    return [k for k in _TRIAGE_SYSTEMS if k in keys]
+
+
+# Fan-out/fan-in tuple: the enabled systems' checkers run in parallel, and the
+# JoinNode waits for all of them.
+HEALTH_CHECKERS = tuple(_TRIAGE_SYSTEMS[k][2] for k in triage_systems(_specialists))
 
 health_join = JoinNode(name="health_join")
 
@@ -273,10 +305,10 @@ triage_summarizer = create_agent(
     description="Synthesizes health check results into an incident triage report.",
     planner=_planner,
     instruction=(
-        "You synthesize the five checker reports in session state (kafka_status, "
-        "k8s_status, docker_status, observability_status, elasticsearch_status) into "
-        "one triage verdict. Use only what the reports say — do not soften, embellish, "
-        "or add findings they don't contain.\n\n"
+        "You synthesize the health checker reports in session state ("
+        + (", ".join(c.output_key for c in HEALTH_CHECKERS) or "none: no system could be checked")
+        + ") into one triage verdict. Use only what the reports say — do not soften, "
+        "embellish, or add findings they don't contain.\n\n"
         "Verdict rules (strict):\n"
         "- overall 'critical' if ANY system reports critical\n"
         "- overall 'degraded' if any system reports degraded or unknown/unverified — "
@@ -310,53 +342,52 @@ journal_writer = create_agent(
 
 # ── Conversational triage sub-agent ───────────────────────────────────
 
+
 # A single-turn agent the coordinator delegates to for "run a triage". It sweeps
 # every subsystem with the same health-check tools the deterministic graph uses,
 # then records a structured verdict. (The deterministic, parallel, bounded-loop
 # version lives in `orrery_triage_workflow` below for batch/scheduled runs.)
-incident_triage_agent = create_agent(
-    name="incident_triage_agent",
-    description="Runs a full health sweep across all systems and returns a triage report.",
-    planner=_planner,
-    instruction=(
-        "Run a full incident triage: check Kafka, Kubernetes, Docker, Observability "
-        "(Prometheus/Alertmanager), and Elasticsearch — each system's core checks once, "
-        "no corrective actions, no deep dives (targeted investigation belongs to the "
-        "specialists).\n\n"
-        "Verdict rules (strict): 'critical' if any system shows unavailability or data "
-        "loss risk (brokers down, red ES health, NotReady nodes, critical alerts "
-        "firing); 'degraded' for lost redundancy, growing lag, warning alerts, down "
-        "scrape targets — or any system you could not check (a failed tool call is a "
-        "risk, not a pass; report it as unverified, never as healthy); 'healthy' only "
-        "when every system affirmatively checks out.\n\n"
-        "Report: overall status + deciding reason first, then per-system findings with "
-        "exact names and numbers from tool output, then next actions with concrete "
-        "targets. Call record_triage_verdict EXACTLY ONCE with overall_status and the "
-        "full report text."
-    ),
-    tools=[
-        get_kafka_cluster_health,
-        list_kafka_topics,
-        list_consumer_groups,
-        get_consumer_lag,
-        get_cluster_info,
-        get_nodes,
-        get_events,
-        list_pods,
-        list_containers,
-        get_container_stats,
-        docker_compose_status,
-        get_prometheus_targets,
-        get_prometheus_alerts,
-        get_active_alerts,
-        query_prometheus,
-        es_get_cluster_health,
-        es_list_indices,
-        es_get_shard_allocation,
-        list_eck_clusters,
-        record_triage_verdict,
-    ],
-)
+def build_triage_agent(specialists: Sequence[Specialist]) -> Any | None:
+    """The single-turn sweep over the enabled systems, or ``None`` if none is.
+
+    Built with the coordinator (at import and on every catalog edit), from the
+    same specialists, so its tools and its instruction name only systems this
+    deployment runs.
+    """
+    systems = triage_systems(specialists)
+    if not systems:
+        return None
+    names = [_TRIAGE_SYSTEMS[k][0] for k in systems]
+    tools = [tool for k in systems for tool in _TRIAGE_SYSTEMS[k][1]]
+    return create_agent(
+        name="incident_triage_agent",
+        description="Runs a full health sweep across all systems and returns a triage report.",
+        planner=_planner,
+        instruction=(
+            "Run a full incident triage: check "
+            + ", ".join(names)
+            + " — each system's core checks once, "
+            "no corrective actions, no deep dives (targeted investigation belongs to the "
+            "specialists). These are the only systems this deployment checks; do not "
+            "report on others.\n\n"
+            "Verdict rules (strict): 'critical' if any system shows unavailability or data "
+            "loss risk (brokers down, red ES health, NotReady nodes, critical alerts "
+            "firing); 'degraded' for lost redundancy, growing lag, warning alerts, down "
+            "scrape targets — or any system you could not check (a failed tool call is a "
+            "risk, not a pass; report it as unverified, never as healthy); 'healthy' only "
+            "when every system affirmatively checks out.\n\n"
+            "Report: overall status + deciding reason first, then per-system findings with "
+            "exact names and numbers from tool output, then next actions with concrete "
+            "targets. Call record_triage_verdict EXACTLY ONCE with overall_status and the "
+            "full report text."
+        ),
+        tools=[*tools, record_triage_verdict],
+    )
+
+
+# The deployment's sweep as configured by env (kept as a module attribute for
+# callers and tests; the coordinator builds its own from the active set).
+incident_triage_agent = build_triage_agent(_specialists)
 
 
 # ── Conversational root coordinator ───────────────────────────────────
@@ -437,6 +468,7 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     section is derived from exactly the agents passed in, so it never mentions
     one the coordinator cannot reach.
     """
+    triage = build_triage_agent(specialists)
     return create_agent(
         name="orrery_chat_agent",
         description="Conversational DevOps orchestrator that routes queries to specialist agents.",
@@ -447,9 +479,14 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
             "ONE specialist that owns it; answer from what the specialist returns.\n\n"
             "## Routing\n"
             + _routing_lines(specialists, declarative_agents)
-            + "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
-            "'run a triage', 'check all systems'). Never use it for a single-system "
-            "question — that costs five systems' worth of checks to answer one.\n\n"
+            + (
+                "- **incident_triage_agent**: ONLY for broad sweeps ('is everything healthy?', "
+                "'run a triage', 'check all systems'). Never use it for a single-system "
+                "question — that costs every system's checks to answer one.\n"
+                if triage is not None
+                else ""
+            )
+            + "\n"
             "For a cross-system incident, delegate to the specialists one at a time in "
             "cause-likelihood order and stop when the cause is found. Pass the specialist "
             "everything it needs in your request (names, namespaces, time windows, prior "
@@ -486,7 +523,7 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
         tools=[
             *(AgentTool(agent=s.agent) for s in specialists),
             *(AgentTool(agent=a) for a in declarative_agents),
-            AgentTool(agent=incident_triage_agent),
+            *([AgentTool(agent=triage)] if triage is not None else []),
             LoadMemoryTool(),
             *([_knowledge_tool] if _knowledge_tool is not None else []),
             *_mcp_tools,
@@ -597,14 +634,22 @@ orrery_triage_workflow = Workflow(
     name="orrery_triage",
     description=(
         "Deterministic incident-response pipeline: parallel health checks across "
-        "Kafka, Kubernetes, Docker, Observability, and Elasticsearch → triage → "
+        "the enabled systems (Kafka, Kubernetes, Docker, Observability, Elasticsearch) → triage → "
         "journaling → conditional closed-loop remediation. Run via `make run-triage`."
     ),
     edges=[
-        # Parallel health checks → barrier → triage → journal → route
-        ("START", HEALTH_CHECKERS),
-        (HEALTH_CHECKERS, health_join),
-        (health_join, triage_summarizer, journal_writer, triage_route),
+        # Parallel health checks → barrier → triage → journal → route. With no
+        # sweepable system enabled there is nothing to fan out to, and the
+        # summarizer reports everything as unverified.
+        *(
+            [
+                ("START", HEALTH_CHECKERS),
+                (HEALTH_CHECKERS, health_join),
+                (health_join, triage_summarizer, journal_writer, triage_route),
+            ]
+            if HEALTH_CHECKERS
+            else [("START", triage_summarizer, journal_writer, triage_route)]
+        ),
         (triage_route, {"remediate": remediation_actor, "resolved": final_report}),
         # Remediation loop (act → verify → retry, bounded by verify_route)
         (remediation_actor, remediation_verifier, verify_route),

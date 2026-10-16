@@ -69,3 +69,38 @@ def test_a_catalog_agent_is_added_and_gated_by_its_tools():
 def test_invalid_catalogs_are_refused(catalog, message):
     with pytest.raises(ValueError, match=message):
         ChatAgentAdmin().build(catalog)
+
+
+def _tool_names(agent) -> set[str]:
+    return {getattr(t, "name", None) or getattr(t, "__name__", "") for t in agent.tools}
+
+
+def _triage(root):
+    (triage,) = [
+        t.agent
+        for t in root.tools
+        if getattr(t, "agent", None) and t.agent.name == "incident_triage_agent"
+    ]
+    return triage
+
+
+def test_switching_a_specialist_off_keeps_its_tools_out_of_the_sweep():
+    # The sweep used to be a fixed list: a "full health sweep" still called
+    # Docker tools on a deployment that had switched Docker off.
+    root = ChatAgentAdmin().build(AgentCatalog(disabled_specialists=["docker", "k8s"]))
+    tools = _tool_names(_triage(root))
+    assert {"list_containers", "get_container_stats", "docker_compose_status"}.isdisjoint(tools)
+    assert {"list_pods", "get_nodes", "get_events", "get_cluster_info"}.isdisjoint(tools)
+    assert {"get_consumer_lag", "get_prometheus_alerts", "record_triage_verdict"} <= tools
+    instruction = str(base_instruction(_triage(root)))
+    assert "Docker" not in instruction and "Kubernetes" not in instruction
+
+
+def test_no_sweep_when_no_sweepable_system_is_on():
+    root = ChatAgentAdmin().build(
+        AgentCatalog(
+            disabled_specialists=["docker", "k8s", "kafka", "observability", "elasticsearch"]
+        )
+    )
+    assert "incident_triage_agent" not in _delegates(root)
+    assert "incident_triage_agent" not in str(base_instruction(root))
