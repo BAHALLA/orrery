@@ -1,4 +1,12 @@
 /**
+ * Settings the server provides at runtime (`/console-config.js`, loaded by
+ * index.html before this module). They win over the build-time `VITE_*`
+ * values, so one published image can be pointed at any identity provider.
+ */
+const runtime: OrreryRuntimeConfig =
+  (typeof window !== "undefined" && window.__ORRERY_CONSOLE_CONFIG__) || {};
+
+/**
  * Runtime configuration, resolved once at module load.
  *
  * The console is served same-origin by the FastAPI front door in production,
@@ -13,7 +21,7 @@ export const config = {
    * server's `JWT_ROLE_CLAIM` or the badge disagrees with enforced RBAC.
    * Keycloak's realm roles live at `realm_access.roles`.
    */
-  roleClaim: import.meta.env.VITE_OIDC_ROLE_CLAIM || "roles",
+  roleClaim: runtime.roleClaim || import.meta.env.VITE_OIDC_ROLE_CLAIM || "roles",
 } as const;
 
 /**
@@ -22,9 +30,9 @@ export const config = {
  * CI, and offline work usable with no identity provider running.
  */
 export const oidcConfig = {
-  issuer: (import.meta.env.VITE_OIDC_ISSUER ?? "").replace(/\/+$/, ""),
-  clientId: import.meta.env.VITE_OIDC_CLIENT_ID ?? "orrery-console",
-  scope: import.meta.env.VITE_OIDC_SCOPE ?? "openid profile email",
+  issuer: (runtime.oidc?.issuer ?? import.meta.env.VITE_OIDC_ISSUER ?? "").replace(/\/+$/, ""),
+  clientId: runtime.oidc?.clientId ?? import.meta.env.VITE_OIDC_CLIENT_ID ?? "orrery-console",
+  scope: runtime.oidc?.scope ?? import.meta.env.VITE_OIDC_SCOPE ?? "openid profile email",
 } as const;
 
 /** True when SSO is configured; drives which sign-in surface the app renders. */

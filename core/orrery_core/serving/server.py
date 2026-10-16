@@ -71,6 +71,7 @@ from ..security.auth import (
 from ..security.identity import identity_from_claims
 from .agent_admin import AgentAdmin
 from .catalog_service import CatalogService
+from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
 from .inventory import agent_inventory
@@ -139,6 +140,9 @@ class ServerConfig:
     admin_editing: bool = False
     #: How often each replica checks the catalog store for edits made elsewhere.
     catalog_poll_seconds: float = 15.0
+    #: Console settings served at runtime from /console-config.js (OIDC SSO
+    #: without rebuilding the image). See :mod:`.console_config`.
+    console: ConsoleConfig = field(default_factory=ConsoleConfig)
 
     @property
     def serve_docs(self) -> bool:
@@ -179,6 +183,8 @@ class ServerConfig:
           package) to enforce the limit per caller across the deployment.
         - ``ORRERY_CSP_EXTRA_ORIGINS`` (comma-separated) — origins the web
           console may connect to besides its own and ``JWT_ISSUER``'s.
+        - ``ORRERY_CONSOLE_OIDC_*`` — the console's SSO settings, served at
+          runtime (see :class:`ConsoleConfig`).
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
@@ -200,6 +206,7 @@ class ServerConfig:
             csp_extra_origins=tuple(
                 o.strip() for o in os.getenv("ORRERY_CSP_EXTRA_ORIGINS", "").split(",") if o.strip()
             ),
+            console=ConsoleConfig.from_env(),
         )
 
 
@@ -551,7 +558,16 @@ def create_app(
     # CORS preflights and errors.
     api.add_middleware(
         SecurityHeadersMiddleware,
-        csp=build_csp(trusted_origins(cfg.jwt.issuer, cfg.csp_extra_origins)),
+        # The console's issuer is usually JWT_ISSUER, but may be set on its own.
+        csp=build_csp(
+            trusted_origins(
+                cfg.jwt.issuer,
+                (
+                    *cfg.csp_extra_origins,
+                    *((cfg.console.oidc_issuer,) if cfg.console.oidc_issuer else ()),
+                ),
+            )
+        ),
     )
 
     if cfg.cors_origins:
@@ -1022,6 +1038,7 @@ def create_app(
     # Mount the web console last so the explicit API routes above always win
     # over the catch-all static mount at "/".
     if cfg.web_console_enabled:
+        _add_console_config_route(api, cfg.console)
         _mount_web_console(api)
 
     return api
@@ -1034,6 +1051,27 @@ def _static_dir() -> Path:
     """Directory holding the built console bundle (`web/dist`, copied here at
     image build time). Kept as a function so tests can monkeypatch it."""
     return Path(__file__).parent / "static"
+
+
+def _add_console_config_route(api: FastAPI, console: ConsoleConfig) -> None:
+    """Serve ``/console-config.js``, which ``index.html`` loads before the app.
+
+    A same-origin script rather than inline JSON, so the console's
+    ``script-src 'self'`` CSP needs no exception. ``no-store``: it reflects the
+    current environment, and a cached copy would outlive a config change.
+    Registered before the static mount, so it shadows the bundle's dev stub.
+    """
+    from fastapi.responses import Response
+
+    body = render_script(console)
+
+    @api.get("/console-config.js", include_in_schema=False)
+    async def console_config_js() -> Response:
+        return Response(
+            content=body,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
 
 def _mount_web_console(api: FastAPI) -> None:

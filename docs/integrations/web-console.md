@@ -68,17 +68,26 @@ configuration, and the console renders only the matching sign-in surface.
 
 ### SSO (recommended)
 
-Set `VITE_OIDC_ISSUER` at build time and the console runs **OpenID Connect
-Authorization Code with PKCE**. It is provider-agnostic — the same build works
-against Keycloak, Authentik, Auth0, Okta, Entra ID, or Google — and uses a
-*public* client with no secret, which is the correct pattern for a browser SPA.
+Set `ORRERY_CONSOLE_OIDC_ISSUER` on the server and the console runs **OpenID
+Connect Authorization Code with PKCE**. It is provider-agnostic: the same image
+works against Keycloak, Authentik, Auth0, Okta, Entra ID or Google, and it uses
+a *public* client with no secret, which is the correct pattern for a browser SPA.
 
-| Build-time variable | Default | Description |
+The settings are read **at runtime**: the front door serves them at
+`/console-config.js`, which the console loads before it starts. The published
+image therefore needs no rebuild to turn SSO on.
+
+| Server variable | Default | Description |
 |---|---|---|
-| `VITE_OIDC_ISSUER` | — | Issuer URL. **Unset disables SSO** and falls back to the token gate. |
-| `VITE_OIDC_CLIENT_ID` | `orrery-console` | Public client id |
-| `VITE_OIDC_SCOPE` | `openid profile email` | Requested scopes |
-| `VITE_OIDC_ROLE_CLAIM` | `roles` | Dotted path to the roles claim; **must match the server's `JWT_ROLE_CLAIM`** |
+| `ORRERY_CONSOLE_OIDC_ISSUER` | — | Issuer URL. **Unset disables SSO** and falls back to the token gate. |
+| `ORRERY_CONSOLE_OIDC_CLIENT_ID` | `orrery-console` | Public client id |
+| `ORRERY_CONSOLE_OIDC_SCOPE` | `openid profile email` | Requested scopes |
+| `ORRERY_CONSOLE_OIDC_ROLE_CLAIM` | `JWT_ROLE_CLAIM` | Dotted path to the roles claim; it **must match the server's `JWT_ROLE_CLAIM`**, which is why it defaults to it |
+
+The same four settings can still be baked into a custom build as
+`VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_SCOPE` and
+`VITE_OIDC_ROLE_CLAIM`. When both are set, the runtime value wins. The issuer's
+origin is added to the console's `connect-src`/`frame-src` automatically.
 
 The server side needs no new code — point it at the provider's JWKS:
 
@@ -105,7 +114,7 @@ machine.
 
 ### Pasted token (default, and for CI)
 
-With `VITE_OIDC_ISSUER` unset the console shows the token gate: paste a JWT,
+With `ORRERY_CONSOLE_OIDC_ISSUER` (and `VITE_OIDC_ISSUER`) unset the console shows the token gate: paste a JWT,
 e.g. from `make dev-token`. This keeps CI, offline work, and quick local runs
 usable with no identity provider running.
 
@@ -139,8 +148,8 @@ stops it.
     error:
 
     1. **Roles are nested.** Keycloak puts realm roles at `realm_access.roles`,
-       not a flat `roles` claim. Set `JWT_ROLE_CLAIM=realm_access.roles` (and
-       the matching `VITE_OIDC_ROLE_CLAIM`) or every user silently resolves to
+       not a flat `roles` claim. Set `JWT_ROLE_CLAIM=realm_access.roles` (the console
+       follows it) or every user silently resolves to
        `viewer`. Dotted paths are supported on both sides.
     2. **The audience is wrong by default.** Keycloak issues access tokens with
        `aud: account`. Add an **audience mapper** on the client emitting your

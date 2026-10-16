@@ -96,8 +96,8 @@ JWT_ROLE_CLAIM=realm_access.roles
 ```
 
 A path that doesn't resolve is treated as "no roles" and yields `viewer` — it
-fails closed. Set the console's `VITE_OIDC_ROLE_CLAIM` to the same value, or its
-badge will disagree with the role the server enforces.
+fails closed. The console reads the same claim for its role badge
+(`ORRERY_CONSOLE_OIDC_ROLE_CLAIM` defaults to `JWT_ROLE_CLAIM`).
 
 Custom role names are supported by passing `admin_values=` /
 `operator_values=` when calling `extract_role` directly. The HTTP path
