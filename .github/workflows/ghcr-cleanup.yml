@@ -1,0 +1,55 @@
+name: GHCR cleanup
+
+# Every push to main publishes a `sha-…` image (plus per-platform manifests,
+# a cosign signature and attestations), so the registry grows by a few dozen
+# versions a day. This keeps what someone may pull and removes the rest:
+#
+# - kept: anything tagged with a version (`0.6.6`, `0.6`), `latest` or `main`,
+#   and every `sha-…` image younger than two weeks;
+# - removed: older `sha-…` images, and untagged versions nothing kept refers to.
+#
+# dataaxiom/ghcr-cleanup-action, not actions/delete-package-versions: an image
+# is a multi-arch index whose platform manifests and signatures are untagged
+# versions of their own. Deleting "untagged" blindly deletes the children of
+# images that are kept and breaks them; this action follows the index and its
+# referrers, and `validate` checks every remaining image afterwards.
+
+on:
+  schedule:
+    - cron: "0 5 * * 0" # Sundays 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Only report what would be deleted"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Prune old images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      packages: write # delete package versions
+    steps:
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: orrery
+          use-regex: true
+          delete-tags: "^sha-[0-9a-f]+$"
+          exclude-tags: '^(\d+\.\d+(\.\d+)?|latest|main)$'
+          older-than: 14 days
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-partial-images: true
+          delete-orphaned-images: true
+          validate: true
+          # Scheduled runs delete; a manual run is a dry run unless unticked.
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
