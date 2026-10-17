@@ -16,7 +16,14 @@ from orrery_core.agent.declarative import (
     load_agents_config,
     tool_catalogue,
 )
-from orrery_core.registry import Specialist, discover_specialists, source_of
+from orrery_core.registry import (
+    JOURNAL,
+    HealthCheck,
+    Specialist,
+    SpecialistSpec,
+    discover_specialists,
+    source_of,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +119,69 @@ def test_the_real_workspace_registers_its_specialists(monkeypatch):
 
     monkeypatch.setenv("ORRERY_DISABLED_SPECIALISTS", "docker")
     assert "docker" not in [s.key for s in discover_specialists(record=False)]
+
+
+# ── SpecialistSpec: what a specialist contributes ───────────────────
+
+
+def _check(*tools: Any) -> HealthCheck:
+    return HealthCheck(
+        system="Redis", checks="ping and memory.", criteria="critical = down.", tools=tools
+    )
+
+
+def test_a_spec_carries_hint_health_check_and_capabilities():
+    agent = _agent("redis_agent", [get_status, restart_service])
+    spec = SpecialistSpec(
+        agent=agent,
+        routing_hint="Redis health, memory, keyspace.",
+        health_check=_check(get_status),
+        capabilities=frozenset({JOURNAL}),
+    )
+    [s] = discover_specialists(loader=_eps(("redis", spec), dist="acme-redis-agent"))
+    assert s.agent is agent and s.hint == "Redis health, memory, keyspace."
+    assert s.health_check is not None and s.health_check.tools == (get_status,)
+    assert s.capabilities == frozenset({JOURNAL})
+    assert source_of("redis_agent") == "plugin"
+
+
+def test_a_bare_agent_still_registers_and_routes_on_its_description():
+    agent = LlmAgent(name="plain_a", model="gemini-x", description="Plain specialist.")
+    [s] = discover_specialists(loader=_eps(("plain", agent)))
+    assert s.hint == "Plain specialist." and s.health_check is None and not s.capabilities
+
+
+def test_a_sweep_may_not_use_a_guarded_tool():
+    # An instruction saying "no corrective actions" is not a control: a guarded
+    # tool in a sweep would be one model mistake from running unattended.
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", [get_status, restart_service]),
+        health_check=_check(get_status, restart_service),
+    )
+    with pytest.raises(ValueError, match="read-only"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_a_sweep_may_only_use_the_specialists_own_tools():
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", [get_status]), health_check=_check(get_events)
+    )
+    with pytest.raises(ValueError, match="not one of redis_agent's own tools"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_a_sweep_needs_tools():
+    spec = SpecialistSpec(agent=_agent("redis_agent", [get_status]), health_check=_check())
+    with pytest.raises(ValueError, match="no tools"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_the_workspace_specialists_declare_their_contributions():
+    by_key = {s.key: s for s in discover_specialists(record=False)}
+    for key in ("docker", "elasticsearch", "k8s", "kafka", "observability"):
+        assert by_key[key].health_check is not None, key
+    assert JOURNAL in by_key["ops_journal"].capabilities
+    assert by_key["ops_journal"].health_check is None
 
 
 # ── Declarative agents ───────────────────────────────────────────────

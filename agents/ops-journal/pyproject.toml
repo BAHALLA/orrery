@@ -14,7 +14,7 @@ dependencies = [
 # (orrery_core.registry). ORRERY_SPECIALISTS / ORRERY_DISABLED_SPECIALISTS
 # select which registered specialists a deployment runs.
 [project.entry-points."orrery.specialists"]
-ops_journal = "ops_journal_agent.agent:root_agent"
+ops_journal = "ops_journal_agent.agent:specialist"
 
 [tool.uv.sources]
 orrery-core = { workspace = true }

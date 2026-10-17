@@ -81,12 +81,16 @@ class TestPlannerWiring:
         monkeypatch.setenv("ORRERY_PLANNER", "plan_react")
         agent_mod, rem_mod = _reload_agent()
 
+        # One checker per specialist that declares a HealthCheck.
+        assert {c.name for c in agent_mod.HEALTH_CHECKERS} == {
+            "kafka_health_checker",
+            "k8s_health_checker",
+            "docker_health_checker",
+            "observability_health_checker",
+            "elasticsearch_health_checker",
+        }
         leaf_agents = [
-            agent_mod.kafka_health_checker,
-            agent_mod.k8s_health_checker,
-            agent_mod.docker_health_checker,
-            agent_mod.observability_health_checker,
-            agent_mod.elasticsearch_health_checker,
+            *agent_mod.HEALTH_CHECKERS,
             agent_mod.journal_writer,
             rem_mod.remediation_verifier,
         ]

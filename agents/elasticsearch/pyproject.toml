@@ -15,7 +15,7 @@ dependencies = [
 # (orrery_core.registry). ORRERY_SPECIALISTS / ORRERY_DISABLED_SPECIALISTS
 # select which registered specialists a deployment runs.
 [project.entry-points."orrery.specialists"]
-elasticsearch = "elasticsearch_agent.agent:root_agent"
+elasticsearch = "elasticsearch_agent.agent:specialist"
 
 [tool.uv.sources]
 orrery-core = { workspace = true }

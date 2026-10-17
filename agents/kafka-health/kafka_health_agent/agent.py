@@ -1,4 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
+from orrery_core.registry import HealthCheck, SpecialistSpec
 
 from .strimzi import (
     approve_kafka_rebalance,
@@ -98,4 +99,22 @@ root_agent = create_agent(
         restart_kafka_connector,
         get_mirrormaker2_status,
     ],
+)
+
+# What this specialist contributes to the coordinator (see orrery_core.registry).
+specialist = SpecialistSpec(
+    agent=root_agent,
+    routing_hint=(
+        "Kafka cluster health, topics, consumer groups, lag, Strimzi CRs, connectors, MirrorMaker."
+    ),
+    health_check=HealthCheck(
+        system="Kafka",
+        checks="cluster health, topic list, consumer groups, and consumer lag.",
+        criteria=(
+            "critical = brokers unreachable/offline or offline partitions; "
+            "degraded = under-replicated partitions, or lag that is high or has no "
+            "active consumers; healthy = none of these."
+        ),
+        tools=(get_kafka_cluster_health, list_kafka_topics, list_consumer_groups, get_consumer_lag),
+    ),
 )

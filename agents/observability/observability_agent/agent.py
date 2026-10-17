@@ -1,4 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
+from orrery_core.registry import HealthCheck, SpecialistSpec
 
 from .tools import (
     create_silence,
@@ -80,4 +81,22 @@ root_agent = create_agent(
         create_silence,
         delete_silence,
     ],
+)
+
+# What this specialist contributes to the coordinator (see orrery_core.registry).
+specialist = SpecialistSpec(
+    agent=root_agent,
+    routing_hint="Prometheus metrics/alerts, Loki logs, Alertmanager silences.",
+    health_check=HealthCheck(
+        system="Observability (Prometheus/Alertmanager)",
+        checks=(
+            "Prometheus target health, firing Prometheus alerts, and active Alertmanager alerts."
+        ),
+        criteria=(
+            "critical = critical-severity alerts firing, or Prometheus/Alertmanager "
+            "itself unreachable; degraded = warning alerts firing or scrape targets "
+            "down; healthy = none of these. Report alert names and down-target counts."
+        ),
+        tools=(get_prometheus_targets, get_prometheus_alerts, get_active_alerts, query_prometheus),
+    ),
 )

@@ -1,4 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
+from orrery_core.registry import HealthCheck, SpecialistSpec
 
 from .tools import (
     docker_compose_status,
@@ -72,4 +73,20 @@ root_agent = create_agent(
         prune_images,
         prune_containers,
     ],
+)
+
+# What this specialist contributes to the coordinator (see orrery_core.registry).
+specialist = SpecialistSpec(
+    agent=root_agent,
+    routing_hint="Docker containers, logs, stats, compose status.",
+    health_check=HealthCheck(
+        system="Docker",
+        checks="container list, container stats, and compose service status.",
+        criteria=(
+            "critical = expected services exited/dead; degraded = restarting or "
+            "unhealthy containers, or containers pinned at resource limits; "
+            "healthy = none of these."
+        ),
+        tools=(list_containers, get_container_stats, docker_compose_status),
+    ),
 )

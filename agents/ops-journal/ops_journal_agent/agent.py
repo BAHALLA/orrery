@@ -1,4 +1,5 @@
 from orrery_core import create_agent, load_agent_env
+from orrery_core.registry import JOURNAL, SpecialistSpec
 
 from .tools import (
     add_team_bookmark,
@@ -55,4 +56,11 @@ root_agent = create_agent(
         add_team_bookmark,
         list_team_bookmarks,
     ],
+)
+
+# What this specialist contributes to the coordinator (see orrery_core.registry).
+specialist = SpecialistSpec(
+    agent=root_agent,
+    routing_hint="notes, past findings, activity, preferences, bookmarks.",
+    capabilities=frozenset({JOURNAL}),
 )

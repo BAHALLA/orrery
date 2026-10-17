@@ -12,6 +12,13 @@ registry instead::
 Any installed package can do the same — a team's own specialist is a
 ``pip install`` away, with no fork of this repository.
 
+An entry point resolves to an agent, or to a :class:`SpecialistSpec` when the
+specialist has more to say than its ``description``: a one-line routing hint,
+its part of a health sweep (:class:`HealthCheck`), and capabilities the
+coordinator may offer (:data:`JOURNAL`). The coordinator knows nothing about
+any specialist by name; everything it says about one comes from here, so a
+third-party specialist routes, sweeps and offers exactly like a built-in one.
+
 Operators choose what is live per deployment:
 
 - ``ORRERY_SPECIALISTS=kafka,k8s`` — only these (default: every installed one);
@@ -62,13 +69,104 @@ def source_of(agent_name: str) -> Source | None:
     return _SOURCES.get(agent_name)
 
 
+#: Capability: the specialist can save findings for later (notes, journal).
+#: The coordinator offers "want me to save this?" only when one is enabled.
+JOURNAL = "journal"
+
+
+@dataclass(frozen=True)
+class HealthCheck:
+    """A specialist's part of a health sweep ("is everything healthy?").
+
+    The sweeps run unattended, so this is a contract, not free text: ``tools``
+    are called once each and must be **read-only** tools of the specialist's
+    own agent (checked at discovery), ``checks`` says what they cover, and
+    ``criteria`` is the severity rubric (critical / degraded / healthy) the
+    verdict is held to. One declaration feeds both the conversational sweep
+    and the batch workflow's checker, so the two cannot drift apart.
+    """
+
+    #: Human name of the system, e.g. ``"Kafka"``.
+    system: str
+    checks: str
+    criteria: str
+    tools: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class SpecialistSpec:
+    """What a specialist package registers: its agent and what it contributes."""
+
+    agent: BaseAgent
+    #: One line the coordinator routes on. Defaults to the agent's description.
+    routing_hint: str = ""
+    health_check: HealthCheck | None = None
+    capabilities: frozenset[str] = frozenset()
+
+
 @dataclass(frozen=True)
 class Specialist:
-    """One registered specialist: its entry-point key and the loaded agent."""
+    """One registered specialist: its entry-point key, agent and contributions."""
 
     key: str
     agent: BaseAgent
     distribution: str
+    routing_hint: str = ""
+    health_check: HealthCheck | None = None
+    capabilities: frozenset[str] = frozenset()
+
+    @property
+    def hint(self) -> str:
+        """What the coordinator says this specialist is for."""
+        return self.routing_hint or self.agent.description or self.agent.name
+
+
+def _tool_name(tool: Any) -> str:
+    return str(getattr(tool, "name", None) or getattr(tool, "__name__", "") or tool)
+
+
+def _validate_health_check(key: str, agent: BaseAgent, check: HealthCheck) -> None:
+    """A sweep may only call read-only tools its own specialist exposes.
+
+    The sweep runs with "no corrective actions" in its instruction, but an
+    instruction is not a control: a guarded tool in the list would be one model
+    mistake from running unattended. Refused here, at startup, instead.
+    """
+    from .security.guardrails import get_guard_level
+
+    if not check.tools:
+        raise ValueError(f"specialist {key!r}: health_check has no tools")
+    own = {id(t) for t in getattr(agent, "tools", None) or []}
+    for tool in check.tools:
+        if id(tool) not in own:
+            raise ValueError(
+                f"specialist {key!r}: health_check tool {_tool_name(tool)!r} is not one of "
+                f"{agent.name}'s own tools"
+            )
+        if (level := get_guard_level(tool)) is not None:
+            raise ValueError(
+                f"specialist {key!r}: health_check tool {_tool_name(tool)!r} is "
+                f"{level}; a sweep may only use read-only tools"
+            )
+
+
+def _as_spec(key: str, ep: Any, obj: Any) -> SpecialistSpec:
+    if isinstance(obj, SpecialistSpec):
+        spec = obj
+    elif isinstance(obj, BaseAgent):
+        spec = SpecialistSpec(agent=obj)
+    else:
+        raise ValueError(
+            f"Entry point {ENTRY_POINT_GROUP}:{key} ({ep.value}) is a "
+            f"{type(obj).__name__}, not an agent or a SpecialistSpec"
+        )
+    if not isinstance(spec.agent, BaseAgent):
+        raise ValueError(
+            f"Entry point {ENTRY_POINT_GROUP}:{key}: SpecialistSpec.agent is not an agent"
+        )
+    if spec.health_check is not None:
+        _validate_health_check(key, spec.agent, spec.health_check)
+    return spec
 
 
 def _names(env: str) -> set[str]:
@@ -104,15 +202,20 @@ def discover_specialists(
             logger.info("Specialist %s disabled by configuration", key)
             continue
         ep = by_key[key]
-        agent = ep.load()
-        if not isinstance(agent, BaseAgent):
-            raise ValueError(
-                f"Entry point {ENTRY_POINT_GROUP}:{key} ({ep.value}) is a "
-                f"{type(agent).__name__}, not an agent"
-            )
+        spec = _as_spec(key, ep, ep.load())
+        agent = spec.agent
         # Normalised (PEP 503): installers record `docker_agent` or `docker-agent`.
         dist = re.sub(r"[-_.]+", "-", getattr(getattr(ep, "dist", None), "name", "") or "").lower()
-        selected.append(Specialist(key=key, agent=agent, distribution=dist))
+        selected.append(
+            Specialist(
+                key=key,
+                agent=agent,
+                distribution=dist,
+                routing_hint=spec.routing_hint,
+                health_check=spec.health_check,
+                capabilities=frozenset(spec.capabilities),
+            )
+        )
         if record:
             # Shipped in this repository's workspace vs. installed from elsewhere.
             record_source(agent.name, "builtin" if dist in _WORKSPACE_DISTRIBUTIONS else "plugin")
