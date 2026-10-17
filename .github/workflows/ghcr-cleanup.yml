@@ -42,9 +42,11 @@ jobs:
       - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           package: orrery
-          use-regex: true
-          delete-tags: "^sha-[0-9a-f]+$"
-          exclude-tags: '^(\d+\.\d+(\.\d+)?|latest|main)$'
+          # Wildcards, not regex: the action refuses regexes it judges
+          # ReDoS-prone. `*.*` is every version tag (0.6.6, 0.6); `sha-*`
+          # does not match the `sha256-…` signature tags.
+          delete-tags: "sha-*"
+          exclude-tags: "latest,main,*.*"
           older-than: 14 days
           delete-untagged: true
           delete-ghost-images: true
