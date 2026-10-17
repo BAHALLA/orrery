@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-17
+
+Specialists declare what they contribute (routing hint, health check,
+remediation, journal) and the coordinator and batch workflow are built from
+those declarations; third-party specialists are opt-in and checked at load.
+Includes the fixes from an independent review (ADR-005, amended).
+
 ### Changed
 
 - **Specialists declare what they contribute; the coordinator knows none by
@@ -909,7 +916,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/BAHALLA/orrery/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/BAHALLA/orrery/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/BAHALLA/orrery/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/BAHALLA/orrery/compare/v0.6.0...v0.6.1
