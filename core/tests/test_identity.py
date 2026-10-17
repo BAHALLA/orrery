@@ -97,6 +97,44 @@ def test_a_crafted_identity_cannot_inject_headers(monkeypatch):
         kubernetes_headers()
 
 
+@pytest.mark.parametrize(
+    "identity",
+    [
+        CallerIdentity(subject="x", username="alice@example.com", groups=("sre", "system:masters")),
+        CallerIdentity(subject="x", username="System:Admin"),
+        CallerIdentity(subject="x", username="system:serviceaccount:kube-system:default"),
+    ],
+)
+def test_a_reserved_kubernetes_identity_is_never_impersonated(monkeypatch, identity):
+    # Impersonating system:masters is cluster-admin: a token claiming it (an
+    # IdP mapping mistake, a user-created group) must not be forwarded.
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "kubernetes")
+
+    with caller_scope(identity), pytest.raises(ImpersonationRequired, match="reserved Kubernetes"):
+        kubernetes_headers()
+
+
+def test_kubernetes_names_take_the_configured_prefixes(monkeypatch):
+    # Like the API server's --oidc-username-prefix / --oidc-groups-prefix.
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "kubernetes")
+    monkeypatch.setenv("ORRERY_IMPERSONATE_K8S_USER_PREFIX", "oidc:")
+    monkeypatch.setenv("ORRERY_IMPERSONATE_K8S_GROUP_PREFIX", "oidc:")
+
+    with caller_scope(ALICE):
+        headers = kubernetes_headers()
+
+    assert ("Impersonate-User", "oidc:alice@example.com") in headers
+    assert [v for k, v in headers if k == "Impersonate-Group"] == ["oidc:sre", "oidc:oncall"]
+
+
+def test_a_prefix_cannot_launder_a_reserved_name(monkeypatch):
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "kubernetes")
+    monkeypatch.setenv("ORRERY_IMPERSONATE_K8S_GROUP_PREFIX", "system:")
+
+    with caller_scope(ALICE), pytest.raises(ImpersonationRequired, match="reserved Kubernetes"):
+        kubernetes_headers()
+
+
 def test_identity_from_claims(monkeypatch):
     claims = {"email": "bob@example.com", "email_verified": True, "realm": {"groups": ["sre"]}}
 

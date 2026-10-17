@@ -84,7 +84,7 @@ from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
-from .sse import stream_turn
+from .sse import drain_turns, stream_turn
 
 logger = logging.getLogger("orrery.server")
 
@@ -140,6 +140,9 @@ class ServerConfig:
     admin_editing: bool = False
     #: How often each replica checks the catalog store for edits made elsewhere.
     catalog_poll_seconds: float = 15.0
+    #: How long shutdown waits for running turns. Keep it under the pod's
+    #: terminationGracePeriodSeconds minus its preStop sleep (Helm: 60 - 10).
+    shutdown_grace_seconds: float = 40.0
     #: Console settings served at runtime from /console-config.js (OIDC SSO
     #: without rebuilding the image). See :mod:`.console_config`.
     console: ConsoleConfig = field(default_factory=ConsoleConfig)
@@ -203,6 +206,7 @@ class ServerConfig:
             admin_editing=os.getenv("ORRERY_ADMIN_EDITING", "false").lower()
             in ("1", "true", "yes"),
             catalog_poll_seconds=float(os.getenv("ORRERY_CATALOG_POLL_SECONDS", "15")),
+            shutdown_grace_seconds=float(os.getenv("ORRERY_SHUTDOWN_GRACE_SECONDS", "40")),
             csp_extra_origins=tuple(
                 o.strip() for o in os.getenv("ORRERY_CSP_EXTRA_ORIGINS", "").split(",") if o.strip()
             ),
@@ -529,6 +533,15 @@ def create_app(
             "with N replicas a caller gets N times the configured limit."
         )
 
+    shutting_down = asyncio.Event()
+
+    def accepting_turns() -> None:
+        """Refuse a new turn while shutting down: the replica is draining."""
+        if shutting_down.is_set():
+            raise HTTPException(
+                status_code=503, detail="Shutting down; retry", headers={"Retry-After": "5"}
+            )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         # Size the pool the blocking tool layer runs on. Done here because it
@@ -541,6 +554,10 @@ def create_app(
         try:
             yield
         finally:
+            # New turns are refused from here on (503), then the running ones
+            # get the grace period to finish.
+            shutting_down.set()
+            await drain_turns(cfg.shutdown_grace_seconds)
             if catalog is not None:
                 await catalog.stop()
 
@@ -695,7 +712,11 @@ def create_app(
             identity=identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None,
         )
 
-    @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])
+    @api.post(
+        "/chat",
+        response_model=ChatResponse,
+        dependencies=[Depends(accepting_turns), Depends(chat_rate_limit)],
+    )
     async def chat(
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
@@ -707,7 +728,7 @@ def create_app(
     # plain one does), narrated as Server-Sent Events — see `sse.py` for the
     # event vocabulary. POST, not GET, so the message never lands in a URL or
     # an access log; the console reads it with fetch(), not EventSource.
-    @api.post("/chat/stream", dependencies=[Depends(chat_rate_limit)])
+    @api.post("/chat/stream", dependencies=[Depends(accepting_turns), Depends(chat_rate_limit)])
     async def chat_stream(
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
@@ -951,9 +972,9 @@ def create_app(
         if auth.role != "admin":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
 
-    def catalog_response(current: AgentCatalog) -> CatalogResponse:
+    async def catalog_response(current: AgentCatalog) -> CatalogResponse:
         assert agent_admin is not None and catalog is not None  # nosec B101 — guarded by caller
-        options = agent_admin.options()
+        options = await asyncio.to_thread(agent_admin.options)
         return CatalogResponse(
             editing_enabled=cfg.admin_editing,
             catalog=current,
@@ -973,7 +994,7 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail="This deployment has no editable agent catalog"
             )
-        return catalog_response(await catalog.current())
+        return await catalog_response(await catalog.current())
 
     @api.put("/admin/catalog", response_model=CatalogResponse)
     async def put_catalog(
@@ -1004,7 +1025,7 @@ def create_app(
             ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return catalog_response(stored)
+        return await catalog_response(stored)
 
     @api.post(
         "/onboarding/selftest",

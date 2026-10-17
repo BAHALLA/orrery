@@ -230,6 +230,8 @@ own permissions apply too. Full guide: [Acting as the user](../impersonation.md)
 | `ORRERY_IMPERSONATION` | unset | `kubernetes`, `elasticsearch`, or both. Unset: everything runs as the service account. A typo stops startup. |
 | `ORRERY_IMPERSONATE_USER_CLAIM` | `email` | Claim naming the user (dotted path). `email` is used only when `email_verified` is `true`; otherwise the subject is used. |
 | `ORRERY_IMPERSONATE_GROUPS_CLAIM` | `groups` | Claim listing the user's groups (dotted path). |
+| `ORRERY_IMPERSONATE_K8S_USER_PREFIX` | (none) | Prepended to the impersonated Kubernetes user; match the API server's `--oidc-username-prefix`. |
+| `ORRERY_IMPERSONATE_K8S_GROUP_PREFIX` | (none) | Prepended to each impersonated Kubernetes group; match `--oidc-groups-prefix`. A `system:` user or group is always refused. |
 | `ORRERY_IMPERSONATION_FALLBACK` | unset | `service` uses the service account when no user is known. A rollout aid; leave unset afterwards, so unknown callers are refused. |
 
 ## What this does **not** cover (intentionally)

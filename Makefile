@@ -261,7 +261,8 @@ demo: ## A seeded incident (Kafka lag + an OOM-looping worker) and the console o
 	@echo "▶ Open http://localhost:8000 and paste this operator token:"
 	@$(MAKE) --no-print-directory dev-token ROLE=operator
 	@echo "▶ Then ask: \"Why is the orders consumer lagging?\" — and ask it to fix what it finds."
-	@$(MAKE) --no-print-directory run-api
+	@echo "▶ Only the demo's own systems are on: Kubernetes and Elasticsearch would act on your kubeconfig and cluster."
+	@ORRERY_SPECIALISTS=kafka,docker,observability,ops_journal $(MAKE) --no-print-directory run-api
 
 demo-reset: ## Remove the demo's seeded faults (the topic, group and worker)
 	uv run python scripts/demo/seed.py --reset

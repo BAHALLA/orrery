@@ -74,7 +74,9 @@ class CatalogService:
         """Build, save, swap — in that order. Raises ``ValueError`` (unbuildable)
         or :class:`~orrery_core.agent.catalog_store.CatalogConflict` (stale)."""
         async with self._lock:
-            root = self._admin.build(catalog)  # raises before anything is stored
+            # Building imports nothing but does real work (every agent, every
+            # instruction): off the event loop, so other turns keep streaming.
+            root = await asyncio.to_thread(self._admin.build, catalog)  # raises before saving
             stored = await asyncio.to_thread(
                 self._store.save, catalog, expected_version=expected_version, actor=actor
             )
@@ -90,18 +92,20 @@ class CatalogService:
         logger.info("Agent catalog v%d applied (by %s)", stored.version, actor)
         return stored
 
-    def _narrowed(self, stored: AgentCatalog) -> Any | None:
+    async def _narrowed(self, stored: AgentCatalog) -> Any | None:
         """The tree for *stored*'s switch-offs alone, or ``None`` if even that fails.
 
         Keeps every switch-off that still names a specialist the deployment
         runs, and drops the catalog's own agents: what it removed stays
         removed, what it added and no longer builds is left out.
         """
-        runs = {s.key for s in self._admin.options().specialists if s.available}
+        options = await asyncio.to_thread(self._admin.options)
+        runs = {s.key for s in options.specialists if s.available}
+        narrowed = AgentCatalog(
+            disabled_specialists=sorted(set(stored.disabled_specialists) & runs)
+        )
         try:
-            return self._admin.build(
-                AgentCatalog(disabled_specialists=sorted(set(stored.disabled_specialists) & runs))
-            )
+            return await asyncio.to_thread(self._admin.build, narrowed)
         except ValueError:
             return None
 
@@ -124,9 +128,9 @@ class CatalogService:
             if stored.version == self._applied_version:
                 return
             try:
-                root = self._admin.build(stored)
+                root = await asyncio.to_thread(self._admin.build, stored)
             except ValueError as exc:
-                root = self._narrowed(stored)
+                root = await self._narrowed(stored)
                 if root is None:
                     if startup:
                         raise RuntimeError(

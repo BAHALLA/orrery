@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Kubernetes impersonation never assumes a `system:` identity.** A token
+  claiming the group `system:masters` (an identity-provider mapping mistake,
+  or a group users can create) was forwarded as `Impersonate-Group`, which is
+  cluster-admin. Any `system:` user or group is now refused, with the call.
+  New `ORRERY_IMPERSONATE_K8S_USER_PREFIX` / `_GROUP_PREFIX` match the API
+  server's `--oidc-username-prefix` / `--oidc-groups-prefix`.
+- `docs/impersonation.md` no longer calls an unrestricted `impersonate` grant
+  "nothing more": it is cluster-admin for anyone holding the service
+  account's token. The example now lists `resourceNames`, and the docs warn
+  against a self-editable user claim such as `preferred_username`.
+- Tool-result `status` values reach the browser and chat only as a short
+  machine word; an MCP server controls that field.
+- **MCP tool text is screened and pinned.** A tool whose description or
+  schema reads like an instruction to the model is withheld, and so is one
+  whose description or schema changes after it was first seen, until a
+  restart. Each is logged and audited (`mcp_tool_withheld`).
+
+### Fixed
+
+- **A catalog agent named like a coordinator tool broke every turn.** A
+  declarative agent called `load_memory` (or `search_knowledge`, or an MCP
+  agent's name) built, was saved, and gave the coordinator two function
+  declarations with one name, which the model API refuses, on every turn and
+  after restarts. The names are reserved, and the coordinator's tool list is
+  checked for duplicates, so such an edit is refused (422).
+- `make demo` runs only the demo's own specialists (Kafka, Docker,
+  observability, journal), not Kubernetes and Elasticsearch against your own
+  kubeconfig and cluster.
+- The Kafka specialist's blocking calls run through `asyncio.to_thread`, which
+  carries the turn's caller identity into the worker thread.
+- **Rolling deploys no longer cut streamed turns short.** A turn whose
+  client disconnected kept running, but shutdown didn't wait for it, so
+  SIGTERM ended it mid-tool. Shutdown now refuses new turns (503 with
+  `Retry-After`) and waits up to `ORRERY_SHUTDOWN_GRACE_SECONDS` (default 40,
+  under Helm's 60 s grace minus the 10 s preStop).
+- Building the coordinator for a catalog edit, and listing the catalog's
+  options, run off the event loop, so other turns keep streaming meanwhile.
+
 ## [0.6.4] - 2026-10-17
 
 Specialists declare what they contribute (routing hint, health check,

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import re
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -112,9 +113,15 @@ def _call_id(tool: BaseTool, tool_context: ToolContext) -> str:
     return str(call_id) if call_id else f"{tool.name}:{id(tool_context)}"
 
 
+#: What a result's ``status`` may look like to be forwarded. The field is
+#: shown in the browser and in chat, and an MCP server controls it, so only a
+#: short machine word gets through (``success``, ``confirmation_required``).
+_STATUS = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,39}")
+
+
 def _status_of(result: Any) -> str:
     value = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
-    return value if isinstance(value, str) else ""
+    return value if isinstance(value, str) and _STATUS.fullmatch(value) else ""
 
 
 def _outcome(result: Any) -> StepOutcome:
