@@ -423,6 +423,47 @@ describe("App auth flow", () => {
     await user.click(screen.getByRole("button", { name: /new chat/i }));
     expect(screen.queryByText("ok")).not.toBeInTheDocument();
   });
+
+  it("keeps one session per thread: New chat starts another, going back continues the first", async () => {
+    // The server mints a session per id-less turn and echoes a known id back.
+    let minted = 0;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/chat/stream")) {
+        const body = JSON.parse(String(init?.body));
+        const session_id = body.session_id || `s${++minted}`;
+        return jsonResponse({ session_id, response: `reply in ${session_id}` });
+      }
+      return jsonResponse({ entries: [], pending: null, severity: null, report: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+    const sent = () =>
+      fetchMock.mock.calls
+        .filter(([u]) => String(u).endsWith("/chat/stream"))
+        .map(([, init]) => JSON.parse(String(init?.body)).session_id ?? null);
+
+    const user = userEvent.setup();
+    render(<App />);
+    const say = async (text: string) => {
+      await user.type(screen.getByRole("textbox", { name: /message/i }), text);
+      await user.click(screen.getByRole("button", { name: /send/i }));
+    };
+
+    await say("check kafka");
+    await screen.findByText("reply in s1");
+    await say("and the lag?");
+    await waitFor(() => expect(sent()).toEqual([null, "s1"]));
+
+    await user.click(screen.getByRole("button", { name: /new chat/i }));
+    await say("restart payment-api");
+    await screen.findByText("reply in s2");
+    await waitFor(() => expect(sent()).toEqual([null, "s1", null]));
+
+    const history = screen.getByRole("navigation", { name: /conversation history/i });
+    await user.click(within(history).getByText("check kafka"));
+    await say("still lagging?");
+    await waitFor(() => expect(sent()).toEqual([null, "s1", null, "s1"]));
+  });
 });
 
 describe("resilience and safety posture", () => {
