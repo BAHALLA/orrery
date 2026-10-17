@@ -1,4 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
+from orrery_core.registry import HealthCheck, SpecialistSpec
 
 from .operators import (
     describe_custom_resource,
@@ -118,4 +119,23 @@ root_agent = create_agent(
         describe_workload,
         get_operator_events,
     ],
+)
+
+# What this specialist contributes to the coordinator (see orrery_core.registry).
+specialist = SpecialistSpec(
+    agent=root_agent,
+    routing_hint=(
+        "Kubernetes cluster info, nodes, pods, deployments, logs, events, operators/CRs, "
+        "scaling, restarts, rollbacks, patches."
+    ),
+    health_check=HealthCheck(
+        system="Kubernetes",
+        checks="cluster info, node status, recent events, and pod states.",
+        criteria=(
+            "critical = NotReady nodes or workloads down (CrashLoopBackOff/ImagePull "
+            "with no ready replicas); degraded = pod restarts, warning events, evictions, "
+            "or partial replica availability; healthy = none of these."
+        ),
+        tools=(get_cluster_info, get_nodes, get_events, list_pods),
+    ),
 )

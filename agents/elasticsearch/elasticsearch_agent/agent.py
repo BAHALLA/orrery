@@ -1,4 +1,5 @@
 from orrery_core import OPERATING_PRINCIPLES, create_agent, load_agent_env
+from orrery_core.registry import HealthCheck, SpecialistSpec
 
 from .eck import (
     describe_eck_cluster,
@@ -100,4 +101,23 @@ root_agent = create_agent(
         describe_kibana,
         get_eck_operator_events,
     ],
+)
+
+# What this specialist contributes to the coordinator (see orrery_core.registry).
+specialist = SpecialistSpec(
+    agent=root_agent,
+    routing_hint="Elasticsearch health, indices, shards, ILM, snapshots, ECK CRs.",
+    health_check=HealthCheck(
+        system="Elasticsearch",
+        checks=(
+            "cluster health (green/yellow/red), index list, shard allocation, and — "
+            "when on Kubernetes — ECK Elasticsearch CRs for the declarative state."
+        ),
+        criteria=(
+            "critical = red health or unassigned primary shards; degraded = yellow "
+            "health, unassigned replicas, or ECK clusters not Ready; healthy = green "
+            "and all CRs Ready. Quote the exact color and unassigned-shard count."
+        ),
+        tools=(get_cluster_health, list_indices, get_shard_allocation, list_eck_clusters),
+    ),
 )

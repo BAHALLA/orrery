@@ -149,8 +149,46 @@ the chat root discovers specialists from installed packages.
 
 ```toml
 [project.entry-points."orrery.specialists"]
-my_service = "my_agent.agent:root_agent"
+my_service = "my_agent.agent:specialist"
 ```
+
+The entry point names a `SpecialistSpec`: your agent, plus what it contributes
+to the coordinator. Everything the coordinator says about a specialist comes
+from here. It knows none of them by name, so yours routes, sweeps and offers
+exactly like a built-in one.
+
+```python
+# agents/my-agent/my_agent/agent.py (after root_agent)
+from orrery_core.registry import HealthCheck, SpecialistSpec
+
+specialist = SpecialistSpec(
+    agent=root_agent,
+    # One line the coordinator routes on (defaults to the agent's description).
+    routing_hint="My Service health, queues, workers.",
+    # Optional: your part of "is everything healthy?". Read-only tools only.
+    health_check=HealthCheck(
+        system="My Service",
+        checks="service health and queue depth.",
+        criteria=(
+            "critical = service down; degraded = queue growing or a worker "
+            "restarting; healthy = none of these."
+        ),
+        tools=(get_status,),
+    ),
+)
+```
+
+| Field | What the coordinator does with it |
+|---|---|
+| `routing_hint` | One line in its routing section, while the specialist is enabled. |
+| `health_check` | Joins both health sweeps: the conversational `incident_triage_agent` gets the tools and the rubric, and the batch workflow gets a `<key>_health_checker` that writes `<key>_status`. |
+| `capabilities` | `JOURNAL`: this specialist can save findings, so the coordinator may offer "want me to save this?". Offered only while one is enabled. |
+
+`HealthCheck.tools` is checked at startup: every tool must be one of your
+agent's own tools and **read-only** (no `@confirm`/`@destructive`). Sweeps run
+unattended, and an instruction saying "take no action" is not a control. An
+entry point may still name a bare agent: it registers with no health check and
+no capabilities, routed by its `description`.
 
 Then install the workspace (entry points are package metadata, so re-sync after
 adding one):
@@ -162,8 +200,7 @@ The key (`my_service`) is what operators use to switch the specialist off and on
 `ORRERY_SPECIALISTS=kafka,my_service` runs only those, and
 `ORRERY_DISABLED_SPECIALISTS=my_service` runs everything else. An unknown key in
 either list stops startup. The coordinator's routing prompt lists only the
-active specialists, describing yours by its `description`, so write that for
-the model.
+active specialists, each by its routing hint, so write that for the model.
 
 A package **outside** this repository can register a specialist the same way;
 `pip install` it next to Orrery and it appears, labelled *plugin* in the admin

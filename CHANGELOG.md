@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Specialists declare what they contribute; the coordinator knows none by
+  name** (ADR-005). An `orrery.specialists` entry point may now name a
+  `SpecialistSpec` instead of a bare agent: its `routing_hint`, its
+  `HealthCheck` (its part of a health sweep), and `capabilities` such as
+  `JOURNAL`. The coordinator's routing section, the conversational sweep, the
+  batch workflow's parallel checkers and the journal offer are all built from
+  the enabled specialists' declarations. The hard-coded tables (routing hints,
+  sweep tools, five checkers, the ops-journal name) are gone, so a third-party
+  specialist routes, joins both sweeps and offers journaling exactly like a
+  built-in one. Bare-agent entry points still work.
+- The conversational sweep now holds each system to the same severity rubric
+  as its batch checker (one `HealthCheck`, two sweeps).
+- The batch workflow journals the report only while a `JOURNAL` specialist is
+  enabled.
+
+### Security
+
+- **Health sweeps are read-only by construction.** A `HealthCheck` may list
+  only the specialist's own tools, and none guarded by `@confirm` or
+  `@destructive`; anything else stops startup. Sweeps run unattended, and the
+  instruction "take no corrective action" was the only thing keeping them
+  read-only.
+
 ## [0.6.3] - 2026-10-17
 
 A patch release: the coordinator offers the ops journal only while it is

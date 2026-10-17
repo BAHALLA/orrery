@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import pytest
+from google.adk.agents import LlmAgent
 
+from orrery_assistant import agent as chat
 from orrery_assistant.admin import ChatAgentAdmin
 from orrery_core import base_instruction, is_confirmation_gate
 from orrery_core.agent.catalog_store import AgentCatalog
 from orrery_core.agent.declarative import DeclarativeAgentConfig
+from orrery_core.registry import JOURNAL, HealthCheck, Specialist
 
 
 def _delegates(root) -> list[str]:
@@ -93,7 +96,10 @@ def test_switching_a_specialist_off_keeps_its_tools_out_of_the_sweep():
     assert {"list_pods", "get_nodes", "get_events", "get_cluster_info"}.isdisjoint(tools)
     assert {"get_consumer_lag", "get_prometheus_alerts", "record_triage_verdict"} <= tools
     instruction = str(base_instruction(_triage(root)))
-    assert "Docker" not in instruction and "Kubernetes" not in instruction
+    # Elasticsearch's rubric mentions ECK on Kubernetes; the systems swept are
+    # the per-system headings.
+    assert "**Docker**" not in instruction and "**Kubernetes**" not in instruction
+    assert "**Kafka**" in instruction
 
 
 def test_no_sweep_when_no_sweepable_system_is_on():
@@ -118,3 +124,62 @@ def test_the_journal_is_only_offered_while_it_is_on():
     assert "ops_journal_agent" not in _delegates(off)
     assert offer not in str(base_instruction(off))
     assert "ops_journal" not in str(base_instruction(off))
+
+
+# ── A third-party specialist is a first-class citizen ────────────────
+
+
+async def redis_ping() -> dict:
+    """Ping Redis."""
+    return {}
+
+
+async def redis_memory() -> dict:
+    """Read Redis memory usage."""
+    return {}
+
+
+def _redis(**extra) -> Specialist:
+    agent = LlmAgent(
+        name="redis_agent",
+        model="gemini-x",
+        description="Redis.",
+        tools=[redis_ping, redis_memory],
+    )
+    return Specialist(
+        key="redis",
+        agent=agent,
+        distribution="acme-redis-agent",
+        routing_hint="Redis health, memory, keyspace, replication.",
+        health_check=HealthCheck(
+            system="Redis",
+            checks="ping and memory usage.",
+            criteria="critical = no PONG; degraded = memory above 90%; healthy = none.",
+            tools=(redis_ping, redis_memory),
+        ),
+        **extra,
+    )
+
+
+def test_a_plugin_specialist_routes_and_sweeps_like_a_builtin():
+    # Nothing in the coordinator names Redis: everything below comes from the
+    # specialist's own declaration.
+    root = chat.build_chat_agent([_redis()], [])
+    instruction = str(base_instruction(root))
+    assert "redis_agent" in _delegates(root)
+    assert "- **redis_agent**: Redis health, memory, keyspace, replication." in instruction
+
+    sweep = _triage(root)
+    assert {"redis_ping", "redis_memory", "record_triage_verdict"} == _tool_names(sweep)
+    sweep_instruction = str(base_instruction(sweep))
+    assert "**Redis**" in sweep_instruction and "memory above 90%" in sweep_instruction
+
+    checker = chat.build_health_checker(_redis())
+    assert checker.name == "redis_health_checker" and checker.output_key == "redis_status"
+
+
+def test_a_plugin_journal_is_offered_under_its_own_name():
+    offer = "offer once to save findings via redis_agent"
+    assert offer not in str(base_instruction(chat.build_chat_agent([_redis()], [])))
+    with_journal = chat.build_chat_agent([_redis(capabilities=frozenset({JOURNAL}))], [])
+    assert offer in str(base_instruction(with_journal))
