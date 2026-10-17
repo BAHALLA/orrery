@@ -39,7 +39,7 @@ built-in user.
   `ORRERY_SHUTDOWN_GRACE_SECONDS` (now 30). Together they fit Helm's 60 s
   grace minus its 10 s preStop.
 
-## [0.6.5] - 2026-10-17
+## [0.6.5] - 2026-10-17 (tag removed; shipped in 0.6.6)
 
 A security patch: Kubernetes impersonation never assumes a `system:` identity,
 catalog agents can't take a coordinator tool's name, MCP tool text is screened
@@ -85,7 +85,7 @@ and pinned, and shutdown lets running turns finish.
 - Building the coordinator for a catalog edit, and listing the catalog's
   options, run off the event loop, so other turns keep streaming meanwhile.
 
-## [0.6.4] - 2026-10-17
+## [0.6.4] - 2026-10-17 (tag removed; shipped in 0.6.6)
 
 Specialists declare what they contribute (routing hint, health check,
 remediation, journal) and the coordinator and batch workflow are built from
@@ -166,7 +166,7 @@ Includes the fixes from an independent review (ADR-005, amended).
 - `ORRERY_CONSOLE_OIDC_ISSUER` must be https (http only for localhost) and
   match `JWT_ISSUER`; a mismatch used to sign in and then 401 every call.
 
-## [0.6.3] - 2026-10-17
+## [0.6.3] - 2026-10-17 (tag removed; shipped in 0.6.6)
 
 A patch release: the coordinator offers the ops journal only while it is
 switched on.
@@ -190,7 +190,7 @@ switched on.
   user's session id starts a fresh one. The console test follows a thread, New
   chat, and back again, checking the session id each turn sends.
 
-## [0.6.2] - 2026-10-17
+## [0.6.2] - 2026-10-17 (tag removed; shipped in 0.6.6)
 
 A patch release: a health sweep now checks only the specialists that are
 switched on.
@@ -208,7 +208,7 @@ switched on.
   coordinator is offered no sweep and the batch workflow reports everything as
   unverified.
 
-## [0.6.1] - 2026-10-16
+## [0.6.1] - 2026-10-16 (tag removed; shipped in 0.6.6)
 
 A patch release. The published image can now sign in through any OIDC
 provider without being rebuilt, and the Kafka specialist's consumer-group
@@ -237,7 +237,7 @@ check works again.
   builds the real class instead of a `MagicMock`, which had accepted the
   missing attribute.
 
-## [0.6.0] - 2026-10-15
+## [0.6.0] - 2026-10-15 (tag removed; shipped in 0.6.6)
 
 A minor release that changes what Orrery feels like to use, and what it can be
 pointed at. Answers **stream**, under a live trace of every specialist and tool
@@ -447,7 +447,7 @@ out: the memory store runs a **one-time migration at first boot** (see Fixed).
 - **The web console bundle is split** (`web/vite.config.ts`). `react` and the markdown pipeline (react-markdown, remark/rehype, lowlight) ship as their own chunks via Rolldown's `advancedChunks` — Vite 8 rejects the object form of `manualChunks`. The app chunk drops from 653 kB to 113 kB and the vendor chunks cache across console releases instead of one file re-downloading every time; the raised `chunkSizeWarningLimit` is gone.
 - **Orrery has a visual identity** (`docs/assets/brand/`, `README.md`, `web/`). An orrery mark — three orbits, an amber sun, three planets — replaces Material's stock robot in the docs, the emoji in the README and the console header; one palette across docs, console and brand assets; favicon and social card; tagline "SRE agents you can let near production." The README leads as a landing page, and both it and the docs home cross-reference the twelve-part blog series on why the platform is built the way it is. Cosmetic: no behaviour changed.
 
-## [0.4.0] - 2026-09-11
+## [0.4.0] - 2026-09-11 (tag removed; shipped in 0.4.1)
 
 The agent can now read what humans wrote. Until this release Orrery saw live
 infrastructure through ~70 tools and recalled its own past sessions, but had no
@@ -562,7 +562,7 @@ invisible to anyone consuming the image or the library.
 - **`Limiter(default_limits=…)` was inert** (`core/orrery_core/serving/server.py`). slowapi only applies those through `SlowAPIMiddleware`, which this app does not install, so the argument read as blanket coverage while doing nothing. Limits are now declared per route, where the cost actually differs — `/chat` buys tokens; `/confirmations/pending` is a cheap read the console polls on a timer and must not be throttled into failure.
 - **`ConfirmationStore.add` documents why it is not keyed by `args_hash`**, with tests pinning the behaviour. An audit recommended adding it so parallel same-tool calls stop superseding each other; that would also let a card the requester scrolled past authorize an execution minutes later. The supersede costs liveness only — `consume_pending` matches `args_hash` exactly, so an evicted call re-prompts and can never be authorized by the survivor's approval.
 
-## [0.3.0] - 2026-07-25
+## [0.3.0] - 2026-07-25 (tag removed; shipped in 0.3.1)
 
 ### Added
 
@@ -637,7 +637,7 @@ invisible to anyone consuming the image or the library.
   - **observability** (+4, read-only): `list_prometheus_metrics` (discover metric names by substring), `get_prometheus_metadata` (type/help), `get_prometheus_rules` (alerting + recording rules and their state), and `query_loki_range` (LogQL over a relative last-N-hours window).
   - Each agent's instruction gained a short routing note so the model reaches for the new tools appropriately; all mutating tools flow through the existing `@confirm`/`@destructive` + requester-verified confirmation gate.
 
-## [0.2.2] - 2026-07-19
+## [0.2.2] - 2026-07-19 (tag removed; shipped in 0.2.3)
 
 ### Changed
 - **Docs review: fixed staleness, tightened onboarding docs, and polished the MkDocs site** (`CONTRIBUTING.md`, `SECURITY.md`, `docs/`, `mkdocs.yml`): `CONTRIBUTING.md` was rewritten — it pointed contributors at a non-existent `make run-kafka-health` target (now `make run-assistant`), the wrong validator import (`orrery_core.validation` → `orrery_core.security.validation`), and a stale project tree; it now documents the real `fmt`/`lint`/`test`/`eval` flow, Conventional Commits, the CHANGELOG expectation, the AEP process, and the mock-every-operator-client testing rule. `SECURITY.md` now references the shipped runtime defenses (`SafetyScreenPlugin`, `PIIRedactionPlugin`) and the `0.x` pre-release support line. Brand consistency pass (`AI Agents platform` → `Orrery`) across getting-started/integrations/enhancements. MkDocs style: Inter + JetBrains Mono fonts, `navigation.prune` / `content.code.annotate` / instant-progress, and a light CSS polish for tables and code blocks. Strict build passes.
@@ -667,7 +667,7 @@ invisible to anyone consuming the image or the library.
 ### Changed
 - **Web console renders assistant replies as markdown** (`web/src/components/MessageList.tsx`): agent replies are markdown (lists, bold, inline code, tables) and were displayed raw — literal `**` and `*` bullets. Assistant bubbles now render through `react-markdown` + `remark-gfm` (React elements, no `dangerouslySetInnerHTML`, so no sanitizer needed) with theme-aware typography for lists, code blocks, and scrollable tables; user messages stay plain text.
 
-## [0.2.1] - 2026-07-18
+## [0.2.1] - 2026-07-18 (tag removed; shipped in 0.2.3)
 
 ### Added
 - **Web console MVP (AEP-019, Milestone 1)** (`web/`, `core/orrery_core/serving/server.py`): a Vite + React + TypeScript single-page console served by the existing FastAPI front door — bearer-token gate (token persisted locally, sent as `Authorization` on `POST /chat`), chat threading the server-issued `session_id`, an identity + role badge (decoded client-side for display only; the server remains authoritative for RBAC), and loading/error/network/auth-expiry states with theme-aware, accessible CSS. Opt-in via `ORRERY_WEB_CONSOLE_ENABLED` (default off): the built bundle mounts at `/` **after** the API routes so explicit routes always win, and a missing bundle is warn-and-skip, not a crash — the static shell is public, `/chat` stays JWT-gated. The Docker image builds the bundle in a `node:22` stage and copies only `dist/` into the Python image (no Node in the runtime image); the Node toolchain is isolated from the uv workspace, so `make test` stays Node-free. Dedicated web CI job (eslint + prettier + tsc strict + vitest).
@@ -681,7 +681,7 @@ invisible to anyone consuming the image or the library.
 ### Fixed
 - **Destructive-tool confirmation looped forever through an `AgentTool`** (`core/orrery_core/security/guardrails.py`, `agents/orrery-assistant/orrery_assistant/agent.py`): in requester-verified (strict) mode the pending confirmation was stored in `tool_context.state`, but guarded tools are reached *through* an `AgentTool` (the chat root delegates to a specialist) and every `AgentTool` call runs the specialist in a **fresh, throwaway sub-session**. The pending written during the request turn was therefore gone by the turn the human's `approve` arrived, so the `approved` branch was structurally unreachable — the gate re-prompted every time and the root model spun, re-calling the specialist with fabricated approvals (`"approve"`, `"Force restart…"`, `"I explicitly approve…"`) until it hit its iteration cap. Two fixes: (1) strict-mode pendings now live in a process-level `PendingConfirmationStore` keyed by **requester** (the one identity the gateway forward-propagates into every sub-invocation and that is stable across turns), so a real approval in a later, different session resolves the pending raised earlier; the "only the original requester may approve" rule is now enforced by the key itself (fail-closed on an unknown requester). (2) The chat-root instruction now mandates: on a `confirmation_required` result, relay it to the user and **stop** — never self-approve or re-call the specialist in the same turn. Model-mediated (non-strict) mode is unchanged. Regression test drives a `@destructive` tool across two distinct sub-sessions and asserts the approval resolves. *Note: `PendingConfirmationStore` is process-local; multi-replica HTTP deployments need a shared backend, mirroring the Google Chat store above.*
 
-## [0.2.0] - 2026-07-11
+## [0.2.0] - 2026-07-11 (tag removed; shipped in 0.2.3)
 
 ### Added
 - **Autonomy levels (L2/L3/L4)** (`core/orrery_core/plugins/autonomy_plugin.py`): a third access-control axis, orthogonal to RBAC — RBAC answers *who* may act, autonomy answers *which mode this process runs in*. **L2** is read-only fail-closed (only unguarded tools + an explicit whitelist run), **L3** allows mutations but blocks `@destructive` (+ blacklist), **L4** allows destructive tools behind ADK-native `request_confirmation`. Classification comes from the same `@confirm`/`@destructive` metadata RBAC uses. Opt-in: registered only when `ORRERY_AUTONOMY_LEVEL` (or `default_plugins(autonomy_level=...)`) is set, with a per-request `session.state["autonomy_level"]` override. Blocked calls return a structured deny dict so audit/metrics still observe them.
@@ -737,7 +737,7 @@ invisible to anyone consuming the image or the library.
 - **Observability page consolidated** (`docs/metrics.md`, retitled *Observability* in the nav): metrics and distributed tracing now live on one page — the three-signal overview, metrics reference, and the full tracing guide (the Grafana Tempo trace-waterfall screenshot, what the spans carry, log↔trace correlation, and the `make tracing-up` local stack + dashboard). `docs/config/general.md` keeps a compact tracing env-var table that links to it, so tracing is discoverable under *Platform Features → Observability* rather than buried in configuration. The homepage Observability card and "Observable by Design" principle now mention traces, the `CLAUDE.md` architecture section gains a tracing bullet, and **AEP-010 is marked completed** (with an implementation note on how the final design diverged from the original proposal and why exemplars were deferred).
 - **mkdocs navigation polish**: dropped `navigation.expand` for a cleaner collapsed sidebar and added `navigation.footer` (prev/next), `navigation.instant`(+`.prefetch`), `toc.follow`, and `search.share`.
 
-## [0.1.10] - 2026-06-14
+## [0.1.10] - 2026-06-14 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Two-root ADK 2.0 architecture (ADR-003)**: The orchestrator is split into two entrypoints that reuse the same node agents. The interactive root is `orrery_chat_agent`, a chat-mode `LlmAgent` that keeps conversation history and routes free-form queries to the six specialist `AgentTool`s + memory, plus an `incident_triage_agent` `AgentTool` for single-turn full sweeps. The batch root is `orrery_triage_workflow`, a deterministic graph `Workflow` (`make run-triage`) — parallel health checks → `health_join` → triage → conditional remediation. A chat-mode agent must be a root (ADK forbids it as a routed graph node) and a `Workflow` can't be an `AgentTool`, so the two are separate by design.
@@ -795,7 +795,7 @@ invisible to anyone consuming the image or the library.
 - **`README.md` — feature bullet** in *Intelligence & Orchestration* announcing opt-in planning with the env-var on-ramp.
 - **`.env.example` — Planning block** documenting `ORRERY_PLANNER`, `ORRERY_PLANNER_THINKING_BUDGET`, `ORRERY_PLANNER_INCLUDE_THOUGHTS` with inline guidance on when to use each value.
 
-## [0.1.9] - 2026-04-26
+## [0.1.9] - 2026-04-26 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Progressive progress cards in Google Chat** (`agents/google-chat-bot`): The async response path now posts a live "🔍 Investigating…" Card v2 immediately and PATCHes it in place as the agent run progresses. Operators see the currently executing sub-agent (friendly label — *Checking Kafka*, *Synthesizing findings*, …), a tool-call breadcrumb, subsystem health chips (✅/⚠️/❌/⏳) derived from `state_delta` writes on `kafka_status` / `k8s_status` / `docker_status` / `observability_status` / `elasticsearch_status`, an optional remediation panel populated by `remediation_action` / `verification_result` / `remediation_summary`, and an elapsed-seconds footer. Updates are debounced at 800ms and force-flushed on status transitions.
@@ -818,7 +818,7 @@ invisible to anyone consuming the image or the library.
 - **Re-prompting loop on every Approve retry** (`agents/google-chat-bot`): The per-context `_gchat_pending_<tool>` flag the callback set on the first call lived on the AgentTool's child session and was invisible to subsequent calls (each AgentTool invocation gets a fresh sub-session). On retry the callback never saw a matching pending and posted *another* approval card — the operator could be stuck approving forever. Resolved by moving the handshake into `ConfirmationStore` (see *Changed* above).
 - **APP_COMMAND payloads with empty `message: {}` resolved to the wrong pending in shared spaces**: Quick Command events don't carry a thread name, so `_extract_thread_name` returns `None` and the handler falls back to matching by space name. The handler now logs a warning when this fallback fires so operators can see when concurrent destructive actions in a shared space could collide on the resolution.
 
-## [0.1.8] - 2026-04-23
+## [0.1.8] - 2026-04-23 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Elasticsearch Agent** (`agents/elasticsearch`): New specialist agent for Elasticsearch cluster operations, exposing **19 read-only REST tools** — cluster health/stats/nodes/pending tasks/settings, indices listing/stats/mappings/settings, shard allocation + `explain` diagnostics, `search` + `count`, index templates, aliases, ILM policies + `explain_ilm_status`, and snapshot repositories/snapshots. HTTP session is pooled as a module-level singleton with API-key / basic-auth / CA bundle support via `ELASTICSEARCH_*` env vars.
@@ -827,7 +827,7 @@ invisible to anyone consuming the image or the library.
 - **Compose profile + Makefile targets**: `docker-compose.yml` gains an `elastic` profile with single-node Elasticsearch 8.13.4 + Kibana (security disabled for dev); `make run-elasticsearch` / `make run-elasticsearch-cli` launch the agent standalone.
 - **Tests & evals**: 36 new unit tests (25 REST + 11 ECK) with mocked `requests.Session` / `CustomObjectsApi` / `CoreV1Api`, plus 6 new eval scenarios (`cluster_and_indices.test.json`, `eck.test.json`) — bringing the suite to **608 tests / 28 eval scenarios**.
 
-## [0.1.7] - 2026-04-19
+## [0.1.7] - 2026-04-19 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Zero-clone Docker quick-start**: The README and `docs/getting-started.md` now lead with `docker pull ghcr.io/bahalla/orrery:latest` + `docker run` for a 30-second single-container test drive, followed by a `curl`-the-compose-file path for the full Kafka/Postgres/Prometheus stack — no repository clone required.
@@ -848,7 +848,7 @@ invisible to anyone consuming the image or the library.
 ### Removed
 - **`Dockerfile.prod`**: replaced by the consolidated, production-ready `Dockerfile`. The `release.yml` workflow now builds from `./Dockerfile`.
 
-## [0.1.6] - 2026-04-19
+## [0.1.6] - 2026-04-19 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Operator Registry (`orrery_core.operators`)**: Pluggable registry for Kubernetes operator detection and CR status interpretation. Ships with built-in detectors for **Strimzi** (`kafka.strimzi.io` — 9 kinds incl. `Kafka`, `KafkaTopic`, `KafkaConnector`, `KafkaRebalance`) and **ECK** (`*.k8s.elastic.co` — 7 kinds incl. `Elasticsearch`, `Kibana`, `ApmServer`, `Beat`). New detectors can be registered via `default_registry.register()`.
@@ -866,7 +866,7 @@ invisible to anyone consuming the image or the library.
 - **Docs**: `docs/integrations/google-chat-pubsub.md` now documents every Terraform variable (`chat_publisher_email`, `enable_vertex_ai`, `vertex_ai_project_id`, tuning knobs) and the timeout-alignment rule for Pub/Sub ack deadlines.
 - **AEP-018**: Proposal for Pub/Sub idempotency (dedup store on `eventId`) and HPA-on-backlog for the `pubsubWorker` to remove the single-replica SPOF during incidents.
 
-## [0.1.5] - 2026-04-18
+## [0.1.5] - 2026-04-18 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Pub/Sub Diagnostics**: Added verbose trace logging for message receipt, parsing, and agent execution to simplify troubleshooting.
@@ -876,7 +876,7 @@ invisible to anyone consuming the image or the library.
 ### Fixed
 - **Cleanup**: Ensured proper cancellation of background heartbeat tasks during worker shutdown.
 
-## [0.1.4] - 2026-04-18
+## [0.1.4] - 2026-04-18 (tag removed; shipped in 0.1.11)
 
 ### Added
 - **Google Chat Pub/Sub Transport**: Added support for private GKE clusters via Pub/Sub connection type.
@@ -891,7 +891,7 @@ invisible to anyone consuming the image or the library.
 ### Fixed
 - **Poison Message Handling**: Implemented robust `ack`/`nack` logic in the Pub/Sub worker to prevent infinite redelivery of malformed payloads.
 
-## [0.1.3] - 2026-04-13
+## [0.1.3] - 2026-04-13 (tag removed; shipped in 0.1.11)
 
 ### Changed
 - **Rebranding**: Project renamed from "AI Agents for DevOps" to **Orrery**.
@@ -900,7 +900,7 @@ invisible to anyone consuming the image or the library.
 - **Infrastructure**: Updated Kubernetes manifests, Helm charts, and Docker images to use the `orrery` namespace and naming.
 - **Observability**: Prometheus metrics renamed from `ai_agents_*` to `orrery_*`.
 
-## [0.1.2] - 2026-04-12
+## [0.1.2] - 2026-04-12 (tag removed; shipped in 0.1.11)
 
 ### Added
 
@@ -918,7 +918,7 @@ invisible to anyone consuming the image or the library.
 - **Async Auth Scope Guidance**: Added detailed troubleshooting and configuration for `403 Forbidden` errors caused by missing `chat.bot` scopes when using Application Default Credentials (ADC).
 - **ADC-First Auth Pattern**: Updated Google Chat bot to prioritize Application Default Credentials, enabling seamless Workload Identity support on GKE and Cloud Run.
 
-## [0.1.1] - 2026-04-11
+## [0.1.1] - 2026-04-11 (tag removed; shipped in 0.1.11)
 
 ### Added
 
@@ -956,7 +956,7 @@ invisible to anyone consuming the image or the library.
 - **Kafka Tool Imports**: Fixed a `NameError` in `kafka_health_agent/tools.py` caused by using decorators before they were imported.
 - **Database URL Masking**: Ensured `DATABASE_URL` is masked in all log outputs and console prints to prevent credential leaks.
 
-## [0.1.0] - 2026-04-09
+## [0.1.0] - 2026-04-09 (tag removed; shipped in 0.1.11)
 
 First public release of the AI Agents for DevOps & SRE platform.
 
@@ -995,31 +995,31 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Server-side role enforcement prevents privilege escalation
 
 [Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.6...HEAD
-[0.6.6]: https://github.com/BAHALLA/orrery/compare/v0.6.5...v0.6.6
-[0.6.5]: https://github.com/BAHALLA/orrery/compare/v0.6.4...v0.6.5
-[0.6.4]: https://github.com/BAHALLA/orrery/compare/v0.6.3...v0.6.4
-[0.6.3]: https://github.com/BAHALLA/orrery/compare/v0.6.2...v0.6.3
-[0.6.2]: https://github.com/BAHALLA/orrery/compare/v0.6.1...v0.6.2
-[0.6.1]: https://github.com/BAHALLA/orrery/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.0
+[0.6.6]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.6
+[0.6.5]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
+[0.6.4]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
+[0.6.3]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
+[0.6.2]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
+[0.6.1]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
+[0.6.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
 [0.5.0]: https://github.com/BAHALLA/orrery/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/BAHALLA/orrery/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/BAHALLA/orrery/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/BAHALLA/orrery/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/BAHALLA/orrery/compare/v0.2.3...v0.3.0
-[0.2.3]: https://github.com/BAHALLA/orrery/compare/v0.2.2...v0.2.3
-[0.2.2]: https://github.com/BAHALLA/orrery/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/BAHALLA/orrery/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/BAHALLA/orrery/compare/v0.1.11...v0.2.0
-[0.1.11]: https://github.com/BAHALLA/orrery/compare/v0.1.10...v0.1.11
-[0.1.10]: https://github.com/BAHALLA/orrery/compare/v0.1.9...v0.1.10
-[0.1.9]: https://github.com/BAHALLA/orrery/compare/v0.1.8...v0.1.9
-[0.1.8]: https://github.com/BAHALLA/orrery/compare/v0.1.7...v0.1.8
-[0.1.7]: https://github.com/BAHALLA/orrery/compare/v0.1.6...v0.1.7
-[0.1.6]: https://github.com/BAHALLA/orrery/compare/v0.1.5...v0.1.6
-[0.1.5]: https://github.com/BAHALLA/orrery/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/BAHALLA/orrery/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/BAHALLA/orrery/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/BAHALLA/orrery/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/BAHALLA/orrery/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.0
+[0.4.1]: https://github.com/BAHALLA/orrery/compare/v0.3.1...v0.4.1
+[0.4.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.4.1
+[0.3.1]: https://github.com/BAHALLA/orrery/compare/v0.2.3...v0.3.1
+[0.3.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.3.1
+[0.2.3]: https://github.com/BAHALLA/orrery/compare/v0.1.11...v0.2.3
+[0.2.2]: https://github.com/BAHALLA/orrery/releases/tag/v0.2.3
+[0.2.1]: https://github.com/BAHALLA/orrery/releases/tag/v0.2.3
+[0.2.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.2.3
+[0.1.11]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.10]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.9]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.8]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.7]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.6]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.5]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.4]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.3]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.2]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.1]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[0.1.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
