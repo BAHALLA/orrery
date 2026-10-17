@@ -422,6 +422,12 @@ def discover_specialists(
             )
             continue
         spec = _as_spec(key, ep, ep.load(), plugin=entry.source == "plugin")
+        if clash := next((s for s in selected if s.agent.name == spec.agent.name), None):
+            # The coordinator calls each as an AgentTool named after the agent:
+            # two with one name would be one tool shadowing the other.
+            raise ValueError(
+                f"Specialists {clash.key!r} and {key!r} both name their agent {spec.agent.name!r}"
+            )
         selected.append(
             Specialist(
                 key=key,

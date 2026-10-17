@@ -3,9 +3,13 @@
 Three jobs, one invariant — *the gateway only ever serves a tree that was
 successfully built*:
 
-- **startup**: apply the stored catalog, if any. A stored catalog that no
-  longer builds (a specialist it names was uninstalled) is logged loudly and
-  skipped; the deployment's default tree keeps serving.
+- **startup**: apply the stored catalog, if any. Switching a specialist off is
+  often a safety decision, so startup **fails closed**: a store it cannot read
+  stops startup (serving the deployment's defaults would quietly switch back
+  on what an admin switched off), and a stored catalog that no longer builds
+  (a specialist or tool it names was uninstalled) is served *narrowed*: its
+  switch-offs that still apply, without its additions. Only if even that
+  cannot build does startup stop.
 - **update**: build the new tree first (that is the validation), then save
   with an optimistic version check, then swap. A build failure changes
   nothing; a version conflict changes nothing.
@@ -51,7 +55,7 @@ class CatalogService:
         return self._applied_version
 
     async def start(self) -> None:
-        await self._sync()
+        await self._sync(startup=True)
         if self._poll_seconds > 0:
             self._task = asyncio.create_task(self._follow(), name="orrery-catalog-follow")
 
@@ -86,11 +90,32 @@ class CatalogService:
         logger.info("Agent catalog v%d applied (by %s)", stored.version, actor)
         return stored
 
-    async def _sync(self) -> None:
+    def _narrowed(self, stored: AgentCatalog) -> Any | None:
+        """The tree for *stored*'s switch-offs alone, or ``None`` if even that fails.
+
+        Keeps every switch-off that still names a specialist the deployment
+        runs, and drops the catalog's own agents: what it removed stays
+        removed, what it added and no longer builds is left out.
+        """
+        runs = {s.key for s in self._admin.options().specialists if s.available}
+        try:
+            return self._admin.build(
+                AgentCatalog(disabled_specialists=sorted(set(stored.disabled_specialists) & runs))
+            )
+        except ValueError:
+            return None
+
+    async def _sync(self, *, startup: bool = False) -> None:
         """Apply the stored catalog if it is newer than what is being served."""
         try:
             stored = await asyncio.to_thread(self._store.load)
-        except Exception:
+        except Exception as exc:
+            if startup:
+                raise RuntimeError(
+                    "Could not read the agent catalog store at startup. Refusing to serve "
+                    "the deployment's default agents, which may include specialists an "
+                    "admin switched off."
+                ) from exc
             logger.warning("Could not read the agent catalog store", exc_info=True)
             return
         if stored.version == self._applied_version:
@@ -101,14 +126,28 @@ class CatalogService:
             try:
                 root = self._admin.build(stored)
             except ValueError as exc:
+                root = self._narrowed(stored)
+                if root is None:
+                    if startup:
+                        raise RuntimeError(
+                            f"Stored agent catalog v{stored.version} does not build ({exc}), "
+                            "and neither do its switch-offs alone"
+                        ) from exc
+                    logger.error(
+                        "Stored agent catalog v%d no longer builds (%s); keeping the current "
+                        "agents",
+                        stored.version,
+                        exc,
+                    )
+                    # Remember it, so the same broken version isn't retried every poll.
+                    self._applied_version = stored.version
+                    return
                 logger.error(
-                    "Stored agent catalog v%d no longer builds (%s); keeping the current agents",
+                    "Stored agent catalog v%d no longer builds (%s); serving its switch-offs "
+                    "without its agents",
                     stored.version,
                     exc,
                 )
-                # Remember it, so the same broken version isn't retried every poll.
-                self._applied_version = stored.version
-                return
             self._gateway.replace_root_agent(root)
             self._applied_version = stored.version
         logger.info("Agent catalog v%d applied from the store", stored.version)

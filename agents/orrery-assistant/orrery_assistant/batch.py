@@ -30,6 +30,7 @@ is still complete.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from typing import Any
@@ -65,6 +66,10 @@ class SweepOutcome:
     verdict_missing: bool = False
     #: No enabled specialist declared a health check: nothing was swept.
     no_systems_checked: bool = False
+    #: Per system the sweep was built with: did its checker report anything?
+    #: The graph's shape follows what is installed and enabled, so the summary
+    #: line records what this run actually covered.
+    systems_checked: dict[str, bool] = field(default_factory=dict)
     error: str | None = None
     calls: int = 0
     #: ``(tool, status)`` refusals that left a hole in the sweep's coverage.
@@ -76,7 +81,12 @@ class SweepOutcome:
     def exit_code(self) -> SweepExit:
         if self.error is not None or self.severity is None:
             return SweepExit.FAILED
-        if self.coverage_holes or self.verdict_missing or self.no_systems_checked:
+        if (
+            self.coverage_holes
+            or self.verdict_missing
+            or self.no_systems_checked
+            or not all(self.systems_checked.values())
+        ):
             return SweepExit.INCOMPLETE
         return SweepExit.COMPLETE
 
@@ -89,7 +99,11 @@ class SweepOutcome:
 
 
 def judge_sweep(
-    state: dict[str, Any], ledger: ToolLedger, error: BaseException | None = None
+    state: dict[str, Any],
+    ledger: ToolLedger,
+    error: BaseException | None = None,
+    *,
+    status_keys: Mapping[str, str] | None = None,
 ) -> SweepOutcome:
     """Build the :class:`SweepOutcome` for a finished (or failed) sweep.
 
@@ -97,6 +111,8 @@ def judge_sweep(
         state: The session state after the run.
         ledger: The ledger armed for the run.
         error: The exception the run raised, if it raised.
+        status_keys: System key -> the state key its checker reports under. A
+            system whose checker left no report is a hole in the sweep.
     """
     holes: list[tuple[str, str]] = []
     awaiting: list[str] = []
@@ -115,6 +131,10 @@ def judge_sweep(
         severity=str(severity) if severity else None,
         verdict_missing=bool(state.get("triage_verdict_missing")),
         no_systems_checked=bool(state.get("no_systems_checked")),
+        systems_checked={
+            system: bool(str(state.get(key, "")).strip())
+            for system, key in (status_keys or {}).items()
+        },
         error=f"{type(error).__name__}: {error}" if error is not None else None,
         calls=len(ledger.calls()),
         coverage_holes=holes,

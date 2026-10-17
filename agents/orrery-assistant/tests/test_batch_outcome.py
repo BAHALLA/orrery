@@ -87,3 +87,16 @@ def test_a_sweep_that_checked_no_system_is_incomplete():
     outcome = judge_sweep(state, _ledger())
     assert outcome.exit_code is SweepExit.INCOMPLETE
     assert json.loads(outcome.summary())["no_systems_checked"] is True
+
+
+def test_the_summary_records_what_each_system_reported():
+    keys = {"kafka": "kafka_status", "redis": "redis_status"}
+    state = {"incident_severity": "healthy", "kafka_status": "STATUS: healthy"}
+    outcome = judge_sweep(state, _ledger(), status_keys=keys)
+    assert outcome.systems_checked == {"kafka": True, "redis": False}
+    # A checker that reported nothing is a hole, whatever the verdict says.
+    assert outcome.exit_code is SweepExit.INCOMPLETE
+    assert json.loads(outcome.summary())["systems_checked"] == {"kafka": True, "redis": False}
+
+    state["redis_status"] = "STATUS: healthy"
+    assert judge_sweep(state, _ledger(), status_keys=keys).exit_code is SweepExit.COMPLETE

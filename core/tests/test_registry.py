@@ -453,3 +453,9 @@ def test_config_file(tmp_path, monkeypatch):
         "    instruction: Check events first.\n    tools: [get_events]\n"
     )
     assert load_agents_config(path).agents[0].name == "first_responder"
+
+
+def test_two_specialists_with_one_agent_name_stop_startup():
+    loader = _eps(("kafka", _agent("same_a", [])), ("docker", _agent("same_a", [])))
+    with pytest.raises(ValueError, match="both name their agent 'same_a'"):
+        discover_specialists(loader=loader)

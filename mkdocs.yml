@@ -127,6 +127,7 @@ nav:
   - Concepts:
     - Design Patterns: agent-design-patterns.md
     - Agents Overview: agents-overview.md
+    - How Specialists Are Chosen: specialist-selection.md
     - Guardrails & RBAC: guardrails.md
     - Acting as the user: impersonation.md
     - Structured Tool Results: tool-results.md
@@ -137,7 +138,7 @@ nav:
       - "ADR-002: Agent Composition": adr/002-agent-tool-vs-sub-agents.md
       - "ADR-003: Graph Workflow & Conversational Root": adr/003-graph-workflow-inversion.md
       - "ADR-004: Per-user Token Exchange": adr/004-user-token-exchange.md
-      - "ADR-005: Specialist Selection": adr/005-specialist-selection.md
+      - "ADR-005: Specialist Declarations": adr/005-specialist-selection.md
   - Operate:
     - Production Deployment: deployment.md
     - Integrations:

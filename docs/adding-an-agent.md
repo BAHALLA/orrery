@@ -236,6 +236,9 @@ put its code in front of the coordinator:
 Two packages registering one key stop startup, so a plugin cannot quietly
 replace a built-in.
 
+How the coordinator then chooses among specialists, the trust model and the
+failure modes: [How specialists are chosen](specialist-selection.md).
+
 ---
 
 ## No code at all: declarative agents {: #declarative }

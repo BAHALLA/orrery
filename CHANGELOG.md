@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key, and an empty report is "degraded".
 - A batch run with no system to check exits `2` (incomplete) instead of `0`,
   and does not remediate on no evidence.
+- The batch run's JSON summary records, per system, whether its checker
+  reported (`systems_checked`); a silent checker makes the run incomplete.
 - Two different tools under one name in an assembled agent (sweep, actor,
   verifier) now stop startup instead of failing at the model API.
 - The console's Agents tab no longer imports the code of specialists the
@@ -68,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds the built-ins to. Remediation actions must be guarded.
 - Routing hints and agent descriptions reach the coordinator's prompt as one
   line of at most 200 characters, so one cannot open a section of its own.
+- **The admin catalog fails closed at startup.** A stored catalog that no
+  longer builds is served narrowed (its switch-offs, without its additions)
+  instead of falling back to the env's defaults, which re-enabled specialists
+  an admin had switched off; an unreadable store stops startup.
+- Two specialists with one agent name stop startup.
 - `ORRERY_CONSOLE_OIDC_ISSUER` must be https (http only for localhost) and
   match `JWT_ISSUER`; a mismatch used to sign in and then 401 every call.
 
