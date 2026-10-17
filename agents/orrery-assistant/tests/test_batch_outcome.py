@@ -78,3 +78,12 @@ def test_summary_is_one_json_line_with_the_outcome():
     assert payload["outcome"] == "incomplete"
     assert payload["exit_code"] == 2
     assert payload["coverage_holes"] == [["list_pods", "access_denied"]]
+
+
+def test_a_sweep_that_checked_no_system_is_incomplete():
+    # With no specialist declaring a health check there is nothing to sweep;
+    # no refusal is recorded, so the ledger alone would call it complete.
+    state = {"incident_severity": "healthy", "no_systems_checked": True}
+    outcome = judge_sweep(state, _ledger())
+    assert outcome.exit_code is SweepExit.INCOMPLETE
+    assert json.loads(outcome.summary())["no_systems_checked"] is True

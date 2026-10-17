@@ -7,10 +7,10 @@ from google.adk.agents import LlmAgent
 
 from orrery_assistant import agent as chat
 from orrery_assistant.admin import ChatAgentAdmin
-from orrery_core import base_instruction, is_confirmation_gate
+from orrery_core import base_instruction, confirm, is_confirmation_gate
 from orrery_core.agent.catalog_store import AgentCatalog
 from orrery_core.agent.declarative import DeclarativeAgentConfig
-from orrery_core.registry import JOURNAL, HealthCheck, Specialist
+from orrery_core.registry import HealthCheck, Installed, Journal, Remediation, Specialist
 
 
 def _delegates(root) -> list[str]:
@@ -139,12 +139,28 @@ async def redis_memory() -> dict:
     return {}
 
 
+@confirm("fails the Redis primary over to a replica")
+async def failover_redis() -> dict:
+    """Fail over."""
+    return {}
+
+
+async def write_runbook_note() -> dict:
+    """Save a note in the team wiki."""
+    return {}
+
+
+async def record_change() -> dict:
+    """Record an operation in the change log."""
+    return {}
+
+
 def _redis(**extra) -> Specialist:
     agent = LlmAgent(
         name="redis_agent",
         model="gemini-x",
         description="Redis.",
-        tools=[redis_ping, redis_memory],
+        tools=[redis_ping, redis_memory, failover_redis, write_runbook_note, record_change],
     )
     return Specialist(
         key="redis",
@@ -181,5 +197,82 @@ def test_a_plugin_specialist_routes_and_sweeps_like_a_builtin():
 def test_a_plugin_journal_is_offered_under_its_own_name():
     offer = "offer once to save findings via redis_agent"
     assert offer not in str(base_instruction(chat.build_chat_agent([_redis()], [])))
-    with_journal = chat.build_chat_agent([_redis(capabilities=frozenset({JOURNAL}))], [])
+    with_journal = chat.build_chat_agent([_redis(journal=_REDIS_JOURNAL)], [])
     assert offer in str(base_instruction(with_journal))
+
+
+_REDIS_JOURNAL = Journal(save=write_runbook_note, log=record_change)
+_REDIS_REMEDIATION = Remediation(
+    actions=(failover_redis,), playbook="failover_redis when the primary is down."
+)
+
+
+def test_a_plugin_journal_saves_the_batch_report_with_its_own_tools():
+    # The batch step used to call ops-journal's tools whatever journal was on.
+    writer = chat.build_journal_writer(_redis(journal=_REDIS_JOURNAL))
+    assert _tool_names(writer) == {"write_runbook_note", "record_change"}
+    assert "save_note" not in str(base_instruction(writer))
+    assert "with write_runbook_note" in str(base_instruction(writer))
+
+
+def test_a_plugin_remediation_is_the_only_one_the_loop_can_take():
+    from orrery_assistant.remediation import build_remediation
+
+    nodes = build_remediation([_redis(remediation=_REDIS_REMEDIATION)], record_change)
+    assert nodes is not None
+    assert _tool_names(nodes.actor) == {"failover_redis", "record_change"}
+    assert is_confirmation_gate(nodes.actor.before_tool_callback)
+    assert "failover_redis when the primary is down" in str(base_instruction(nodes.actor))
+    # The verifier sees the system through its health-check reads.
+    assert _tool_names(nodes.verifier) == {
+        "redis_ping",
+        "redis_memory",
+        "mark_remediation_resolved",
+    }
+    assert _tool_names(nodes.summarizer) == {"record_change"}
+
+
+def test_no_remediation_loop_without_a_remediating_specialist():
+    # The lab runs with k8s off: Kafka and observability only observe, so an
+    # unattended run must have nothing it could act with.
+    from orrery_assistant.remediation import build_remediation
+
+    assert build_remediation([_redis()]) is None
+    kafka_only = [s for s in chat._specialists if s.key in ("kafka", "observability")]
+    assert build_remediation(kafka_only) is None
+
+
+def test_the_k8s_remediation_comes_from_its_declaration():
+    from orrery_assistant.remediation import build_remediation
+
+    nodes = build_remediation([s for s in chat._specialists if s.key == "k8s"])
+    assert nodes is not None
+    assert {"restart_deployment", "scale_deployment", "rollback_deployment"} == _tool_names(
+        nodes.actor
+    )
+
+
+def test_two_tools_with_one_name_in_a_sweep_are_refused():
+    # Two function declarations with one name are a 400 from the model API.
+    async def get_events() -> dict:
+        """Another system's events."""
+        return {}
+
+    clash = Specialist(
+        key="other",
+        agent=LlmAgent(name="other_agent", model="gemini-x", tools=[get_events]),
+        distribution="acme-other",
+        health_check=HealthCheck(system="Other", checks=".", criteria=".", tools=(get_events,)),
+    )
+    k8s = [s for s in chat._specialists if s.key == "k8s"]
+    with pytest.raises(ValueError, match="two different tools are both named 'get_events'"):
+        chat.build_triage_agent([*k8s, clash])
+
+
+def test_options_list_excluded_specialists_without_importing_them(monkeypatch):
+    from orrery_assistant import admin
+
+    installed = [*admin.installed_specialists(), Installed("billing", "acme-billing", "plugin")]
+    monkeypatch.setattr(admin, "installed_specialists", lambda: installed)
+    billing = next(s for s in ChatAgentAdmin().options().specialists if s.key == "billing")
+    assert not billing.available and billing.source == "plugin" and billing.agent_name == ""

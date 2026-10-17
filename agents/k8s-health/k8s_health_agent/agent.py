@@ -1,5 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.registry import HealthCheck, SpecialistSpec
+from orrery_core.registry import HealthCheck, Remediation, SpecialistSpec
 
 from .operators import (
     describe_custom_resource,
@@ -137,5 +137,15 @@ specialist = SpecialistSpec(
             "or partial replica availability; healthy = none of these."
         ),
         tools=(get_cluster_info, get_nodes, get_events, list_pods),
+    ),
+    remediation=Remediation(
+        actions=(restart_deployment, scale_deployment, rollback_deployment),
+        playbook=(
+            "restart_deployment for CrashLoopBackOff / OOMKilled / wedged pods; "
+            "scale_deployment for saturation or growing consumer lag with healthy pods; "
+            "rollback_deployment for failures that started right after a rollout. "
+            "The target is a deployment and its namespace."
+        ),
+        verify=(get_deployment_status, list_pods, describe_pod, get_pod_logs, get_events),
     ),
 )

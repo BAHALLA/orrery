@@ -12,17 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Specialists declare what they contribute; the coordinator knows none by
   name** (ADR-005). An `orrery.specialists` entry point may now name a
   `SpecialistSpec` instead of a bare agent: its `routing_hint`, its
-  `HealthCheck` (its part of a health sweep), and `capabilities` such as
-  `JOURNAL`. The coordinator's routing section, the conversational sweep, the
-  batch workflow's parallel checkers and the journal offer are all built from
-  the enabled specialists' declarations. The hard-coded tables (routing hints,
-  sweep tools, five checkers, the ops-journal name) are gone, so a third-party
-  specialist routes, joins both sweeps and offers journaling exactly like a
-  built-in one. Bare-agent entry points still work.
+  `HealthCheck` (its part of a health sweep), its `Remediation` (guarded
+  actions the unattended loop may take) and its `Journal` (where findings are
+  saved). The coordinator's routing section, the conversational sweep, the
+  batch workflow's parallel checkers, the remediation loop and the journal
+  offer and step are all built from the enabled specialists' declarations. The
+  hard-coded tables (routing hints, sweep tools, five checkers, status keys,
+  remediation tools, the ops-journal name and tools) are gone, so a
+  third-party specialist routes, sweeps, remediates and journals exactly like
+  a built-in one. Bare-agent entry points still work.
 - The conversational sweep now holds each system to the same severity rubric
   as its batch checker (one `HealthCheck`, two sweeps).
-- The batch workflow journals the report only while a `JOURNAL` specialist is
-  enabled.
+- The batch workflow journals the report only while a journal specialist is
+  enabled, with that specialist's own tools.
+- A specialist key must be a lowercase identifier (`my_db`, not `my-db`); it
+  names the batch checker and its state key.
+
+### Fixed
+
+- **Remediation no longer reaches a switched-off Kubernetes.** The batch
+  loop's actor and verifier imported the k8s and Kafka tools directly, so with
+  `k8s` disabled a degraded verdict still sent the workflow into
+  `restart_deployment` against it (only the confirmation gate stopped it).
+  The loop now exists only when an enabled specialist declares a
+  `Remediation`; otherwise the report says a human must act.
+- The batch fallback (no `record_triage_verdict` call) read a hand-kept list
+  of the built-in systems' report keys, so a third-party checker's "critical"
+  was never read and silence inferred "healthy". It now reads every checker's
+  key, and an empty report is "degraded".
+- A batch run with no system to check exits `2` (incomplete) instead of `0`,
+  and does not remediate on no evidence.
+- Two different tools under one name in an assembled agent (sweep, actor,
+  verifier) now stop startup instead of failing at the model API.
+- The console's Agents tab no longer imports the code of specialists the
+  deployment excludes (read from package metadata instead), and a broken
+  excluded package can no longer break it.
 
 ### Security
 
@@ -30,7 +54,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the specialist's own tools, and none guarded by `@confirm` or
   `@destructive`; anything else stops startup. Sweeps run unattended, and the
   instruction "take no corrective action" was the only thing keeping them
-  read-only.
+  read-only. A tool *named* as a write (`looks_mutating`) is refused too, even
+  undecorated.
+- **Third-party specialists are opt-in.** An installed package (or a
+  dependency pulling one in) is no longer loaded, routed to or put in the
+  prompt by default: it must be named in `ORRERY_SPECIALISTS`. Built-ins stay
+  on by default.
+- **Two packages registering one specialist key stop startup**, instead of the
+  last one silently replacing (for example) the built-in `kafka`.
+- **Third-party specialists meet the confirmation invariants at startup.**
+  Every agent they reach must gate its guarded tools, and no tool named as a
+  write may ship undecorated, the same rules `test_confirmation_wiring.py`
+  holds the built-ins to. Remediation actions must be guarded.
+- Routing hints and agent descriptions reach the coordinator's prompt as one
+  line of at most 200 characters, so one cannot open a section of its own.
+- `ORRERY_CONSOLE_OIDC_ISSUER` must be https (http only for localhost) and
+  match `JWT_ISSUER`; a mismatch used to sign in and then 401 every call.
 
 ## [0.6.3] - 2026-10-17
 

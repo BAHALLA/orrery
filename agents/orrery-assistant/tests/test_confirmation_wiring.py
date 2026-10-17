@@ -122,8 +122,10 @@ def test_remediation_actor_is_gated():
     ``scale_deployment`` is ``@confirm``, so operator RBAC allowed it and nothing
     else stood in the way on ``run_triage.py``'s unattended path.
     """
-    from orrery_assistant.remediation import remediation_actor
+    from orrery_assistant.agent import _remediation
 
+    assert _remediation is not None
+    remediation_actor = _remediation.actor
     assert is_confirmation_gate(remediation_actor.before_tool_callback)
     assert {"restart_deployment", "scale_deployment", "rollback_deployment"} <= {
         getattr(t, "__name__", "") for t in _guarded_tools(remediation_actor)

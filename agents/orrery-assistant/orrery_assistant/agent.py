@@ -18,10 +18,13 @@ entrypoint — `make run-triage` — because a ``Workflow`` cannot be a sub-agen
 
     orrery_triage_workflow (Workflow, separate entrypoint)
       START ─▶ [parallel] one checker per HealthCheck ─▶ health_join (JoinNode)
-            ─▶ triage_summarizer ─▶ journal_writer ─▶ triage_route
-                  ├─("remediate")▶ remediation_actor ⇄ remediation_verifier
-                  │                    └▶ verify_route ─("done")▶ summarizer ─▶ final_report
+            ─▶ triage_summarizer ─▶ journal_writer* ─▶ triage_route
+                  ├─("remediate")▶ remediation_actor* ⇄ remediation_verifier*
+                  │                    └▶ verify_route ─("done")▶ summarizer* ─▶ final_report
                   └─("resolved")▶ final_report
+
+    * only when an enabled specialist contributes it: a Journal for the
+      journal step, a Remediation for the loop.
 """
 
 import os
@@ -35,13 +38,7 @@ from google.adk.tools.load_memory_tool import LoadMemoryTool
 from google.adk.tools.tool_context import ToolContext
 from google.adk.workflow import JoinNode
 
-from ops_journal_agent.tools import log_operation, save_note
-from orrery_assistant.remediation import (
-    remediation_actor,
-    remediation_summarizer,
-    remediation_verifier,
-    verify_route,
-)
+from orrery_assistant.remediation import build_remediation, unique_tools, verify_route
 from orrery_core import (
     AgentTool,
     create_agent,
@@ -53,7 +50,7 @@ from orrery_core import (
 )
 from orrery_core.agent.declarative import build_declarative_agents, load_agents_config
 from orrery_core.knowledge import knowledge_tool
-from orrery_core.registry import JOURNAL, Specialist, discover_specialists
+from orrery_core.registry import Specialist, discover_specialists, one_line
 
 load_agent_env(__file__)
 
@@ -102,7 +99,7 @@ _planner = resolve_planner()
 
 
 def _checker_instruction(system: str, checks: str, criteria: str) -> str:
-    """Bounded-sweep contract shared by the five parallel health checkers.
+    """Bounded-sweep contract shared by the parallel health checkers.
 
     Checkers run unattended inside the triage graph, so the contract optimizes
     for speed (each check once, no exploration) and for a report the
@@ -215,17 +212,31 @@ triage_summarizer = create_agent(
 
 # ── Journal writer ────────────────────────────────────────────────────
 
-journal_writer = create_agent(
-    name="journal_writer",
-    description="Saves the triage report as a journal note.",
-    instruction=(
-        "Read the triage report from session state (triage_report) and save it "
-        "verbatim — no rewriting — with save_note, tag 'incident-triage'. Then call "
-        "log_operation once to record the triage run. Two tool calls total; "
-        "no commentary."
-    ),
-    tools=[save_note, log_operation],
-)
+
+def _journal(specialists: Sequence[Specialist]) -> Specialist | None:
+    """The enabled specialist that keeps records (``SpecialistSpec.journal``), if any."""
+    return next((s for s in specialists if s.journal is not None), None)
+
+
+def _tool_name(tool: Any) -> str:
+    return str(getattr(tool, "name", None) or getattr(tool, "__name__", "") or tool)
+
+
+def build_journal_writer(journal: Specialist) -> Any:
+    """The batch step that saves the triage report, with the journal's own tools."""
+    assert journal.journal is not None  # nosec B101 — callers pass _journal()'s result
+    save, log = journal.journal.save, journal.journal.log
+    return create_agent(
+        name="journal_writer",
+        description="Saves the triage report as a journal note.",
+        instruction=(
+            "Read the triage report from session state (triage_report) and save it "
+            f"verbatim — no rewriting — with {_tool_name(save)}, tag 'incident-triage'. "
+            f"Then call {_tool_name(log)} once to record the triage run. Two tool calls "
+            "total; no commentary."
+        ),
+        tools=unique_tools([save, log], "journal_writer"),
+    )
 
 
 # ── Conversational triage sub-agent ───────────────────────────────────
@@ -247,7 +258,9 @@ def build_triage_agent(specialists: Sequence[Specialist]) -> Any | None:
         return None
     checks = [s.health_check for s in systems]
     names = [c.system for c in checks if c is not None]
-    tools = [tool for c in checks if c is not None for tool in c.tools]
+    tools = unique_tools(
+        [tool for c in checks if c is not None for tool in c.tools], "incident_triage_agent"
+    )
     # Each system's own rubric, the same one its batch checker is held to.
     rubric = "".join(
         f"- **{c.system}**: check {c.checks} Severity: {c.criteria}\n"
@@ -300,13 +313,8 @@ incident_triage_agent = build_triage_agent(_specialists)
 # description): the coordinator holds no knowledge of any specialist by name.
 def _routing_lines(specialists: Sequence[Specialist], declarative_agents: Sequence[Any]) -> str:
     lines = [(s.agent.name, s.hint) for s in specialists]
-    lines += sorted((a.name, a.description or a.name) for a in declarative_agents)
+    lines += sorted((a.name, one_line(a.description or a.name)) for a in declarative_agents)
     return "".join(f"- **{name}**: {hint}\n" for name, hint in lines)
-
-
-def _journal(specialists: Sequence[Specialist]) -> Specialist | None:
-    """The enabled specialist that can save findings, if any (capability JOURNAL)."""
-    return next((s for s in specialists if JOURNAL in s.capabilities), None)
 
 
 _MCP_INSTRUCTION = (
@@ -449,22 +457,34 @@ _PROBLEM_SIGNALS = (
     "unreachable",
 )
 
-_STATUS_KEYS = (
-    "kafka_status",
-    "k8s_status",
-    "docker_status",
-    "observability_status",
-    "elasticsearch_status",
+# The checkers' report keys, from the checkers themselves: a key listed here by
+# hand would miss every specialist added since, and read its silence as healthy.
+_STATUS_KEYS = tuple(c.output_key for c in HEALTH_CHECKERS)
+
+# Built from the enabled specialists' declarations: ``None`` when no enabled
+# specialist offers a remediation action (or a journal), and then the graph
+# has no such branch (or step) at all.
+_journal_specialist = _journal(_specialists)
+journal_writer = build_journal_writer(_journal_specialist) if _journal_specialist else None
+_remediation = build_remediation(
+    _specialists,
+    _journal_specialist.journal.log
+    if _journal_specialist and _journal_specialist.journal
+    else None,
 )
 
 
-def _infer_severity_from_status(state: Any) -> str:
+def _infer_severity_from_status(state: Any, keys: Sequence[str] | None = None) -> str:
     """Best-effort severity from the per-system status reports.
 
     Used only when ``record_triage_verdict`` was not called. Returns
-    ``"degraded"`` if any strong problem signal appears, else ``"healthy"``.
+    ``"degraded"`` if any strong problem signal appears or there was no report
+    to read (nothing checked is not an all-clear), else ``"healthy"``.
     """
-    blob = " ".join(str(state.get(k, "")) for k in _STATUS_KEYS).lower()
+    reports = [str(state.get(k, "")) for k in (_STATUS_KEYS if keys is None else keys)]
+    if not any(r.strip() for r in reports):
+        return "degraded"
+    blob = " ".join(reports).lower()
     return "degraded" if any(sig in blob for sig in _PROBLEM_SIGNALS) else "healthy"
 
 
@@ -476,6 +496,11 @@ def triage_route(ctx: Context) -> str:
     scanning the per-system status reports and flags ``triage_verdict_missing``
     — so a degraded system is never *silently* routed to ``resolved`` on a
     fail-open default. Initializes the remediation loop counters on entry.
+
+    Remediates only with something to act on and something to act with: a
+    sweep that checked no system has no evidence to justify an action, and a
+    deployment with no remediating specialist has no loop. Both end in the
+    report, flagged, for a human.
     """
     explicit = ctx.state.get("incident_severity")
     if explicit is None:
@@ -487,7 +512,12 @@ def triage_route(ctx: Context) -> str:
     else:
         severity = str(explicit).lower()
 
-    if severity in ("degraded", "critical"):
+    if not _STATUS_KEYS:
+        ctx.state["no_systems_checked"] = True
+    elif severity in ("degraded", "critical") and _remediation is None:
+        ctx.state["remediation_unavailable"] = True
+
+    if severity in ("degraded", "critical") and _STATUS_KEYS and _remediation is not None:
         ctx.state["remediation_iteration"] = 0
         ctx.state["remediation_resolved"] = False
         route = "remediate"
@@ -509,6 +539,16 @@ def final_report(ctx: Context) -> str:
     if summary:
         return f"{summary}{caveat}"
     severity = ctx.state.get("incident_severity", "healthy")
+    if ctx.state.get("no_systems_checked"):
+        return (
+            "Triage incomplete — no enabled specialist declares a health check, so no "
+            f"system was checked. Nothing was remediated.{caveat}"
+        )
+    if ctx.state.get("remediation_unavailable"):
+        return (
+            f"Triage complete — system status: {severity}. No enabled specialist offers a "
+            f"remediation action; a human must act.{caveat}"
+        )
     return f"Triage complete — system status: {severity}. No remediation required.{caveat}"
 
 
@@ -519,7 +559,7 @@ def final_report(ctx: Context) -> str:
 # chat agent can't be a routed node — so the deterministic graph is a standalone
 # entrypoint (see run_triage.py / `make run-triage`) that reuses the same nodes.
 # The report is journaled only when a journal specialist is enabled.
-_JOURNAL_STEP = (journal_writer,) if _journal(_specialists) else ()
+_JOURNAL_STEP = (journal_writer,) if journal_writer is not None else ()
 
 orrery_triage_workflow = Workflow(
     name="orrery_triage",
@@ -541,11 +581,20 @@ orrery_triage_workflow = Workflow(
             if HEALTH_CHECKERS
             else [("START", triage_summarizer, *_JOURNAL_STEP, triage_route)]
         ),
-        (triage_route, {"remediate": remediation_actor, "resolved": final_report}),
-        # Remediation loop (act → verify → retry, bounded by verify_route)
-        (remediation_actor, remediation_verifier, verify_route),
-        (verify_route, {"retry": remediation_actor, "done": remediation_summarizer}),
-        (remediation_summarizer, final_report),
+        *(
+            [
+                (
+                    triage_route,
+                    {"remediate": _remediation.actor, "resolved": final_report},
+                ),
+                # Remediation loop (act → verify → retry, bounded by verify_route)
+                (_remediation.actor, _remediation.verifier, verify_route),
+                (verify_route, {"retry": _remediation.actor, "done": _remediation.summarizer}),
+                (_remediation.summarizer, final_report),
+            ]
+            if _remediation is not None
+            else [(triage_route, {"resolved": final_report})]
+        ),
     ],
 )
 
