@@ -483,6 +483,7 @@ def create_app(
         )
 
     _require_shared_state_when_replicated(cfg)
+    cfg.console.validate(cfg.jwt.issuer if cfg.auth_enabled else None)
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
     # loop, reply extraction). This HTTP surface is one ChannelAdapter over it.

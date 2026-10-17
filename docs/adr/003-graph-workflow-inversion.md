@@ -5,6 +5,16 @@
 **Author:** Taoufiq
 **Supersedes:** [ADR-002](002-agent-tool-vs-sub-agents.md)
 
+!!! note "Since ADR-005"
+    The diagrams and tables below show the graph as it was decided. Since
+    [ADR-005](005-specialist-selection.md) its shape follows the enabled
+    specialists: one health checker per declared `HealthCheck` (not a fixed
+    five), a journal step only when a `Journal` is enabled, and a remediation
+    loop only when a `Remediation` is. Memory recall is `LoadMemoryTool`
+    (called by the model), not `PreloadMemoryTool`. The workflow is
+    deterministic in *structure*, not in outcome: whether to remediate, and
+    what, come from model output, behind the confirmation gate.
+
 ## Context
 
 ADK 2.0 introduced the **Workflow Runtime** — a graph-based execution engine where

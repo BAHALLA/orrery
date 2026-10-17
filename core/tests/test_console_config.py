@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from orrery_core.serving.console_config import GLOBAL_NAME, ConsoleConfig, render_script
 
 
@@ -39,3 +41,33 @@ def test_script_cannot_close_a_script_element():
     script = render_script(ConsoleConfig(oidc_client_id="</script><script>alert(1)</script>"))
     assert "</script>" not in script
     assert _payload(script)["oidc"]["clientId"] == "</script><script>alert(1)</script>"
+
+
+# ── Startup checks ───────────────────────────────────────────────────
+
+
+def test_an_issuer_the_server_would_not_accept_stops_startup():
+    # Sign-in would succeed and every API call would then get 401.
+    cfg = ConsoleConfig(oidc_issuer="https://sso.example.com/realms/a")
+    with pytest.raises(ValueError, match="differs from JWT_ISSUER"):
+        cfg.validate("https://sso.example.com/realms/b")
+    cfg.validate("https://sso.example.com/realms/a/")  # a trailing slash is the same issuer
+    cfg.validate(None)  # nothing to compare with
+
+
+@pytest.mark.parametrize(
+    ("issuer", "ok"),
+    [
+        ("http://localhost:8080/realms/dev", True),
+        ("http://127.0.0.1/realms/dev", True),
+        ("http://sso.example.com/realms/a", False),
+        ("sso.example.com/realms/a", False),
+    ],
+)
+def test_an_issuer_outside_localhost_must_be_https(issuer, ok):
+    cfg = ConsoleConfig(oidc_issuer=issuer)
+    if ok:
+        cfg.validate(None)
+    else:
+        with pytest.raises(ValueError, match="must be an https URL"):
+            cfg.validate(None)

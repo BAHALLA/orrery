@@ -5,15 +5,18 @@ from unittest.mock import MagicMock
 import pytest
 
 # Importing agent validates that the full graph module loads without errors
-from orrery_assistant.agent import root_agent  # noqa: F401
+from orrery_assistant.agent import _remediation
 from orrery_assistant.remediation import (
     MAX_REMEDIATION_ITERATIONS,
     mark_remediation_resolved,
-    remediation_actor,
-    remediation_summarizer,
-    remediation_verifier,
     verify_route,
 )
+
+# Built from the k8s specialist's declared Remediation (on in the test env).
+assert _remediation is not None
+remediation_actor = _remediation.actor
+remediation_verifier = _remediation.verifier
+remediation_summarizer = _remediation.summarizer
 
 
 def _Ctx(state: dict | None = None) -> MagicMock:

@@ -41,7 +41,7 @@ from google.adk.apps import App
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from orrery_assistant.agent import orrery_triage_workflow
+from orrery_assistant.agent import STATUS_KEYS, orrery_triage_workflow
 from orrery_assistant.batch import SweepOutcome, judge_sweep
 from orrery_core import (
     ToolLedger,
@@ -63,7 +63,7 @@ async def main() -> SweepOutcome:
         name=APP_NAME,
         root_agent=orrery_triage_workflow,
         plugins=default_plugins(enable_memory=True),
-        # A full sweep fans out to five specialists and can loop through
+        # A full sweep fans out to every enabled checker and can loop through
         # remediation three times, so this root produces the longest transcripts
         # of any surface. The explicit summarizer in the factory is required
         # here: the root is a Workflow, and ADK raises rather than deriving a
@@ -104,7 +104,12 @@ async def main() -> SweepOutcome:
     final = await runner.session_service.get_session(
         app_name=APP_NAME, user_id="batch", session_id=session.id
     )
-    outcome = judge_sweep(dict(final.state) if final else {}, ledger, error)
+    outcome = judge_sweep(
+        dict(final.state) if final else {},
+        ledger,
+        error,
+        status_keys=STATUS_KEYS,
+    )
     print(outcome.summary())
     return outcome
 

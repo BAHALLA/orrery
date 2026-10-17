@@ -20,7 +20,7 @@ from orrery_core.agent.declarative import (
     build_declarative_agents,
     tool_catalogue,
 )
-from orrery_core.registry import discover_specialists, source_of
+from orrery_core.registry import installed_specialists, source_of
 from orrery_core.security.guardrails import get_guard_level, get_guard_reason
 from orrery_core.serving.agent_admin import AdminOptions, SpecialistOption, ToolOption
 
@@ -42,7 +42,9 @@ class ChatAgentAdmin:
         self._file_agents = list(chat._declarative_agents)
 
     def options(self) -> AdminOptions:
-        installed = discover_specialists(apply_env=False, record=False)
+        # Excluded specialists are listed from package metadata only: opening
+        # the Agents tab must not import code the deployment chose not to run.
+        loaded = {s.key: s for s in self._allowed}
         catalogue, ambiguous = tool_catalogue(self._allowed)
         tools = [
             ToolOption(
@@ -58,13 +60,14 @@ class ChatAgentAdmin:
         return AdminOptions(
             specialists=[
                 SpecialistOption(
-                    key=s.key,
-                    agent_name=s.agent.name,
-                    description=s.agent.description or "",
-                    source=source_of(s.agent.name) or "builtin",
-                    available=s.key in self._allowed_keys,
+                    key=i.key,
+                    agent_name=s.agent.name if s else "",
+                    description=(s.agent.description or "") if s else "",
+                    source=(source_of(s.agent.name) if s else None) or i.source,
+                    available=s is not None,
                 )
-                for s in installed
+                for i in installed_specialists()
+                for s in [loaded.get(i.key)]
             ],
             tools=tools,
             file_agents=[a.name for a in self._file_agents],

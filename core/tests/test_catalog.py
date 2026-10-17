@@ -158,18 +158,71 @@ async def test_startup_applies_the_stored_catalog_and_follows_other_replicas():
     assert service.applied_version == 2
 
 
+class _StrictAdmin(_Admin):
+    """Refuses catalogs naming what the deployment no longer runs, like the real one."""
+
+    def build(self, catalog: AgentCatalog) -> Any:
+        if "uninstalled" in catalog.disabled_specialists or any(
+            a.name == "first_responder" for a in catalog.agents
+        ):
+            raise ValueError("no longer installed")
+        return super().build(catalog)
+
+
 @pytest.mark.asyncio
-async def test_a_stored_catalog_that_no_longer_builds_keeps_the_current_agents(caplog):
+async def test_a_stored_catalog_that_no_longer_builds_keeps_its_switch_offs(caplog):
+    # Serving the env default here would switch k8s back on after a restart:
+    # an admin's safety decision undone by an unrelated uninstall.
     store = InMemoryCatalogStore()
-    store.save(AgentCatalog(disabled_specialists=["uninstalled"]), expected_version=0, actor="ana")
-    admin = _Admin()
-    admin.refuse = "cannot switch specialists the deployment does not run"
-    service, gateway = _service(store, admin)
+    store.save(
+        AgentCatalog(disabled_specialists=["k8s", "uninstalled"], agents=[_agent_cfg()]),
+        expected_version=0,
+        actor="ana",
+    )
+    service, gateway = _service(store, _StrictAdmin())
 
     await service.start()
 
+    gateway.replace_root_agent.assert_called_once_with(("tree", ("k8s",), ()))
+    assert "serving its switch-offs" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_refuses_when_not_even_the_switch_offs_build():
+    store = InMemoryCatalogStore()
+    store.save(AgentCatalog(disabled_specialists=["k8s"]), expected_version=0, actor="ana")
+    admin = _Admin()
+    admin.refuse = "broken"
+    service, gateway = _service(store, admin)
+
+    with pytest.raises(RuntimeError, match="neither do its switch-offs"):
+        await service.start()
     gateway.replace_root_agent.assert_not_called()
-    assert "no longer builds" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_startup_refuses_when_the_store_cannot_be_read():
+    store = MagicMock()
+    store.load.side_effect = OSError("database is down")
+    service, gateway = _service(store)
+
+    with pytest.raises(RuntimeError, match="Refusing to serve the deployment's default"):
+        await service.start()
+    gateway.replace_root_agent.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_poll_that_no_longer_builds_keeps_the_current_agents(caplog):
+    store = InMemoryCatalogStore()
+    service, gateway = _service(store)
+    await service.start()
+    service._admin.refuse = "broken"  # type: ignore[attr-defined]
+    store.save(AgentCatalog(disabled_specialists=["k8s"]), expected_version=0, actor="bob")
+
+    await service._sync()
+
+    gateway.replace_root_agent.assert_not_called()
+    assert "keeping the current agents" in caplog.text and service.applied_version == 1
 
 
 # ── Gateway swap ─────────────────────────────────────────────────────

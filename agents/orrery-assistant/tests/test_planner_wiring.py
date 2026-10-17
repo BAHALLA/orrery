@@ -63,7 +63,7 @@ class TestPlannerWiring:
         # ORRERY_PLANNER is unset. Zero behavior change.
         assert agent_mod.orrery_chat_agent.planner is None
         assert agent_mod.triage_summarizer.planner is None
-        assert rem_mod.remediation_actor.planner is None
+        assert agent_mod._remediation.actor.planner is None
 
     def test_plan_react_attaches_to_reasoning_agents(self, clean_planner_env, monkeypatch):
         monkeypatch.setenv("ORRERY_PLANNER", "plan_react")
@@ -72,7 +72,7 @@ class TestPlannerWiring:
         # The reasoning-heavy orchestrator/synthesis/actor agents opt in.
         assert isinstance(agent_mod.orrery_chat_agent.planner, PlanReActPlanner)
         assert isinstance(agent_mod.triage_summarizer.planner, PlanReActPlanner)
-        assert isinstance(rem_mod.remediation_actor.planner, PlanReActPlanner)
+        assert isinstance(agent_mod._remediation.actor.planner, PlanReActPlanner)
 
     def test_leaves_stay_planner_free_under_plan_react(self, clean_planner_env, monkeypatch):
         """Per-system health checkers, the journal writer, and the
@@ -92,7 +92,7 @@ class TestPlannerWiring:
         leaf_agents = [
             *agent_mod.HEALTH_CHECKERS,
             agent_mod.journal_writer,
-            rem_mod.remediation_verifier,
+            agent_mod._remediation.verifier,
         ]
         for leaf in leaf_agents:
             assert leaf.planner is None, (
@@ -109,14 +109,14 @@ class TestPlannerWiring:
         with caplog.at_level("WARNING", logger="orrery.base"):
             agent_mod, rem_mod = _reload_agent()
         assert agent_mod.triage_summarizer.planner is None
-        assert rem_mod.remediation_actor.planner is None
+        assert agent_mod._remediation.actor.planner is None
 
     def test_builtin_attaches_under_gemini(self, clean_planner_env, monkeypatch):
         monkeypatch.setenv("ORRERY_PLANNER", "builtin")
         # MODEL_PROVIDER unset defaults to gemini in resolve_planner.
         agent_mod, rem_mod = _reload_agent()
         assert isinstance(agent_mod.triage_summarizer.planner, BuiltInPlanner)
-        assert isinstance(rem_mod.remediation_actor.planner, BuiltInPlanner)
+        assert isinstance(agent_mod._remediation.actor.planner, BuiltInPlanner)
 
 
 # ── Graph structure + deterministic routing (ADR-003) ────────────────

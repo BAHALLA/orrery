@@ -159,7 +159,7 @@ exactly like a built-in one.
 
 ```python
 # agents/my-agent/my_agent/agent.py (after root_agent)
-from orrery_core.registry import HealthCheck, SpecialistSpec
+from orrery_core.registry import HealthCheck, Journal, Remediation, SpecialistSpec
 
 specialist = SpecialistSpec(
     agent=root_agent,
@@ -175,6 +175,14 @@ specialist = SpecialistSpec(
         ),
         tools=(get_status,),
     ),
+    # Optional: what the unattended remediation loop may do. Guarded tools only.
+    remediation=Remediation(
+        actions=(restart_worker,),
+        playbook="restart_worker when a worker is wedged; the target is a worker id.",
+        verify=(get_worker_status,),
+    ),
+    # Optional: where findings are saved (the ops journal declares one).
+    # journal=Journal(save=save_note, log=log_operation),
 )
 ```
 
@@ -182,13 +190,22 @@ specialist = SpecialistSpec(
 |---|---|
 | `routing_hint` | One line in its routing section, while the specialist is enabled. |
 | `health_check` | Joins both health sweeps: the conversational `incident_triage_agent` gets the tools and the rubric, and the batch workflow gets a `<key>_health_checker` that writes `<key>_status`. |
-| `capabilities` | `JOURNAL`: this specialist can save findings, so the coordinator may offer "want me to save this?". Offered only while one is enabled. |
+| `remediation` | The batch workflow's act → verify loop may take these actions, guided by the playbook; the verifier gets the `verify` tools plus every enabled health-check tool. With no enabled `Remediation`, the workflow has no loop at all. |
+| `journal` | The coordinator may offer "want me to save this?", and the batch run saves its report with `save` and logs with `log`. Only while one is enabled. |
 
-`HealthCheck.tools` is checked at startup: every tool must be one of your
-agent's own tools and **read-only** (no `@confirm`/`@destructive`). Sweeps run
-unattended, and an instruction saying "take no action" is not a control. An
-entry point may still name a bare agent: it registers with no health check and
-no capabilities, routed by its `description`.
+Everything is checked at startup, because the sweeps and the loop run
+unattended and an instruction saying "take no action" is not a control:
+
+- every tool listed must be one of your agent's own tools;
+- `HealthCheck.tools` and `Remediation.verify` must be **read-only**: no
+  `@confirm`/`@destructive`, and not *named* as a write (`restart_…`,
+  `delete_…`, see `orrery_core.looks_mutating`);
+- `Remediation.actions` must be guarded, so each one stops at the
+  confirmation gate.
+
+An entry point may still name a bare agent: it registers with no
+contributions, routed by its `description` (one line, at most 200
+characters).
 
 Then install the workspace (entry points are package metadata, so re-sync after
 adding one):
@@ -196,15 +213,31 @@ adding one):
 make install
 ```
 
-The key (`my_service`) is what operators use to switch the specialist off and on:
+The key (`my_service`) must be a lowercase identifier (it names the batch
+checker, `my_service_health_checker`), and it is what operators use to switch the specialist off and on:
 `ORRERY_SPECIALISTS=kafka,my_service` runs only those, and
 `ORRERY_DISABLED_SPECIALISTS=my_service` runs everything else. An unknown key in
 either list stops startup. The coordinator's routing prompt lists only the
 active specialists, each by its routing hint, so write that for the model.
 
-A package **outside** this repository can register a specialist the same way;
-`pip install` it next to Orrery and it appears, labelled *plugin* in the admin
-view.
+A package **outside** this repository can register a specialist the same way,
+with two differences, because installing a package should not be enough to
+put its code in front of the coordinator:
+
+- it is loaded only when `ORRERY_SPECIALISTS` names it (built-ins are on by
+  default; plugins are not). The admin view lists it, labelled *plugin*, from
+  package metadata without importing it;
+- at startup it is held to the rules this repository's tests hold the
+  built-ins to: every agent it reaches that holds a guarded tool or a toolset
+  needs a confirmation gate (build agents with `create_agent()`, which adds
+  one), and no tool named as a write may be undecorated, its `Journal` tools
+  included (the batch run calls those unattended).
+
+Two packages registering one key stop startup, so a plugin cannot quietly
+replace a built-in.
+
+How the coordinator then chooses among specialists, the trust model and the
+failure modes: [How specialists are chosen](specialist-selection.md).
 
 ---
 

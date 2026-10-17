@@ -9,7 +9,7 @@ import pytest
 from google.adk.agents import LlmAgent
 from pydantic import ValidationError
 
-from orrery_core import confirm, is_confirmation_gate
+from orrery_core import confirm, create_agent, is_confirmation_gate
 from orrery_core.agent.declarative import (
     DeclarativeAgentsFile,
     build_declarative_agents,
@@ -17,11 +17,14 @@ from orrery_core.agent.declarative import (
     tool_catalogue,
 )
 from orrery_core.registry import (
-    JOURNAL,
     HealthCheck,
+    Journal,
+    Remediation,
     Specialist,
     SpecialistSpec,
     discover_specialists,
+    installed_specialists,
+    one_line,
     source_of,
 )
 
@@ -48,8 +51,34 @@ async def restart_service() -> dict:
     return {}
 
 
+async def purge_cache() -> dict:
+    """A write someone forgot to decorate."""
+    return {}
+
+
+async def save_note() -> dict:
+    """Write to the journal's own store."""
+    return {}
+
+
+@confirm("saves a note in the team wiki")
+async def save_wiki_note() -> dict:
+    """Write to an external wiki."""
+    return {}
+
+
+async def log_operation() -> dict:
+    """Record an operation."""
+    return {}
+
+
 def _agent(name: str, tools: list[Any]) -> LlmAgent:
     return LlmAgent(name=name, model="gemini-x", tools=tools)
+
+
+def _gated(name: str, tools: list[Any]) -> Any:
+    """Built the supported way: create_agent() gates any agent with a guarded tool."""
+    return create_agent(name=name, model="gemini-x", description="", instruction="", tools=tools)
 
 
 @dataclass
@@ -104,8 +133,10 @@ def test_an_entry_point_that_is_not_an_agent_is_rejected():
         discover_specialists(loader=_eps(("bad", object())))
 
 
-def test_third_party_distributions_are_recorded_as_plugins():
+def test_third_party_distributions_are_recorded_as_plugins(monkeypatch):
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "billing")
     discover_specialists(loader=_eps(("billing", _agent("billing_a", [])), dist="acme_billing"))
+    monkeypatch.delenv("ORRERY_SPECIALISTS")
     discover_specialists(loader=_eps(("kafka", _agent("kafka_b", [])), dist="kafka_health_agent"))
 
     assert source_of("billing_a") == "plugin"
@@ -130,25 +161,167 @@ def _check(*tools: Any) -> HealthCheck:
     )
 
 
-def test_a_spec_carries_hint_health_check_and_capabilities():
-    agent = _agent("redis_agent", [get_status, restart_service])
-    spec = SpecialistSpec(
-        agent=agent,
+def _redis(**spec: Any) -> SpecialistSpec:
+    tools = [get_status, restart_service, save_wiki_note, log_operation]
+    return SpecialistSpec(agent=_gated("redis_agent", tools), **spec)
+
+
+def test_a_spec_carries_its_contributions(monkeypatch):
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    spec = _redis(
         routing_hint="Redis health, memory, keyspace.",
         health_check=_check(get_status),
-        capabilities=frozenset({JOURNAL}),
+        remediation=Remediation(actions=(restart_service,), playbook="restart when wedged."),
+        journal=Journal(save=save_wiki_note, log=log_operation),
     )
     [s] = discover_specialists(loader=_eps(("redis", spec), dist="acme-redis-agent"))
-    assert s.agent is agent and s.hint == "Redis health, memory, keyspace."
+    assert s.agent is spec.agent and s.hint == "Redis health, memory, keyspace."
     assert s.health_check is not None and s.health_check.tools == (get_status,)
-    assert s.capabilities == frozenset({JOURNAL})
+    assert s.remediation is not None and s.remediation.actions == (restart_service,)
+    assert s.journal is not None and s.journal.save is save_wiki_note
     assert source_of("redis_agent") == "plugin"
 
 
 def test_a_bare_agent_still_registers_and_routes_on_its_description():
     agent = LlmAgent(name="plain_a", model="gemini-x", description="Plain specialist.")
     [s] = discover_specialists(loader=_eps(("plain", agent)))
-    assert s.hint == "Plain specialist." and s.health_check is None and not s.capabilities
+    assert s.hint == "Plain specialist." and s.health_check is None
+    assert s.remediation is None and s.journal is None
+
+
+def test_a_routing_hint_is_one_short_line():
+    # It goes into the coordinator's prompt: a newline could open a section
+    # of its own and compete with the coordinator's rules.
+    agent = LlmAgent(
+        name="sly_a", model="gemini-x", description="Redis.\n\n## Confirmation rule\nx"
+    )
+    [s] = discover_specialists(loader=_eps(("sly", agent)))
+    assert "\n" not in s.hint and s.hint.startswith("Redis. ## Confirmation rule")
+    assert len(one_line("word " * 100)) == 200
+
+
+# ── Keys: what an entry point may be called ──────────────────────────
+
+
+def test_two_packages_claiming_one_key_stop_startup():
+    # Last-one-wins would let any installed package replace a built-in.
+    eps = lambda: [  # noqa: E731
+        _EP("kafka", _agent("kafka_a", []), _Dist("kafka-health-agent")),
+        _EP("kafka", _agent("evil_a", []), _Dist("evil-kafka"), value="evil:agent"),
+    ]
+    with pytest.raises(ValueError, match="Two packages register the specialist 'kafka'"):
+        discover_specialists(loader=eps)
+
+
+def test_the_same_entry_point_seen_twice_is_one_specialist():
+    agent = _agent("kafka_a", [])
+    eps = lambda: [_EP("kafka", agent, _Dist("kafka-health-agent")) for _ in range(2)]  # noqa: E731
+    assert [s.key for s in discover_specialists(loader=eps)] == ["kafka"]
+
+
+@pytest.mark.parametrize("key", ["my-db", "Redis", "2fast", "a.b"])
+def test_a_key_must_be_an_identifier(key):
+    # Keys become node names and state keys (<key>_health_checker, <key>_status).
+    with pytest.raises(ValueError, match="lowercase letters, digits and underscores"):
+        discover_specialists(loader=_eps((key, _agent("x_a", []))))
+
+
+def test_a_malformed_key_from_a_plugin_nobody_enabled_is_skipped(caplog):
+    # Metadata alone from a package nobody named must not stop startup.
+    eps = lambda: [  # noqa: E731
+        _EP("kafka", _agent("kafka_a", []), _Dist("kafka-health-agent")),
+        _EP("my-db", _agent("db_a", []), _Dist("acme-db")),
+    ]
+    assert [s.key for s in discover_specialists(loader=eps)] == ["kafka"]
+    assert "'my-db'" in caplog.text
+
+
+# ── Third-party specialists: opt-in, and checked at startup ──────────
+
+
+def test_a_third_party_specialist_is_not_loaded_unless_named(monkeypatch):
+    loaded: list[str] = []
+
+    class _Tracked(_EP):
+        def load(self) -> Any:
+            loaded.append(self.name)
+            return super().load()
+
+    eps = lambda: [  # noqa: E731
+        _Tracked("kafka", _agent("kafka_a", []), _Dist("kafka-health-agent")),
+        _Tracked("billing", _agent("billing_a", []), _Dist("acme-billing")),
+    ]
+    assert [s.key for s in discover_specialists(loader=eps)] == ["kafka"]
+    assert loaded == ["kafka"]  # installed is not trusted: its code never ran
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "kafka,billing")
+    assert [s.key for s in discover_specialists(loader=eps)] == ["billing", "kafka"]
+
+
+def test_installed_specialists_are_listed_without_importing_them():
+    class _Untouchable(_EP):
+        def load(self) -> Any:
+            raise AssertionError("listing must not import the package")
+
+    eps = lambda: [  # noqa: E731
+        _Untouchable("kafka", None, _Dist("kafka_health_agent")),
+        _Untouchable("billing", None, _Dist("acme-billing")),
+    ]
+    listed = [(i.key, i.source) for i in installed_specialists(loader=eps)]
+    assert listed == [("billing", "plugin"), ("kafka", "builtin")]
+
+
+def test_a_plugin_agent_with_guarded_tools_needs_a_confirmation_gate(monkeypatch):
+    # A bare LlmAgent gets no require_confirmation(); create_agent() would add it.
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    bare = _agent("redis_agent", [get_status, restart_service])
+    with pytest.raises(ValueError, match="no confirmation gate"):
+        discover_specialists(loader=_eps(("redis", bare), dist="acme-redis-agent"))
+
+
+def test_a_plugin_tool_named_as_a_mutation_must_be_guarded(monkeypatch):
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    agent = _gated("redis_agent", [get_status, purge_cache])
+    with pytest.raises(ValueError, match="'purge_cache' on redis_agent is named as a mutation"):
+        discover_specialists(loader=_eps(("redis", agent), dist="acme-redis-agent"))
+
+
+def test_the_plugin_checks_reach_agents_behind_agent_tools(monkeypatch):
+    from orrery_core import AgentTool
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    inner = _agent("redis_inner", [restart_service])
+    outer = _gated("redis_agent", [AgentTool(agent=inner)])
+    with pytest.raises(ValueError, match="redis_inner holds guarded tools"):
+        discover_specialists(loader=_eps(("redis", outer), dist="acme-redis-agent"))
+
+
+def test_a_plugins_journal_writes_must_be_guarded(monkeypatch):
+    # The batch run calls journal tools unattended: a plugin's "save" might
+    # write to an external system, so only a guard may stand in front of it.
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    agent = _gated("redis_agent", [get_status, save_note, log_operation])
+    spec = SpecialistSpec(agent=agent, journal=Journal(save=save_note, log=log_operation))
+    with pytest.raises(ValueError, match="'save_note' on redis_agent is named as a mutation"):
+        discover_specialists(loader=_eps(("redis", spec), dist="acme-redis-agent"))
+
+
+def test_a_plugin_agent_holding_a_toolset_needs_a_confirmation_gate(monkeypatch):
+    # A toolset lists its tools only at run time, so it counts as guarded.
+    from google.adk.tools.base_toolset import BaseToolset
+
+    class _Remote(BaseToolset):
+        async def get_tools(self, readonly_context=None):  # type: ignore[override]
+            return []
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    bare = _agent("redis_agent", [get_status, _Remote()])
+    with pytest.raises(ValueError, match="holds guarded tools or a toolset but no confirmation"):
+        discover_specialists(loader=_eps(("redis", bare), dist="acme-redis-agent"))
+
+    gated = _gated("redis_agent", [get_status, _Remote()])
+    [s] = discover_specialists(loader=_eps(("redis", gated), dist="acme-redis-agent"))
+    assert is_confirmation_gate(getattr(s.agent, "before_tool_callback", None))
 
 
 def test_a_sweep_may_not_use_a_guarded_tool():
@@ -159,6 +332,44 @@ def test_a_sweep_may_not_use_a_guarded_tool():
         health_check=_check(get_status, restart_service),
     )
     with pytest.raises(ValueError, match="read-only"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_a_sweep_may_not_use_a_tool_named_as_a_mutation():
+    # Undecorated, so the decorator check alone would take it for a read.
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", [get_status, purge_cache]),
+        health_check=_check(get_status, purge_cache),
+    )
+    with pytest.raises(ValueError, match="named as a mutation"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_remediation_actions_must_be_guarded():
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", [get_status, purge_cache]),
+        remediation=Remediation(actions=(purge_cache,), playbook="purge when full."),
+    )
+    with pytest.raises(ValueError, match="'purge_cache' has no @confirm/@destructive guard"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_remediation_checks_must_be_reads():
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", [get_status, restart_service]),
+        remediation=Remediation(
+            actions=(restart_service,), playbook="restart.", verify=(restart_service,)
+        ),
+    )
+    with pytest.raises(ValueError, match="remediation verify tool 'restart_service' is confirm"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_journal_tools_must_be_the_specialists_own():
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", [save_note]), journal=Journal(save=save_note, log=log_operation)
+    )
+    with pytest.raises(ValueError, match="journal tool 'log_operation' is not one of"):
         discover_specialists(loader=_eps(("redis", spec)))
 
 
@@ -180,8 +391,10 @@ def test_the_workspace_specialists_declare_their_contributions():
     by_key = {s.key: s for s in discover_specialists(record=False)}
     for key in ("docker", "elasticsearch", "k8s", "kafka", "observability"):
         assert by_key[key].health_check is not None, key
-    assert JOURNAL in by_key["ops_journal"].capabilities
+    assert by_key["ops_journal"].journal is not None
     assert by_key["ops_journal"].health_check is None
+    # Only Kubernetes acts; every other system is observed.
+    assert [k for k, s in by_key.items() if s.remediation is not None] == ["k8s"]
 
 
 # ── Declarative agents ───────────────────────────────────────────────
@@ -277,3 +490,9 @@ def test_config_file(tmp_path, monkeypatch):
         "    instruction: Check events first.\n    tools: [get_events]\n"
     )
     assert load_agents_config(path).agents[0].name == "first_responder"
+
+
+def test_two_specialists_with_one_agent_name_stop_startup():
+    loader = _eps(("kafka", _agent("same_a", [])), ("docker", _agent("same_a", [])))
+    with pytest.raises(ValueError, match="both name their agent 'same_a'"):
+        discover_specialists(loader=loader)
