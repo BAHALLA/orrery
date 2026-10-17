@@ -77,9 +77,9 @@ Open [http://localhost:8000](http://localhost:8000).
     You now have a full autonomous DevOps stack running locally!
 
 !!! tip "Pinning a specific version"
-    Override the image tag to pin to a release (e.g. `0.6.4`):
+    Override the image tag to pin to a release (e.g. `0.6.5`):
     ```bash
-    ORRERY_IMAGE=ghcr.io/bahalla/orrery:0.6.4 \
+    ORRERY_IMAGE=ghcr.io/bahalla/orrery:0.6.5 \
       docker compose --profile demo up -d
     ```
 

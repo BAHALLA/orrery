@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-10-17
+
+A security patch: Kubernetes impersonation never assumes a `system:` identity,
+catalog agents can't take a coordinator tool's name, MCP tool text is screened
+and pinned, and shutdown lets running turns finish.
+
 ### Security
 
 - **Kubernetes impersonation never assumes a `system:` identity.** A token
@@ -956,7 +962,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/BAHALLA/orrery/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/BAHALLA/orrery/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/BAHALLA/orrery/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/BAHALLA/orrery/compare/v0.6.1...v0.6.2
