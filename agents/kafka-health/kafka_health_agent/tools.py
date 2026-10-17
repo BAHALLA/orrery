@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from functools import partial
 from typing import Any
 
 from confluent_kafka import ConsumerGroupTopicPartitions, KafkaException, TopicPartition
@@ -46,9 +45,14 @@ def _get_admin_client() -> AdminClient:
 
 
 async def _run_sync(func, *args, **kwargs):
-    """Run a blocking function in a thread pool executor."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+    """Run a blocking function in a worker thread.
+
+    ``asyncio.to_thread``, not ``run_in_executor``: it copies the caller's
+    context variables into the thread, so the turn's verified identity
+    (``orrery_core.security.identity``) is still there when Kafka calls are
+    impersonated.
+    """
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 @confirm("increases the number of partitions for an existing topic")

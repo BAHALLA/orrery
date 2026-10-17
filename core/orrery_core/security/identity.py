@@ -19,6 +19,14 @@ verified caller is refused — unless the code path explicitly declares it acts 
 the platform itself (:func:`service_scope`, used by the unattended triage run),
 or the deployment opts into falling back to the service account
 (``ORRERY_IMPERSONATION_FALLBACK=service``).
+
+**Never a system identity.** Kubernetes reserves ``system:`` names for
+itself: impersonating the group ``system:masters`` *is* cluster-admin. A token
+claiming such a user or group (an identity-provider mapping mistake, or a
+group users may create) is refused, not forwarded. Kubernetes names can also be
+prefixed (``ORRERY_IMPERSONATE_K8S_USER_PREFIX`` / ``_GROUP_PREFIX``), the way
+the API server's ``--oidc-username-prefix`` / ``--oidc-groups-prefix`` keep
+identity-provider names apart from every other user.
 """
 
 from __future__ import annotations
@@ -40,6 +48,12 @@ IMPERSONATION_ENV = "ORRERY_IMPERSONATION"
 FALLBACK_ENV = "ORRERY_IMPERSONATION_FALLBACK"
 USER_CLAIM_ENV = "ORRERY_IMPERSONATE_USER_CLAIM"
 GROUPS_CLAIM_ENV = "ORRERY_IMPERSONATE_GROUPS_CLAIM"
+K8S_USER_PREFIX_ENV = "ORRERY_IMPERSONATE_K8S_USER_PREFIX"
+K8S_GROUP_PREFIX_ENV = "ORRERY_IMPERSONATE_K8S_GROUP_PREFIX"
+
+#: Kubernetes' own namespace for users and groups (``system:masters`` is
+#: cluster-admin). No caller is ever impersonated into it.
+_RESERVED_K8S_PREFIX = "system:"
 
 #: Header values must be a single line of printable characters: an identity
 #: carrying CR/LF would let a crafted claim inject headers.
@@ -145,9 +159,27 @@ def kubernetes_headers() -> list[tuple[str, str]]:
     identity = acting_identity("kubernetes")
     if identity is None:
         return []
-    headers = [("Impersonate-User", _safe(identity.username, "username"))]
-    headers += [("Impersonate-Group", _safe(g, "group")) for g in identity.groups]
+    user_prefix = os.getenv(K8S_USER_PREFIX_ENV, "")
+    group_prefix = os.getenv(K8S_GROUP_PREFIX_ENV, "")
+    headers = [("Impersonate-User", _k8s_name(user_prefix + identity.username, "username"))]
+    headers += [
+        ("Impersonate-Group", _k8s_name(group_prefix + g, "group")) for g in identity.groups
+    ]
     return headers
+
+
+def _k8s_name(value: str, what: str) -> str:
+    """A safe header value outside Kubernetes' reserved ``system:`` namespace.
+
+    The whole call is refused rather than the name dropped: a token that
+    claims ``system:masters`` is a misconfiguration (or an attack) someone
+    should hear about, not a group to quietly leave out.
+    """
+    if value.lower().startswith(_RESERVED_K8S_PREFIX):
+        raise ImpersonationRequired(
+            f"refusing to impersonate the reserved Kubernetes {what} {value!r}"
+        )
+    return _safe(value, what)
 
 
 def elasticsearch_headers() -> dict[str, str]:
@@ -180,6 +212,10 @@ def identity_from_claims(subject: str, claims: Mapping[str, Any]) -> CallerIdent
     impersonated as that colleague. Without verification the subject is used —
     which Kubernetes and Elasticsearch won't know, so the call is denied by the
     target rather than run as the wrong person.
+
+    Any other user claim is trusted as is, so it must be one users cannot set
+    themselves (not a self-editable ``preferred_username``); see
+    ``docs/impersonation.md``.
     """
     user_claim = os.getenv(USER_CLAIM_ENV, "email") or "email"
     user = _claim(claims, user_claim)

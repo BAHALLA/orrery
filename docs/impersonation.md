@@ -24,7 +24,22 @@ ORRERY_IMPERSONATION=kubernetes,elasticsearch
 # How a verified token maps to the identity the target knows (dotted paths):
 ORRERY_IMPERSONATE_USER_CLAIM=email        # default: email, falling back to the subject
 ORRERY_IMPERSONATE_GROUPS_CLAIM=groups     # default: groups
+# Kubernetes only: match the API server's --oidc-username-prefix / --oidc-groups-prefix
+ORRERY_IMPERSONATE_K8S_USER_PREFIX=oidc:   # default: none
+ORRERY_IMPERSONATE_K8S_GROUP_PREFIX=oidc:  # default: none
 ```
+
+**The user claim must be one users cannot set.** An `email` counts only when
+the token says it is verified. Any other claim is trusted as the identity
+provider issued it, so don't point `ORRERY_IMPERSONATE_USER_CLAIM` at a claim
+people can edit themselves (on many identity providers, `preferred_username`):
+whoever renames themselves to a colleague is then impersonated as that
+colleague.
+
+**Never a system identity.** Kubernetes reserves `system:` names; impersonating
+the group `system:masters` is cluster-admin. A user or group starting with
+`system:` (after the prefix) is refused, and the call with it, rather than
+forwarded.
 
 **It fails closed.** With a system enabled, a call to it that has no verified
 caller is **refused**, not quietly made as the service account. Two things can
@@ -54,8 +69,17 @@ threads, and nothing outside it.
 
 ## Kubernetes setup
 
-Grant the agent's service account the right to impersonate, and nothing more.
-Its own permissions can then shrink to whatever the platform itself needs:
+!!! danger "Impersonating any user or group is cluster-admin"
+    The `impersonate` verb on all `users` and `groups` lets the holder become
+    anyone, including the group `system:masters`, which bypasses RBAC entirely.
+    Orrery refuses to forward `system:` names, but the grant belongs to the
+    **service account**: anyone who obtains the pod's token can impersonate
+    `system:masters` directly with `kubectl --as-group`. Without
+    `resourceNames`, the service account is cluster-admin in all but name.
+
+List the users and groups Orrery may act as. Kubernetes matches
+`resourceNames` exactly (no wildcards), so this is the list of people and teams
+who use Orrery against this cluster:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -64,10 +88,13 @@ metadata:
   name: orrery-impersonator
 rules:
   - apiGroups: [""]
-    resources: ["users", "groups"]
+    resources: ["users"]
     verbs: ["impersonate"]
-    # Optional: only these identities may be assumed.
-    # resourceNames: ["alice@example.com", "sre"]
+    resourceNames: ["oidc:alice@example.com", "oidc:bob@example.com"]
+  - apiGroups: [""]
+    resources: ["groups"]
+    verbs: ["impersonate"]
+    resourceNames: ["oidc:sre", "oidc:oncall"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -80,9 +107,17 @@ subjects:
     namespace: orrery
 ```
 
-Each user then needs their own RoleBindings, the ones they'd have with
-`kubectl`. The identity has to match what your cluster's authenticator calls
-them: with OIDC, the same claim the API server's `--oidc-username-claim` uses.
+The service account's own permissions can then shrink to whatever the platform
+itself needs (the unattended sweep runs with them). Each user needs their own
+RoleBindings, the ones they'd have with `kubectl`.
+
+The impersonated names must match what your cluster's authenticator calls
+people: with OIDC, the same claim as the API server's `--oidc-username-claim`,
+and the same prefixes as `--oidc-username-prefix` / `--oidc-groups-prefix`
+(set `ORRERY_IMPERSONATE_K8S_USER_PREFIX` / `_GROUP_PREFIX` to them). A prefix
+keeps identity-provider names apart from every other kind of user, so a group
+created in the identity provider can never collide with one the cluster uses
+for something else.
 
 ## Elasticsearch setup
 

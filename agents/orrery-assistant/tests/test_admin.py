@@ -74,6 +74,30 @@ def test_invalid_catalogs_are_refused(catalog, message):
         ChatAgentAdmin().build(catalog)
 
 
+@pytest.mark.parametrize("name", ["load_memory", "search_knowledge", "orrery_chat_agent"])
+def test_a_catalog_agent_may_not_take_a_coordinator_tool_name(name):
+    # It built, so it was saved and swapped in, and every turn then failed at
+    # the model API on two function declarations with one name.
+    catalog = AgentCatalog(
+        agents=[
+            DeclarativeAgentConfig(
+                name=name,
+                description="Shadows a tool the coordinator already has",
+                instruction="Check events first.",
+                tools=["get_events"],
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match="collides"):
+        ChatAgentAdmin().build(catalog)
+
+
+def test_the_coordinator_refuses_two_tools_with_one_name():
+    shadow = LlmAgent(name="kafka_health_agent", model="gemini-x", description="Shadow.")
+    with pytest.raises(ValueError, match="two different tools are both named 'kafka_health_agent'"):
+        chat.build_chat_agent(chat._specialists, [shadow])
+
+
 def _tool_names(agent) -> set[str]:
     return {getattr(t, "name", None) or getattr(t, "__name__", "") for t in agent.tools}
 

@@ -82,8 +82,16 @@ _mcp_tools = _mcp_specialists()
 # being imported here one by one — a new specialist is an installed package,
 # not an edit to this file. Declarative agents (ORRERY_AGENTS_CONFIG) recombine
 # their tools; both are validated at import, so a bad config stops startup.
-#: Names no declarative agent may take.
-RESERVED_AGENT_NAMES = ("incident_triage_agent", "orrery_chat_agent")
+#: Names no declarative agent may take: the coordinator's own agents and tools.
+#: An agent becomes an AgentTool under its own name, and two function
+#: declarations with one name make the model API refuse every turn.
+RESERVED_AGENT_NAMES = (
+    "incident_triage_agent",
+    "orrery_chat_agent",
+    "load_memory",
+    "search_knowledge",
+    *(t.agent.name for t in _mcp_tools),
+)
 _specialists = discover_specialists()
 _file_agents_config = load_agents_config()
 _declarative_agents = build_declarative_agents(
@@ -421,14 +429,19 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
             "match — cite it only when it actually fits; if nothing matches, proceed "
             "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION + _MCP_INSTRUCTION
         ),
-        tools=[
-            *(AgentTool(agent=s.agent) for s in specialists),
-            *(AgentTool(agent=a) for a in declarative_agents),
-            *([AgentTool(agent=triage)] if triage is not None else []),
-            LoadMemoryTool(),
-            *([_knowledge_tool] if _knowledge_tool is not None else []),
-            *_mcp_tools,
-        ],
+        # Checked, not trusted: a name used twice would build fine and then
+        # fail every turn at the model API, and a catalog that built is saved.
+        tools=unique_tools(
+            [
+                *(AgentTool(agent=s.agent) for s in specialists),
+                *(AgentTool(agent=a) for a in declarative_agents),
+                *([AgentTool(agent=triage)] if triage is not None else []),
+                LoadMemoryTool(),
+                *([_knowledge_tool] if _knowledge_tool is not None else []),
+                *_mcp_tools,
+            ],
+            "orrery_chat_agent",
+        ),
     )
 
 
