@@ -6,84 +6,43 @@ integration wired at all", which is the failure a new user actually hits and the
 one the platform is worst at reporting: today a missing kubeconfig surfaces as a
 stack trace inside a tool result, several turns into a conversation.
 
-Every probe here **must** stay read-only. They run on an authenticated but
-otherwise ungated path (the self-test does not consult RBAC), so anything with
-side effects does not belong.
-
-The list lives in the agent package rather than in core because core has no
-dependency on any agent — the console stays a transport over ``AgentGateway``.
+The probes come from the specialists themselves (``SpecialistSpec.setup_check``),
+like everything else the coordinator knows about one: a specialist the
+deployment switched off is not probed, its module is not imported for it, and a
+third-party specialist gets a row by declaring a check. They run on an
+authenticated but otherwise ungated path (the self-test does not consult RBAC),
+which is why the registry refuses a setup check whose tool is not one of the
+specialist's own reads.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
+from orrery_core.registry import Specialist
 from orrery_core.serving.onboarding import IntegrationProbe
 
 
-def default_probes() -> list[IntegrationProbe]:
-    """The probes for the specialists this assistant composes.
+def _runner(tool: Any) -> Any:
+    # A raw async function, or an ADK FunctionTool around one.
+    func = getattr(tool, "func", tool)
 
-    Imports are deferred to call time so that a missing optional dependency
-    surfaces as one red row in the console rather than preventing the server
-    from starting.
-    """
+    async def run() -> dict:
+        return await func()
 
-    async def kafka() -> dict:
-        from kafka_health_agent.tools import get_kafka_cluster_health
+    return run
 
-        return await get_kafka_cluster_health()
 
-    async def kubernetes() -> dict:
-        from k8s_health_agent.tools import get_cluster_info
-
-        return await get_cluster_info()
-
-    async def elasticsearch() -> dict:
-        from elasticsearch_agent.tools import get_cluster_health
-
-        return await get_cluster_health()
-
-    async def prometheus() -> dict:
-        from observability_agent.tools import get_prometheus_targets
-
-        return await get_prometheus_targets()
-
-    async def docker() -> dict:
-        from docker_agent.tools import list_containers
-
-        return await list_containers()
-
+def default_probes(specialists: Sequence[Specialist]) -> list[IntegrationProbe]:
+    """One probe per enabled specialist that declares a setup check."""
     return [
         IntegrationProbe(
-            name="kafka",
-            label="Kafka",
-            hint=(
-                "Set KAFKA_BOOTSTRAP_SERVERS to a reachable broker list; for a secured "
-                "cluster also KAFKA_SECURITY_PROTOCOL and its TLS/SASL settings."
-            ),
-            run=kafka,
-        ),
-        IntegrationProbe(
-            name="kubernetes",
-            label="Kubernetes",
-            hint="Provide a kubeconfig (KUBECONFIG_PATH) or run inside a cluster.",
-            run=kubernetes,
-        ),
-        IntegrationProbe(
-            name="elasticsearch",
-            label="Elasticsearch",
-            hint="Set ELASTICSEARCH_URL (and credentials, if the cluster needs them).",
-            run=elasticsearch,
-        ),
-        IntegrationProbe(
-            name="prometheus",
-            label="Prometheus",
-            hint="Set PROMETHEUS_URL to a reachable Prometheus instance.",
-            run=prometheus,
-        ),
-        IntegrationProbe(
-            name="docker",
-            label="Docker",
-            hint="Ensure the docker CLI is on PATH and the daemon socket is reachable.",
-            run=docker,
-        ),
+            name=s.key,
+            label=s.setup_check.label,
+            hint=s.setup_check.hint,
+            run=_runner(s.setup_check.tool),
+        )
+        for s in specialists
+        if s.setup_check is not None
     ]

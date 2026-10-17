@@ -1,5 +1,5 @@
 from orrery_core import OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.registry import HealthCheck, SpecialistSpec
+from orrery_core.registry import HealthCheck, SetupCheck, SpecialistSpec
 
 from .eck import (
     describe_eck_cluster,
@@ -119,5 +119,10 @@ specialist = SpecialistSpec(
             "and all CRs Ready. Quote the exact color and unassigned-shard count."
         ),
         tools=(get_cluster_health, list_indices, get_shard_allocation, list_eck_clusters),
+    ),
+    setup_check=SetupCheck(
+        label="Elasticsearch",
+        tool=get_cluster_health,
+        hint=("Set ELASTICSEARCH_URL (and credentials, if the cluster needs them)."),
     ),
 )

@@ -159,7 +159,7 @@ exactly like a built-in one.
 
 ```python
 # agents/my-agent/my_agent/agent.py (after root_agent)
-from orrery_core.registry import HealthCheck, Journal, Remediation, SpecialistSpec
+from orrery_core.registry import HealthCheck, Journal, Remediation, SetupCheck, SpecialistSpec
 
 specialist = SpecialistSpec(
     agent=root_agent,
@@ -183,6 +183,12 @@ specialist = SpecialistSpec(
     ),
     # Optional: where findings are saved (the ops journal declares one).
     # journal=Journal(save=save_note, log=log_operation),
+    # Optional: your row in the console's first-run self-test. One read-only tool.
+    setup_check=SetupCheck(
+        label="My Service",
+        tool=get_status,
+        hint="Set MY_SERVICE_URL to a reachable instance.",
+    ),
 )
 ```
 
@@ -192,12 +198,14 @@ specialist = SpecialistSpec(
 | `health_check` | Joins both health sweeps: the conversational `incident_triage_agent` gets the tools and the rubric, and the batch workflow gets a `<key>_health_checker` that writes `<key>_status`. |
 | `remediation` | The batch workflow's act → verify loop may take these actions, guided by the playbook; the verifier gets the `verify` tools plus every enabled health-check tool. With no enabled `Remediation`, the workflow has no loop at all. |
 | `journal` | The coordinator may offer "want me to save this?", and the batch run saves its report with `save` and logs with `log`. Only while one is enabled. |
+| `setup_check` | A row in the console's first-run self-test ("is this integration wired at all?"): the tool is called with no arguments and, if it fails, the console shows `hint`. Only for specialists the deployment runs. |
 
 Everything is checked at startup, because the sweeps and the loop run
 unattended and an instruction saying "take no action" is not a control:
 
 - every tool listed must be one of your agent's own tools;
-- `HealthCheck.tools` and `Remediation.verify` must be **read-only**: no
+- `HealthCheck.tools`, `Remediation.verify` and `SetupCheck.tool` must be
+  **read-only** (the self-test does not consult RBAC): no
   `@confirm`/`@destructive`, and not *named* as a write (`restart_…`,
   `delete_…`, see `orrery_core.looks_mutating`);
 - `Remediation.actions` must be guarded, so each one stops at the

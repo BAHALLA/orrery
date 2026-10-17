@@ -1,5 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.registry import HealthCheck, SpecialistSpec
+from orrery_core.registry import HealthCheck, SetupCheck, SpecialistSpec
 
 from .tools import (
     create_silence,
@@ -98,5 +98,10 @@ specialist = SpecialistSpec(
             "down; healthy = none of these. Report alert names and down-target counts."
         ),
         tools=(get_prometheus_targets, get_prometheus_alerts, get_active_alerts, query_prometheus),
+    ),
+    setup_check=SetupCheck(
+        label="Prometheus",
+        tool=get_prometheus_targets,
+        hint=("Set PROMETHEUS_URL to a reachable Prometheus instance."),
     ),
 )

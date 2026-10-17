@@ -1,5 +1,5 @@
 from orrery_assistant.admin import ChatAgentAdmin
-from orrery_assistant.agent import root_agent
+from orrery_assistant.agent import _specialists, root_agent
 from orrery_assistant.probes import default_probes
 from orrery_core import create_memory_service, default_plugins
 from orrery_core.serving.runner import create_context_cache_config
@@ -16,8 +16,10 @@ api = create_app(
     memory_service=create_memory_service(db_url=config.database_url),
     context_cache_config=create_context_cache_config(),
     # Powers the console's first-run self-test: which integrations are actually
-    # wired. Core stays agent-agnostic, so the probe list is supplied here.
-    integration_probes=default_probes(),
+    # wired. Core stays agent-agnostic, so the probe list is supplied here, from
+    # the specialists the deployment runs (the env set: an admin's catalog
+    # switch-off removes a route, not the integration, so it is still probed).
+    integration_probes=default_probes(_specialists),
     # Lets admins switch specialists and compose declarative agents from the
     # console (writes need ORRERY_ADMIN_EDITING=true); stored next to sessions.
     agent_admin=ChatAgentAdmin(),

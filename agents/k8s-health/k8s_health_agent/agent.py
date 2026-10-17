@@ -1,5 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.registry import HealthCheck, Remediation, SpecialistSpec
+from orrery_core.registry import HealthCheck, Remediation, SetupCheck, SpecialistSpec
 
 from .operators import (
     describe_custom_resource,
@@ -147,5 +147,10 @@ specialist = SpecialistSpec(
             "The target is a deployment and its namespace."
         ),
         verify=(get_deployment_status, list_pods, describe_pod, get_pod_logs, get_events),
+    ),
+    setup_check=SetupCheck(
+        label="Kubernetes",
+        tool=get_cluster_info,
+        hint=("Provide a kubeconfig (KUBECONFIG_PATH) or run inside a cluster."),
     ),
 )

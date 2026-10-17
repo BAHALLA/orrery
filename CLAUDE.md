@@ -53,7 +53,7 @@ no per-agent run targets:
 make run-dev            # ADK Dev UI (in-memory)
 make run-cli            # Terminal mode
 make run-cli PERSIST=1  # Persistent store (Postgres via DATABASE_URL, else in-memory)
-make run-api            # FastAPI front door + web console on :8000 (auth ON, dev JWT)
+make run-api            # FastAPI front door + web console on 127.0.0.1:8000 (auth ON, dev JWT; API_HOST=0.0.0.0 for the LAN)
 make run-api SSO=1      # …with Keycloak SSO (needs `make up PROFILES=sso`)
 make run-web            # Web console dev server with HMR (Vite :5173)
 make run-slack          # Slack bot (MODE=socket for Socket Mode)

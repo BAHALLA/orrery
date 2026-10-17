@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The console's first-run self-test is built from the specialists that
+  run.** Its probes were a fixed list of five integrations, imported and
+  called whatever `ORRERY_SPECIALISTS` / `ORRERY_DISABLED_SPECIALISTS` said,
+  on a path that does not consult RBAC. A specialist now declares its row as
+  `SpecialistSpec.setup_check` (`SetupCheck(label, tool, hint)`); the tool must
+  be one of its own reads, checked at startup like a health check's. A
+  specialist the env excludes is not probed or imported for it, and a
+  third-party one gets a row by declaring a check. Probe names are now the
+  specialist keys (`k8s`, `observability` instead of `kubernetes`,
+  `prometheus`); the labels are unchanged.
+- **`make run-api` listens on 127.0.0.1.** It runs with your kubeconfig,
+  cluster and model credentials, so it no longer serves the LAN by default
+  (`make demo` uses it too). `API_HOST=0.0.0.0` restores the old behaviour.
+
+### Removed
+
+- **The shutdown "503 + Retry-After" guard (0.6.5).** It could never fire:
+  on SIGTERM uvicorn closes its listening socket and every idle connection,
+  and turns keep-alive off on busy ones, before the app's shutdown runs, so
+  no new request reaches the app. Raising the flag from the signal would not
+  change that, and neither would failing `/readyz` (probes get "connection
+  refused" first). The drain itself is unchanged: turns whose clients left
+  still get `ORRERY_SHUTDOWN_GRACE_SECONDS` to finish.
+
 ## [0.6.6] - 2026-10-17
 
 A security patch: the published image and the Helm chart run the authenticated

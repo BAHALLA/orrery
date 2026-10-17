@@ -1,5 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.registry import HealthCheck, SpecialistSpec
+from orrery_core.registry import HealthCheck, SetupCheck, SpecialistSpec
 
 from .tools import (
     docker_compose_status,
@@ -88,5 +88,10 @@ specialist = SpecialistSpec(
             "healthy = none of these."
         ),
         tools=(list_containers, get_container_stats, docker_compose_status),
+    ),
+    setup_check=SetupCheck(
+        label="Docker",
+        tool=list_containers,
+        hint=("Ensure the docker CLI is on PATH and the daemon socket is reachable."),
     ),
 )

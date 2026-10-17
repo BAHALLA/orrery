@@ -535,15 +535,6 @@ def create_app(
             "with N replicas a caller gets N times the configured limit."
         )
 
-    shutting_down = asyncio.Event()
-
-    def accepting_turns() -> None:
-        """Refuse a new turn while shutting down: the replica is draining."""
-        if shutting_down.is_set():
-            raise HTTPException(
-                status_code=503, detail="Shutting down; retry", headers={"Retry-After": "5"}
-            )
-
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
         # Size the pool the blocking tool layer runs on. Done here because it
@@ -556,10 +547,12 @@ def create_app(
         try:
             yield
         finally:
-            # By now uvicorn has stopped accepting connections and waited for
-            # connected requests; the 503 is a backstop for a request that
-            # still reaches the app. Turns whose clients left get the grace.
-            shutting_down.set()
+            # New work is refused by the server, not here: on SIGTERM uvicorn
+            # closes its listening socket and every idle connection, and turns
+            # keep-alive off on busy ones, so no new request reaches the app.
+            # By now it has also waited --timeout-graceful-shutdown for the
+            # connected requests. What it cannot see are turns whose clients
+            # left (they run in their own tasks): those get the grace here.
             await drain_turns(cfg.shutdown_grace_seconds)
             if catalog is not None:
                 await catalog.stop()
@@ -715,11 +708,7 @@ def create_app(
             identity=identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None,
         )
 
-    @api.post(
-        "/chat",
-        response_model=ChatResponse,
-        dependencies=[Depends(accepting_turns), Depends(chat_rate_limit)],
-    )
+    @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])
     async def chat(
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
@@ -731,7 +720,7 @@ def create_app(
     # plain one does), narrated as Server-Sent Events — see `sse.py` for the
     # event vocabulary. POST, not GET, so the message never lands in a URL or
     # an access log; the console reads it with fetch(), not EventSource.
-    @api.post("/chat/stream", dependencies=[Depends(accepting_turns), Depends(chat_rate_limit)])
+    @api.post("/chat/stream", dependencies=[Depends(chat_rate_limit)])
     async def chat_stream(
         body: ChatRequest,
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
