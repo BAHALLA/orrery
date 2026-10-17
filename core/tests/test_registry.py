@@ -61,6 +61,12 @@ async def save_note() -> dict:
     return {}
 
 
+@confirm("saves a note in the team wiki")
+async def save_wiki_note() -> dict:
+    """Write to an external wiki."""
+    return {}
+
+
 async def log_operation() -> dict:
     """Record an operation."""
     return {}
@@ -156,7 +162,7 @@ def _check(*tools: Any) -> HealthCheck:
 
 
 def _redis(**spec: Any) -> SpecialistSpec:
-    tools = [get_status, restart_service, save_note, log_operation]
+    tools = [get_status, restart_service, save_wiki_note, log_operation]
     return SpecialistSpec(agent=_gated("redis_agent", tools), **spec)
 
 
@@ -166,13 +172,13 @@ def test_a_spec_carries_its_contributions(monkeypatch):
         routing_hint="Redis health, memory, keyspace.",
         health_check=_check(get_status),
         remediation=Remediation(actions=(restart_service,), playbook="restart when wedged."),
-        journal=Journal(save=save_note, log=log_operation),
+        journal=Journal(save=save_wiki_note, log=log_operation),
     )
     [s] = discover_specialists(loader=_eps(("redis", spec), dist="acme-redis-agent"))
     assert s.agent is spec.agent and s.hint == "Redis health, memory, keyspace."
     assert s.health_check is not None and s.health_check.tools == (get_status,)
     assert s.remediation is not None and s.remediation.actions == (restart_service,)
-    assert s.journal is not None and s.journal.save is save_note
+    assert s.journal is not None and s.journal.save is save_wiki_note
     assert source_of("redis_agent") == "plugin"
 
 
@@ -218,6 +224,16 @@ def test_a_key_must_be_an_identifier(key):
     # Keys become node names and state keys (<key>_health_checker, <key>_status).
     with pytest.raises(ValueError, match="lowercase letters, digits and underscores"):
         discover_specialists(loader=_eps((key, _agent("x_a", []))))
+
+
+def test_a_malformed_key_from_a_plugin_nobody_enabled_is_skipped(caplog):
+    # Metadata alone from a package nobody named must not stop startup.
+    eps = lambda: [  # noqa: E731
+        _EP("kafka", _agent("kafka_a", []), _Dist("kafka-health-agent")),
+        _EP("my-db", _agent("db_a", []), _Dist("acme-db")),
+    ]
+    assert [s.key for s in discover_specialists(loader=eps)] == ["kafka"]
+    assert "'my-db'" in caplog.text
 
 
 # ── Third-party specialists: opt-in, and checked at startup ──────────
@@ -280,11 +296,32 @@ def test_the_plugin_checks_reach_agents_behind_agent_tools(monkeypatch):
         discover_specialists(loader=_eps(("redis", outer), dist="acme-redis-agent"))
 
 
-def test_a_plugins_declared_journal_tools_may_write(monkeypatch):
+def test_a_plugins_journal_writes_must_be_guarded(monkeypatch):
+    # The batch run calls journal tools unattended: a plugin's "save" might
+    # write to an external system, so only a guard may stand in front of it.
     monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
-    spec = _redis(journal=Journal(save=save_note, log=log_operation))
-    [s] = discover_specialists(loader=_eps(("redis", spec), dist="acme-redis-agent"))
-    assert s.journal is not None
+    agent = _gated("redis_agent", [get_status, save_note, log_operation])
+    spec = SpecialistSpec(agent=agent, journal=Journal(save=save_note, log=log_operation))
+    with pytest.raises(ValueError, match="'save_note' on redis_agent is named as a mutation"):
+        discover_specialists(loader=_eps(("redis", spec), dist="acme-redis-agent"))
+
+
+def test_a_plugin_agent_holding_a_toolset_needs_a_confirmation_gate(monkeypatch):
+    # A toolset lists its tools only at run time, so it counts as guarded.
+    from google.adk.tools.base_toolset import BaseToolset
+
+    class _Remote(BaseToolset):
+        async def get_tools(self, readonly_context=None):  # type: ignore[override]
+            return []
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    bare = _agent("redis_agent", [get_status, _Remote()])
+    with pytest.raises(ValueError, match="holds guarded tools or a toolset but no confirmation"):
+        discover_specialists(loader=_eps(("redis", bare), dist="acme-redis-agent"))
+
+    gated = _gated("redis_agent", [get_status, _Remote()])
+    [s] = discover_specialists(loader=_eps(("redis", gated), dist="acme-redis-agent"))
+    assert is_confirmation_gate(getattr(s.agent, "before_tool_callback", None))
 
 
 def test_a_sweep_may_not_use_a_guarded_tool():

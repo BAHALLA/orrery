@@ -21,6 +21,7 @@ def _ctx(**state) -> MagicMock:
 
 def test_the_report_keys_come_from_the_checkers():
     assert tuple(c.output_key for c in chat.HEALTH_CHECKERS) == chat._STATUS_KEYS
+    assert chat.STATUS_KEYS["kafka"] == "kafka_status"
 
 
 def test_a_third_party_checkers_report_is_read():

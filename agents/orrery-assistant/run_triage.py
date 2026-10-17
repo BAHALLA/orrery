@@ -41,7 +41,7 @@ from google.adk.apps import App
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from orrery_assistant.agent import HEALTH_CHECKERS, orrery_triage_workflow
+from orrery_assistant.agent import STATUS_KEYS, orrery_triage_workflow
 from orrery_assistant.batch import SweepOutcome, judge_sweep
 from orrery_core import (
     ToolLedger,
@@ -108,7 +108,7 @@ async def main() -> SweepOutcome:
         dict(final.state) if final else {},
         ledger,
         error,
-        status_keys={c.name.removesuffix("_health_checker"): c.output_key for c in HEALTH_CHECKERS},
+        status_keys=STATUS_KEYS,
     )
     print(outcome.summary())
     return outcome

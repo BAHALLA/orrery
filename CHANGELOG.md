@@ -67,7 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Third-party specialists meet the confirmation invariants at startup.**
   Every agent they reach must gate its guarded tools, and no tool named as a
   write may ship undecorated, the same rules `test_confirmation_wiring.py`
-  holds the built-ins to. Remediation actions must be guarded.
+  holds the built-ins to. An agent holding a toolset (MCP, OpenAPI) needs the
+  gate too, and a plugin's journal tools named as writes must be guarded,
+  since the batch run calls them unattended. Remediation actions must be
+  guarded.
 - Routing hints and agent descriptions reach the coordinator's prompt as one
   line of at most 200 characters, so one cannot open a section of its own.
 - **The admin catalog fails closed at startup.** A stored catalog that no

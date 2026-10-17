@@ -111,6 +111,17 @@ enabled specialists.**
   `build_application(settings)` would let the batch workflow follow the
   catalog and allow two configurations per test process.
 - **Load-time checks cannot see inside toolsets** (MCP, OpenAPI), which list
-  tools at run time; the confirmation gate still applies per call.
+  tools at run time. An agent holding one must therefore carry a confirmation
+  gate (a plugin's is refused at load without one), and the gate applies per
+  call.
+- **A journal writes unattended.** The batch run calls a `Journal`'s `save` and
+  `log` with nobody watching. The built-in ops journal writes only to its own
+  session/user state. A plugin journal's tools named as writes must be
+  guarded, so an unattended save into an external system stops at the gate;
+  but that rests on the name check, so a write named like a read
+  (`record_…`) would still run.
 - **Checks catch mistakes, not malice.** A named plugin's code runs with the
-  process's permissions; supply-chain controls are the defence there.
+  process's permissions; supply-chain controls are the defence there. "Built-in"
+  is decided by distribution name, so a same-named package from a public index
+  would load by default as built-in; the uv workspace and the image built from
+  the lockfile are what rule that out.

@@ -118,10 +118,11 @@ class Journal:
     """The specialist keeps records: the coordinator may offer to save findings.
 
     ``save`` stores a note (the batch run saves its triage report with it) and
-    ``log`` records an operation. They write to the journal's own store by
-    design, so they need no confirmation; that is also why only the tools named
-    here are exempt from the "named as a mutation" check on a third-party
-    specialist.
+    ``log`` records an operation. The batch run calls both **unattended**. The
+    built-in ops journal writes only to its own session/user state, so its
+    tools need no confirmation; a third-party journal gets no such exemption:
+    its tools named as writes must be guarded, so an unattended save into an
+    external system stops at the confirmation gate.
     """
 
     save: Any
@@ -272,15 +273,20 @@ def _check_plugin_gates(key: str, spec: SpecialistSpec) -> None:
 
     - a tool *named* as a mutation must carry ``@confirm``/``@destructive``
       (an undecorated one is treated as a read everywhere: no gate, no L2
-      block, callable by a viewer), except the tools it declares as its
-      :class:`Journal`;
-    - an agent holding a guarded tool must have a confirmation gate
-      (``create_agent()`` adds one; a bare ``LlmAgent`` does not).
+      block, callable by a viewer). This includes its :class:`Journal` tools:
+      the batch run calls those unattended, and only a guard stops a journal
+      whose "save" writes somewhere other than its own store;
+    - an agent holding a guarded tool **or a toolset** must have a
+      confirmation gate (``create_agent()`` adds one; a bare ``LlmAgent`` does
+      not). A toolset (MCP, OpenAPI) lists its tools only at run time, so it
+      cannot be shown safe here and counts as guarded, as it does in
+      ``create_agent()``.
     """
+    from google.adk.tools.base_toolset import BaseToolset
+
     from .security.classify import looks_mutating
     from .security.guardrails import is_confirmation_gate, is_guarded
 
-    journal = {id(spec.journal.save), id(spec.journal.log)} if spec.journal else set()
     for agent in _agents_in(spec.agent):
         tools = [
             t
@@ -288,17 +294,19 @@ def _check_plugin_gates(key: str, spec: SpecialistSpec) -> None:
             if not isinstance(getattr(t, "agent", None), BaseAgent)
         ]
         for tool in tools:
+            if isinstance(tool, BaseToolset):
+                continue  # no static names to check; gated below
             name = _tool_name(tool)
-            if looks_mutating(name) and not is_guarded(tool) and id(tool) not in journal:
+            if looks_mutating(name) and not is_guarded(tool):
                 raise ValueError(
                     f"third-party specialist {key!r}: tool {name!r} on {agent.name} is named "
                     "as a mutation but has no @confirm/@destructive guard"
                 )
-        if any(is_guarded(t) for t in tools) and not is_confirmation_gate(
-            getattr(agent, "before_tool_callback", None)
-        ):
+        gated = [t for t in tools if isinstance(t, BaseToolset) or is_guarded(t)]
+        if gated and not is_confirmation_gate(getattr(agent, "before_tool_callback", None)):
             raise ValueError(
-                f"third-party specialist {key!r}: {agent.name} holds guarded tools but no "
+                f"third-party specialist {key!r}: {agent.name} holds guarded tools or a "
+                "toolset but no "
                 "confirmation gate; build it with orrery_core.create_agent() or add "
                 "require_confirmation() to its before_tool_callback"
             )
@@ -352,16 +360,22 @@ def _installed(loader: Callable[[], Any] | None) -> dict[str, tuple[Installed, A
     eps = list((loader or (lambda: entry_points(group=ENTRY_POINT_GROUP)))())
     found: dict[str, tuple[Installed, Any]] = {}
     for ep in eps:
-        if not _KEY.fullmatch(ep.name):
-            raise ValueError(
-                f"Entry point {ENTRY_POINT_GROUP}:{ep.name!r} ({ep.value}): a specialist "
-                "key must be lowercase letters, digits and underscores, starting with a letter"
-            )
         # Normalised (PEP 503): installers record `docker_agent` or `docker-agent`.
         dist = re.sub(r"[-_.]+", "-", getattr(getattr(ep, "dist", None), "name", "") or "").lower()
         entry = Installed(
             ep.name, dist, "builtin" if dist in _WORKSPACE_DISTRIBUTIONS else "plugin"
         )
+        if not _KEY.fullmatch(ep.name):
+            message = (
+                f"Entry point {ENTRY_POINT_GROUP}:{ep.name!r} ({ep.value}): a specialist "
+                "key must be lowercase letters, digits and underscores, starting with a letter"
+            )
+            if entry.source == "builtin":
+                raise ValueError(message)
+            # A package nobody enabled must not be able to stop startup with
+            # its metadata alone; it could never be named anyway.
+            logger.warning("%s; ignored", message)
+            continue
         if ep.name in found:
             other, other_ep = found[ep.name]
             if (other.distribution, other_ep.value) == (dist, ep.value):

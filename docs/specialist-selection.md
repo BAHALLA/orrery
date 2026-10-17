@@ -171,12 +171,17 @@ can register one. The rules:
    metadata, without importing it) but not loaded until `ORRERY_SPECIALISTS`
    names it.
 2. **No silent replacement.** Two packages registering one key, or two
-   specialists with one agent name, stop startup.
+   specialists with one agent name, stop startup. A malformed key from a
+   package nobody named is logged and ignored: metadata alone cannot stop
+   startup.
 3. **The built-ins' invariants, at load time.** This repository's tests check
    that every agent holding a guarded tool has a confirmation gate, and that no
    tool named as a write (`looks_mutating`) is undecorated. A plugin never
    meets those tests, so both checks run on every agent it can reach when it
-   loads. Its declared `Journal` tools are the one exemption.
+   loads. An agent holding a toolset (MCP, OpenAPI) needs the gate too, since
+   its tools are only known at run time. A plugin's `Journal` tools get no
+   exemption: the batch run calls them unattended, so if they are named as
+   writes they must be guarded.
 4. **Contributions are checked like the built-ins'.** Health-check and verify
    tools must be reads; remediation actions must be guarded; every listed tool
    must be the specialist's own.

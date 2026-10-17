@@ -228,10 +228,10 @@ put its code in front of the coordinator:
   default; plugins are not). The admin view lists it, labelled *plugin*, from
   package metadata without importing it;
 - at startup it is held to the rules this repository's tests hold the
-  built-ins to: every agent it reaches that holds a guarded tool needs a
-  confirmation gate (build agents with `create_agent()`, which adds one), and no
-  tool named as a write may be undecorated, except the two it declares as its
-  `Journal`.
+  built-ins to: every agent it reaches that holds a guarded tool or a toolset
+  needs a confirmation gate (build agents with `create_agent()`, which adds
+  one), and no tool named as a write may be undecorated, its `Journal` tools
+  included (the batch run calls those unattended).
 
 Two packages registering one key stop startup, so a plugin cannot quietly
 replace a built-in.

@@ -123,6 +123,11 @@ def _checker_instruction(system: str, checks: str, criteria: str) -> str:
     )
 
 
+def status_key(key: str) -> str:
+    """The state key a system's batch checker writes its report to."""
+    return f"{key}_status"
+
+
 def build_health_checker(specialist: Specialist) -> Any:
     """The batch workflow's checker for one specialist, from its HealthCheck."""
     check = specialist.health_check
@@ -132,7 +137,7 @@ def build_health_checker(specialist: Specialist) -> Any:
         description=f"Checks {check.system} health and reports status.",
         instruction=_checker_instruction(check.system, check.checks, check.criteria),
         tools=list(check.tools),
-        output_key=f"{specialist.key}_status",
+        output_key=status_key(specialist.key),
     )
 
 
@@ -459,7 +464,10 @@ _PROBLEM_SIGNALS = (
 
 # The checkers' report keys, from the checkers themselves: a key listed here by
 # hand would miss every specialist added since, and read its silence as healthy.
-_STATUS_KEYS = tuple(c.output_key for c in HEALTH_CHECKERS)
+#: System key -> the state key its checker reports under (``run_triage`` judges
+#: per-system coverage from it).
+STATUS_KEYS = {s.key: status_key(s.key) for s in sweepable(_specialists)}
+_STATUS_KEYS = tuple(STATUS_KEYS.values())
 
 # Built from the enabled specialists' declarations: ``None`` when no enabled
 # specialist offers a remediation action (or a journal), and then the graph
