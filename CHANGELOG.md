@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A health sweep checked specialists that were switched off.** The
+  conversational sweep (`incident_triage_agent`) and the batch workflow's
+  checkers were fixed lists over every system. So a deployment with
+  `ORRERY_DISABLED_SPECIALISTS=docker,k8s`, or an admin who switched those off
+  in the console, still had a "full health sweep" call Docker and Kubernetes
+  tools. Both sweeps are now built from the enabled specialists. The sweep is
+  rebuilt with the coordinator on every catalog edit; its instruction names
+  only the systems it checks; and with nothing sweepable enabled, the
+  coordinator is offered no sweep and the batch workflow reports everything as
+  unverified.
+
 ## [0.6.1] - 2026-10-16
 
 A patch release. The published image can now sign in through any OIDC

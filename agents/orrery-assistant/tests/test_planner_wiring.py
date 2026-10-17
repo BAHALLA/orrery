@@ -243,3 +243,32 @@ class TestTriageRouting:
         ctx = MagicMock()
         ctx.state = {"incident_severity": "healthy"}
         assert "healthy" in agent_mod.final_report(ctx)
+
+
+class TestSweepFollowsEnabledSpecialists:
+    """ORRERY_DISABLED_SPECIALISTS reaches both sweeps, not just the routing."""
+
+    def test_env_disabled_specialists_are_not_swept(self, clean_planner_env, monkeypatch):
+        monkeypatch.setenv("ORRERY_DISABLED_SPECIALISTS", "docker,k8s,elasticsearch")
+        try:
+            agent_mod, _ = _reload_agent()
+            # Batch workflow: only the enabled systems' checkers fan out.
+            assert {c.name for c in agent_mod.HEALTH_CHECKERS} == {
+                "kafka_health_checker",
+                "observability_health_checker",
+            }
+            node_names = {n.name for n in agent_mod.orrery_triage_workflow.graph.nodes}
+            assert "docker_health_checker" not in node_names
+            assert "k8s_health_checker" not in node_names
+            # Conversational sweep: no tool of a disabled specialist.
+            tools = {
+                getattr(t, "name", None) or getattr(t, "__name__", "")
+                for t in agent_mod.incident_triage_agent.tools
+            }
+            assert "list_containers" not in tools
+            assert "list_pods" not in tools
+            assert "es_get_cluster_health" not in tools
+            assert "get_consumer_lag" in tools
+        finally:
+            monkeypatch.delenv("ORRERY_DISABLED_SPECIALISTS")
+            _reload_agent()
