@@ -310,13 +310,18 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      # Loopback only: this demo front door runs without authentication.
+      - "127.0.0.1:8000:8000"
     deploy:
       resources:
         limits:
           memory: 1g
           cpus: "1.0"
     environment:
+      # Anonymous front door (every caller is a viewer) with the web console.
+      # For sign-in, set AUTH_ENABLED=true and JWT_* (see docs/config/security.md).
+      AUTH_ENABLED: "false"
+      ORRERY_WEB_CONSOLE_ENABLED: "true"
       # ── LLM provider (pick one) ──────────────────────────────────
       # Option 1: Google AI Studio (default)
       GOOGLE_GENAI_USE_ENTERPRISE: "FALSE"
@@ -347,7 +352,7 @@ services:
     volumes:
       - devops-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    command: ["adk", "web", "--host", "0.0.0.0", "--port", "8000", "agents/orrery-assistant"]
+    command: ["uvicorn", "orrery_assistant.app:api", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]
 
   # ── Slack bot (use: docker compose --profile slack up) ────────────
 

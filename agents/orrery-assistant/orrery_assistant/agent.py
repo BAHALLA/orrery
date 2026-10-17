@@ -54,6 +54,32 @@ from orrery_core.registry import Specialist, discover_specialists, one_line
 
 load_agent_env(__file__)
 
+
+def _warn_if_adk_web_with_auth() -> None:
+    """``adk web`` reads none of the front door's settings; say so loudly.
+
+    With ``AUTH_ENABLED=true`` set, someone expects authentication. Under the
+    ADK developer UI there is none, and its session endpoints let anyone read
+    any user's conversations. Not refused: a developer's ``.env`` usually sets
+    it, and ``make run-dev`` on localhost is the intended use.
+    """
+    import logging
+    import sys
+    from pathlib import Path
+
+    argv = sys.argv
+    under_adk_web = Path(argv[0]).name == "adk" and argv[1:2] == ["web"]
+    if under_adk_web and os.getenv("AUTH_ENABLED", "").lower() in ("1", "true", "yes"):
+        logging.getLogger("orrery.assistant").error(
+            "Running under `adk web`, which ignores AUTH_ENABLED and JWT_*: there is "
+            "NO authentication, and anyone who can reach this port can read every "
+            "session. Use it on localhost only; deploy `uvicorn "
+            "orrery_assistant.app:api` instead."
+        )
+
+
+_warn_if_adk_web_with_auth()
+
 # ``None`` when ORRERY_KNOWLEDGE_BACKEND is unset (the default). Attaching a
 # search tool with no corpus behind it would teach the model to call it and get
 # nothing back, which is worse than not offering it at all — so the tool and

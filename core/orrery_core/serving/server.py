@@ -140,9 +140,11 @@ class ServerConfig:
     admin_editing: bool = False
     #: How often each replica checks the catalog store for edits made elsewhere.
     catalog_poll_seconds: float = 15.0
-    #: How long shutdown waits for running turns. Keep it under the pod's
-    #: terminationGracePeriodSeconds minus its preStop sleep (Helm: 60 - 10).
-    shutdown_grace_seconds: float = 40.0
+    #: How long shutdown waits for turns whose clients left. It runs *after*
+    #: uvicorn's own --timeout-graceful-shutdown (connected requests), so the
+    #: two together must fit the pod's grace period minus its preStop sleep
+    #: (Helm: 15 + 30 within 60 - 10).
+    shutdown_grace_seconds: float = 30.0
     #: Console settings served at runtime from /console-config.js (OIDC SSO
     #: without rebuilding the image). See :mod:`.console_config`.
     console: ConsoleConfig = field(default_factory=ConsoleConfig)
@@ -206,7 +208,7 @@ class ServerConfig:
             admin_editing=os.getenv("ORRERY_ADMIN_EDITING", "false").lower()
             in ("1", "true", "yes"),
             catalog_poll_seconds=float(os.getenv("ORRERY_CATALOG_POLL_SECONDS", "15")),
-            shutdown_grace_seconds=float(os.getenv("ORRERY_SHUTDOWN_GRACE_SECONDS", "40")),
+            shutdown_grace_seconds=float(os.getenv("ORRERY_SHUTDOWN_GRACE_SECONDS", "30")),
             csp_extra_origins=tuple(
                 o.strip() for o in os.getenv("ORRERY_CSP_EXTRA_ORIGINS", "").split(",") if o.strip()
             ),
@@ -554,8 +556,9 @@ def create_app(
         try:
             yield
         finally:
-            # New turns are refused from here on (503), then the running ones
-            # get the grace period to finish.
+            # By now uvicorn has stopped accepting connections and waited for
+            # connected requests; the 503 is a backstop for a request that
+            # still reaches the app. Turns whose clients left get the grace.
             shutting_down.set()
             await drain_turns(cfg.shutdown_grace_seconds)
             if catalog is not None:

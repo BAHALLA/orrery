@@ -123,11 +123,14 @@ for something else.
 
 ```json
 PUT _security/role/orrery_run_as
-{ "run_as": ["*"] }
+{ "run_as": ["*@example.com"] }
 ```
 
-Narrow `run_as` to the users or patterns Orrery may act for, and give the
-platform's own user that role. Each person's own Elasticsearch roles then
+`run_as: ["*"]` would include the `elastic` superuser and the built-in system
+users. Orrery refuses to act as those, but the grant belongs to the platform's
+own Elasticsearch user, so anyone holding its credentials could run as
+`elastic` directly. Narrow `run_as` to a pattern only your people match (their
+verified email domain) and give the platform's own user that role. Each person's own Elasticsearch roles then
 decide what their requests can read.
 
 ## What it looks like when it's refused

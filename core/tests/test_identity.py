@@ -297,3 +297,16 @@ def test_impersonation_off_sends_no_impersonation_headers(tmp_path, api_server):
     _core(tmp_path, api_server.port).list_namespaced_pod("default")
 
     assert not any(k.lower().startswith("impersonate") for k, _ in api_server.requests[-1])
+
+
+@pytest.mark.parametrize("username", ["elastic", "Elastic", "kibana_system", "_xpack"])
+def test_a_reserved_elasticsearch_user_is_never_impersonated(monkeypatch, username):
+    # run_as ["*"] covers the superuser: a caller whose name is "elastic" (a
+    # self-chosen username under a non-email user claim) must not become it.
+    monkeypatch.setenv("ORRERY_IMPERSONATION", "elasticsearch")
+
+    with (
+        caller_scope(CallerIdentity(subject="x", username=username)),
+        pytest.raises(ImpersonationRequired, match="reserved Elasticsearch user"),
+    ):
+        elasticsearch_headers()

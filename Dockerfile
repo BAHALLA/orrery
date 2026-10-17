@@ -131,12 +131,18 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Default: run the orrery-assistant orchestrator with web UI.
-# Individual services (Slack bot, Google Chat bot, Pub/Sub worker) override
-# this via `command:` in docker-compose or the Kubernetes manifest.
-# Health/readiness probes are owned by the orchestrator (docker-compose,
-# Helm values in deploy/helm/orrery-assistant/values.yaml) rather than
-# baked in here, because the /healthz server only runs for services that
-# start HealthServer (run_persistent, Pub/Sub worker) — not `adk web`.
+# Default: the HTTP front door (JWT auth, RBAC from verified claims, rate
+# limits, CSP, the web console, /healthz and /readyz on :8000). It reads
+# AUTH_ENABLED / JWT_*: with neither set it refuses to start, so a bare
+# `docker run` can't serve an unauthenticated API by accident.
+#
+# Not `adk web`: that is Google's developer UI. It ignores AUTH_ENABLED and
+# JWT_*, and its session endpoints let anyone read any user's conversations.
+# Use it locally (`make run-dev`), never as a deployment.
+#
+# Shutdown: uvicorn waits up to 15 s for requests whose clients are still
+# connected, then the app waits up to ORRERY_SHUTDOWN_GRACE_SECONDS (30) for
+# turns whose clients left. Both fit a 60 s grace period minus a 10 s preStop.
+# Other services (Slack bot, Google Chat bot, Pub/Sub worker) override this.
 EXPOSE 8000 8080
-CMD ["adk", "web", "--host", "0.0.0.0", "--port", "8000", "agents/orrery-assistant"]
+CMD ["uvicorn", "orrery_assistant.app:api", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The image and the Helm chart run the authenticated front door.** Their
+  default command was `adk web`, Google's developer UI, which ignores
+  `AUTH_ENABLED` and `JWT_*` and lets anyone read any user's sessions, so a
+  deployment from them had none of the front door's protections (auth,
+  verified-requester approvals, rate limits, CSP, the catalog, the shutdown
+  drain). The default is now `uvicorn orrery_assistant.app:api`; with no JWT
+  settings it refuses to start, and the chart's `auth.enabled: false` now
+  means an anonymous (viewer-only) front door. The chart's probes moved to
+  the HTTP port, where the front door serves `/healthz` and `/readyz` (the
+  old port 8080 was served by nothing under `adk web`). The compose `demo`
+  profile binds to loopback. `adk web` logs an error when `AUTH_ENABLED=true`.
+- **Elasticsearch impersonation never runs as a built-in user.** `elastic`,
+  `kibana_system` and the other reserved users, and `_`-prefixed internal
+  ones, are refused; the docs' `run_as` example is a domain pattern, not `*`.
+- MCP pinning covers tool annotations, so a server flipping `readOnlyHint`
+  after review is withheld like a changed description.
+
+### Changed
+
+- Shutdown budget: uvicorn waits 15 s for connected requests
+  (`--timeout-graceful-shutdown`), then turns whose clients left get
+  `ORRERY_SHUTDOWN_GRACE_SECONDS` (now 30). Together they fit Helm's 60 s
+  grace minus its 10 s preStop.
+
 ## [0.6.5] - 2026-10-17
 
 A security patch: Kubernetes impersonation never assumes a `system:` identity,
@@ -48,8 +74,8 @@ and pinned, and shutdown lets running turns finish.
 - **Rolling deploys no longer cut streamed turns short.** A turn whose
   client disconnected kept running, but shutdown didn't wait for it, so
   SIGTERM ended it mid-tool. Shutdown now refuses new turns (503 with
-  `Retry-After`) and waits up to `ORRERY_SHUTDOWN_GRACE_SECONDS` (default 40,
-  under Helm's 60 s grace minus the 10 s preStop).
+  `Retry-After`) and waits up to `ORRERY_SHUTDOWN_GRACE_SECONDS` for turns
+  whose clients left.
 - Building the coordinator for a catalog edit, and listing the catalog's
   options, run off the event loop, so other turns keep streaming meanwhile.
 

@@ -55,6 +55,21 @@ K8S_GROUP_PREFIX_ENV = "ORRERY_IMPERSONATE_K8S_GROUP_PREFIX"
 #: cluster-admin). No caller is ever impersonated into it.
 _RESERVED_K8S_PREFIX = "system:"
 
+#: Elasticsearch's built-in users (``elastic`` is the superuser) and its
+#: internal ``_``-prefixed ones. A ``run_as`` grant of ``*`` covers them, so a
+#: caller whose identity is one of these names is refused, not run as it.
+_RESERVED_ES_USERS = frozenset(
+    {
+        "elastic",
+        "kibana",
+        "kibana_system",
+        "logstash_system",
+        "beats_system",
+        "apm_system",
+        "remote_monitoring_user",
+    }
+)
+
 #: Header values must be a single line of printable characters: an identity
 #: carrying CR/LF would let a crafted claim inject headers.
 _SAFE = re.compile(r"^[\x21-\x7e][\x20-\x7e]{0,253}$")
@@ -186,7 +201,12 @@ def elasticsearch_headers() -> dict[str, str]:
     identity = acting_identity("elasticsearch")
     if identity is None:
         return {}
-    return {"es-security-runas-user": _safe(identity.username, "username")}
+    name = identity.username
+    if name.lower() in _RESERVED_ES_USERS or name.startswith("_"):
+        raise ImpersonationRequired(
+            f"refusing to impersonate the reserved Elasticsearch user {name!r}"
+        )
+    return {"es-security-runas-user": _safe(name, "username")}
 
 
 def _claim(claims: Mapping[str, Any], path: str) -> Any:
