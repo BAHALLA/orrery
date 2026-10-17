@@ -469,6 +469,9 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     one the coordinator cannot reach.
     """
     triage = build_triage_agent(specialists)
+    # Only offer what the coordinator can do: with the journal switched off, a
+    # "want me to save this?" ends in a tool it doesn't have.
+    journal = any(s.agent.name == "ops_journal_agent" for s in specialists)
     return create_agent(
         name="orrery_chat_agent",
         description="Conversational DevOps orchestrator that routes queries to specialist agents.",
@@ -503,9 +506,13 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
             "Only when the user themselves replies with an explicit 'approve' (or 'deny') in a "
             "later turn should you re-invoke the specialist to carry out (or drop) the exact "
             "same action. A casual 'yes' is not an approval.\n\n"
-            "After a significant investigation, offer once to save findings via "
-            "ops_journal_agent.\n\n"
-            "## Past-incident recall (load_memory)\n"
+            + (
+                "After a significant investigation, offer once to save findings via "
+                "ops_journal_agent.\n\n"
+                if journal
+                else ""
+            )
+            + "## Past-incident recall (load_memory)\n"
             "You have a `load_memory` tool that searches durable memory of earlier "
             "sessions. Nothing from the past is loaded automatically — call it yourself "
             "when past context would help. **When to call it:** before diagnosing a "

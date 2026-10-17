@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The coordinator offered the ops journal after it was switched off.** "After
+  a significant investigation, offer once to save findings via
+  ops_journal_agent" was fixed text in the coordinator's instruction. So with
+  `ops_journal` disabled (env or the console's catalog editor), an answer still
+  ended "want me to save this to your ops journal?", and a yes led to a tool
+  the coordinator didn't have. The offer is now part of the instruction only
+  while the journal is enabled.
+
+### Tests
+
+- **One console thread is one session.** End-to-end tests through the HTTP API
+  (real Runner and session store, a model that echoes what it was shown): turns
+  in a thread share one session, including across a catalog edit that rebuilds
+  the coordinator and over `/chat/stream`; a new chat is a new session; another
+  user's session id starts a fresh one. The console test follows a thread, New
+  chat, and back again, checking the session id each turn sends.
+
 ## [0.6.2] - 2026-10-17
 
 A patch release: a health sweep now checks only the specialists that are

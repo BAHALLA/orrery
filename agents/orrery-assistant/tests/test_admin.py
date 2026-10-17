@@ -104,3 +104,17 @@ def test_no_sweep_when_no_sweepable_system_is_on():
     )
     assert "incident_triage_agent" not in _delegates(root)
     assert "incident_triage_agent" not in str(base_instruction(root))
+
+
+def test_the_journal_is_only_offered_while_it_is_on():
+    # The offer to save findings was fixed text: with the journal switched off,
+    # the coordinator still asked "want me to save this to your ops journal?".
+    offer = "offer once to save findings"
+    on = ChatAgentAdmin().build(AgentCatalog())
+    assert "ops_journal_agent" in _delegates(on)
+    assert offer in str(base_instruction(on))
+
+    off = ChatAgentAdmin().build(AgentCatalog(disabled_specialists=["ops_journal"]))
+    assert "ops_journal_agent" not in _delegates(off)
+    assert offer not in str(base_instruction(off))
+    assert "ops_journal" not in str(base_instruction(off))
