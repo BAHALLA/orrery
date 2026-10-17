@@ -27,9 +27,10 @@ them on any ``get_tools`` call. So each exposed tool is also:
 
 5. **screened**: a description or schema text matching the prompt-injection
    patterns (:mod:`orrery_core.plugins.safety_plugin`) keeps the tool out;
-6. **pinned**: the first description and schemas seen are fingerprinted, and a
-   tool whose text later changes is withheld (a "rug pull") until the process
-   restarts and pins it again, which is when an operator is looking.
+6. **pinned**: the first description, schemas and annotations seen are
+   fingerprinted, and a tool whose text later changes is withheld (a "rug
+   pull") until the process restarts. A restart pins whatever is then served,
+   so the change has to be reviewed on the server first.
 
 Configuration is a YAML file named by ``ORRERY_MCP_CONFIG``::
 
@@ -255,12 +256,21 @@ def _texts(value: Any) -> list[str]:
 
 
 def tool_text(tool: BaseTool) -> dict[str, Any]:
-    """What the model sees of an MCP tool: its description and schemas."""
+    """What a server says about an MCP tool: description, schemas, annotations.
+
+    The annotations are pinned with the text: with ``trust_annotations`` they
+    set the guard level, so a server flipping ``readOnlyHint`` after review
+    would otherwise lower a tool's protection unnoticed.
+    """
     raw = getattr(tool, "raw_mcp_tool", None)
+    annotations = _field(raw, "annotations")
+    if annotations is not None and hasattr(annotations, "model_dump"):
+        annotations = annotations.model_dump(mode="json", exclude_none=True)
     return {
         "description": getattr(tool, "description", "") or "",
         "input": _field(raw, "inputSchema", "input_schema"),
         "output": _field(raw, "outputSchema", "output_schema"),
+        "annotations": annotations,
     }
 
 
@@ -334,7 +344,11 @@ class GuardedMcpToolset(McpToolset):
         digest = fingerprint(text)
         pinned = self._pinned.setdefault(tool.name, digest)
         if pinned != digest:
-            return "its description or schema changed since it was first seen; restart to accept"
+            return (
+                "its description, schema or annotations changed since it was first seen. "
+                "Review the change on the server before restarting: a restart accepts "
+                "whatever it then serves as the new reviewed version"
+            )
         return None
 
 

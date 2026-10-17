@@ -110,9 +110,11 @@ also:
 
 - **screened**: if its description or any text in its schemas matches the
   prompt-injection patterns, the tool is withheld;
-- **pinned**: its description and schemas are fingerprinted when first seen. If
-  they later change (a "rug pull"), the tool is withheld until Orrery restarts
-  and pins the new version, which is when an operator is looking.
+- **pinned**: its description, schemas and annotations are fingerprinted when
+  first seen. If they later change (a "rug pull", or a `readOnlyHint` flipped
+  to lower the guard), the tool is withheld until Orrery restarts. A restart
+  pins whatever the server then serves, so review the change on the server
+  first.
 
 Each withheld tool is logged once and audited as `mcp_tool_withheld`.
 

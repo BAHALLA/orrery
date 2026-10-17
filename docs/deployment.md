@@ -166,11 +166,18 @@ evaluation: they install with no database and no identity provider.
 
 ## Step 4 — Enable authentication
 
-If you are exposing the agent over HTTP (Ingress, `orrery_core.serving.server`,
-`adk web`), turn on the JWT bearer-token front door before sending real
-traffic. Without it, RBAC roles in the JWT are not verifiable and any
-caller on the network can self-declare as `admin`. The Slack and Google
-Chat bots authenticate at their own layer and are unaffected.
+The image and the chart run the HTTP front door
+(`uvicorn orrery_assistant.app:api`). Turn on its JWT verification before
+sending real traffic. Without it (`auth.enabled: false`) every caller is an
+anonymous viewer: nothing they do is attributable to a person, and nobody can
+approve an action. The Slack and Google Chat bots authenticate at their own
+layer and are unaffected.
+
+!!! warning "`adk web` is not a deployment"
+    `adk web` is Google's developer UI. It ignores `AUTH_ENABLED` and `JWT_*`,
+    and its session endpoints let anyone list and read any user's
+    conversations. Use it locally (`make run-dev`), never behind a port other
+    people can reach.
 
 For the full threat model and provider-specific JWKS endpoints, see
 [`config/security.md`](config/security.md).

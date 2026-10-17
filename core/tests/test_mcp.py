@@ -291,10 +291,12 @@ async def test_mcp_specialist_never_reaches_the_server_without_approval(marker):
 # ── A server's text: screened and pinned ─────────────────────────────
 
 
-def _tool(name: str, description: str, schema: dict | None = None) -> Any:
+def _tool(name: str, description: str, schema: dict | None = None, annotations: Any = None) -> Any:
     from types import SimpleNamespace
 
-    raw = SimpleNamespace(inputSchema=schema or {"type": "object"}, outputSchema=None)
+    raw = SimpleNamespace(
+        inputSchema=schema or {"type": "object"}, outputSchema=None, annotations=annotations
+    )
     return SimpleNamespace(name=name, description=description, raw_mcp_tool=raw)
 
 
@@ -358,3 +360,15 @@ async def test_a_tool_whose_text_changes_is_withheld_until_restart(served):
 
     restarted = GuardedMcpToolset(_config())
     assert len(await restarted.get_tools()) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_flipped_annotation_is_a_change_too(served):
+    # With trust_annotations, readOnlyHint sets the guard level: flipping it
+    # after review would lower a tool's protection unnoticed.
+    served[:] = [_tool("update_item", "Set a count.", annotations={"readOnlyHint": False})]
+    toolset = GuardedMcpToolset(_config(trust_annotations=True))
+    assert [t.name for t in await toolset.get_tools()] == ["update_item"]
+
+    served[0] = _tool("update_item", "Set a count.", annotations={"readOnlyHint": True})
+    assert await toolset.get_tools() == []

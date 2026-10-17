@@ -235,7 +235,7 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | `ORRERY_AGENTS_CONFIG` | unset | YAML file of [declarative agents](../adding-an-agent.md#declarative) built from existing tools. |
 | `ORRERY_ADMIN_EDITING` | `false` | Let admins switch specialists and compose agents from the console ([details](../adding-an-agent.md#admin-editing)). |
 | `ORRERY_CATALOG_POLL_SECONDS` | `15` | How often each replica checks for catalog edits made through another one. |
-| `ORRERY_SHUTDOWN_GRACE_SECONDS` | `40` | On shutdown, how long running turns may finish (new ones get 503). Keep it under the pod's termination grace period minus its preStop sleep. |
+| `ORRERY_SHUTDOWN_GRACE_SECONDS` | `30` | On shutdown, how long turns whose clients left may finish, after uvicorn's `--timeout-graceful-shutdown` (15 in the image) has waited for connected ones. Keep the sum under the pod's termination grace period minus its preStop sleep. |
 | `ORRERY_MCP_CONFIG` | unset | YAML file of [MCP servers](../integrations/mcp.md) to expose as gated specialists. Needs the `[mcp]` extra. |
 
 ## HTTP front door

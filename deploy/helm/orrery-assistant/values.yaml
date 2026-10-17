@@ -43,15 +43,22 @@ securityContext:
   capabilities:
     drop: ["ALL"]
 
-# Main ADK web command. Override to run alternate entry points.
+# The HTTP front door (JWT auth, RBAC, rate limits, the web console). Not
+# `adk web`, Google's developer UI, which ignores `auth` entirely and lets
+# anyone read any user's conversations. Override only to run another
+# entry point, and then point `probes.port` at whatever serves /healthz.
 command:
-  - adk
-  - web
+  - uvicorn
+  - orrery_assistant.app:api
   - --host
   - 0.0.0.0
   - --port
   - "8000"
-  - agents/orrery-assistant
+  # Waits for requests whose clients are still connected; then the app waits
+  # ORRERY_SHUTDOWN_GRACE_SECONDS (30) for turns whose clients left. 15 + 30
+  # fits terminationGracePeriodSeconds (60) minus preStopSleepSeconds (10).
+  - --timeout-graceful-shutdown
+  - "15"
 
 service:
   type: ClusterIP
@@ -101,13 +108,16 @@ podDisruptionBudget:
 persistence:
   backend: memory
 
-# SIGTERM handling — give in-flight LLM calls time to finish. The server waits
-# up to ORRERY_SHUTDOWN_GRACE_SECONDS (default 40) for running turns, which must
-# fit in terminationGracePeriodSeconds - preStopSleepSeconds.
+# SIGTERM handling — give in-flight LLM calls time to finish. uvicorn's
+# --timeout-graceful-shutdown (see `command`) plus ORRERY_SHUTDOWN_GRACE_SECONDS
+# (default 30) must fit in terminationGracePeriodSeconds - preStopSleepSeconds.
 terminationGracePeriodSeconds: 60
 preStopSleepSeconds: 10
 
 probes:
+  # The front door serves /healthz and /readyz on its HTTP port. Entry points
+  # that run a separate HealthServer (run_persistent) use `health` (8080).
+  port: http
   liveness:
     path: /healthz
     initialDelaySeconds: 15
@@ -246,10 +256,11 @@ mcp:
   #   read_only: [list_issues, get_issue]
 
 ## ── Authentication (AEP-013) ───────────────────────────────────────
-## JWT bearer-token verification for the HTTP front door. Required for
-## any deployment that exposes orrery_core.server over HTTP — without it
-## the RBAC roles encoded in the JWT are not verifiable and `adk web`
-## style entry points trust the caller's self-declared identity.
+## JWT bearer-token verification for the HTTP front door (the default
+## `command`). Required for any deployment reachable by people: with
+## auth.enabled=false the front door runs anonymous (every caller is a
+## viewer), which the chart refuses behind an ingress unless
+## auth.allowAnonymous=true. Note `adk web` reads none of this.
 ##
 ## The Slack and Google Chat transports authenticate at their own layer
 ## (Slack signing secret, Google OIDC) and ignore these settings.

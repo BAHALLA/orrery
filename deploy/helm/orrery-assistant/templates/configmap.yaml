@@ -32,6 +32,10 @@ data:
   {{- with .Values.auth.corsOrigins }}
   ORRERY_CORS_ORIGINS: {{ . | quote }}
   {{- end }}
+  {{- else }}
+  # Anonymous front door: every caller is a viewer. The server's default is
+  # auth on, which would refuse to start without JWT settings.
+  AUTH_ENABLED: "false"
   {{- end }}
   {{- if .Values.mcp.enabled }}
   ORRERY_MCP_CONFIG: {{ printf "%s/mcp.yaml" .Values.mcp.mountPath | quote }}
