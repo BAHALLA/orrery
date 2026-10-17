@@ -15,8 +15,9 @@ Any installed package can do the same — a team's own specialist is a
 An entry point resolves to an agent, or to a :class:`SpecialistSpec` when the
 specialist has more to say than its ``description``: a one-line routing hint,
 its part of a health sweep (:class:`HealthCheck`), the actions it offers the
-unattended remediation loop (:class:`Remediation`) and a place to keep records
-(:class:`Journal`). The coordinator knows nothing about any specialist by name;
+unattended remediation loop (:class:`Remediation`), a place to keep records
+(:class:`Journal`) and its row in the console's first-run self-test
+(:class:`SetupCheck`). The coordinator knows nothing about any specialist by name;
 everything it says about one comes from here, so a third-party specialist
 routes, sweeps, remediates and journals exactly like a built-in one.
 
@@ -130,6 +131,24 @@ class Journal:
 
 
 @dataclass(frozen=True)
+class SetupCheck:
+    """The console's first-run self-test for this specialist: is it wired at all?
+
+    Not "is the system healthy" (the agent answers that) but "can Orrery reach
+    it", the failure a new user hits first. ``tool`` is the specialist's single
+    cheapest **read-only** tool, called with no arguments; the self-test runs
+    on an authenticated path that does not consult RBAC, so the tool is
+    checked at discovery like a health check's. ``hint`` is what to configure
+    when it fails.
+    """
+
+    #: Human name shown in the console, e.g. ``"Kafka"``.
+    label: str
+    tool: Any
+    hint: str
+
+
+@dataclass(frozen=True)
 class SpecialistSpec:
     """What a specialist package registers: its agent and what it contributes."""
 
@@ -139,6 +158,7 @@ class SpecialistSpec:
     health_check: HealthCheck | None = None
     remediation: Remediation | None = None
     journal: Journal | None = None
+    setup_check: SetupCheck | None = None
 
 
 #: Longest routing line taken from a specialist: it goes into the
@@ -168,6 +188,7 @@ class Specialist:
     health_check: HealthCheck | None = None
     remediation: Remediation | None = None
     journal: Journal | None = None
+    setup_check: SetupCheck | None = None
 
     @property
     def hint(self) -> str:
@@ -244,6 +265,12 @@ def _validate_remediation(key: str, agent: BaseAgent, remediation: Remediation) 
 
 def _validate_journal(key: str, agent: BaseAgent, journal: Journal) -> None:
     _own_tools(key, agent, (journal.save, journal.log), "journal")
+
+
+def _validate_setup_check(key: str, agent: BaseAgent, check: SetupCheck) -> None:
+    """The self-test skips RBAC, so its tool must be one of the specialist's reads."""
+    _own_tools(key, agent, (check.tool,), "setup_check")
+    _read_only(key, (check.tool,), "setup_check")
 
 
 def _agents_in(agent: BaseAgent) -> list[BaseAgent]:
@@ -332,6 +359,8 @@ def _as_spec(key: str, ep: Any, obj: Any, *, plugin: bool) -> SpecialistSpec:
         _validate_remediation(key, spec.agent, spec.remediation)
     if spec.journal is not None:
         _validate_journal(key, spec.agent, spec.journal)
+    if spec.setup_check is not None:
+        _validate_setup_check(key, spec.agent, spec.setup_check)
     if plugin:
         _check_plugin_gates(key, spec)
     return spec
@@ -451,6 +480,7 @@ def discover_specialists(
                 health_check=spec.health_check,
                 remediation=spec.remediation,
                 journal=spec.journal,
+                setup_check=spec.setup_check,
             )
         )
         if record:

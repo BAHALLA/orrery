@@ -35,6 +35,7 @@ specialist = SpecialistSpec(
         verify=(get_deployment_status, list_pods, ...),
     ),
     journal=None,  # the ops journal declares Journal(save=save_note, log=log_operation)
+    setup_check=SetupCheck(label="Kubernetes", tool=get_cluster_info, hint="..."),
 )
 ```
 
@@ -161,6 +162,16 @@ remediate and the target come from model output.
   read, an inferred verdict, or a run with no system to check is
   "incomplete" (exit 2), never "complete" (0).
 
+### The console's first-run self-test
+
+`POST /onboarding/selftest` answers "is each integration wired at all?" with
+one row per specialist the deployment runs (the env set) that declares a
+`SetupCheck`. The env set, not the catalog: a console switch-off removes a
+route, not the integration, whose tools declarative agents may still use. A
+specialist the env excludes is not probed, and its module is not imported for
+it. The self-test does not consult RBAC, which is why `SetupCheck.tool` is
+held to the same read-only rule as a health check's tools.
+
 ## Trust model for third-party specialists
 
 Entry points come from every distribution in the environment, so "installed"
@@ -255,7 +266,7 @@ at all, which the lockfile and image signing are there to prevent.
 | Plugin architecture (as pytest plugins) | Entry points: a specialist is a `pip install`, not a fork |
 | Self-describing components (cf. A2A Agent Cards) | `SpecialistSpec` |
 | Dependency inversion | The coordinator depends on the `orrery_core.registry` contract, never on a specialist package |
-| Typed capabilities | `Journal`, `Remediation`: a capability carries the tools that implement it |
+| Typed capabilities | `Journal`, `Remediation`, `SetupCheck`: a capability carries the tools that implement it |
 | Default deny | A plugin is off until named; the loop holds only enabled, guarded actions |
 | Validate by construction | A catalog's tree is built before it is saved |
 | Optimistic concurrency | A stale catalog save gets 409 (like Kubernetes `resourceVersion`) |

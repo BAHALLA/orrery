@@ -20,6 +20,7 @@ from orrery_core.registry import (
     HealthCheck,
     Journal,
     Remediation,
+    SetupCheck,
     Specialist,
     SpecialistSpec,
     discover_specialists,
@@ -332,6 +333,34 @@ def test_a_sweep_may_not_use_a_guarded_tool():
         health_check=_check(get_status, restart_service),
     )
     with pytest.raises(ValueError, match="read-only"):
+        discover_specialists(loader=_eps(("redis", spec)))
+
+
+def test_a_setup_check_is_carried_to_the_specialist():
+    check = SetupCheck(label="Redis", tool=get_status, hint="Set REDIS_URL.")
+    spec = SpecialistSpec(agent=_agent("redis_agent", [get_status]), setup_check=check)
+
+    [s] = discover_specialists(loader=_eps(("redis", spec)))
+
+    assert s.setup_check is check
+
+
+@pytest.mark.parametrize(
+    ("tools", "probe", "match"),
+    [
+        # The self-test does not consult RBAC: a guarded tool there would run
+        # for any signed-in caller.
+        ([get_status, restart_service], restart_service, "read-only"),
+        ([get_status, purge_cache], purge_cache, "named as a mutation"),
+        ([get_status], get_events, "not one of redis_agent's own tools"),
+    ],
+)
+def test_a_setup_check_may_only_use_one_of_the_specialists_reads(tools, probe, match):
+    spec = SpecialistSpec(
+        agent=_agent("redis_agent", tools),
+        setup_check=SetupCheck(label="Redis", tool=probe, hint="Set REDIS_URL."),
+    )
+    with pytest.raises(ValueError, match=match):
         discover_specialists(loader=_eps(("redis", spec)))
 
 

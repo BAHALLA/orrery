@@ -1,5 +1,5 @@
 from orrery_core import CONFIRMATION_RULE, OPERATING_PRINCIPLES, create_agent, load_agent_env
-from orrery_core.registry import HealthCheck, SpecialistSpec
+from orrery_core.registry import HealthCheck, SetupCheck, SpecialistSpec
 
 from .strimzi import (
     approve_kafka_rebalance,
@@ -116,5 +116,13 @@ specialist = SpecialistSpec(
             "active consumers; healthy = none of these."
         ),
         tools=(get_kafka_cluster_health, list_kafka_topics, list_consumer_groups, get_consumer_lag),
+    ),
+    setup_check=SetupCheck(
+        label="Kafka",
+        tool=get_kafka_cluster_health,
+        hint=(
+            "Set KAFKA_BOOTSTRAP_SERVERS to a reachable broker list; for a secured cluster "
+            "also KAFKA_SECURITY_PROTOCOL and its TLS/SASL settings."
+        ),
     ),
 )

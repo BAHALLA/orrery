@@ -221,7 +221,12 @@ API_AUTH_ENV  := JWT_ALGORITHM=HS256 \
                  JWT_ISSUER=$(DEV_JWT_ISSUER)
 endif
 
-run-api: _dev-jwt-secret web-build ## API front door + web console on :8000 (SSO=1 for Keycloak)
+# Loopback by default: the agent runs with your kubeconfig, cluster and LLM
+# credentials, so a laptop on a shared network should not serve it to the LAN.
+# API_HOST=0.0.0.0 to reach it from another machine (a VM's host, a phone).
+API_HOST ?= 127.0.0.1
+
+run-api: _dev-jwt-secret web-build ## API front door + web console on :8000 (SSO=1 for Keycloak, API_HOST=0.0.0.0 for the LAN)
 ifeq ($(SSO),1)
 	@curl -sf $(SSO_ISSUER)/.well-known/openid-configuration >/dev/null 2>&1 || \
 		{ echo "✗ Keycloak unreachable at $(SSO_ISSUER). Run: make up PROFILES=sso"; exit 1; }
@@ -230,7 +235,7 @@ else
 	@echo "▶ http://localhost:8000 — mint a token in another terminal: make dev-token"
 endif
 	$(RUN) env AUTH_ENABLED=true $(API_AUTH_ENV) ORRERY_WEB_CONSOLE_ENABLED=true \
-		uvicorn orrery_assistant.app:api --host 0.0.0.0 --port 8000
+		uvicorn orrery_assistant.app:api --host $(API_HOST) --port 8000
 
 run-slack: ## Slack bot on :3000 (MODE=socket for Socket Mode, no public URL)
 	cd agents/slack-bot && uv run $(if $(filter socket,$(MODE)),python -m slack_bot,uvicorn slack_bot.app:api --host 0.0.0.0 --port 3000)

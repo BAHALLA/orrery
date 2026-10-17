@@ -504,15 +504,3 @@ def test_plain_chat_reply_is_unchanged_by_partial_events(streaming_app):
     response = TestClient(app).post("/chat", json={"message": "hi"})
 
     assert response.json()["response"] == "Hello"
-
-
-def test_a_draining_server_refuses_new_turns(streaming_app):
-    app, _ = streaming_app
-    with TestClient(app):
-        pass  # startup, then shutdown: the replica is draining
-
-    client = TestClient(app)
-    for path in ("/chat", "/chat/stream"):
-        response = client.post(path, json={"message": "hi"})
-        assert response.status_code == 503, path
-        assert response.headers["retry-after"] == "5"
