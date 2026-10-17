@@ -101,6 +101,21 @@ tool to make it *cheaper* to use; nothing you leave out becomes more permissive.
     Turn it on for servers you operate or have reviewed — not for a third-party
     endpoint whose tool list can change under you.
 
+## A server's text is screened and pinned
+
+A tool's description and schemas become part of the model's prompt, and the
+server can change them whenever it is asked for its tools. Guard levels don't
+depend on that text, but the model's behaviour does, so each exposed tool is
+also:
+
+- **screened**: if its description or any text in its schemas matches the
+  prompt-injection patterns, the tool is withheld;
+- **pinned**: its description and schemas are fingerprinted when first seen. If
+  they later change (a "rug pull"), the tool is withheld until Orrery restarts
+  and pins the new version, which is when an operator is looking.
+
+Each withheld tool is logged once and audited as `mcp_tool_withheld`.
+
 ## What else applies
 
 Tool results from MCP servers pass through the same plugins as any other tool:

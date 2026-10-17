@@ -60,6 +60,24 @@ TURN_FAILED_MESSAGE = "The agent hit an error while handling this message. Pleas
 _running_turns: set[asyncio.Task[None]] = set()
 
 
+async def drain_turns(timeout: float) -> int:
+    """Wait up to *timeout* seconds for running turns; return how many are left.
+
+    Called at shutdown. A turn outlives its client by design (a closed tab must
+    not cut a tool call in half), and the server stops waiting for a request
+    once its client is gone, so without this a rolling deploy's SIGTERM ended
+    those turns mid-tool: exactly the outcome they were kept running to avoid.
+    """
+    pending = set(_running_turns)
+    if not pending:
+        return 0
+    logger.info("Waiting up to %.0fs for %d running turn(s)", timeout, len(pending))
+    _, still = await asyncio.wait(pending, timeout=timeout)
+    if still:
+        logger.warning("Shutting down with %d turn(s) still running", len(still))
+    return len(still)
+
+
 class TurnRunner(Protocol):
     """What :func:`stream_turn` needs from a gateway — ``AgentGateway`` is one."""
 

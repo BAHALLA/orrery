@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a self-editable user claim such as `preferred_username`.
 - Tool-result `status` values reach the browser and chat only as a short
   machine word; an MCP server controls that field.
+- **MCP tool text is screened and pinned.** A tool whose description or
+  schema reads like an instruction to the model is withheld, and so is one
+  whose description or schema changes after it was first seen, until a
+  restart. Each is logged and audited (`mcp_tool_withheld`).
 
 ### Fixed
 
@@ -35,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kubeconfig and cluster.
 - The Kafka specialist's blocking calls run through `asyncio.to_thread`, which
   carries the turn's caller identity into the worker thread.
+- **Rolling deploys no longer cut streamed turns short.** A turn whose
+  client disconnected kept running, but shutdown didn't wait for it, so
+  SIGTERM ended it mid-tool. Shutdown now refuses new turns (503 with
+  `Retry-After`) and waits up to `ORRERY_SHUTDOWN_GRACE_SECONDS` (default 40,
+  under Helm's 60 s grace minus the 10 s preStop).
+- Building the coordinator for a catalog edit, and listing the catalog's
+  options, run off the event loop, so other turns keep streaming meanwhile.
 
 ## [0.6.4] - 2026-10-17
 

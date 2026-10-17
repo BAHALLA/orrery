@@ -101,7 +101,9 @@ podDisruptionBudget:
 persistence:
   backend: memory
 
-# SIGTERM handling — give in-flight LLM calls time to finish.
+# SIGTERM handling — give in-flight LLM calls time to finish. The server waits
+# up to ORRERY_SHUTDOWN_GRACE_SECONDS (default 40) for running turns, which must
+# fit in terminationGracePeriodSeconds - preStopSleepSeconds.
 terminationGracePeriodSeconds: 60
 preStopSleepSeconds: 10
 

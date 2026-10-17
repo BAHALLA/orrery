@@ -22,7 +22,13 @@ from orrery_core.plugins.progress_plugin import ProgressPlugin, ProgressStep, pr
 from orrery_core.security.auth import JWTConfig
 from orrery_core.serving.gateway import AgentGateway, InboundMessage, OutboundReply
 from orrery_core.serving.server import ServerConfig, create_app
-from orrery_core.serving.sse import KEEPALIVE, TURN_FAILED_MESSAGE, encode_event, stream_turn
+from orrery_core.serving.sse import (
+    KEEPALIVE,
+    TURN_FAILED_MESSAGE,
+    drain_turns,
+    encode_event,
+    stream_turn,
+)
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -380,6 +386,51 @@ async def test_turn_keeps_running_after_the_client_disconnects():
     await asyncio.wait_for(finished.wait(), timeout=1)
 
 
+async def _abandoned_turn(seconds: float, finished: asyncio.Event) -> None:
+    """Start a streamed turn of *seconds*, then drop its client."""
+
+    class SlowGateway(_FakeGateway):
+        async def run(
+            self, msg, *, on_event=None, session_id=None, streaming=False
+        ) -> OutboundReply:
+            await asyncio.sleep(seconds)
+            finished.set()
+            return OutboundReply(text="done", session_id=session_id or "")
+
+    gen = stream_turn(SlowGateway(), _msg(), session_id="s1")
+    await gen.__anext__()
+    waiting = asyncio.ensure_future(gen.__anext__())
+    await asyncio.sleep(0.01)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await gen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_a_turn_whose_client_left():
+    # The server stops waiting for a request once its client is gone; the turn
+    # keeps running, so shutdown has to wait for it or SIGTERM cuts it mid-tool.
+    finished = asyncio.Event()
+    await _abandoned_turn(0.1, finished)
+
+    assert await drain_turns(timeout=2) == 0
+    assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_no_longer_than_its_grace():
+    finished = asyncio.Event()
+    await _abandoned_turn(5, finished)
+
+    assert await drain_turns(timeout=0.05) == 1
+    assert not finished.is_set()
+    from orrery_core.serving import sse
+
+    for task in list(sse._running_turns):
+        task.cancel()
+
+
 def test_encode_event_is_one_frame():
     frame = encode_event("delta", {"text": "two\nlines"})
 
@@ -453,3 +504,15 @@ def test_plain_chat_reply_is_unchanged_by_partial_events(streaming_app):
     response = TestClient(app).post("/chat", json={"message": "hi"})
 
     assert response.json()["response"] == "Hello"
+
+
+def test_a_draining_server_refuses_new_turns(streaming_app):
+    app, _ = streaming_app
+    with TestClient(app):
+        pass  # startup, then shutdown: the replica is draining
+
+    client = TestClient(app)
+    for path in ("/chat", "/chat/stream"):
+        response = client.post(path, json={"message": "hi"})
+        assert response.status_code == 503, path
+        assert response.headers["retry-after"] == "5"

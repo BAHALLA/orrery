@@ -21,6 +21,16 @@ closed**:
    behind a confirmation card. Classify a tool to make it cheaper, never the
    other way round.
 
+Guard levels are robust; a server's *text* is not. Its tool descriptions and
+schemas go into the model's function declarations, and the server can change
+them on any ``get_tools`` call. So each exposed tool is also:
+
+5. **screened**: a description or schema text matching the prompt-injection
+   patterns (:mod:`orrery_core.plugins.safety_plugin`) keeps the tool out;
+6. **pinned**: the first description and schemas seen are fingerprinted, and a
+   tool whose text later changes is withheld (a "rug pull") until the process
+   restarts and pins it again, which is when an operator is looking.
+
 Configuration is a YAML file named by ``ORRERY_MCP_CONFIG``::
 
     servers:
@@ -39,6 +49,8 @@ Requires the ``[mcp]`` extra (``uv sync --extra mcp``).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -53,6 +65,8 @@ from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.base_tool import BaseTool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..observability.audit import audit_event
+from ..plugins.safety_plugin import screen_text
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
 
@@ -219,6 +233,42 @@ def classify_mcp_tool(
     )
 
 
+def _field(obj: Any, *names: str) -> Any:
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is None and isinstance(obj, dict):
+            value = obj.get(name)
+        if value is not None:
+            return value
+    return None
+
+
+def _texts(value: Any) -> list[str]:
+    """Every string inside *value* (dict keys and values, list items)."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [t for k, v in value.items() for t in (*_texts(k), *_texts(v))]
+    if isinstance(value, list | tuple):
+        return [t for item in value for t in _texts(item)]
+    return []
+
+
+def tool_text(tool: BaseTool) -> dict[str, Any]:
+    """What the model sees of an MCP tool: its description and schemas."""
+    raw = getattr(tool, "raw_mcp_tool", None)
+    return {
+        "description": getattr(tool, "description", "") or "",
+        "input": _field(raw, "inputSchema", "input_schema"),
+        "output": _field(raw, "outputSchema", "output_schema"),
+    }
+
+
+def fingerprint(text: dict[str, Any]) -> str:
+    blob = json.dumps(text, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
 class GuardedMcpToolset(McpToolset):
     """An ``McpToolset`` whose tools carry Orrery guard levels.
 
@@ -235,6 +285,10 @@ class GuardedMcpToolset(McpToolset):
             tool_name_prefix=config.name,
         )
         self._reported_missing = False
+        #: Tool name -> fingerprint of the text first seen (see the module docstring).
+        self._pinned: dict[str, str] = {}
+        #: Tools already reported as withheld, so a refusal is logged once.
+        self._withheld: set[str] = set()
 
     async def get_tools(self, readonly_context: ReadonlyContext | None = None) -> list[BaseTool]:
         tools = await super().get_tools(readonly_context)
@@ -242,6 +296,19 @@ class GuardedMcpToolset(McpToolset):
         exposed: list[BaseTool] = []
         for tool in tools:
             if tool.name not in allowed:  # tool_filter already did this; belt and braces
+                continue
+            if (why := self._refusal(tool)) is not None:
+                if tool.name not in self._withheld:
+                    self._withheld.add(tool.name)
+                    logger.error(
+                        "MCP tool %s_%s withheld: %s", self.server_config.name, tool.name, why
+                    )
+                    audit_event(
+                        "mcp_tool_withheld",
+                        server=self.server_config.name,
+                        tool=tool.name,
+                        reason=why,
+                    )
                 continue
             raw = getattr(tool, "raw_mcp_tool", None)
             level, reason = classify_mcp_tool(
@@ -258,6 +325,17 @@ class GuardedMcpToolset(McpToolset):
                     sorted(missing),
                 )
         return exposed
+
+    def _refusal(self, tool: BaseTool) -> str | None:
+        """Why *tool*'s text keeps it out, or ``None`` if it may be exposed."""
+        text = tool_text(tool)
+        if any(screen_text(t) is not None for t in _texts(text)):
+            return "its description or schema reads like an instruction to the model"
+        digest = fingerprint(text)
+        pinned = self._pinned.setdefault(tool.name, digest)
+        if pinned != digest:
+            return "its description or schema changed since it was first seen; restart to accept"
+        return None
 
 
 def _secret_env(var: str, *, what: str) -> str:
