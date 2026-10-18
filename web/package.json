@@ -22,8 +22,8 @@
   "dependencies": {
     "lowlight": "^3.3.0",
     "oidc-client-ts": "^3.5.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1"
