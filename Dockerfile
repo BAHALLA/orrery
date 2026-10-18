@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ── Web console build stage (AEP-019) ─────────────────────────────────
 # Builds the React SPA to a static bundle. An isolated Node toolchain — no
 # Node reaches the runtime image; only the compiled dist/ is copied in.
-FROM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS web-builder
+FROM node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913 AS web-builder
 
 WORKDIR /web
 
