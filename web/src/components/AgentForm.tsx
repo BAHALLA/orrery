@@ -4,6 +4,8 @@ import { guardDot, guardLabel } from "./guards";
 import { CloseIcon, SearchIcon } from "./icons";
 
 interface Props {
+  /** False while the dashboard is hidden: Escape then belongs to the chat. */
+  active: boolean;
   initial: DeclarativeAgent;
   tools: CatalogResponse["tools"];
   onDone: (agent: DeclarativeAgent) => void;
@@ -18,7 +20,7 @@ const input =
  * dashboard: the form needs more room than a card, and the agent list behind
  * it is what the operator is editing, so it stays in view.
  */
-export function AgentForm({ initial, tools, onDone, onCancel }: Props) {
+export function AgentForm({ active, initial, tools, onDone, onCancel }: Props) {
   const [draft, setDraft] = useState(initial);
   const [filter, setFilter] = useState("");
   const needle = filter.toLowerCase();
@@ -32,12 +34,13 @@ export function AgentForm({ initial, tools, onDone, onCancel }: Props) {
     });
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, [active, onCancel]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-sm sm:items-center">

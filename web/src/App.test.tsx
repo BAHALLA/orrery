@@ -674,6 +674,113 @@ describe("resilience and safety posture", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/changed since you loaded it/i);
   });
 
+  it("keeps an unsaved agents draft across the chat and a triage verdict", async () => {
+    let release: () => void = () => {};
+    const replyGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/admin/catalog")) {
+          return jsonResponse({
+            editing_enabled: true,
+            applied_version: 0,
+            catalog: {
+              version: 0,
+              disabled_specialists: ["docker", "k8s"],
+              agents: [],
+              updated_by: "",
+              updated_at: 0,
+            },
+            specialists: ["docker", "k8s"].map((key) => ({
+              key,
+              agent_name: `${key}_agent`,
+              description: "",
+              source: "builtin",
+              available: true,
+            })),
+            tools: [],
+            file_agents: [],
+          });
+        }
+        if (url.endsWith("/admin/agents")) {
+          return jsonResponse({
+            agents: [
+              {
+                name: "pager_agent",
+                description: "Handles paging rotations",
+                source: "plugin",
+                tools: [],
+              },
+            ],
+          });
+        }
+        if (url.endsWith("/me")) {
+          return jsonResponse({
+            subject: "alice",
+            role: "admin",
+            autonomy_level: null,
+            model_provider: "gemini",
+            model_name: "",
+            self_test_available: true,
+          });
+        }
+        if (url.includes("/triage")) {
+          return jsonResponse({ session_id: "s1", severity: "degraded", report: "Kafka lag." });
+        }
+        if (url.includes("/chat")) {
+          await replyGate;
+          return jsonResponse({ session_id: "s1", response: "Triage complete: degraded." });
+        }
+        return jsonResponse({
+          sessions: [],
+          entries: [],
+          pending: null,
+          severity: null,
+          report: null,
+        });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "alice", roles: ["admin"] }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    // A sweep is running when the admin goes to edit agents.
+    await user.click(await screen.findByRole("button", { name: /run triage/i }));
+    await user.click(await screen.findByRole("button", { name: /^agents$/i }));
+    await user.click(await screen.findByRole("switch", { name: "Enable docker" }));
+    expect(screen.getByRole("button", { name: /^agents unsaved$/i })).toBeInTheDocument();
+
+    // The verdict lands mid-edit: badged here, not a forced switch to the chat.
+    release();
+    const verdict = await screen.findByRole("button", { name: /triage verdict ready/i });
+    expect(screen.getByRole("switch", { name: "Enable docker" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    // Away to the chat and back: the draft is still there.
+    await user.click(verdict);
+    expect(screen.queryByRole("button", { name: /triage verdict ready/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^agents unsaved$/i }));
+    const docker = screen.getByRole("switch", { name: "Enable docker" });
+    expect(docker).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
+
+    // Switching it back leaves ["k8s", "docker"]: the same set, so nothing to save.
+    await user.click(docker);
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^agents$/i })).toBeInTheDocument();
+
+    // A tool-less agent found by its description alone stays in the results.
+    await user.type(screen.getByRole("searchbox", { name: /find an agent/i }), "paging");
+    expect(
+      within(screen.getByRole("list", { name: "Agents" })).getByText("pager_agent"),
+    ).toBeInTheDocument();
+  });
+
   it("hides the agent inventory from non-admins", async () => {
     stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));
     localStorage.setItem(storageKeys.token, token);

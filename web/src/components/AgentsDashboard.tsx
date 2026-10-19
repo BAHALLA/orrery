@@ -13,6 +13,12 @@ import { PlusIcon, SearchIcon } from "./icons";
 
 interface Props {
   system: SystemController;
+  /** False while the console shows the chat: the page stays mounted, hidden,
+   * so a draft survives navigating away (or a triage verdict pulling the
+   * console back to the chat). */
+  active: boolean;
+  /** Told whenever the draft gains or loses unsaved changes. */
+  onDirtyChange: (dirty: boolean) => void;
 }
 
 type Tool = InventoryAgent["tools"][number];
@@ -25,6 +31,10 @@ const sourceLabel: Record<string, string> = {
   declarative: "declarative",
   mcp: "MCP",
 };
+
+/** Order-insensitive: switching a specialist off and on again reorders the list. */
+const sameDraft = (a: string[], b: DeclarativeAgent[], c: string[], d: DeclarativeAgent[]) =>
+  JSON.stringify([[...a].sort(), b]) === JSON.stringify([[...c].sort(), d]);
 
 const sectionTitle =
   "text-xs font-semibold tracking-wider text-slate-500 uppercase dark:text-slate-400";
@@ -39,7 +49,7 @@ const sectionTitle =
  * adds what is *not* served: switched-off specialists (tools taken from the
  * catalog's tool list) and the ones the deployment's env excludes.
  */
-export function AgentsDashboard({ system }: Props) {
+export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
   const { agents, agentsError, loadAgents, loadCatalog, saveCatalog } = system;
   // Only a well-formed catalog counts: an older server answers with something else.
   const catalog = system.catalog?.catalog ? system.catalog : null;
@@ -76,6 +86,8 @@ export function AgentsDashboard({ system }: Props) {
       key={catalog?.catalog.version ?? "read-only"}
       agents={agents}
       catalog={catalog}
+      active={active}
+      onDirtyChange={onDirtyChange}
       savedVersion={savedVersion}
       saveError={saveError}
       onDiscard={() => setSaveError(null)}
@@ -101,6 +113,8 @@ interface Card {
 function Dashboard({
   agents,
   catalog,
+  active,
+  onDirtyChange,
   savedVersion,
   saveError,
   onDiscard,
@@ -108,6 +122,8 @@ function Dashboard({
 }: {
   agents: InventoryAgent[];
   catalog: CatalogResponse | null;
+  active: boolean;
+  onDirtyChange: (dirty: boolean) => void;
   savedVersion: number | null;
   saveError: string | null;
   onDiscard: () => void;
@@ -124,8 +140,16 @@ function Dashboard({
 
   const dirty =
     editable &&
-    JSON.stringify([disabled, composed]) !==
-      JSON.stringify([catalog?.catalog.disabled_specialists, catalog?.catalog.agents]);
+    !sameDraft(
+      disabled,
+      composed,
+      catalog?.catalog.disabled_specialists ?? [],
+      catalog?.catalog.agents ?? [],
+    );
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
 
   const cards = useMemo<Card[]>(() => {
     const served = new Map(agents.map((a) => [a.name, a]));
@@ -160,13 +184,11 @@ function Dashboard({
 
   const needle = query.trim().toLowerCase();
   const visible = needle
-    ? cards
-        .map((c) =>
-          `${c.name} ${c.description}`.toLowerCase().includes(needle)
-            ? c
-            : { ...c, tools: c.tools.filter((t) => t.name.toLowerCase().includes(needle)) },
-        )
-        .filter((c) => c.tools.length > 0 || c.name.toLowerCase().includes(needle))
+    ? cards.flatMap((c) => {
+        if (`${c.name} ${c.description}`.toLowerCase().includes(needle)) return [c];
+        const tools = c.tools.filter((t) => t.name.toLowerCase().includes(needle));
+        return tools.length ? [{ ...c, tools }] : [];
+      })
     : cards;
 
   const excluded = catalog?.specialists.filter((s) => !s.available) ?? [];
@@ -416,6 +438,7 @@ function Dashboard({
 
       {editing && catalog ? (
         <AgentForm
+          active={active}
           initial={editing.agent}
           tools={catalog.tools}
           onCancel={() => setEditing(null)}

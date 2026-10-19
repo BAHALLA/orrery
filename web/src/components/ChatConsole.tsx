@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Identity } from "../auth/token";
 import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
@@ -36,18 +36,37 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [view, setView] = useState<"chat" | "agents">("chat");
+  // The Agents page mounts on first visit and then stays mounted (hidden), so
+  // an unsaved catalog draft survives a trip back to the chat.
+  const [agentsOpened, setAgentsOpened] = useState(false);
+  const [agentsDirty, setAgentsDirty] = useState(false);
+  // Read by the triage effect, which must not re-run when only this changes.
+  const agentsDirtyRef = useRef(false);
+  const onAgentsDirty = useCallback((dirty: boolean) => {
+    agentsDirtyRef.current = dirty;
+    setAgentsDirty(dirty);
+  }, []);
+  // A verdict that arrived while the admin was mid-edit on the Agents page.
+  const [verdictWaiting, setVerdictWaiting] = useState(false);
 
-  // Surface a fresh triage verdict without the user hunting for it.
+  // Surface a fresh triage verdict without the user hunting for it — but never
+  // by pulling an admin off a page with unsaved edits; badge it there instead.
   const lastSeverity = useRef<string | null>(null);
   useEffect(() => {
     const sev = chat.triage?.severity ?? null;
     if (sev && sev !== lastSeverity.current) {
       setInspectorTab("triage");
       setInspectorOpen(true);
-      setView("chat");
+      if (agentsDirtyRef.current) setVerdictWaiting(true);
+      else setView("chat");
     }
     lastSeverity.current = sev;
   }, [chat.triage]);
+
+  const showChat = () => {
+    setView("chat");
+    setVerdictWaiting(false);
+  };
 
   // Escape closes whichever overlay is on top.
   useEffect(() => {
@@ -62,7 +81,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
 
   const toggleInspector = (tab: InspectorTab) => {
     if (view !== "chat") {
-      setView("chat");
+      showChat();
       setInspectorTab(tab);
       setInspectorOpen(true);
     } else if (inspectorOpen && inspectorTab === tab) {
@@ -89,17 +108,21 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         open={navOpen}
         onClose={() => setNavOpen(false)}
         onNewChat={() => {
-          setView("chat");
+          showChat();
           conversations.newConversation();
         }}
         onRunTriage={() => {
-          setView("chat");
+          showChat();
           void chat.runTriage();
         }}
         onOpenSystem={() => toggleInspector("system")}
         view={view}
-        onOpenAgents={() => setView("agents")}
-        onShowChat={() => setView("chat")}
+        agentsDirty={agentsDirty}
+        onOpenAgents={() => {
+          setAgentsOpened(true);
+          setView("agents");
+        }}
+        onShowChat={showChat}
         onSignOut={onSignOut}
       />
 
@@ -124,6 +147,21 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               <OrbitSpinner />
               Working{liveSteps ? ` · ${liveSteps} step${liveSteps === 1 ? "" : "s"}` : ""}
             </span>
+          ) : null}
+          {view === "agents" && verdictWaiting && chat.triage?.severity ? (
+            <button
+              type="button"
+              className={headerButton(false)}
+              onClick={() => toggleInspector("triage")}
+            >
+              <RadarIcon />
+              Triage verdict ready
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold uppercase ${severityBadge[chat.triage.severity]}`}
+              >
+                {chat.triage.severity}
+              </span>
+            </button>
           ) : null}
           {view === "chat" ? (
             <>
@@ -159,9 +197,16 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           ) : null}
         </header>
 
-        {view === "agents" ? (
-          <AgentsDashboard system={system} />
-        ) : (
+        {agentsOpened ? (
+          <div className={view === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+            <AgentsDashboard
+              system={system}
+              active={view === "agents"}
+              onDirtyChange={onAgentsDirty}
+            />
+          </div>
+        ) : null}
+        {view === "chat" ? (
           <div className="relative flex min-h-0 flex-1">
             <section className="flex min-w-0 flex-1 flex-col">
               <MessageList
@@ -241,7 +286,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               </>
             ) : null}
           </div>
-        )}
+        ) : null}
       </main>
     </div>
   );
