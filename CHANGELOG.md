@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-10-19
+
+Chat attachments: screenshots and text files, processed in memory and never
+stored (AEP-030). Message content is kept out of trace spans by default.
+
 ### Added
 
 - **Chat attachments, processed and never stored (AEP-030).** The console and
@@ -1093,7 +1098,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.8...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.9...HEAD
+[0.6.9]: https://github.com/BAHALLA/orrery/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/BAHALLA/orrery/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/BAHALLA/orrery/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.6
