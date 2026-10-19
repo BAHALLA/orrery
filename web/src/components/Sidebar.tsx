@@ -20,6 +20,8 @@ interface Props {
   onOpenSystem: () => void;
   /** Which page the main column shows; "agents" is the admin dashboard. */
   view: "chat" | "agents";
+  /** The Agents page holds unsaved edits: marked here so they aren't forgotten. */
+  agentsDirty: boolean;
   onOpenAgents: () => void;
   /** Called when a history row is opened, so the main column shows the chat. */
   onShowChat: () => void;
@@ -61,6 +63,7 @@ export function Sidebar({
   onRunTriage,
   onOpenSystem,
   view,
+  agentsDirty,
   onOpenAgents,
   onShowChat,
   onSignOut,
@@ -150,7 +153,13 @@ export function Sidebar({
               onClick={then(onOpenAgents)}
               title="Which agents and tools the coordinator can reach, and their guards"
             >
-              <AgentsIcon /> Agents
+              <AgentsIcon /> Agents{" "}
+              {agentsDirty ? (
+                <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+                  unsaved
+                </span>
+              ) : null}
             </button>
           ) : null}
         </div>
