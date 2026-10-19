@@ -779,6 +779,10 @@ describe("resilience and safety posture", () => {
     expect(
       within(screen.getByRole("list", { name: "Agents" })).getByText("pager_agent"),
     ).toBeInTheDocument();
+
+    // A half-filled agent dialog is unsaved work as well.
+    await user.click(screen.getByRole("button", { name: "New agent" }));
+    expect(screen.getByRole("button", { name: /^agents unsaved$/i })).toBeInTheDocument();
   });
 
   it("hides the agent inventory from non-admins", async () => {

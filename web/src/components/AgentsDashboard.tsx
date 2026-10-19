@@ -147,9 +147,11 @@ function Dashboard({
       catalog?.catalog.agents ?? [],
     );
 
+  // An open agent dialog counts too: its text isn't in the draft until "Keep agent".
+  const unsaved = dirty || editing !== null;
   useEffect(() => {
-    onDirtyChange(dirty);
-  }, [dirty, onDirtyChange]);
+    onDirtyChange(unsaved);
+  }, [unsaved, onDirtyChange]);
 
   const cards = useMemo<Card[]>(() => {
     const served = new Map(agents.map((a) => [a.name, a]));
