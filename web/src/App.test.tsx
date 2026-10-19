@@ -559,8 +559,7 @@ describe("resilience and safety posture", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: /check my environment/i }));
-    await user.click(await screen.findByRole("tab", { name: /agents/i }));
+    await user.click(await screen.findByRole("button", { name: /^agents$/i }));
 
     const list = await screen.findByRole("list", { name: "Agents" });
     expect(within(list).getByText("k8s_health_agent")).toBeInTheDocument();
@@ -643,8 +642,7 @@ describe("resilience and safety posture", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: /check my environment/i }));
-    await user.click(await screen.findByRole("tab", { name: /agents/i }));
+    await user.click(await screen.findByRole("button", { name: /^agents$/i }));
     await user.click(await screen.findByRole("switch", { name: "Enable docker" }));
 
     await user.click(screen.getByRole("button", { name: "New agent" }));
@@ -685,7 +683,7 @@ describe("resilience and safety posture", () => {
     await user.click(await screen.findByRole("button", { name: /check my environment/i }));
     await screen.findByRole("tab", { name: /system/i });
 
-    expect(screen.queryByRole("tab", { name: /agents/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^agents$/i })).not.toBeInTheDocument();
   });
 
   it("runs the environment check and names what to fix", async () => {
