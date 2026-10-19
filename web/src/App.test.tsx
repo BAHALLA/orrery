@@ -401,6 +401,84 @@ describe("App auth flow", () => {
     expect(screen.getAllByText("degraded").length).toBeGreaterThan(0);
   });
 
+  it("attaches a file, sends it as multipart, and shows it as a chip", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/me")) {
+        return jsonResponse({
+          subject: "bob",
+          role: "operator",
+          autonomy_level: null,
+          model_provider: "anthropic",
+          model_name: "claude-haiku-5-5",
+          self_test_available: false,
+          attachments: {
+            max_files: 4,
+            max_file_bytes: 1024,
+            max_total_bytes: 4096,
+            images: true,
+            image_types: ["image/png", "image/jpeg", "image/gif", "image/webp"],
+          },
+        });
+      }
+      if (u.includes("/chat"))
+        return jsonResponse({ session_id: "s1", response: "It ran out of memory." });
+      return jsonResponse({
+        sessions: [],
+        entries: [],
+        pending: null,
+        severity: null,
+        report: null,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["operator"] }));
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await screen.findByRole("button", { name: "Attach files" });
+    const picker = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(picker).not.toBeNull();
+    await user.upload(picker as HTMLInputElement, [
+      new File(["OOMKilled"], "app.log", { type: "text/plain" }),
+      new File(["x".repeat(2048)], "huge.log", { type: "text/plain" }),
+    ]);
+
+    // The oversized one is refused before upload; the other waits as a chip.
+    expect(await screen.findByRole("alert")).toHaveTextContent("huge.log is over the 1 KB limit.");
+    const queued = screen.getByRole("list", { name: "Attachments" });
+    expect(within(queued).getByText("app.log")).toBeInTheDocument();
+
+    // A file alone is a valid message.
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/chat"));
+      expect(call?.[1]?.body).toBeInstanceOf(FormData);
+    });
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/chat"));
+    const form = call?.[1]?.body as FormData;
+    expect((form.getAll("files") as File[]).map((f) => f.name)).toEqual(["app.log"]);
+    const sent = await screen.findByRole("list", { name: "Attached files" });
+    expect(within(sent).getByText("app.log")).toBeInTheDocument();
+    expect(await screen.findByText("It ran out of memory.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Attachments" })).not.toBeInTheDocument();
+  });
+
+  it("hides attaching when the server doesn't offer it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ sessions: [], entries: [], pending: null, severity: null, report: null }),
+      ),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["operator"] }));
+    render(<App />);
+
+    await screen.findByRole("textbox", { name: /message/i });
+    expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
+  });
+
   it("keeps conversations in a sidebar history", async () => {
     vi.stubGlobal(
       "fetch",

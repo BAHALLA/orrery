@@ -18,6 +18,16 @@ export interface ChatMessage {
   interrupted?: boolean;
   /** Wall time from send to final answer, once finished. */
   durationMs?: number;
+  /** Files sent with a user message. Reloaded messages carry them as
+   * placeholder lines in `text` instead; see `chat/attachments.ts`. */
+  attachments?: AttachmentRef[];
+}
+
+/** What the transcript shows of an attachment: never its content. */
+export interface AttachmentRef {
+  name: string;
+  type: string;
+  size: string;
 }
 
 /** Non-terminal, per-message error surfaced inline in the transcript. */

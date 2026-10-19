@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Chat attachments, processed and never stored (AEP-030).** The console and
+  `POST /chat` / `/chat/stream` accept images (PNG, JPEG, GIF, WebP) and UTF-8
+  text files as `multipart/form-data`; JSON bodies are unchanged. Each file is
+  checked by content, not by its declared type. Images are decoded within a
+  pixel budget read before decoding, then downscaled to a 1568 px edge and
+  re-encoded, which strips EXIF/GPS. Text is truncated head + tail, credentials
+  are redacted and instruction-like spans are neutralized like a tool result.
+  The model sees the file for that turn only. The session keeps one placeholder
+  line, so the bytes never reach the session store, memory, audit log or a
+  later request. The multipart body is parsed in memory under hard caps
+  (Starlette's parser would spool to disk). The console adds a paperclip,
+  drag and drop, and screenshot paste, with limits checked before upload.
+  Configure with `ORRERY_ATTACHMENT*`; set `ORRERY_ATTACHMENT_IMAGES=false`
+  for a text-only model. New dependencies in the `server` extra: `pillow`,
+  `python-multipart`.
+  **On by default after upgrading** (set `ORRERY_ATTACHMENTS=false` to opt
+  out). A proxy in front must admit the body size and must not spool it to
+  disk: nginx `proxy_request_buffering off`. The Helm chart's ingress now
+  defaults to `proxy-request-buffering: "off"` and `proxy-body-size: 25m`.
+  The file is never stored, but the assistant's reply about it is, like any
+  reply.
+
+### Security
+
+- **Message content is kept out of trace spans by default.** ADK copies whole
+  LLM requests (prompts, tool results and now uploaded text) into span
+  attributes unless `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` is falsy, and it
+  defaults on. `configure_tracing()` and the HTTP server (when attachments are
+  on) now default it to `false`. An explicit `true` is honoured with a warning.
+
 ## [0.6.8] - 2026-10-19
 
 Fixes the 0.6.7 Agents dashboard silently discarding unsaved edits.

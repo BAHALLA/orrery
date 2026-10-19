@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
+import { splitAttachments } from "../chat/attachments";
 import type { ChatMessage } from "../chat/types";
+import { AttachmentChip } from "./AttachmentChip";
 import { AgentMarkdown } from "./AgentMarkdown";
 import { CopyButton } from "./CopyButton";
 import { OrreryMark } from "./OrreryMark";
@@ -22,15 +24,29 @@ function formatTime(at: number): string {
 const STICK_THRESHOLD = 80;
 
 function UserMessage({ m }: { m: ChatMessage }) {
+  // A message sent from here carries its files; a reloaded one carries them as
+  // the server's placeholder lines, turned back into chips here.
+  const parsed = m.attachments
+    ? { text: m.text, attachments: m.attachments }
+    : splitAttachments(m.text);
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 text-white shadow-sm sm:max-w-[75%]">
-        <p className="whitespace-pre-wrap break-words">{m.text}</p>
+      <div className="flex max-w-[85%] flex-col gap-2 rounded-2xl rounded-br-md bg-brand-600 px-4 py-2.5 text-white shadow-sm sm:max-w-[75%]">
+        {parsed.attachments.length ? (
+          <ul className="flex flex-wrap justify-end gap-1.5" aria-label="Attached files">
+            {parsed.attachments.map((a, i) => (
+              <li key={`${a.name}-${i}`} className="min-w-0">
+                <AttachmentChip attachment={a} tone="bubble" />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {parsed.text ? <p className="whitespace-pre-wrap break-words">{parsed.text}</p> : null}
       </div>
       <div className="flex items-center gap-1.5 px-1 text-xs text-slate-400 dark:text-slate-500">
         <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
         <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
-          <CopyButton value={m.text} label="Copy the message" />
+          <CopyButton value={parsed.text} label="Copy the message" />
         </span>
       </div>
     </div>

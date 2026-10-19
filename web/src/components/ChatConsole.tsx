@@ -262,7 +262,8 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               <MessageInput
                 disabled={chat.isSending}
                 isSending={chat.isSending}
-                onSend={(text) => void chat.send(text)}
+                attachments={system.me?.attachments ?? null}
+                onSend={(text, files) => void chat.send(text, files)}
                 onStop={chat.stop}
               />
             </section>

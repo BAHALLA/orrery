@@ -21,9 +21,9 @@ from pathlib import Path
 
 import jwt
 
-# Recording-only dependencies, supplied by `uv run --with` (see make demo-gif),
-# deliberately not workspace dependencies.
-from PIL import Image  # ty: ignore[unresolved-import]
+# Pillow is in the server extra (chat attachments); Playwright is recording-only,
+# supplied by `uv run --with` (see make demo-gif) and not a workspace dependency.
+from PIL import Image
 from playwright.async_api import Page, async_playwright  # ty: ignore[unresolved-import]
 from scripted_server import DEMO_SECRET  # type: ignore[import-not-found]  # same directory
 

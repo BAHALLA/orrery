@@ -68,7 +68,13 @@ service:
 ingress:
   enabled: false
   className: nginx
-  annotations: {}
+  ## Chat attachments (AEP-030) are processed in memory and never stored, so the
+  ## proxy must not write request bodies to disk either, and must admit the
+  ## largest upload (ORRERY_ATTACHMENT_MAX_TOTAL_BYTES, 24 MiB by default).
+  ## For a non-nginx controller, set its equivalents instead.
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
   hosts:
     - host: agents.example.com
       paths:

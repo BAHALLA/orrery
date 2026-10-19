@@ -248,6 +248,34 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 
 A refused request is a `429` with `Retry-After`, which the console shows as "retry in Ns".
 
+### Chat attachments
+
+Images and UTF-8 text files on `/chat` and `/chat/stream` (multipart), processed in memory for one
+turn and never stored ([AEP-030](../enhancements/aep-030-chat-attachments.md)).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_ATTACHMENTS` | `true` | Master switch. Off: `/me` reports `attachments: null` and multipart bodies get `415`. |
+| `ORRERY_ATTACHMENT_IMAGES` | `true` | Accept images. Set `false` for a model without vision. |
+| `ORRERY_ATTACHMENT_MAX_FILES` | `4` | Files per message. |
+| `ORRERY_ATTACHMENT_MAX_BYTES` | `10485760` | Per file, as uploaded (10 MiB). |
+| `ORRERY_ATTACHMENT_MAX_TOTAL_BYTES` | `25165824` | Whole request body (24 MiB). A proxy in front must allow it (nginx `client_max_body_size`). |
+| `ORRERY_ATTACHMENT_MAX_PIXELS` | `25000000` | Source-image budget, checked from the header before decoding. |
+| `ORRERY_ATTACHMENT_IMAGE_MAX_EDGE` | `1568` | Long edge after downscaling. |
+| `ORRERY_ATTACHMENT_MAX_TEXT_CHARS` | `200000` | Characters of a text file the model sees; the middle is cut beyond this. |
+| `ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES` | `2` | Image decodes at once, per process (bounds peak memory). |
+| `ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS` | `4` | Multipart bodies held in memory at once, per process. Past it a request waits, then gets `503` with `Retry-After`. |
+| `ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS` | `60` | Deadline for receiving a request body (`408` after). |
+
+A proxy in front must not spool bodies to disk: nginx `proxy_request_buffering off`, or on
+Ingress-NGINX `nginx.ingress.kubernetes.io/proxy-request-buffering: "off"` (the Helm chart's default
+ingress annotations set it, with `proxy-body-size: 25m`). For a 1 GiB container use
+`MAX_CONCURRENT_DECODES=1`, `MAX_PIXELS=16000000`, `MAX_CONCURRENT_UPLOADS=2`.
+
+With attachments on, the server defaults ADK's `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` to `false`
+(so does `configure_tracing`), so prompts, uploaded text and tool results stay out of trace spans.
+Set it to `true` explicitly to opt back in.
+
 ## Distributed Tracing
 
 OpenTelemetry tracing follows a single request *through* the agent hierarchy so you can attribute latency and localize failures. It is an opt-in extra (`uv sync --extra otel`), **off by default**, and driven entirely by the env vars below — `default_plugins()` reads `OTEL_TRACING_ENABLED` automatically, so one flag turns it on across every transport.

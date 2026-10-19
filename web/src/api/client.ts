@@ -76,10 +76,12 @@ export class ApiClient {
     this.token = token;
   }
 
-  /** `body === undefined` means a GET request; anything else is POSTed as JSON. */
+  /** `body === undefined` means a GET request; anything else is POSTed as JSON,
+   * except `FormData`, which the browser encodes (and sets the boundary for). */
   private async request<T>(path: string, body: unknown, options: RequestOptions = {}): Promise<T> {
     const headers: Record<string, string> = {};
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const form = body instanceof FormData;
+    if (body !== undefined && !form) headers["Content-Type"] = "application/json";
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
 
     let res: Response;
@@ -87,7 +89,7 @@ export class ApiClient {
       res = await fetch(`${config.apiBaseUrl}${path}`, {
         method: options.method ?? (body !== undefined ? "POST" : "GET"),
         headers,
-        body: body !== undefined ? JSON.stringify(body) : null,
+        body: form ? body : body !== undefined ? JSON.stringify(body) : null,
         signal: options.signal ?? null,
       });
     } catch (err) {
@@ -126,7 +128,7 @@ export class ApiClient {
 
   /** Send one chat turn. Pass the returned session_id back on the next call. */
   chat(req: ChatRequest, options?: RequestOptions): Promise<ChatResponse> {
-    return this.request<ChatResponse>("/chat", req, options);
+    return this.request<ChatResponse>("/chat", chatBody(req), options);
   }
 
   /**
@@ -139,10 +141,9 @@ export class ApiClient {
    * (a proxy or test double that ignored the stream) is taken as the reply.
    */
   async chatStream(req: ChatRequest, { signal, onEvent }: StreamOptions): Promise<ChatResponse> {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    };
+    const body = chatBody(req);
+    const headers: Record<string, string> = { Accept: "text/event-stream" };
+    if (!(body instanceof FormData)) headers["Content-Type"] = "application/json";
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
 
     let res: Response;
@@ -150,7 +151,7 @@ export class ApiClient {
       res = await fetch(`${config.apiBaseUrl}/chat/stream`, {
         method: "POST",
         headers,
-        body: JSON.stringify(req),
+        body: body instanceof FormData ? body : JSON.stringify(body),
         signal: signal ?? null,
       });
     } catch (err) {
@@ -302,6 +303,16 @@ function retryAfterSeconds(res: Response): number | null {
 }
 
 /** Pull a human-readable message out of a non-2xx response, tolerating any shape. */
+/** JSON for a plain turn; multipart when it carries files (AEP-030). */
+function chatBody({ files, ...json }: ChatRequest): FormData | Omit<ChatRequest, "files"> {
+  if (!files?.length) return json;
+  const form = new FormData();
+  form.append("message", json.message);
+  if (json.session_id) form.append("session_id", json.session_id);
+  for (const file of files) form.append("files", file, file.name);
+  return form;
+}
+
 async function extractError(res: Response): Promise<string> {
   try {
     const data: unknown = await res.json();

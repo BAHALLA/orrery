@@ -101,6 +101,43 @@ def test_configure_tracing_enabled_is_idempotent(monkeypatch):
     assert provider.resource.attributes["service.name"] == "orrery-test"
 
 
+def _traced_llm_request(text: str) -> str:
+    """What ADK writes into a real LLM span for a request carrying *text*."""
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.telemetry.tracing import trace_call_llm
+    from google.genai import types
+
+    request = LlmRequest(
+        model="m", contents=[types.Content(role="user", parts=[types.Part(text=text)])]
+    )
+    ctx = _fake(invocation_id="inv", session=_fake(id="s"), run_config=None)
+    with recording_span() as exporter:
+        trace_call_llm(ctx, "e1", request, LlmResponse())
+    return json.dumps(dict(only_span(exporter).attributes or {}))
+
+
+def test_configure_tracing_keeps_message_content_out_of_spans(monkeypatch):
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    monkeypatch.setenv(tracing.CONTENT_IN_SPANS_ENV, "x")
+    monkeypatch.delenv(tracing.CONTENT_IN_SPANS_ENV)
+
+    assert configure_tracing(exporter=InMemorySpanExporter()) is True
+
+    # An uploaded log, a prompt, a tool result: none of it reaches the backend.
+    assert "SECRET-LOG-LINE" not in _traced_llm_request("SECRET-LOG-LINE")
+
+
+def test_an_explicit_span_content_opt_in_is_honoured(monkeypatch, caplog):
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    monkeypatch.setenv(tracing.CONTENT_IN_SPANS_ENV, "true")
+
+    assert configure_tracing(exporter=InMemorySpanExporter()) is True
+
+    assert "SECRET-LOG-LINE" in _traced_llm_request("SECRET-LOG-LINE")
+    assert "span attributes will carry prompts" in caplog.text
+
+
 # ── TracingPlugin: request id / user message ─────────────────────────
 
 

@@ -33,6 +33,10 @@ Environment variables:
   ``http://localhost:4317``. When unset, spans print to the console.
 - ``OTEL_SERVICE_NAME``           — resource service.name (default: ``orrery``)
 - ``OTEL_TRACES_SAMPLER_ARG``     — head-sampling ratio 0.0–1.0 (default: 1.0)
+- ``ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`` — ADK's own switch for copying
+  prompts, tool arguments and results into span attributes. ADK defaults it
+  **on**; :func:`configure_tracing` defaults it **off** (see
+  :data:`CONTENT_IN_SPANS_ENV`). Set it to ``true`` explicitly to opt back in.
 """
 
 from __future__ import annotations
@@ -76,6 +80,13 @@ from .log import request_id_var
 from .metrics import track_llm_tokens
 
 logger = logging.getLogger("orrery.tracing")
+
+#: ADK copies whole LLM requests (prompts, uploaded text attachments) and tool
+#: arguments/results into span attributes unless this is falsy, and it defaults
+#: on. A trace backend is a second, longer-lived store with its own access
+#: model, so the content stays out of it unless an operator opts in. ADK reads
+#: the variable per span, so setting it before the first turn is enough.
+CONTENT_IN_SPANS_ENV = "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"
 
 # Session-state key under which the per-request correlation id is stored, so it
 # survives in the persisted session alongside ``user_role`` and ``_auth``.
@@ -130,6 +141,19 @@ def configure_tracing(
     if not _env_truthy("OTEL_TRACING_ENABLED"):
         logger.debug("Tracing disabled (set OTEL_TRACING_ENABLED=true to enable)")
         return False
+
+    if os.environ.setdefault(CONTENT_IN_SPANS_ENV, "false").strip().lower() not in (
+        "",
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        logger.warning(
+            "%s is on: span attributes will carry prompts, uploaded text attachments "
+            "and tool results to the trace backend.",
+            CONTENT_IN_SPANS_ENV,
+        )
 
     with _config_lock:
         if _configured:
