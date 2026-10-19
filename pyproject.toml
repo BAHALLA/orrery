@@ -165,6 +165,10 @@ filterwarnings = [
     # class; Starlette TestClient's httpx shim used by fastapi.testclient).
     "ignore:BaseAgentConfig is deprecated.*:DeprecationWarning",
     "ignore:Using .httpx. with .starlette.testclient. is deprecated.*",
+    # ADK's own AgentTool builds its sub-Runner with `plugins=` (adk 2.12). The
+    # warning has no stacklevel, so it is attributed to google.adk.runners whoever
+    # the caller is; orrery_core's Runners all pass `app=` (grep `Runner(`).
+    "ignore:The .plugins. argument is deprecated.*:DeprecationWarning:google.adk.runners",
 ]
 testpaths = [
     "core/tests",
