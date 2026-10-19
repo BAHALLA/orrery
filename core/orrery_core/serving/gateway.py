@@ -53,6 +53,12 @@ from ..security.guardrails import (
     ensure_pending_confirmation_store,
 )
 from ..security.identity import CallerIdentity, caller_scope, enabled_systems
+from .attachments import (
+    AttachmentPlugin,
+    PreparedAttachment,
+    attachment_scope,
+    message_text,
+)
 from .events import extract_reply_text
 from .session_cache import DEFAULT_MAX_SESSION_MAPPINGS, BoundedSessionCache
 
@@ -92,6 +98,9 @@ class InboundMessage:
     #: (``ORRERY_IMPERSONATION``). Set only from what the transport itself
     #: verified — a JWT, a signed chat event — never from message content.
     identity: CallerIdentity | None = None
+    #: Files for this turn, already validated (:mod:`.attachments`). Shown to
+    #: the model for this turn only; the session stores a placeholder each.
+    attachments: Sequence[PreparedAttachment] = ()
 
 
 @dataclass
@@ -282,10 +291,16 @@ class AgentGateway:
         self.runner = self._build_runner(root_agent)
 
     def _build_runner(self, root_agent: Agent | Workflow) -> Runner:
+        # Every gateway can carry attachments, so every gateway delivers them:
+        # a surface that forgot the plugin would show the model placeholders
+        # for files it never received. Inert on turns without attachments.
+        plugins = self._plugins
+        if not any(isinstance(p, AttachmentPlugin) for p in plugins):
+            plugins = [*plugins, AttachmentPlugin()]
         app = App(
             name=self.app_name,
             root_agent=root_agent,
-            plugins=self._plugins,
+            plugins=plugins,
             context_cache_config=self._context_cache_config,
             events_compaction_config=self._events_compaction_config,
         )
@@ -363,6 +378,7 @@ class AgentGateway:
         on_event: EventHook | None = None,
         streaming: bool = False,
         identity: CallerIdentity | None = None,
+        attachments: Sequence[PreparedAttachment] = (),
     ) -> OutboundReply:
         """Run one turn against an already-resolved session.
 
@@ -374,8 +390,13 @@ class AgentGateway:
         text as it is generated, each followed in the end by one aggregated,
         non-partial event with the full text. The returned reply is built from
         non-partial events only, so it is the same text either way.
+
+        *attachments* are stored as placeholder lines after *text* and their
+        content reaches the model for this turn only (see :mod:`.attachments`).
         """
-        message = types.Content(role="user", parts=[types.Part.from_text(text=text)])
+        stored = message_text(text, attachments)
+        message = types.Content(role="user", parts=[types.Part.from_text(text=stored)])
+        # The typed text alone decides approve/deny: a placeholder is not a word.
         delta = self._turn_state_delta(text=text, user_id=user_id, state_delta=state_delta)
         run_kwargs: dict[str, Any] = {}
         if streaming:
@@ -388,7 +409,7 @@ class AgentGateway:
         # those inside AgentTool specialists and to_thread workers, sees it.
         # Without one, an enclosing scope (service_scope for batch runs) stands.
         scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
-        with scope:
+        with scope, attachment_scope(attachments):
             async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
@@ -480,6 +501,7 @@ class AgentGateway:
             on_event=on_event,
             streaming=streaming,
             identity=msg.identity,
+            attachments=msg.attachments,
         )
 
     async def dispatch(self, adapter: ChannelAdapter, raw: Any) -> Any:

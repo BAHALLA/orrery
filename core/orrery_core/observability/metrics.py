@@ -117,6 +117,28 @@ SAFETY_SCREEN_TOTAL = Counter(
     ["direction", "source"],
 )
 
+#: Chat attachments (AEP-030), processed in memory for one turn and dropped.
+#:
+#: ``kind`` is ``image`` / ``text`` / ``unknown`` and ``outcome`` is
+#: ``accepted`` or a bounded rejection reason (``too_large``, ``unsupported``,
+#: ``invalid``, ``too_many``), so a spike says *why* uploads are refused.
+ATTACHMENTS_TOTAL = Counter(
+    "orrery_attachments_total",
+    "Chat attachments by kind and outcome",
+    ["kind", "outcome"],
+)
+ATTACHMENT_BYTES_TOTAL = Counter(
+    "orrery_attachment_bytes_total",
+    "Bytes of accepted attachments, as uploaded and as sent to the model",
+    ["stage"],
+)
+ATTACHMENT_PREP_SECONDS = Histogram(
+    "orrery_attachment_prep_seconds",
+    "Time to validate and prepare one attachment (sniff, decode, re-encode, screen)",
+    ["kind"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+
 #: Confirmation lifecycle (AEP-024).
 #:
 #: The gate already enforced requester-verified approval correctly; what it did
@@ -393,6 +415,17 @@ def track_safety_screen(*, direction: str, source: str, spans: int = 1) -> None:
             the run stops at the first match.
     """
     SAFETY_SCREEN_TOTAL.labels(direction=direction, source=source).inc(spans)
+
+
+def track_attachment(
+    *, kind: str, outcome: str, seconds: float = 0.0, bytes_in: int = 0, bytes_out: int = 0
+) -> None:
+    """Record one attachment's outcome; sizes and latency only when accepted."""
+    ATTACHMENTS_TOTAL.labels(kind=kind, outcome=outcome).inc()
+    if outcome == "accepted":
+        ATTACHMENT_PREP_SECONDS.labels(kind=kind).observe(seconds)
+        ATTACHMENT_BYTES_TOTAL.labels(stage="uploaded").inc(bytes_in)
+        ATTACHMENT_BYTES_TOTAL.labels(stage="to_model").inc(bytes_out)
 
 
 def track_confirmation_raised(*, tool: str, mode: str) -> None:

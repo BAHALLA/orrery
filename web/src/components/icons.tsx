@@ -161,6 +161,27 @@ export const SearchIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const PaperclipIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m20 11.5-8.3 8.3a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9" />
+  </Icon>
+);
+
+export const ImageIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="m20.5 16-4.8-4.8L6 19.5" />
+  </Icon>
+);
+
+export const FileIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z" />
+    <path d="M14 3.5v5h5M9 13h6M9 16.5h4" />
+  </Icon>
+);
+
 /** An indeterminate spinner: one planet on an orbit, the brand's own motif. */
 export function OrbitSpinner({ size = 14, className = "" }: { size?: number; className?: string }) {
   return (

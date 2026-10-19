@@ -12,6 +12,8 @@ export interface ChatRequest {
   message: string;
   /** Omit / null on the first turn; the server mints and returns a session id. */
   session_id?: string | null;
+  /** Attachments (AEP-030). With any, the turn is sent as multipart/form-data. */
+  files?: File[];
 }
 
 /** POST /chat success response. */
@@ -129,6 +131,17 @@ export interface MeResponse {
   model_provider: string;
   model_name: string;
   self_test_available: boolean;
+  /** What a turn may attach (AEP-030); null when attachments are off. */
+  attachments?: AttachmentsInfo | null;
+}
+
+/** The server's attachment limits. The server re-checks everything by content. */
+export interface AttachmentsInfo {
+  max_files: number;
+  max_file_bytes: number;
+  max_total_bytes: number;
+  images: boolean;
+  image_types: string[];
 }
 
 /** How a tool is gated. `dynamic`: an MCP toolset, classified per tool at run time. */

@@ -29,6 +29,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--blue">P2</span> | [AEP-023](aep-023-scheduled-tasks.md) | First-Class Scheduled Agent Tasks | <span class="badge badge--amber">in-progress</span> | Medium | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-028](aep-028-plan-approval.md) | Plan-Level Approval for Multi-Step Changes | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-029](aep-029-answer-feedback.md) | User Feedback on Answers | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
+| <span class="badge badge--blue">P2</span> | [AEP-030](aep-030-chat-attachments.md) | Chat Attachments, Processed and Never Stored | <span class="badge badge--green">completed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-026](aep-026-experience-capture-rex.md) | Experience Capture & REX Generation | <span class="badge badge--amber">proposed</span> | Medium-High | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--amber">proposed</span> | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--amber">proposed</span> | Low | Medium |

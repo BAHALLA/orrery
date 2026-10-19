@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from "../api/client";
 import type { ActivityEntry, PendingConfirmation, TriageResponse } from "../api/types";
 import type { ConversationsController } from "../conversations/useConversations";
 import { NEW_CONVERSATION_TITLE } from "../conversations/types";
+import { refsFor } from "./attachments";
 import { applyProgress } from "./trace";
 import type { ChatError, ChatMessage } from "./types";
 
@@ -34,7 +35,8 @@ export interface ChatController {
   pending: PendingConfirmation | null;
   /** The session's latest triage verdict, if one was recorded. */
   triage: TriageResponse | null;
-  send: (text: string) => Promise<void>;
+  /** Send a turn; *files* are attachments (AEP-030), shown to the model once. */
+  send: (text: string, files?: File[]) => Promise<void>;
   /** Send an approve/deny decision through the normal chat flow. */
   decide: (word: "approve" | "deny") => Promise<void>;
   /** Kick off a full triage sweep (the canned prompt). */
@@ -63,9 +65,10 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
   const [triage, setTriage] = useState<TriageResponse | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  // The text of the turn in flight (or the one that just failed), so a retry
-  // can replay it without the user retyping — the composer clears on send.
-  const lastSentRef = useRef<string | null>(null);
+  // The turn in flight (or the one that just failed), so a retry can replay it
+  // — files included — without the user redoing anything: the composer clears
+  // on send.
+  const lastSentRef = useRef<{ text: string; files: File[] } | null>(null);
 
   const { active, activeId, patchConversation } = conv;
   const messages = active.messages;
@@ -148,9 +151,9 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   }, [isSending, sessionId, activeId, refreshSidePanes]);
 
   const send = useCallback(
-    async (raw: string, options: { replay?: boolean } = {}) => {
+    async (raw: string, files: File[] = [], options: { replay?: boolean } = {}) => {
       const text = raw.trim();
-      if (!text || isSending) return;
+      if ((!text && !files.length) || isSending) return;
 
       // The conversation this send belongs to. Every write below names it, so a
       // reply still landing after the user switched away goes to the thread
@@ -179,10 +182,23 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
       patch((c) => ({
         messages: options.replay
           ? [...c.messages, placeholder]
-          : [...c.messages, { id: nextId(), role: "user", text, at: startedAt }, placeholder],
-        title: c.title === NEW_CONVERSATION_TITLE ? titleFrom(text) : c.title,
+          : [
+              ...c.messages,
+              {
+                id: nextId(),
+                role: "user",
+                text,
+                at: startedAt,
+                ...(files.length ? { attachments: refsFor(files) } : {}),
+              },
+              placeholder,
+            ],
+        title:
+          c.title === NEW_CONVERSATION_TITLE
+            ? titleFrom(text || files.map((f) => f.name).join(", "))
+            : c.title,
       }));
-      lastSentRef.current = text;
+      lastSentRef.current = { text, files };
       setIsSending(true);
 
       const controller = new AbortController();
@@ -201,7 +217,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
 
       try {
         const res = await client.chatStream(
-          { message: text, session_id: sessionId },
+          { message: text, session_id: sessionId, files },
           {
             signal: controller.signal,
             onEvent: (event) => {
@@ -286,8 +302,8 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
   const retry = useCallback(async () => {
-    const text = lastSentRef.current;
-    if (text) await send(text, { replay: true });
+    const last = lastSentRef.current;
+    if (last) await send(last.text, last.files, { replay: true });
   }, [send]);
 
   const clearError = useCallback(() => setError(null), []);
@@ -300,7 +316,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     activity,
     pending,
     triage,
-    send: (text: string) => send(text),
+    send: (text: string, files?: File[]) => send(text, files),
     decide,
     runTriage,
     stop,

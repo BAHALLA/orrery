@@ -326,6 +326,47 @@ const frame = (event: string, data: unknown) =>
   `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
 describe("ApiClient.chatStream", () => {
+  it("sends a turn with files as multipart, without a JSON content type", async () => {
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify({ session_id: "s1", response: "ok" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const log = new File(["OOMKilled"], "app.log", { type: "text/plain" });
+
+    await new ApiClient("tok").chatStream(
+      { message: "why?", session_id: "s1", files: [log] },
+      { onEvent: () => {} },
+    );
+
+    const [, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get("message")).toBe("why?");
+    expect(form.get("session_id")).toBe("s1");
+    expect((form.getAll("files")[0] as File).name).toBe("app.log");
+    expect(init.headers["Content-Type"]).toBeUndefined();
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("keeps a turn without files as JSON", async () => {
+    mockFetch(
+      async () =>
+        new Response(JSON.stringify({ session_id: "s1", response: "ok" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    await new ApiClient(null).chatStream({ message: "hi", files: [] }, { onEvent: () => {} });
+
+    const [, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ message: "hi" });
+    expect(init.headers["Content-Type"]).toBe("application/json");
+  });
+
   it("narrates the turn and resolves with the final reply", async () => {
     mockFetch(async () =>
       sseResponse([

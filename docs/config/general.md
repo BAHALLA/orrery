@@ -248,6 +248,23 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 
 A refused request is a `429` with `Retry-After`, which the console shows as "retry in Ns".
 
+### Chat attachments
+
+Images and UTF-8 text files on `/chat` and `/chat/stream` (multipart), processed in memory for one
+turn and never stored ([AEP-030](../enhancements/aep-030-chat-attachments.md)).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_ATTACHMENTS` | `true` | Master switch. Off: `/me` reports `attachments: null` and multipart bodies get `415`. |
+| `ORRERY_ATTACHMENT_IMAGES` | `true` | Accept images. Set `false` for a model without vision. |
+| `ORRERY_ATTACHMENT_MAX_FILES` | `4` | Files per message. |
+| `ORRERY_ATTACHMENT_MAX_BYTES` | `10485760` | Per file, as uploaded (10 MiB). |
+| `ORRERY_ATTACHMENT_MAX_TOTAL_BYTES` | `25165824` | Whole request body (24 MiB). A proxy in front must allow it (nginx `client_max_body_size`). |
+| `ORRERY_ATTACHMENT_MAX_PIXELS` | `25000000` | Source-image budget, checked from the header before decoding. |
+| `ORRERY_ATTACHMENT_IMAGE_MAX_EDGE` | `1568` | Long edge after downscaling. |
+| `ORRERY_ATTACHMENT_MAX_TEXT_CHARS` | `200000` | Characters of a text file the model sees; the middle is cut beyond this. |
+| `ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES` | `2` | Image decodes at once, per process (bounds peak memory). |
+
 ## Distributed Tracing
 
 OpenTelemetry tracing follows a single request *through* the agent hierarchy so you can attribute latency and localize failures. It is an opt-in extra (`uv sync --extra otel`), **off by default**, and driven entirely by the env vars below — `default_plugins()` reads `OTEL_TRACING_ENABLED` automatically, so one flag turns it on across every transport.

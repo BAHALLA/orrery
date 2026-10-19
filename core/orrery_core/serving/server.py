@@ -70,6 +70,7 @@ from ..security.auth import (
 )
 from ..security.identity import identity_from_claims
 from .agent_admin import AgentAdmin
+from .attachments import AttachmentError, AttachmentLimits, AttachmentProcessor
 from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
@@ -85,6 +86,7 @@ from .readiness import ReadinessCheck
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
 from .sse import drain_turns, stream_turn
+from .uploads import ChatInput, ChatRequest, read_chat_input
 
 logger = logging.getLogger("orrery.server")
 
@@ -148,6 +150,8 @@ class ServerConfig:
     #: Console settings served at runtime from /console-config.js (OIDC SSO
     #: without rebuilding the image). See :mod:`.console_config`.
     console: ConsoleConfig = field(default_factory=ConsoleConfig)
+    #: Chat attachments (AEP-030): ``ORRERY_ATTACHMENT*``.
+    attachments: AttachmentLimits = field(default_factory=AttachmentLimits)
 
     @property
     def serve_docs(self) -> bool:
@@ -190,6 +194,9 @@ class ServerConfig:
           console may connect to besides its own and ``JWT_ISSUER``'s.
         - ``ORRERY_CONSOLE_OIDC_*`` — the console's SSO settings, served at
           runtime (see :class:`ConsoleConfig`).
+        - ``ORRERY_ATTACHMENTS`` (default ``true``) and ``ORRERY_ATTACHMENT_*``
+          — what a chat turn may attach (see :class:`AttachmentLimits`). Set
+          ``ORRERY_ATTACHMENT_IMAGES=false`` for a model without vision.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
@@ -213,15 +220,11 @@ class ServerConfig:
                 o.strip() for o in os.getenv("ORRERY_CSP_EXTRA_ORIGINS", "").split(",") if o.strip()
             ),
             console=ConsoleConfig.from_env(),
+            attachments=AttachmentLimits.from_env(),
         )
 
 
 # ── Request / response models ───────────────────────────────────────
-
-
-class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=8192)
-    session_id: str | None = Field(default=None, max_length=128)
 
 
 class ChatResponse(BaseModel):
@@ -348,6 +351,17 @@ class TriageResponse(BaseModel):
     report: str | None
 
 
+class AttachmentsInfo(BaseModel):
+    """The attachment limits a client should check before uploading."""
+
+    max_files: int
+    max_file_bytes: int
+    max_total_bytes: int
+    images: bool
+    #: Image types accepted (the server re-checks by content, not by this).
+    image_types: list[str]
+
+
 class MeResponse(BaseModel):
     """Who the caller is and what this deployment will let them do.
 
@@ -364,6 +378,8 @@ class MeResponse(BaseModel):
     model_name: str
     #: Whether this deployment can run the onboarding self-test.
     self_test_available: bool
+    #: What a chat turn may attach, or ``null`` when attachments are off.
+    attachments: AttachmentsInfo | None = None
 
 
 class CheckResultModel(BaseModel):
@@ -684,8 +700,29 @@ def create_app(
             content={"status": "ready" if result.ready else "not_ready", "checks": result.checks},
         )
 
-    def inbound(body: ChatRequest, auth: AuthContext) -> InboundMessage:
-        """The turn both chat endpoints run: identity and title in state_delta."""
+    attachments = AttachmentProcessor(cfg.attachments)
+
+    async def chat_body(request: Request) -> ChatInput:
+        """The chat body, JSON or multipart, read under hard size caps.
+
+        A dependency rather than a body model so a multipart upload streams
+        into memory under its limits (see ``uploads.py``). Declared after the
+        rate limit on each route, which FastAPI solves first: an unauthenticated
+        or throttled caller is refused before a byte of the body is read.
+        """
+        return await read_chat_input(request, cfg.attachments)
+
+    async def inbound(body: ChatInput, auth: AuthContext) -> InboundMessage:
+        """The turn both chat endpoints run: identity and title in state_delta.
+
+        Attachments are prepared here, before the turn starts, so a refused
+        file is an HTTP error (413/415/422) rather than an ``error`` event
+        behind a streaming 200.
+        """
+        try:
+            prepared = await attachments.prepare_all(body.uploads)
+        except AttachmentError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from exc
         # Identity travels in state_delta each turn (applied before the agent
         # runs), so a long-lived session always inherits the latest verified
         # role and AuthPlugin resolves RBAC from it.
@@ -696,7 +733,9 @@ def create_app(
         # unknown id also mints a fresh session; that one stays untitled, which
         # the console renders as its placeholder.)
         if not body.session_id:
-            state_delta[_CONVERSATION_TITLE_KEY] = _conversation_title(body.message)
+            state_delta[_CONVERSATION_TITLE_KEY] = _conversation_title(
+                body.message or ", ".join(a.name for a in prepared)
+            )
         return InboundMessage(
             text=body.message,
             user_id=auth.subject,
@@ -706,26 +745,56 @@ def create_app(
             # From the verified token only. Anonymous mode has no person behind
             # it, so impersonating systems refuse (fail-closed).
             identity=identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None,
+            attachments=prepared,
         )
 
-    @api.post("/chat", response_model=ChatResponse, dependencies=[Depends(chat_rate_limit)])
+    # Both content types documented, since the body is read by a dependency
+    # and FastAPI can no longer infer it.
+    chat_openapi = {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {"schema": ChatRequest.model_json_schema()},
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string", "maxLength": 8192},
+                            "session_id": {"type": "string", "maxLength": 128},
+                            "files": {
+                                "type": "array",
+                                "items": {"type": "string", "format": "binary"},
+                            },
+                        },
+                    }
+                },
+            },
+        }
+    }
+
+    @api.post(
+        "/chat",
+        response_model=ChatResponse,
+        dependencies=[Depends(chat_rate_limit)],
+        openapi_extra=chat_openapi,
+    )
     async def chat(
-        body: ChatRequest,
+        body: ChatInput = Depends(chat_body),  # noqa: B008 — FastAPI dependency pattern
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> ChatResponse:
-        reply = await gateway.run(inbound(body, auth))
+        reply = await gateway.run(await inbound(body, auth))
         return ChatResponse(session_id=reply.session_id, response=reply.text)
 
     # Same request, same rate limit (one bucket: a streamed turn costs what a
     # plain one does), narrated as Server-Sent Events — see `sse.py` for the
     # event vocabulary. POST, not GET, so the message never lands in a URL or
     # an access log; the console reads it with fetch(), not EventSource.
-    @api.post("/chat/stream", dependencies=[Depends(chat_rate_limit)])
+    @api.post("/chat/stream", dependencies=[Depends(chat_rate_limit)], openapi_extra=chat_openapi)
     async def chat_stream(
-        body: ChatRequest,
+        body: ChatInput = Depends(chat_body),  # noqa: B008 — FastAPI dependency pattern
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> StreamingResponse:
-        msg = inbound(body, auth)
+        msg = await inbound(body, auth)
         # Resolved before the response starts, so a session-store failure is a
         # real HTTP error instead of an `error` event behind a 200.
         session_id = await gateway.resolve_session(msg)
@@ -932,6 +1001,17 @@ def create_app(
             model_provider=os.getenv("MODEL_PROVIDER", "gemini"),
             model_name=os.getenv("MODEL_NAME", ""),
             self_test_available=bool(probes),
+            attachments=AttachmentsInfo(
+                max_files=cfg.attachments.max_files,
+                max_file_bytes=cfg.attachments.max_file_bytes,
+                max_total_bytes=cfg.attachments.max_total_bytes,
+                images=cfg.attachments.images,
+                image_types=["image/png", "image/jpeg", "image/gif", "image/webp"]
+                if cfg.attachments.images
+                else [],
+            )
+            if cfg.attachments.active
+            else None,
         )
 
     @api.get("/admin/agents", response_model=AgentsResponse)
