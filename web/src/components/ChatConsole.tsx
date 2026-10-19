@@ -3,6 +3,7 @@ import type { Identity } from "../auth/token";
 import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
+import { AgentsDashboard } from "./AgentsDashboard";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
@@ -34,6 +35,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("tools");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [view, setView] = useState<"chat" | "agents">("chat");
 
   // Surface a fresh triage verdict without the user hunting for it.
   const lastSeverity = useRef<string | null>(null);
@@ -42,6 +44,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     if (sev && sev !== lastSeverity.current) {
       setInspectorTab("triage");
       setInspectorOpen(true);
+      setView("chat");
     }
     lastSeverity.current = sev;
   }, [chat.triage]);
@@ -58,7 +61,11 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   }, [navOpen, inspectorOpen]);
 
   const toggleInspector = (tab: InspectorTab) => {
-    if (inspectorOpen && inspectorTab === tab) {
+    if (view !== "chat") {
+      setView("chat");
+      setInspectorTab(tab);
+      setInspectorOpen(true);
+    } else if (inspectorOpen && inspectorTab === tab) {
       setInspectorOpen(false);
     } else {
       setInspectorTab(tab);
@@ -81,9 +88,18 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         isSending={chat.isSending}
         open={navOpen}
         onClose={() => setNavOpen(false)}
-        onNewChat={conversations.newConversation}
-        onRunTriage={() => void chat.runTriage()}
+        onNewChat={() => {
+          setView("chat");
+          conversations.newConversation();
+        }}
+        onRunTriage={() => {
+          setView("chat");
+          void chat.runTriage();
+        }}
         onOpenSystem={() => toggleInspector("system")}
+        view={view}
+        onOpenAgents={() => setView("agents")}
+        onShowChat={() => setView("chat")}
         onSignOut={onSignOut}
       />
 
@@ -98,7 +114,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
             <MenuIcon size={18} />
           </button>
           <h2 className="min-w-0 flex-1 truncate font-medium text-slate-800 dark:text-slate-100">
-            {conversations.active.title}
+            {view === "agents" ? "Agents" : conversations.active.title}
           </h2>
           {live ? (
             <span
@@ -109,115 +125,123 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               Working{liveSteps ? ` · ${liveSteps} step${liveSteps === 1 ? "" : "s"}` : ""}
             </span>
           ) : null}
-          <button
-            type="button"
-            className={headerButton(inspectorOpen && inspectorTab === "tools")}
-            onClick={() => toggleInspector("tools")}
-          >
-            <ActivityIcon />
-            <span className="sr-only sm:not-sr-only">Tool calls</span>
-            {chat.activity.length > 0 ? (
-              <span className="rounded-full bg-slate-200 px-1.5 text-xs text-slate-600 tabular-nums dark:bg-slate-700 dark:text-slate-300">
-                {chat.activity.length}
-              </span>
-            ) : null}
-          </button>
-          <button
-            type="button"
-            className={headerButton(inspectorOpen && inspectorTab === "triage")}
-            onClick={() => toggleInspector("triage")}
-          >
-            <RadarIcon />
-            <span className="sr-only sm:not-sr-only">Triage</span>
-            {chat.triage?.severity ? (
-              <span
-                className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold uppercase ${severityBadge[chat.triage.severity]}`}
-              >
-                {chat.triage.severity}
-              </span>
-            ) : null}
-          </button>
-        </header>
-
-        <div className="relative flex min-h-0 flex-1">
-          <section className="flex min-w-0 flex-1 flex-col">
-            <MessageList
-              messages={chat.messages}
-              isSending={chat.isSending}
-              onSuggest={(prompt) => void chat.send(prompt)}
-              onSweep={() => void chat.runTriage()}
-            />
-
-            {chat.pending ? (
-              <ConfirmationPanel
-                pending={chat.pending}
-                disabled={chat.isSending}
-                onDecide={(word) => void chat.decide(word)}
-              />
-            ) : null}
-
-            {chat.error ? (
-              <div className="px-3 sm:px-6">
-                <div
-                  role="alert"
-                  className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300"
-                >
-                  <span className="min-w-0">{chat.error.message}</span>
-                  <span className="flex shrink-0 items-center gap-3">
-                    {chat.error.isAuth ? (
-                      <button type="button" className="font-medium underline" onClick={onSignOut}>
-                        Re-enter token
-                      </button>
-                    ) : chat.error.canRetry ? (
-                      <button
-                        type="button"
-                        className="font-medium underline disabled:opacity-50"
-                        disabled={chat.isSending}
-                        onClick={() => void chat.retry()}
-                      >
-                        Retry
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      aria-label="Dismiss error"
-                      className="rounded p-0.5 opacity-60 hover:opacity-100"
-                      onClick={chat.clearError}
-                    >
-                      <CloseIcon size={14} />
-                    </button>
-                  </span>
-                </div>
-              </div>
-            ) : null}
-
-            <MessageInput
-              disabled={chat.isSending}
-              isSending={chat.isSending}
-              onSend={(text) => void chat.send(text)}
-              onStop={chat.stop}
-            />
-          </section>
-
-          {inspectorOpen ? (
+          {view === "chat" ? (
             <>
-              {/* Below xl the inspector overlays the conversation as a drawer. */}
-              <div
-                aria-hidden="true"
-                onClick={() => setInspectorOpen(false)}
-                className="absolute inset-0 z-10 bg-slate-950/30 backdrop-blur-[1px] xl:hidden"
-              />
-              <InspectorPanel
-                tab={inspectorTab}
-                onTab={setInspectorTab}
-                onClose={() => setInspectorOpen(false)}
-                activity={chat.activity}
-                triage={chat.triage}
-                system={system}
-              />
+              <button
+                type="button"
+                className={headerButton(inspectorOpen && inspectorTab === "tools")}
+                onClick={() => toggleInspector("tools")}
+              >
+                <ActivityIcon />
+                <span className="sr-only sm:not-sr-only">Tool calls</span>
+                {chat.activity.length > 0 ? (
+                  <span className="rounded-full bg-slate-200 px-1.5 text-xs text-slate-600 tabular-nums dark:bg-slate-700 dark:text-slate-300">
+                    {chat.activity.length}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                className={headerButton(inspectorOpen && inspectorTab === "triage")}
+                onClick={() => toggleInspector("triage")}
+              >
+                <RadarIcon />
+                <span className="sr-only sm:not-sr-only">Triage</span>
+                {chat.triage?.severity ? (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold uppercase ${severityBadge[chat.triage.severity]}`}
+                  >
+                    {chat.triage.severity}
+                  </span>
+                ) : null}
+              </button>
             </>
           ) : null}
-        </div>
+        </header>
+
+        {view === "agents" ? (
+          <AgentsDashboard system={system} />
+        ) : (
+          <div className="relative flex min-h-0 flex-1">
+            <section className="flex min-w-0 flex-1 flex-col">
+              <MessageList
+                messages={chat.messages}
+                isSending={chat.isSending}
+                onSuggest={(prompt) => void chat.send(prompt)}
+                onSweep={() => void chat.runTriage()}
+              />
+
+              {chat.pending ? (
+                <ConfirmationPanel
+                  pending={chat.pending}
+                  disabled={chat.isSending}
+                  onDecide={(word) => void chat.decide(word)}
+                />
+              ) : null}
+
+              {chat.error ? (
+                <div className="px-3 sm:px-6">
+                  <div
+                    role="alert"
+                    className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300"
+                  >
+                    <span className="min-w-0">{chat.error.message}</span>
+                    <span className="flex shrink-0 items-center gap-3">
+                      {chat.error.isAuth ? (
+                        <button type="button" className="font-medium underline" onClick={onSignOut}>
+                          Re-enter token
+                        </button>
+                      ) : chat.error.canRetry ? (
+                        <button
+                          type="button"
+                          className="font-medium underline disabled:opacity-50"
+                          disabled={chat.isSending}
+                          onClick={() => void chat.retry()}
+                        >
+                          Retry
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        aria-label="Dismiss error"
+                        className="rounded p-0.5 opacity-60 hover:opacity-100"
+                        onClick={chat.clearError}
+                      >
+                        <CloseIcon size={14} />
+                      </button>
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+
+              <MessageInput
+                disabled={chat.isSending}
+                isSending={chat.isSending}
+                onSend={(text) => void chat.send(text)}
+                onStop={chat.stop}
+              />
+            </section>
+
+            {inspectorOpen ? (
+              <>
+                {/* Below xl the inspector overlays the conversation as a drawer. */}
+                <div
+                  aria-hidden="true"
+                  onClick={() => setInspectorOpen(false)}
+                  className="absolute inset-0 z-10 bg-slate-950/30 backdrop-blur-[1px] xl:hidden"
+                />
+                <InspectorPanel
+                  tab={inspectorTab}
+                  onTab={setInspectorTab}
+                  onClose={() => setInspectorOpen(false)}
+                  activity={chat.activity}
+                  triage={chat.triage}
+                  system={system}
+                />
+              </>
+            ) : null}
+          </div>
+        )}
       </main>
     </div>
   );

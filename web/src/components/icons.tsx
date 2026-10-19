@@ -145,6 +145,22 @@ export const LogOutIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const AgentsIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+  </Icon>
+);
+
+export const SearchIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m16 16 4 4" />
+  </Icon>
+);
+
 /** An indeterminate spinner: one planet on an orbit, the brand's own motif. */
 export function OrbitSpinner({ size = 14, className = "" }: { size?: number; className?: string }) {
   return (

@@ -2,7 +2,7 @@ import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
 import type { Conversation } from "../conversations/types";
 import type { ConversationsController } from "../conversations/useConversations";
-import { CloseIcon, PlusIcon, RadarIcon, ShieldIcon, TrashIcon } from "./icons";
+import { AgentsIcon, CloseIcon, PlusIcon, RadarIcon, ShieldIcon, TrashIcon } from "./icons";
 import { IdentityBadge } from "./IdentityBadge";
 import { OrreryMark } from "./OrreryMark";
 import { ThemeToggle } from "./ThemeToggle";
@@ -18,6 +18,11 @@ interface Props {
   onNewChat: () => void;
   onRunTriage: () => void;
   onOpenSystem: () => void;
+  /** Which page the main column shows; "agents" is the admin dashboard. */
+  view: "chat" | "agents";
+  onOpenAgents: () => void;
+  /** Called when a history row is opened, so the main column shows the chat. */
+  onShowChat: () => void;
   onSignOut: () => void;
 }
 
@@ -55,6 +60,9 @@ export function Sidebar({
   onNewChat,
   onRunTriage,
   onOpenSystem,
+  view,
+  onOpenAgents,
+  onShowChat,
   onSignOut,
 }: Props) {
   const {
@@ -129,6 +137,22 @@ export function Sidebar({
           >
             <ShieldIcon /> Check my environment
           </button>
+          {/* Admins only — and the server enforces it; this only hides the entry. */}
+          {me?.role === "admin" ? (
+            <button
+              type="button"
+              aria-current={view === "agents" ? "page" : undefined}
+              className={`${secondaryButton} ${
+                view === "agents"
+                  ? "bg-brand-50 text-brand-900 hover:bg-brand-50 dark:bg-brand-950/60 dark:text-brand-100 dark:hover:bg-brand-950/60"
+                  : ""
+              }`}
+              onClick={then(onOpenAgents)}
+              title="Which agents and tools the coordinator can reach, and their guards"
+            >
+              <AgentsIcon /> Agents
+            </button>
+          ) : null}
         </div>
 
         <nav
@@ -153,10 +177,13 @@ export function Sidebar({
                 <li key={c.id} className="group relative">
                   <button
                     type="button"
-                    onClick={then(() => selectConversation(c.id))}
-                    aria-current={active ? "page" : undefined}
+                    onClick={then(() => {
+                      selectConversation(c.id);
+                      onShowChat();
+                    })}
+                    aria-current={active && view === "chat" ? "page" : undefined}
                     className={`w-full rounded-lg px-2.5 py-2 pr-8 text-left transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
-                      active
+                      active && view === "chat"
                         ? "bg-brand-50 text-brand-900 dark:bg-brand-950/60 dark:text-brand-100"
                         : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800/60"
                     }`}
