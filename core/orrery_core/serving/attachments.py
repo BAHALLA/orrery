@@ -54,7 +54,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
 
-from ..observability.metrics import track_attachment
+from ..observability.metrics import track_attachment, track_attachment_injection
 from ..plugins.safety_plugin import neutralize_text
 from ..security.redaction import redact_text
 
@@ -127,6 +127,13 @@ class AttachmentLimits:
     max_text_chars: int = 200_000
     #: Image decodes allowed at once, process-wide: bounds peak memory.
     max_concurrent_decodes: int = 2
+    #: Multipart bodies read and prepared at once, process-wide. Each holds up
+    #: to ``max_total_bytes`` until its files are prepared, which no decode
+    #: limit covers; beyond this a request waits, then gets a 503.
+    max_concurrent_uploads: int = 4
+    #: Deadline for receiving a body. uvicorn has none, so a slow-drip client
+    #: could otherwise hold a connection and its buffer indefinitely.
+    read_timeout_seconds: float = 60.0
 
     @classmethod
     def from_env(cls) -> AttachmentLimits:
@@ -142,6 +149,12 @@ class AttachmentLimits:
             max_text_chars=_env_int("ORRERY_ATTACHMENT_MAX_TEXT_CHARS", d.max_text_chars),
             max_concurrent_decodes=max(
                 1, _env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES", d.max_concurrent_decodes)
+            ),
+            max_concurrent_uploads=max(
+                1, _env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS", d.max_concurrent_uploads)
+            ),
+            read_timeout_seconds=float(
+                max(1, _env_int("ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS", 60))
             ),
         )
 
@@ -166,7 +179,8 @@ class Upload:
     """One file part as received: the client's name and the raw bytes."""
 
     filename: str
-    data: bytes
+    #: The parser's own buffer, not a copy of it.
+    data: bytes | bytearray
 
 
 @dataclass(frozen=True)
@@ -230,7 +244,7 @@ def safe_filename(raw: str) -> str:
     return name or "upload"
 
 
-def sniff_image(data: bytes) -> str | None:
+def sniff_image(data: bytes | bytearray) -> str | None:
     """The accepted image format the bytes start with, if any."""
     for magic, fmt in _IMAGE_MAGIC:
         if data.startswith(magic):
@@ -240,10 +254,35 @@ def sniff_image(data: bytes) -> str | None:
     return None
 
 
-def _prepare_image(data: bytes, fmt: str, limits: AttachmentLimits) -> tuple[bytes, str, str]:
+def _orientation(im: Any) -> int:
+    """The EXIF orientation tag, or 1. Hostile or broken EXIF counts as upright."""
+    try:
+        return int(im.getexif().get(0x0112, 1))
+    except Exception:
+        return 1
+
+
+def _transpose_table() -> dict[int, Any]:
+    from PIL import Image
+
+    t = Image.Transpose
+    return {
+        2: t.FLIP_LEFT_RIGHT,
+        3: t.ROTATE_180,
+        4: t.FLIP_TOP_BOTTOM,
+        5: t.TRANSPOSE,
+        6: t.ROTATE_270,
+        7: t.TRANSVERSE,
+        8: t.ROTATE_90,
+    }
+
+
+def _prepare_image(
+    data: bytes | bytearray, fmt: str, limits: AttachmentLimits
+) -> tuple[bytes, str, str]:
     """Decode within the pixel budget, downscale, re-encode. Runs in a thread."""
     try:
-        from PIL import Image, ImageOps
+        from PIL import Image
     except ImportError as exc:  # pragma: no cover — server extra installs it
         raise AttachmentError(
             "Image attachments need Pillow on the server.", status=415, reason="unsupported"
@@ -268,18 +307,29 @@ def _prepare_image(data: bytes, fmt: str, limits: AttachmentLimits) -> tuple[byt
                 im.draft("RGB", (edge, edge))
             im.seek(0)  # first frame of an animation is the evidence
             im.load()
-            frame = ImageOps.exif_transpose(im)
-            has_alpha = frame.mode in ("RGBA", "LA", "PA") or (
-                frame.mode == "P" and "transparency" in frame.info
+            # Peak memory is the full-size decode, so shrink *first* and only
+            # then rotate and convert: each of those copies the image, and on
+            # the reduced one they are cheap. Read what they need from the
+            # original before it is released.
+            has_alpha = im.mode in ("RGBA", "LA", "PA") or (
+                im.mode == "P" and "transparency" in im.info
             )
-            frame = frame.convert("RGBA" if has_alpha else "RGB")
-            if max(frame.size) > edge:
-                # reduce() is a cheap integer box filter; LANCZOS then finishes
-                # from a much smaller source than the original.
-                factor = max(frame.size) // (edge * 2)
-                if factor >= 2:
-                    frame = frame.reduce(factor)
-                frame.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+            target = "RGBA" if has_alpha else "RGB"
+            orientation = _orientation(im)
+            # reduce() has no palette/bilevel/16-bit path: convert those first
+            # (an 8-bit palette image is a quarter of its RGBA size anyway).
+            frame = im if im.mode in ("L", "LA", "RGB", "RGBA") else im.convert(target)
+            factor = max(frame.size) // edge
+            if factor >= 2:
+                # A cheap integer box filter, still >= edge; LANCZOS finishes.
+                frame = frame.reduce(factor)
+            if frame is not im:
+                im.close()  # release the full-size decode now, not at `with` exit
+            if transpose := _transpose_table().get(orientation):
+                frame = frame.transpose(transpose)
+            if frame.mode != target:
+                frame = frame.convert(target)
+            frame.thumbnail((edge, edge), Image.Resampling.LANCZOS)
             out = io.BytesIO()
             if has_alpha:
                 frame.save(out, format="PNG", compress_level=6)
@@ -305,7 +355,7 @@ def _prepare_image(data: bytes, fmt: str, limits: AttachmentLimits) -> tuple[byt
     return out.getvalue(), mime, note
 
 
-def _prepare_text(data: bytes, limits: AttachmentLimits) -> tuple[str, str]:
+def _prepare_text(data: bytes | bytearray, limits: AttachmentLimits) -> tuple[str, str]:
     """Strict UTF-8 → truncated, redacted, neutralized text. Runs in a thread."""
     for magic, label in _KNOWN_BINARY:
         if data.startswith(magic):
@@ -457,6 +507,28 @@ def message_text(text: str, attachments: Sequence[PreparedAttachment]) -> str:
 
 # ── Per-turn delivery to the model ───────────────────────────────────
 
+#: ADK copies whole LLM requests into span attributes unless this is falsy, and
+#: defaults it on. Text attachments are text parts, so with tracing on they
+#: would be exported to the trace backend on every model call of the turn.
+_CONTENT_IN_SPANS_ENV = "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"
+
+
+def keep_attachments_out_of_traces() -> None:
+    """Default ADK's span-content capture off; warn if an operator forced it on.
+
+    Called by the HTTP server when attachments are enabled, whoever installed
+    the tracer (``configure_tracing`` sets the same default). ADK reads the
+    variable per span, so this holds for every turn served afterwards.
+    """
+    value = os.environ.setdefault(_CONTENT_IN_SPANS_ENV, "false").strip().lower()
+    if value not in ("", "0", "false", "no", "off"):
+        logger.warning(
+            "%s is on: text attachments will be exported to the trace backend "
+            "with every model request of their turn. Unset it to keep them out.",
+            _CONTENT_IN_SPANS_ENV,
+        )
+
+
 _TURN_ATTACHMENTS: ContextVar[dict[str, PreparedAttachment] | None] = ContextVar(
     "orrery_turn_attachments", default=None
 )
@@ -517,6 +589,7 @@ class AttachmentPlugin(BasePlugin):
                     if attachment is not None:
                         new_parts.extend(attachment.parts)
                         changed = True
+                        track_attachment_injection(attachment.kind)
             if changed:
                 llm_request.contents[i] = types.Content(role=content.role, parts=new_parts)
         return None

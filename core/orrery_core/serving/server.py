@@ -70,7 +70,12 @@ from ..security.auth import (
 )
 from ..security.identity import identity_from_claims
 from .agent_admin import AgentAdmin
-from .attachments import AttachmentError, AttachmentLimits, AttachmentProcessor
+from .attachments import (
+    AttachmentError,
+    AttachmentLimits,
+    AttachmentProcessor,
+    keep_attachments_out_of_traces,
+)
 from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
@@ -701,28 +706,50 @@ def create_app(
         )
 
     attachments = AttachmentProcessor(cfg.attachments)
+    if cfg.attachments.active:
+        keep_attachments_out_of_traces()
+    # Bounds the bodies held in memory at once, which the decode semaphore
+    # doesn't: each holds up to max_total_bytes until its files are prepared.
+    upload_slots = asyncio.Semaphore(cfg.attachments.max_concurrent_uploads)
 
     async def chat_body(request: Request) -> ChatInput:
-        """The chat body, JSON or multipart, read under hard size caps.
+        """The chat body, JSON or multipart, read under hard caps and a deadline.
 
         A dependency rather than a body model so a multipart upload streams
         into memory under its limits (see ``uploads.py``). Declared after the
         rate limit on each route, which FastAPI solves first: an unauthenticated
         or throttled caller is refused before a byte of the body is read.
-        """
-        return await read_chat_input(request, cfg.attachments)
 
-    async def inbound(body: ChatInput, auth: AuthContext) -> InboundMessage:
-        """The turn both chat endpoints run: identity and title in state_delta.
-
-        Attachments are prepared here, before the turn starts, so a refused
-        file is an HTTP error (413/415/422) rather than an ``error`` event
-        behind a streaming 200.
+        Files are prepared here, before the turn starts, so a refused file is an
+        HTTP error (413/415/422) rather than an ``error`` event behind a
+        streaming 200 — and the raw bytes are dropped on return instead of
+        living as long as the turn.
         """
+        if not request.headers.get("content-type", "").lower().startswith("multipart/"):
+            return await read_chat_input(request, cfg.attachments)
         try:
-            prepared = await attachments.prepare_all(body.uploads)
-        except AttachmentError as exc:
-            raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+            async with asyncio.timeout(cfg.attachments.read_timeout_seconds):
+                await upload_slots.acquire()
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Too many uploads in progress. Retry in a few seconds.",
+                headers={"Retry-After": "5"},
+            ) from exc
+        try:
+            body = await read_chat_input(request, cfg.attachments)
+            try:
+                body.attachments = await attachments.prepare_all(body.uploads)
+            except AttachmentError as exc:
+                raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+            body.uploads = []
+            return body
+        finally:
+            upload_slots.release()
+
+    def inbound(body: ChatInput, auth: AuthContext) -> InboundMessage:
+        """The turn both chat endpoints run: identity and title in state_delta."""
+        prepared = body.attachments
         # Identity travels in state_delta each turn (applied before the agent
         # runs), so a long-lived session always inherits the latest verified
         # role and AuthPlugin resolves RBAC from it.
@@ -782,7 +809,7 @@ def create_app(
         body: ChatInput = Depends(chat_body),  # noqa: B008 — FastAPI dependency pattern
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> ChatResponse:
-        reply = await gateway.run(await inbound(body, auth))
+        reply = await gateway.run(inbound(body, auth))
         return ChatResponse(session_id=reply.session_id, response=reply.text)
 
     # Same request, same rate limit (one bucket: a streamed turn costs what a
@@ -794,7 +821,7 @@ def create_app(
         body: ChatInput = Depends(chat_body),  # noqa: B008 — FastAPI dependency pattern
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> StreamingResponse:
-        msg = await inbound(body, auth)
+        msg = inbound(body, auth)
         # Resolved before the response starts, so a session-store failure is a
         # real HTTP error instead of an `error` event behind a 200.
         session_id = await gateway.resolve_session(msg)

@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Configure with `ORRERY_ATTACHMENT*`; set `ORRERY_ATTACHMENT_IMAGES=false`
   for a text-only model. New dependencies in the `server` extra: `pillow`,
   `python-multipart`.
+  **On by default after upgrading** (set `ORRERY_ATTACHMENTS=false` to opt
+  out). A proxy in front must admit the body size and must not spool it to
+  disk: nginx `proxy_request_buffering off`. The Helm chart's ingress now
+  defaults to `proxy-request-buffering: "off"` and `proxy-body-size: 25m`.
+  The file is never stored, but the assistant's reply about it is, like any
+  reply.
+
+### Security
+
+- **Message content is kept out of trace spans by default.** ADK copies whole
+  LLM requests (prompts, tool results and now uploaded text) into span
+  attributes unless `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` is falsy, and it
+  defaults on. `configure_tracing()` and the HTTP server (when attachments are
+  on) now default it to `false`. An explicit `true` is honoured with a warning.
 
 ## [0.6.8] - 2026-10-19
 

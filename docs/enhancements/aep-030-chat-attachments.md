@@ -48,6 +48,22 @@ service, the audit log and the compaction summary all see the placeholder.
 Later turns are not re-billed for the file. The gateway registers the plugin
 itself, so no surface can forget it.
 
+**What "never stored" covers.** The *file* is never stored. The assistant's
+*reply* about it is stored like any reply, and it may quote the file: a log
+line, or a description of a screenshot. That reply reaches the session, the
+memory service and compaction like every other reply. Ask for "the error code",
+not "repeat the log", when the content matters.
+
+**Traces.** ADK copies whole LLM requests into span attributes by default
+(`ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`, default on). It drops `inline_data`
+but keeps text parts, so a text attachment would be exported to the trace
+backend with every model call of its turn. The server therefore defaults the
+variable to `false` when attachments are on, and so does `configure_tracing`.
+That also keeps prompts and tool results out of traces. An explicit `true` is
+honoured, with a startup warning. Our own model-error path logs the exception
+type and traceback, never the request. A `DEBUG` log level on `google_adk` or
+LiteLLM would log request text, as it would for any message.
+
 Ids are random per upload, so a placeholder typed by a user or replayed from an
 older turn matches nothing. A specialist behind an `AgentTool` inherits the
 scope: if the coordinator quotes the placeholder, the specialist sees the file
@@ -71,7 +87,14 @@ too, in the same turn for the same user.
 The multipart body is parsed by `serving/uploads.py` on top of
 `python-multipart`'s streaming parser. Starlette's form parser would spool
 parts over 1 MB to a temporary file on disk. The rate limit and authentication
-run before a byte of the body is read.
+run before a byte of the body is read. The body must arrive within a deadline
+(60 s, then `408`), because uvicorn has none. A slow-drip client could
+otherwise hold a connection and its buffer indefinitely.
+
+A **reverse proxy** in front must not spool bodies to disk either. On nginx,
+set `proxy_request_buffering off`. On Ingress-NGINX, use the annotation
+`nginx.ingress.kubernetes.io/proxy-request-buffering: "off"`, which the Helm
+chart sets by default together with `proxy-body-size: 25m`.
 
 ### Performance
 
@@ -79,11 +102,24 @@ run before a byte of the body is read.
   gaining detail, and Gemini and GPT tile similarly. A 4K screenshot goes from
   several MB to roughly 150-300 KB of JPEG. That keeps requests well under
   provider limits and cuts image tokens by about 4×.
-- Large JPEGs decode at reduced scale (`draft`); everything else is first
-  shrunk with a cheap integer `reduce()` before the LANCZOS pass.
+- Large JPEGs decode at reduced scale (`draft`). Everything else is shrunk
+  with a cheap integer `reduce()` **first**. Rotation and colour conversion
+  then run on the small image, and the full-size decode is released at once.
+  On a 25 MP PNG with an orientation tag, that took peak memory from 281 MB to
+  104 MB and time from 394 ms to 179 ms.
 - Decoding runs in worker threads under a process-wide semaphore (2 by
   default), so a burst of uploads queues instead of multiplying peak memory or
   holding the event loop.
+- A second process-wide limit (4 by default) bounds the multipart bodies held
+  at once. Each holds up to the body cap until its files are prepared, which
+  the decode limit doesn't cover. Past it, a request waits up to the read
+  deadline, then gets a `503` with `Retry-After`. Raw bytes are dropped as soon
+  as the files are prepared, not held for the rest of the turn. The parser
+  hands over its buffer instead of copying it.
+- Sizing: peak memory per image decode is about the decoded size
+  (width × height × 4 bytes for RGBA). For a 1 GiB container, use
+  `MAX_CONCURRENT_DECODES=1`, `MAX_PIXELS=16000000` and
+  `MAX_CONCURRENT_UPLOADS=2`.
 - Text is truncated head + tail (200k characters by default: a quarter head,
   the rest tail, since a log's end is usually where the failure is) **before**
   the regex passes, which bounds their cost.
@@ -102,8 +138,15 @@ run before a byte of the body is read.
 | `ORRERY_ATTACHMENT_IMAGE_MAX_EDGE` | `1568` | Long edge sent to the model. |
 | `ORRERY_ATTACHMENT_MAX_TEXT_CHARS` | `200000` | Text the model sees per file. |
 | `ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES` | `2` | Image decodes at once, per process. |
+| `ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS` | `4` | Multipart bodies read and prepared at once, per process; then `503`. |
+| `ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS` | `60` | Deadline for receiving a body; then `408`. |
 
-A reverse proxy in front must allow the body size (nginx `client_max_body_size`).
+A reverse proxy in front must allow the body size (nginx `client_max_body_size`)
+and must not buffer it to disk (see above).
+
+Attachments are **on by default** after an upgrade. That adds an upload
+surface, behind the same authentication and rate limit as chat. Set
+`ORRERY_ATTACHMENTS=false` to keep a deployment text-only.
 
 ### Observability
 
@@ -111,6 +154,11 @@ A reverse proxy in front must allow the body size (nginx `client_max_body_size`)
 with a bounded reason: `too_large`, `unsupported`, `invalid` or `too_many`.
 `orrery_attachment_bytes_total{stage}` measures bytes uploaded against bytes
 sent to the model. `orrery_attachment_prep_seconds{kind}` times preparation.
+`orrery_attachment_injections_total{kind}` counts every time a file's content
+is added to a model request. One turn can add the same file several times:
+each tool-loop iteration rebuilds the request, and a specialist the
+coordinator quotes the placeholder to gets it too. This counter is the token
+multiplier the per-file counters can't show.
 Each accepted file is logged with its name, type, size, SHA-256 and processing
 note, never its content.
 

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
+import os
+import threading
 from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from google.adk.agents import LlmAgent
 from google.adk.models.base_llm import BaseLlm
@@ -16,6 +20,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from PIL import Image
+from starlette.requests import Request
 
 from orrery_core.security.auth import JWTConfig
 from orrery_core.serving.attachments import (
@@ -25,12 +30,14 @@ from orrery_core.serving.attachments import (
     AttachmentProcessor,
     Upload,
     attachment_scope,
+    keep_attachments_out_of_traces,
     message_text,
     safe_filename,
     sniff_image,
 )
 from orrery_core.serving.gateway import AgentGateway
 from orrery_core.serving.server import ServerConfig, create_app
+from orrery_core.serving.uploads import read_chat_input
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -455,3 +462,121 @@ def test_me_advertises_the_limits_and_none_when_disabled(chat_app):
     assert off.get("/me").json()["attachments"] is None
     refused = off.post("/chat", files=[("files", ("a.log", b"x", "text/plain"))])
     assert refused.status_code == 415
+
+
+# ── Review hardening (blog-c3 on #282) ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_exif_orientation_is_applied_after_the_downscale():
+    processor = AttachmentProcessor(AttachmentLimits(image_max_edge=100))
+    exif = Image.Exif()
+    exif[0x0112] = 6  # rotate 90° clockwise to display
+    data = _image("JPEG", (400, 200), exif=exif.tobytes())
+
+    prepared = await processor.prepare(Upload("phone.jpg", data))
+
+    blob = prepared.parts[0].inline_data
+    assert blob is not None and blob.data is not None
+    assert _open(blob.data).size == (50, 100)  # reduced, then turned upright
+
+
+@pytest.mark.filterwarnings("ignore:Corrupt EXIF data")
+@pytest.mark.asyncio
+async def test_hostile_exif_counts_as_upright(processor):
+    data = bytearray(_image("JPEG", (16, 16), exif=Image.Exif().tobytes()))
+    # Corrupt the EXIF block after the JPEG header: decoding still works.
+    i = data.find(b"Exif")
+    data[i + 10 : i + 20] = b"\xff" * 10
+
+    prepared = await processor.prepare(Upload("odd.jpg", bytes(data)))
+
+    assert prepared.kind == "image"
+
+
+@pytest.mark.asyncio
+async def test_the_plugin_counts_each_injection(processor):
+    attachment = await processor.prepare(Upload("a.log", b"hello"))
+    request = LlmRequest(
+        contents=[types.Content(role="user", parts=[types.Part(text=attachment.placeholder)])]
+    )
+
+    with (
+        attachment_scope([attachment]),
+        patch("orrery_core.serving.attachments.track_attachment_injection") as track,
+    ):
+        await AttachmentPlugin().before_model_callback(
+            callback_context=MagicMock(), llm_request=request
+        )
+
+    track.assert_called_once_with("text")
+
+
+def _slow_request(content_type: str) -> Request:
+    async def receive() -> dict[str, Any]:
+        await asyncio.sleep(10)  # a client dripping its body
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/chat",
+        "headers": [(b"content-type", content_type.encode())],
+    }
+    return Request(scope, receive)
+
+
+@pytest.mark.parametrize("content_type", ["multipart/form-data; boundary=b", "application/json"])
+@pytest.mark.asyncio
+async def test_a_slow_body_gets_a_408(content_type):
+    limits = AttachmentLimits(read_timeout_seconds=0.05)
+
+    with pytest.raises(HTTPException) as exc:
+        await read_chat_input(_slow_request(content_type), limits)
+
+    assert exc.value.status_code == 408
+
+
+def test_uploads_wait_for_a_slot_then_get_a_503(chat_app):
+    client, llm = chat_app(AttachmentLimits(max_concurrent_uploads=1, read_timeout_seconds=0.2))
+    held = threading.Event()
+
+    async def hold_slot(request: Any, limits: Any) -> Any:
+        held.set()
+        await asyncio.sleep(0.5)  # a body still arriving
+        raise HTTPException(status_code=408)
+
+    with patch("orrery_core.serving.server.read_chat_input", side_effect=hold_slot):
+        first = threading.Thread(
+            target=client.post,
+            args=("/chat",),
+            kwargs={"files": [("files", ("a.log", b"x", "text/plain"))]},
+        )
+        first.start()
+        try:
+            assert held.wait(5)
+            second = client.post("/chat", files=[("files", ("b.log", b"y", "text/plain"))])
+        finally:
+            first.join()
+
+    assert second.status_code == 503
+    assert second.headers["retry-after"] == "5"
+    assert llm.requests == []
+
+
+def test_attachments_keep_message_content_out_of_traces(monkeypatch, chat_app):
+    monkeypatch.setenv("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "x")
+    monkeypatch.delenv("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS")
+
+    chat_app()
+
+    assert os.environ["ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"] == "false"
+
+
+def test_an_explicit_opt_in_to_span_content_is_kept_and_warned(monkeypatch, caplog):
+    monkeypatch.setenv("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "true")
+
+    keep_attachments_out_of_traces()
+
+    assert os.environ["ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"] == "true"
+    assert "exported to the trace backend" in caplog.text

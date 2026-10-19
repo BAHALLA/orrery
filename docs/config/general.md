@@ -264,6 +264,17 @@ turn and never stored ([AEP-030](../enhancements/aep-030-chat-attachments.md)).
 | `ORRERY_ATTACHMENT_IMAGE_MAX_EDGE` | `1568` | Long edge after downscaling. |
 | `ORRERY_ATTACHMENT_MAX_TEXT_CHARS` | `200000` | Characters of a text file the model sees; the middle is cut beyond this. |
 | `ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES` | `2` | Image decodes at once, per process (bounds peak memory). |
+| `ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS` | `4` | Multipart bodies held in memory at once, per process. Past it a request waits, then gets `503` with `Retry-After`. |
+| `ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS` | `60` | Deadline for receiving a request body (`408` after). |
+
+A proxy in front must not spool bodies to disk: nginx `proxy_request_buffering off`, or on
+Ingress-NGINX `nginx.ingress.kubernetes.io/proxy-request-buffering: "off"` (the Helm chart's default
+ingress annotations set it, with `proxy-body-size: 25m`). For a 1 GiB container use
+`MAX_CONCURRENT_DECODES=1`, `MAX_PIXELS=16000000`, `MAX_CONCURRENT_UPLOADS=2`.
+
+With attachments on, the server defaults ADK's `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` to `false`
+(so does `configure_tracing`), so prompts, uploaded text and tool results stay out of trace spans.
+Set it to `true` explicitly to opt back in.
 
 ## Distributed Tracing
 

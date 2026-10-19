@@ -141,7 +141,7 @@ export function MessageInput({ disabled, isSending, attachments, onSend, onStop 
                 onClick={() => pickerRef.current?.click()}
                 disabled={!canAttach}
                 aria-label="Attach files"
-                title={`Attach ${attachments.images ? "screenshots or " : ""}text files (or drop / paste them)`}
+                title={`Attach ${attachments.images ? "screenshots or " : ""}text files (or drop / paste them). Files are used for this message only and never stored; the reply about them is kept like any reply.`}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
               >
                 <PaperclipIcon size={18} />

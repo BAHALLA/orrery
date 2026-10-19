@@ -16,6 +16,7 @@ Both chat endpoints accept either body:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,7 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from python_multipart.multipart import MultipartParser, parse_options_header
 
-from .attachments import AttachmentLimits, Upload
+from .attachments import AttachmentLimits, PreparedAttachment, Upload
 
 #: The JSON body is a message and a session id; nothing legitimate needs more.
 MAX_JSON_BYTES = 64 * 1024
@@ -52,7 +53,10 @@ class ChatInput:
 
     message: str
     session_id: str | None
+    #: Raw files as received. Emptied once they are prepared, so the bytes are
+    #: not held for the rest of a turn that can run for minutes.
     uploads: list[Upload] = field(default_factory=list)
+    attachments: list[PreparedAttachment] = field(default_factory=list)
 
 
 def _too_large(detail: str) -> HTTPException:
@@ -66,15 +70,25 @@ def _validation_error(exc: ValidationError) -> RequestValidationError:
     )
 
 
-async def _read_capped(request: Request, cap: int) -> bytes:
+def _too_slow(seconds: float) -> HTTPException:
+    return HTTPException(
+        status_code=408, detail=f"The request body took longer than {seconds:g}s to arrive."
+    )
+
+
+async def _read_capped(request: Request, cap: int, timeout: float) -> bytes:
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > cap:
         raise _too_large(f"Request body is over the {cap // 1024} KB limit.")
     body = bytearray()
-    async for chunk in request.stream():
-        body += chunk
-        if len(body) > cap:
-            raise _too_large(f"Request body is over the {cap // 1024} KB limit.")
+    try:
+        async with asyncio.timeout(timeout):
+            async for chunk in request.stream():
+                body += chunk
+                if len(body) > cap:
+                    raise _too_large(f"Request body is over the {cap // 1024} KB limit.")
+    except TimeoutError as exc:
+        raise _too_slow(timeout) from exc
     return bytes(body)
 
 
@@ -94,7 +108,7 @@ async def read_chat_input(request: Request, limits: AttachmentLimits) -> ChatInp
         raise HTTPException(
             status_code=415, detail="Send application/json, or multipart/form-data with files."
         )
-    raw = await _read_capped(request, MAX_JSON_BYTES)
+    raw = await _read_capped(request, MAX_JSON_BYTES, limits.read_timeout_seconds)
     try:
         payload: Any = json.loads(raw or b"null")
     except ValueError as exc:
@@ -168,7 +182,9 @@ class _Collector:
 
     def on_part_end(self) -> None:
         if self._name == "files":
-            self.uploads.append(Upload(filename=self._filename or "", data=bytes(self._data)))
+            # Hand over the buffer itself: a bytes() copy would double the
+            # memory each file holds until it is prepared.
+            self.uploads.append(Upload(filename=self._filename or "", data=self._data))
         else:
             try:
                 self.fields[self._name] = self._data.decode("utf-8")
@@ -200,12 +216,15 @@ async def _read_multipart(request: Request, boundary: bytes, limits: AttachmentL
     parser = MultipartParser(boundary, callbacks, max_size=cap)
     received = 0
     try:
-        async for chunk in request.stream():
-            received += len(chunk)
-            if received > cap:
-                raise _too_large(f"Request body is over the {cap // (1024 * 1024)} MB limit.")
-            parser.write(chunk)
+        async with asyncio.timeout(limits.read_timeout_seconds):
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > cap:
+                    raise _too_large(f"Request body is over the {cap // (1024 * 1024)} MB limit.")
+                parser.write(chunk)
         parser.finalize()
+    except TimeoutError as exc:
+        raise _too_slow(limits.read_timeout_seconds) from exc
     except HTTPException:
         raise
     except Exception as exc:  # python-multipart's parse errors on a malformed body

@@ -132,6 +132,15 @@ ATTACHMENT_BYTES_TOTAL = Counter(
     "Bytes of accepted attachments, as uploaded and as sent to the model",
     ["stage"],
 )
+#: Each time an attachment's content is added to a model request. One turn
+#: can add the same file several times (each tool-loop iteration rebuilds the
+#: request, and a specialist may receive it too), so this is the token cost
+#: multiplier the per-file counters can't show.
+ATTACHMENT_INJECTIONS_TOTAL = Counter(
+    "orrery_attachment_injections_total",
+    "Attachment contents added to a model request",
+    ["kind"],
+)
 ATTACHMENT_PREP_SECONDS = Histogram(
     "orrery_attachment_prep_seconds",
     "Time to validate and prepare one attachment (sniff, decode, re-encode, screen)",
@@ -426,6 +435,11 @@ def track_attachment(
         ATTACHMENT_PREP_SECONDS.labels(kind=kind).observe(seconds)
         ATTACHMENT_BYTES_TOTAL.labels(stage="uploaded").inc(bytes_in)
         ATTACHMENT_BYTES_TOTAL.labels(stage="to_model").inc(bytes_out)
+
+
+def track_attachment_injection(kind: str) -> None:
+    """Record one attachment's content added to one model request."""
+    ATTACHMENT_INJECTIONS_TOTAL.labels(kind=kind).inc()
 
 
 def track_confirmation_raised(*, tool: str, mode: str) -> None:
