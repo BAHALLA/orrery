@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Chat attachments: screenshots and text files, processed in memory and never
 stored (AEP-030). Message content is kept out of trace spans by default.
 
+**Upgrade notes: two defaults change.**
+
+- `ORRERY_ATTACHMENTS` is **on**. Chat endpoints accept image and text uploads
+  (behind the same auth and rate limit as chat). Set `ORRERY_ATTACHMENTS=false`
+  to stay text-only. Behind a proxy, allow the body size and turn off request
+  buffering (nginx `proxy_request_buffering off`).
+- `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` now defaults to **false**. If you
+  relied on prompts and tool results appearing in your traces, set it to `true`
+  explicitly.
+
 ### Added
 
 - **Chat attachments, processed and never stored (AEP-030).** The console and
