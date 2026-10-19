@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-10-19
+
+The console's Agents view becomes a full page, and two web build-time
+advisories are patched.
+
+### Added
+
+- **A full-page Agents dashboard in the console.** Admins open it from a new
+  sidebar entry instead of a tab in the 384px inspector. It has summary tiles
+  (agents served, tools, need approval, destructive), one card per agent with
+  its switch and its tools grouped by guard, search across agents and tools,
+  composed agents as cards with a dialog editor, and a save bar that appears
+  only with unsaved changes (with Discard). Switched-off specialists stay
+  visible, dimmed; specialists the deployment excludes collapse into one line.
+  The inspector keeps Tool calls / Triage / System. No API change.
+
 ### Changed
 
 - **The console's first-run self-test is built from the specialists that
@@ -32,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change that, and neither would failing `/readyz` (probes get "connection
   refused" first). The drain itself is unchanged: turns whose clients left
   still get `ORRERY_SHUTDOWN_GRACE_SECONDS` to finish.
+
+### Security
+
+- **Web console build dependencies patched:** `brace-expansion` 5.0.12 and
+  `postcss-selector-parser` 7.1.6 (via an npm override, since
+  `@tailwindcss/typography` pins 6.0.10). Both were quadratic-time DoS in
+  build-time parsing; the built CSS is byte-identical.
 
 ## [0.6.6] - 2026-10-17
 
@@ -1020,7 +1043,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.6...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.6.7...HEAD
+[0.6.7]: https://github.com/BAHALLA/orrery/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.6
 [0.6.5]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
 [0.6.4]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
