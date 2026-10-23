@@ -16,7 +16,7 @@ import contextvars
 import hashlib
 import json
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from typing import Any
 
 from ..observability.audit import audit_event
@@ -43,7 +43,7 @@ _CONVERSATION_SESSION: contextvars.ContextVar[str | None] = contextvars.ContextV
 
 
 @contextlib.contextmanager
-def conversation_scope(session_id: str) -> Iterator[None]:
+def conversation_scope(session_id: str) -> Generator[None]:
     """Attribute pendings raised inside this block to conversation *session_id*."""
     token = _CONVERSATION_SESSION.set(session_id or None)
     try:
