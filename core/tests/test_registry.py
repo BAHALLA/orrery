@@ -525,3 +525,29 @@ def test_two_specialists_with_one_agent_name_stop_startup():
     loader = _eps(("kafka", _agent("same_a", [])), ("docker", _agent("same_a", [])))
     with pytest.raises(ValueError, match="both name their agent 'same_a'"):
         discover_specialists(loader=loader)
+
+
+def test_every_workspace_specialist_is_trusted_as_builtin():
+    """A specialist shipped in this repo must be on the builtin list.
+
+    Otherwise discovery treats it as a third-party plugin and silently skips it
+    unless ``ORRERY_SPECIALISTS`` names it, and the confirmation-wiring test,
+    which walks the live roots, never sees it either. The list stays explicit
+    (it is a trust decision, and an installed image has no workspace to read),
+    so this test is what keeps it complete.
+    """
+    import tomllib
+    from pathlib import Path
+
+    from orrery_core.registry import _WORKSPACE_DISTRIBUTIONS
+
+    agents_dir = Path(__file__).resolve().parents[2] / "agents"
+    declaring = {
+        meta["project"]["name"]
+        for path in agents_dir.glob("*/pyproject.toml")
+        if "orrery.specialists"
+        in (meta := tomllib.loads(path.read_text())).get("project", {}).get("entry-points", {})
+    }
+    assert declaring, "no workspace package declares a specialist; is the path right?"
+    missing = declaring - _WORKSPACE_DISTRIBUTIONS
+    assert not missing, f"add {sorted(missing)} to registry._WORKSPACE_DISTRIBUTIONS"

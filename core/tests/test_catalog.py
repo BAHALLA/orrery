@@ -430,3 +430,32 @@ async def test_the_follow_loop_survives_an_unexpected_error(caplog):
 
     assert calls >= 2 and service.applied_version == 1
     assert "retrying next poll" in caplog.text
+
+
+def test_duplicate_agent_names_are_a_422_not_a_500():
+    agent = {
+        "name": "first_responder",
+        "description": "First look at an alert",
+        "instruction": "Check events.",
+        "tools": ["t"],
+    }
+    with _client() as client:
+        dup = client.put(
+            "/admin/catalog", headers=_bearer("admin"), json={"version": 0, "agents": [agent, agent]}
+        )
+        assert dup.status_code == 422
+
+
+def test_refused_edits_are_audited():
+    from unittest.mock import patch
+
+    with (
+        patch("orrery_core.serving.server.audit_event") as audit,
+        _client(editing=False) as client,
+    ):
+        client.put("/admin/catalog", headers=_bearer("operator"), json={"version": 0})
+        client.put("/admin/catalog", headers=_bearer("admin"), json={"version": 0})
+
+    refusals = [c.kwargs for c in audit.call_args_list if c.args == ("agent_catalog_update_refused",)]
+    assert [r["reason"] for r in refusals] == ["not_admin", "editing_disabled"]
+    assert refusals[0]["role"] == "operator"

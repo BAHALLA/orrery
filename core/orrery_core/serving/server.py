@@ -58,6 +58,7 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
 from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, create_catalog_store
 from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
+from ..observability.audit import audit_event
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
 from ..security.auth import (
@@ -1106,29 +1107,51 @@ def create_app(
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> CatalogResponse:
         """Replace the catalog. 409 if it changed since ``version``; 422 if it
-        cannot be built — in both cases nothing changes."""
-        require_admin(auth)
+        cannot be built — in both cases nothing changes.
+
+        Every refusal is audited, not only successes: an attempt to change
+        which agents run is worth a record whether or not it landed.
+        """
+
+        def refuse(code: int, reason: str, detail: str) -> HTTPException:
+            audit_event(
+                "agent_catalog_update_refused",
+                actor=auth.subject,
+                role=auth.role,
+                reason=reason,
+                expected_version=body.version,
+            )
+            return HTTPException(status_code=code, detail=detail)
+
+        if auth.role != "admin":
+            raise refuse(status.HTTP_403_FORBIDDEN, "not_admin", "Admin role required")
         if catalog is None:
             raise HTTPException(
                 status_code=404, detail="This deployment has no editable agent catalog"
             )
         if not cfg.admin_editing:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Agent editing is disabled on this deployment (ORRERY_ADMIN_EDITING)",
+            raise refuse(
+                status.HTTP_403_FORBIDDEN,
+                "editing_disabled",
+                "Agent editing is disabled on this deployment (ORRERY_ADMIN_EDITING)",
             )
-        proposed = AgentCatalog(disabled_specialists=body.disabled_specialists, agents=body.agents)
         try:
+            # Inside the try: the model's own validators (e.g. duplicate agent
+            # names) raise a ValidationError, a ValueError, which is a 422.
+            proposed = AgentCatalog(
+                disabled_specialists=body.disabled_specialists, agents=body.agents
+            )
             stored = await catalog.update(
                 proposed, expected_version=body.version, actor=auth.subject
             )
         except CatalogConflict as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"The catalog changed since you loaded it (now version {exc.current.version}). Reload and reapply your edit.",
+            raise refuse(
+                status.HTTP_409_CONFLICT,
+                "stale_version",
+                f"The catalog changed since you loaded it (now version {exc.current.version}). Reload and reapply your edit.",
             ) from exc
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise refuse(422, "invalid", str(exc)) from exc
         return await catalog_response(stored)
 
     @api.post(
