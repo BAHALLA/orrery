@@ -1,4 +1,5 @@
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { memo, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import type { Components, Options } from "react-markdown";
 import Markdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -57,18 +58,25 @@ function Pre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
  * so unknown languages degrade to plain text instead of guessing (auto-detect
  * on a short log line is usually wrong and always costs).
  */
-export function AgentMarkdown({ text }: { text: string }) {
+// Module constants, not inline literals: react-markdown rebuilds its unified
+// processor whenever these props change identity, and a streamed answer
+// re-renders this component once per frame.
+const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkGfm];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeHighlight, { detect: false, lowlight }]];
+const COMPONENTS: Components = { pre: Pre };
+
+export const AgentMarkdown = memo(function AgentMarkdown({ text }: { text: string }) {
   return (
     // Inline code as a quiet pill. The typography plugin's default wraps it in
     // literal backticks (::before/::after), which read as unrendered markdown.
     <div className="prose prose-sm dark:prose-invert prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-code:rounded prose-code:bg-slate-200/70 prose-code:px-1 prose-code:py-0.5 prose-code:font-medium prose-code:before:content-none prose-code:after:content-none dark:prose-code:bg-slate-800 prose-pre:prose-code:bg-transparent prose-pre:prose-code:p-0 max-w-none">
       <Markdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: false, lowlight }]]}
-        components={{ pre: Pre }}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={COMPONENTS}
       >
         {text}
       </Markdown>
     </div>
   );
-}
+});

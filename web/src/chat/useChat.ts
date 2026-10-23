@@ -4,6 +4,7 @@ import type { ActivityEntry, PendingConfirmation, TriageResponse } from "../api/
 import type { ConversationsController } from "../conversations/useConversations";
 import { NEW_CONVERSATION_TITLE } from "../conversations/types";
 import { refsFor } from "./attachments";
+import { createFrameBatcher } from "./frameBatcher";
 import { applyProgress } from "./trace";
 import type { ChatError, ChatMessage } from "./types";
 
@@ -141,32 +142,55 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  // While a request is in flight, poll the timeline so multi-specialist
-  // sweeps become visible as each specialist completes — the closest thing
-  // to progress until streaming (AEP-009) lands.
+  // No polling while a turn runs: the stream narrates progress itself (the
+  // live trace), and the side panes are refreshed once, when the stream says
+  // `done` — or when a non-streaming `POST /chat` fallback returns.
+
+  // The latest render's values, for `send` — which is handed out as a stable
+  // function so memoized children don't re-render on every streamed delta.
+  const latest = useRef({ isSending, sessionId, activeId });
   useEffect(() => {
-    if (!isSending || !sessionId) return;
-    const timer = setInterval(() => void refreshSidePanes(sessionId, activeId), 2500);
-    return () => clearInterval(timer);
-  }, [isSending, sessionId, activeId, refreshSidePanes]);
+    latest.current = { isSending, sessionId, activeId };
+  }, [isSending, sessionId, activeId]);
 
   const send = useCallback(
     async (raw: string, files: File[] = [], options: { replay?: boolean } = {}) => {
       const text = raw.trim();
+      const { isSending, sessionId, activeId } = latest.current;
       if ((!text && !files.length) || isSending) return;
+      // Claimed synchronously: a second click in the same tick sees it before
+      // the effect above has re-synced the ref from state.
+      latest.current = { ...latest.current, isSending: true };
 
       // The conversation this send belongs to. Every write below names it, so a
       // reply still landing after the user switched away goes to the thread
       // that asked — never into whichever one happens to be on screen.
       const forConversation = activeId;
-      const patch = (fn: Parameters<typeof patchConversation>[1]) =>
-        patchConversation(forConversation, fn);
+      // Turn start and end count as activity (they move the conversation to
+      // the top of the history); everything streamed in between does not.
+      const patch = (fn: Parameters<typeof patchConversation>[1], touch = false) =>
+        patchConversation(forConversation, fn, { touch });
       const replyId = nextId();
       const startedAt = Date.now();
-      const patchReply = (fn: (m: ChatMessage) => Partial<ChatMessage>) =>
-        patch((c) => ({
-          messages: c.messages.map((m) => (m.id === replyId ? { ...m, ...fn(m) } : m)),
-        }));
+      const patchReply = (fn: (m: ChatMessage) => Partial<ChatMessage>, touch = false) =>
+        patch(
+          (c) => ({
+            messages: c.messages.map((m) => (m.id === replyId ? { ...m, ...fn(m) } : m)),
+          }),
+          touch,
+        );
+      // Deltas are joined per animation frame: one state update per paint
+      // instead of one per token.
+      const deltas = createFrameBatcher<string>((chunks) =>
+        patchReply((m) => ({ text: m.text + chunks.join("") })),
+      );
+      let refreshed = false;
+      const refreshOnce = (sid: string) => {
+        if (refreshed) return Promise.resolve();
+        refreshed = true;
+        return refreshSidePanes(sid, forConversation);
+      };
+      let streamSession: string | null = sessionId;
 
       setError(null);
       // On a retry the message is already in the transcript — appending it
@@ -179,25 +203,28 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
         trace: [],
         streaming: true,
       };
-      patch((c) => ({
-        messages: options.replay
-          ? [...c.messages, placeholder]
-          : [
-              ...c.messages,
-              {
-                id: nextId(),
-                role: "user",
-                text,
-                at: startedAt,
-                ...(files.length ? { attachments: refsFor(files) } : {}),
-              },
-              placeholder,
-            ],
-        title:
-          c.title === NEW_CONVERSATION_TITLE
-            ? titleFrom(text || files.map((f) => f.name).join(", "))
-            : c.title,
-      }));
+      patch(
+        (c) => ({
+          messages: options.replay
+            ? [...c.messages, placeholder]
+            : [
+                ...c.messages,
+                {
+                  id: nextId(),
+                  role: "user",
+                  text,
+                  at: startedAt,
+                  ...(files.length ? { attachments: refsFor(files) } : {}),
+                },
+                placeholder,
+              ],
+          title:
+            c.title === NEW_CONVERSATION_TITLE
+              ? titleFrom(text || files.map((f) => f.name).join(", "))
+              : c.title,
+        }),
+        true,
+      );
       lastSentRef.current = { text, files };
       setIsSending(true);
 
@@ -207,13 +234,16 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
       // Drop the placeholder if nothing ever arrived, otherwise keep what did —
       // a half-written answer or a trace of what ran is still worth reading.
       const settleUnfinished = () =>
-        patch((c) => ({
-          messages: c.messages.flatMap((m) => {
-            if (m.id !== replyId) return [m];
-            if (!m.text && !m.trace?.length) return [];
-            return [{ ...m, streaming: false, interrupted: true }];
+        patch(
+          (c) => ({
+            messages: c.messages.flatMap((m) => {
+              if (m.id !== replyId) return [m];
+              if (!m.text && !m.trace?.length) return [];
+              return [{ ...m, streaming: false, interrupted: true }];
+            }),
           }),
-        }));
+          true,
+        );
 
       try {
         const res = await client.chatStream(
@@ -221,21 +251,29 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
           {
             signal: controller.signal,
             onEvent: (event) => {
+              // Anything but a delta lands after the text buffered so far.
+              if (event.type !== "delta") deltas.flush();
               switch (event.type) {
                 case "session":
                   // Recorded as soon as the server names it: if the stream drops
                   // now, reopening the conversation finds the finished turn.
+                  streamSession = event.session_id;
                   patch({ sessionId: event.session_id });
                   break;
                 case "progress":
                   patchReply((m) => ({ trace: applyProgress(m.trace ?? [], event.step) }));
                   break;
                 case "delta":
-                  patchReply((m) => ({ text: m.text + event.text }));
+                  deltas.push(event.text);
                   break;
                 case "message":
                   // Authoritative: replaces whatever the deltas assembled.
                   patchReply(() => ({ text: event.text }));
+                  break;
+                case "done":
+                  // The turn is over server-side: the tool calls, any pending
+                  // approval and a triage verdict are all recorded now.
+                  if (streamSession) void refreshOnce(streamSession);
                   break;
                 case "error":
                   break; // surfaced by chatStream as a thrown ApiError
@@ -243,15 +281,24 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
             },
           },
         );
+        deltas.cancel();
         patch({ sessionId: res.session_id });
-        patchReply(() => ({
-          text: res.response,
-          streaming: false,
-          durationMs: Date.now() - startedAt,
-        }));
-        await refreshSidePanes(res.session_id, forConversation);
+        patchReply(
+          () => ({
+            text: res.response,
+            streaming: false,
+            durationMs: Date.now() - startedAt,
+          }),
+          true,
+        );
+        // The non-streaming fallback (and a stream that closed without `done`)
+        // never fired the refresh above.
+        await refreshOnce(res.session_id);
       } catch (err) {
+        deltas.cancel();
         settleUnfinished();
+        // Tools may have run before the failure; show what was recorded.
+        if (streamSession) void refreshOnce(streamSession);
         // The user moved to another conversation (which aborts this request):
         // the error belongs to a thread no longer on screen, so say nothing.
         if (activeIdRef.current !== forConversation) return;
@@ -288,7 +335,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [client, sessionId, activeId, isSending, patchConversation, refreshSidePanes],
+    [client, patchConversation, refreshSidePanes],
   );
 
   // The decision is a plain chat message: the requester-verified gate on the
@@ -308,6 +355,8 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
 
   const clearError = useCallback(() => setError(null), []);
 
+  const sendPublic = useCallback((text: string, files?: File[]) => send(text, files), [send]);
+
   return {
     messages,
     sessionId,
@@ -316,7 +365,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     activity,
     pending,
     triage,
-    send: (text: string, files?: File[]) => send(text, files),
+    send: sendPublic,
     decide,
     runTriage,
     stop,

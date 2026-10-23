@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Trace, TraceCall } from "../chat/trace";
 import { agentLabel, flatten, summarize } from "../chat/trace";
 import { AlertIcon, CheckIcon, ChevronIcon, LockIcon, OrbitSpinner } from "./icons";
@@ -130,7 +131,7 @@ function TraceBody({ trace }: { trace: Trace }) {
  * spinner. Finished, it folds into a one-line summary that expands on demand:
  * the answer is what the reader came for, the trace is the receipt.
  */
-export function RunTrace({ trace, live, durationMs }: Props) {
+export const RunTrace = memo(function RunTrace({ trace, live, durationMs }: Props) {
   if (live) {
     const running = flatten(trace).filter((c) => c.state === "running");
     const current = running.at(-1);
@@ -170,4 +171,4 @@ export function RunTrace({ trace, live, durationMs }: Props) {
       </div>
     </details>
   );
-}
+});

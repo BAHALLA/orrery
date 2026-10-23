@@ -1,14 +1,22 @@
+import { memo } from "react";
 import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
-import type { Conversation } from "../conversations/types";
-import type { ConversationsController } from "../conversations/useConversations";
+import type { ConversationSummary } from "../conversations/useConversations";
 import { AgentsIcon, CloseIcon, PlusIcon, RadarIcon, ShieldIcon, TrashIcon } from "./icons";
 import { IdentityBadge } from "./IdentityBadge";
 import { OrreryMark } from "./OrreryMark";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface Props {
-  conversations: ConversationsController;
+  /** History rows, newest first (stable while a reply streams). */
+  history: ConversationSummary[];
+  activeId: string;
+  /** True while the history list is being fetched for the first time. */
+  isLoading: boolean;
+  /** Why history is incomplete, if it is. */
+  error: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
   identity: Identity | null;
   me: MeResponse | null;
   isSending: boolean;
@@ -43,17 +51,23 @@ function relativeTime(ts: number): string {
  * A stored conversation is dated even before its transcript is fetched, so the
  * age comes from the listing rather than from `messages` — which is empty until
  * the conversation is opened. Only an unused draft is "empty". */
-function historyLabel(c: Conversation): string {
-  if (c.sessionId === null && c.messages.length === 0) return "empty";
+function historyLabel(c: ConversationSummary): string {
+  if (c.draft) return "empty";
   return c.updatedAt > 0 ? relativeTime(c.updatedAt) : "—";
 }
 
 const secondaryButton =
   "flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white";
 
-/** Left rail: brand, primary actions, conversation history, identity footer. */
-export function Sidebar({
-  conversations,
+/** Left rail: brand, primary actions, conversation history, identity footer.
+ * Memoized: every prop is stable while an answer streams. */
+export const Sidebar = memo(function Sidebar({
+  history: list,
+  activeId,
+  isLoading,
+  error,
+  onSelect: selectConversation,
+  onDelete: deleteConversation,
   identity,
   me,
   isSending,
@@ -68,15 +82,6 @@ export function Sidebar({
   onShowChat,
   onSignOut,
 }: Props) {
-  const {
-    conversations: list,
-    activeId,
-    isLoading,
-    error,
-    selectConversation,
-    deleteConversation,
-  } = conversations;
-
   // On a narrow screen any navigation also closes the drawer.
   const then =
     <A extends unknown[]>(fn: (...args: A) => void) =>
@@ -205,7 +210,7 @@ export function Sidebar({
                   <button
                     type="button"
                     aria-label={`Delete conversation: ${c.title}`}
-                    onClick={() => void deleteConversation(c.id)}
+                    onClick={() => deleteConversation(c.id)}
                     className="absolute top-2 right-1.5 rounded-md p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 focus:opacity-100 dark:hover:bg-red-950/50"
                   >
                     <TrashIcon size={14} />
@@ -223,4 +228,4 @@ export function Sidebar({
       </aside>
     </>
   );
-}
+});

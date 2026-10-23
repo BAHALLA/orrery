@@ -122,23 +122,21 @@ describe("App auth flow", () => {
       frame("message", { session_id: "s7", text: "Lag is flat." }),
       frame("done", {}),
     ].join("");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: RequestInfo | URL) => {
-        const u = String(url);
-        if (u.endsWith("/chat/stream")) {
-          return new Response(body, {
-            status: 200,
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        }
-        if (u.includes("/activity")) return jsonResponse({ session_id: "s7", entries: [] });
-        if (u.includes("/confirmations/pending")) return jsonResponse({ pending: null });
-        if (u.includes("/triage"))
-          return jsonResponse({ session_id: "s7", severity: null, report: null });
-        return jsonResponse({ sessions: [] });
-      }),
-    );
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith("/chat/stream")) {
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (u.includes("/activity")) return jsonResponse({ session_id: "s7", entries: [] });
+      if (u.includes("/confirmations/pending")) return jsonResponse({ pending: null });
+      if (u.includes("/triage"))
+        return jsonResponse({ session_id: "s7", severity: null, report: null });
+      return jsonResponse({ sessions: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
@@ -155,6 +153,9 @@ describe("App auth flow", () => {
     // …and expands to the specialist's own tool call.
     await user.click(summary);
     expect(screen.getByText("get_consumer_lag")).toBeInTheDocument();
+    // No polling while the turn ran: the side panes are read once, on `done`.
+    const activityCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes("/activity"));
+    expect(activityCalls).toHaveLength(1);
   });
 
   it("restores history from the server in a browser that has never seen it", async () => {

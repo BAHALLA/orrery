@@ -63,10 +63,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     lastSeverity.current = sev;
   }, [chat.triage]);
 
-  const showChat = () => {
+  const showChat = useCallback(() => {
     setView("chat");
     setVerdictWaiting(false);
-  };
+  }, []);
 
   // Escape closes whichever overlay is on top.
   useEffect(() => {
@@ -79,18 +79,43 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [navOpen, inspectorOpen]);
 
-  const toggleInspector = (tab: InspectorTab) => {
-    if (view !== "chat") {
-      showChat();
-      setInspectorTab(tab);
-      setInspectorOpen(true);
-    } else if (inspectorOpen && inspectorTab === tab) {
-      setInspectorOpen(false);
-    } else {
-      setInspectorTab(tab);
-      setInspectorOpen(true);
-    }
-  };
+  const toggleInspector = useCallback(
+    (tab: InspectorTab) => {
+      if (view !== "chat") {
+        showChat();
+        setInspectorTab(tab);
+        setInspectorOpen(true);
+      } else if (inspectorOpen && inspectorTab === tab) {
+        setInspectorOpen(false);
+      } else {
+        setInspectorTab(tab);
+        setInspectorOpen(true);
+      }
+    },
+    [view, inspectorOpen, inspectorTab, showChat],
+  );
+
+  // Stable handlers: the sidebar and transcript are memoized, and a new
+  // closure per render would redraw them on every streamed frame.
+  const { newConversation, selectConversation, deleteConversation } = conversations;
+  const { send, runTriage } = chat;
+  const closeNav = useCallback(() => setNavOpen(false), []);
+  const onNewChat = useCallback(() => {
+    showChat();
+    newConversation();
+  }, [showChat, newConversation]);
+  const onRunTriage = useCallback(() => {
+    showChat();
+    void runTriage();
+  }, [showChat, runTriage]);
+  const onOpenSystem = useCallback(() => toggleInspector("system"), [toggleInspector]);
+  const onOpenAgents = useCallback(() => {
+    setAgentsOpened(true);
+    setView("agents");
+  }, []);
+  const onDelete = useCallback((id: string) => void deleteConversation(id), [deleteConversation]);
+  const onSuggest = useCallback((prompt: string) => void send(prompt), [send]);
+  const onSweep = useCallback(() => void runTriage(), [runTriage]);
 
   // The reply being written, if any — drives the live status in the header.
   // A streaming reply is always the newest message: nothing is appended after it.
@@ -101,27 +126,23 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   return (
     <div className="flex h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar
-        conversations={conversations}
+        history={conversations.history}
+        activeId={conversations.activeId}
+        isLoading={conversations.isLoading}
+        error={conversations.error}
+        onSelect={selectConversation}
+        onDelete={onDelete}
         identity={identity}
         me={system.me}
         isSending={chat.isSending}
         open={navOpen}
-        onClose={() => setNavOpen(false)}
-        onNewChat={() => {
-          showChat();
-          conversations.newConversation();
-        }}
-        onRunTriage={() => {
-          showChat();
-          void chat.runTriage();
-        }}
-        onOpenSystem={() => toggleInspector("system")}
+        onClose={closeNav}
+        onNewChat={onNewChat}
+        onRunTriage={onRunTriage}
+        onOpenSystem={onOpenSystem}
         view={view}
         agentsDirty={agentsDirty}
-        onOpenAgents={() => {
-          setAgentsOpened(true);
-          setView("agents");
-        }}
+        onOpenAgents={onOpenAgents}
         onShowChat={showChat}
         onSignOut={onSignOut}
       />
@@ -212,8 +233,8 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               <MessageList
                 messages={chat.messages}
                 isSending={chat.isSending}
-                onSuggest={(prompt) => void chat.send(prompt)}
-                onSweep={() => void chat.runTriage()}
+                onSuggest={onSuggest}
+                onSweep={onSweep}
               />
 
               {chat.pending ? (

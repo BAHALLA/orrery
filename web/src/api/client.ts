@@ -201,6 +201,8 @@ export class ApiClient {
           // by the same rule as any 5xx, which is what the server says it is.
           throw new ApiError(502, str(data.message, "The agent failed."));
         case "done":
+          // Always last: the turn is over and everything it did is recorded.
+          if (final !== null) onEvent({ type: "done" });
           break;
       }
     }

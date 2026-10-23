@@ -278,3 +278,28 @@ describe("useConversations — no local transcripts", () => {
     legacyStorageKeys.forEach((key) => expect(localStorage.getItem(key)).toBeNull());
   });
 });
+
+describe("useConversations — streaming writes", () => {
+  it("a write with touch: false keeps the row's time and the history's identity", async () => {
+    const { result } = await renderLoaded({
+      sessions: () => json({ sessions: [summary("a", "A", 2), summary("b", "B", 1)] }),
+    });
+    const before = result.current.history;
+    const updatedAt = result.current.conversations.find((c) => c.id === "b")?.updatedAt;
+
+    // A streamed delta into the older conversation: not new activity.
+    act(() =>
+      result.current.patchConversation("b", { messages: [msg("partial")] }, { touch: false }),
+    );
+
+    const b = result.current.conversations.find((c) => c.id === "b");
+    expect(b?.messages.map((m) => m.id)).toEqual(["partial"]);
+    expect(b?.updatedAt).toBe(updatedAt);
+    // Same order, same rows: the memoized sidebar is handed the same array.
+    expect(result.current.history).toBe(before);
+
+    // Turn end counts as activity and moves it to the top.
+    act(() => result.current.patchConversation("b", { messages: [msg("final")] }));
+    expect(result.current.history.map((c) => c.id)).toEqual(["b", "a"]);
+  });
+});

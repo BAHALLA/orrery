@@ -50,8 +50,10 @@ Milestone 2 — triage view:
   (healthy / degraded / critical) as a color-coded badge with the full triage
   report rendered as prose in the inspector's Triage tab, which auto-opens when
   a verdict lands
-- **Live tool calls**: while a request is in flight the table is polled every
-  2.5s, so multi-specialist sweeps become visible as each specialist completes
+- **Live tool calls**: the streamed trace (`POST /chat/stream`) shows each
+  specialist's calls as they happen; the table, pending approval and triage
+  verdict are refreshed once, when the stream reports `done` (or when the
+  non-streaming `POST /chat` fallback returns) — no polling
 
 Remaining: per-system status chips, the remediation-loop trace (batch
 workflow only today), and Milestone 3 (onboarding wizard).

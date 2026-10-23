@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { splitAttachments } from "../chat/attachments";
 import type { ChatMessage } from "../chat/types";
 import { AttachmentChip } from "./AttachmentChip";
@@ -23,7 +23,9 @@ function formatTime(at: number): string {
 /** How far from the bottom still counts as "following along" (px). */
 const STICK_THRESHOLD = 80;
 
-function UserMessage({ m }: { m: ChatMessage }) {
+// Memoized on the message object: a streamed delta replaces only the reply
+// being written, so every other message keeps its identity and is skipped.
+const UserMessage = memo(function UserMessage({ m }: { m: ChatMessage }) {
   // A message sent from here carries its files; a reloaded one carries them as
   // the server's placeholder lines, turned back into chips here.
   const parsed = m.attachments
@@ -51,9 +53,9 @@ function UserMessage({ m }: { m: ChatMessage }) {
       </div>
     </div>
   );
-}
+});
 
-function AssistantMessage({ m }: { m: ChatMessage }) {
+const AssistantMessage = memo(function AssistantMessage({ m }: { m: ChatMessage }) {
   const live = m.streaming === true;
   return (
     <article className="group flex gap-3" aria-busy={live}>
@@ -85,7 +87,7 @@ function AssistantMessage({ m }: { m: ChatMessage }) {
       </div>
     </article>
   );
-}
+});
 
 /**
  * Scrolling transcript. Follows the newest message *only while the reader is
@@ -105,10 +107,14 @@ export function MessageList({ messages, isSending, onSuggest, onSweep }: Props) 
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD;
   };
 
+  // Smooth scrolling restarts its animation on every call; fired once per
+  // streamed frame it never settles and fights the reader. While an answer is
+  // being written the jump is instant; a new message still glides into view.
+  const streaming = messages.at(-1)?.streaming === true;
   useEffect(() => {
     if (!stickToBottom.current) return;
-    endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
-  }, [messages, isSending]);
+    endRef.current?.scrollIntoView?.({ behavior: streaming ? "auto" : "smooth", block: "end" });
+  }, [messages, isSending, streaming]);
 
   if (messages.length === 0 && !isSending) {
     return <Welcome onSuggest={onSuggest} onSweep={onSweep} />;

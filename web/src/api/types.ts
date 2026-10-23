@@ -50,7 +50,8 @@ export type StreamEvent =
   | { type: "progress"; step: ProgressEvent }
   | { type: "delta"; text: string; author: string }
   | { type: "message"; session_id: string; text: string }
-  | { type: "error"; message: string; retryable: boolean };
+  | { type: "error"; message: string; retryable: boolean }
+  | { type: "done" };
 
 /** One of the caller's conversations, as GET /sessions lists it (no transcript). */
 export interface SessionSummary {
