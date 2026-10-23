@@ -78,6 +78,7 @@ from ..security.principal import (
     as_principal,
     warn_if_unclassified,
 )
+from .a2a_config import A2A_ENABLED_ENV, A2AConfig
 from .agent_admin import AgentAdmin
 from .attachments import (
     AttachmentError,
@@ -166,6 +167,8 @@ class ServerConfig:
     console: ConsoleConfig = field(default_factory=ConsoleConfig)
     #: Chat attachments (AEP-030): ``ORRERY_ATTACHMENT*``.
     attachments: AttachmentLimits = field(default_factory=AttachmentLimits)
+    #: Agents exposed over A2A (ADR-007): ``ORRERY_A2A_*``.
+    a2a: A2AConfig = field(default_factory=A2AConfig)
 
     @property
     def serve_docs(self) -> bool:
@@ -211,6 +214,8 @@ class ServerConfig:
         - ``ORRERY_ATTACHMENTS`` (default ``true``) and ``ORRERY_ATTACHMENT_*``
           — what a chat turn may attach (see :class:`AttachmentLimits`). Set
           ``ORRERY_ATTACHMENT_IMAGES=false`` for a model without vision.
+        - ``ORRERY_A2A_*`` — expose the coordinator over A2A (see
+          :class:`~.a2a_config.A2AConfig`). Off by default.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
@@ -235,6 +240,7 @@ class ServerConfig:
             ),
             console=ConsoleConfig.from_env(),
             attachments=AttachmentLimits.from_env(),
+            a2a=A2AConfig.from_env(),
         )
 
 
@@ -463,6 +469,11 @@ def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
         problems.append(
             f"{CONFIRMATION_BACKEND_ENV}={backend} (approvals would be per-pod; use postgres)"
         )
+    if cfg.a2a.enabled:
+        problems.append(
+            f"{A2A_ENABLED_ENV} is set (A2A tasks are kept per process; run the A2A "
+            "surface as a single replica)"
+        )
     if problems:
         raise RuntimeError(
             f"{MULTI_REPLICA_ENV} is set, so this server runs as one of several replicas, "
@@ -540,6 +551,8 @@ def create_app(
         )
 
     _require_shared_state_when_replicated(cfg)
+    if cfg.a2a.enabled:
+        cfg.a2a.validate(auth_enabled=cfg.auth_enabled)
     cfg.console.validate(cfg.jwt.issuer if cfg.auth_enabled else None)
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
@@ -1290,6 +1303,22 @@ def create_app(
         return SelfTestResponse(
             ok=all(r.ok for r in results),
             checks=[CheckResultModel(**r.as_dict()) for r in results],
+        )
+
+    if cfg.a2a.enabled:
+        # Imported only here: the a2a-sdk is the optional `[a2a]` extra.
+        from .a2a_server import mount_a2a
+
+        mount_a2a(
+            api,
+            gateway=gateway,
+            config=cfg.a2a,
+            jwt=cfg.jwt,
+            policy=principal_policy,
+            limiter=limiter,
+            caller_identity=caller_identity,
+            name=app_name,
+            description=getattr(root_agent, "description", "") or app_name,
         )
 
     # Mount the web console last so the explicit API routes above always win
