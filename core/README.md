@@ -335,7 +335,11 @@ The underlying factories (`graceful_tool_error()`, `graceful_model_error()`) can
 Reusable validators for tool inputs. Each returns `None` on success or `{"status": "error", "message": ...}` on failure. Use the walrus operator for concise early-return:
 
 ```python
-from orrery_core.security.validation import validate_string, validate_positive_int, KAFKA_TOPIC_PATTERN
+from orrery_core.security.validation import (
+    validate_string,
+    validate_positive_int,
+    KAFKA_TOPIC_PATTERN,
+)
 
 
 async def create_kafka_topic(topic_name: str, num_partitions: int = 1) -> dict:
