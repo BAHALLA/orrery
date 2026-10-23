@@ -142,3 +142,37 @@ def test_setup_logging_idempotent():
 
     # Cleanup
     root.handlers.clear()
+
+
+def test_setup_logging_reads_log_level(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    setup_logging()
+    root = logging.getLogger()
+
+    assert root.level == logging.DEBUG
+
+    root.handlers.clear()
+    root.setLevel(logging.WARNING)
+
+
+def test_setup_logging_unknown_level_falls_back_to_info(monkeypatch, capsys):
+    monkeypatch.setenv("LOG_LEVEL", "chatty")
+    setup_logging()
+    root = logging.getLogger()
+
+    assert root.level == logging.INFO
+    assert "Unknown LOG_LEVEL 'CHATTY'" in capsys.readouterr().out
+
+    root.handlers.clear()
+    root.setLevel(logging.WARNING)
+
+
+def test_setup_logging_explicit_level_wins(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    setup_logging(logging.ERROR)
+    root = logging.getLogger()
+
+    assert root.level == logging.ERROR
+
+    root.handlers.clear()
+    root.setLevel(logging.WARNING)

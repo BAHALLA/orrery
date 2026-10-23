@@ -165,7 +165,7 @@ async def lifespan(app: FastAPI):
     # Start Prometheus metrics server for scraping
     metrics_plugin = next((p for p in plugins if isinstance(p, MetricsPlugin)), None)
     if metrics_plugin:
-        metrics_plugin.start_server(port=9100)
+        metrics_plugin.start_server()  # METRICS_PORT, default 9100
 
     logger.info("Slack bot started — ADK runner ready")
     yield

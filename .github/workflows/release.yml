@@ -259,10 +259,19 @@ jobs:
       # CycloneDX SBOM of the Python dependency graph (AEP-014). More valuable
       # than the OS-layer SBOM buildx embeds: the primary attack surface here
       # is the LLM client libraries, not the Debian base. Published as a
-      # release asset so downstream consumers can diff/audit it.
+      # release asset so downstream consumers can diff/audit it. The extras are
+      # read from the Dockerfile's `uv sync` so the SBOM lists what the image
+      # ships (mcp, a2a-sdk, pyjwt, ...), not just the base graph.
       - name: Generate Python SBOM (CycloneDX)
         run: |
-          uv export --frozen --no-dev --format requirements-txt -o requirements-sbom.txt
+          mapfile -t extras < <(grep -m1 'uv sync --no-dev' Dockerfile \
+            | grep -oE -- '--extra [a-z0-9-]+' | tr ' ' '\n')
+          if [ "${#extras[@]}" -eq 0 ]; then
+            echo "::error::no --extra flags found in the Dockerfile's uv sync"
+            exit 1
+          fi
+          uv export --frozen --no-dev "${extras[@]}" --format requirements-txt \
+            -o requirements-sbom.txt
           uvx --from "cyclonedx-bom==${CYCLONEDX_BOM_VERSION}" cyclonedx-py \
             requirements requirements-sbom.txt -o sbom-python.cdx.json
 

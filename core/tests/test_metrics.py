@@ -312,3 +312,36 @@ class TestStartServer:
         mc.start_server()  # no explicit port
         mock_start.assert_called_once_with(9300)
         m._server_started = False
+
+
+class TestStartMetricsServerIfEnabled:
+    @patch.dict("os.environ", {"ENABLE_METRICS_SERVER": "false"})
+    @patch("orrery_core.observability.metrics.start_http_server")
+    def test_off_unless_enabled(self, mock_start):
+        from orrery_core.observability.metrics import start_metrics_server_if_enabled
+
+        assert start_metrics_server_if_enabled() is False
+        mock_start.assert_not_called()
+
+    @patch.dict("os.environ", {"ENABLE_METRICS_SERVER": "true", "METRICS_PORT": "9301"})
+    @patch("orrery_core.observability.metrics.start_http_server")
+    def test_starts_on_metrics_port(self, mock_start):
+        import orrery_core.observability.metrics as m
+
+        m._server_started = False
+        assert m.start_metrics_server_if_enabled() is True
+        mock_start.assert_called_once_with(9301)
+        m._server_started = False
+
+    @patch.dict("os.environ", {"ENABLE_METRICS_SERVER": "true"})
+    @patch(
+        "orrery_core.observability.metrics.start_http_server",
+        side_effect=OSError("Address already in use"),
+    )
+    def test_bind_failure_is_logged_not_raised(self, _mock_start, caplog):
+        import orrery_core.observability.metrics as m
+
+        m._server_started = False
+        assert m.start_metrics_server_if_enabled() is False
+        assert "Could not start the Prometheus metrics server" in caplog.text
+        assert m._server_started is False

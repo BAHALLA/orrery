@@ -24,7 +24,7 @@ from google.adk.workflow import Workflow
 from ..agent.base import resolve_summarizer_model
 from ..concurrency import configure_default_executor
 from ..observability.log import mask_dsn
-from ..observability.metrics import track_compaction_event
+from ..observability.metrics import start_metrics_server_if_enabled, track_compaction_event
 from ..persistence.db import create_session_service
 from ..security.rbac import set_user_role
 from .gateway import AgentGateway
@@ -271,6 +271,7 @@ async def run_persistent(
     # from the *host* CPU count, which in a container bears no relation to the
     # quota the process is actually limited to.
     configure_default_executor()
+    start_metrics_server_if_enabled()
 
     resolved_db_url = db_url or os.getenv("DATABASE_URL")
     # Probe first; fall back to an in-memory session store (with a warning) if
