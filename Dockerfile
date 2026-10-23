@@ -110,9 +110,10 @@ WORKDIR /app
 # Docker CLI for container monitoring (used by docker-agent tools).
 # Digest-pinned like the FROM bases; docker:27-cli was built with Go 1.22,
 # whose stdlib carries 15 HIGH/CRITICAL CVEs that tripped the Trivy gate.
-# 29.9.0 / Go 1.26.9 scans clean (the 29.6.2 / Go 1.26.5 pin needed eight
-# triaged ignores and had since picked up three more HIGHs).
-COPY --from=docker:29-cli@sha256:1a4c7cb63513f349bdad01fcc6e0f3f2f67d37b9da86f14dc0d4a0942eecda00 /usr/local/bin/docker /usr/local/bin/docker
+# 29.9.2 / Go 1.26.10 scans clean; 29.9.0 / Go 1.26.9 hit CVE-2026-111943
+# (crypto/x509, HIGH) and failed the release gate (the 29.6.2 / Go 1.26.5 pin
+# before it needed eight triaged ignores).
+COPY --from=docker:29-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb /usr/local/bin/docker /usr/local/bin/docker
 
 # Copy the virtual environment and source from builder with correct ownership
 # in a single layer (avoids a separate `chown -R` that would double disk use).
