@@ -249,7 +249,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                 <div className="px-3 sm:px-6">
                   <div
                     role="alert"
-                    className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300"
+                    className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-crit-border bg-crit-bg px-3 py-2 text-sm text-crit-fg"
                   >
                     <span className="min-w-0">{chat.error.message}</span>
                     <span className="flex shrink-0 items-center gap-3">

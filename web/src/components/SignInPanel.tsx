@@ -45,10 +45,7 @@ export function SignInPanel({ onSignIn, error, isLoading = false }: Props) {
         )}
 
         {error ? (
-          <p
-            role="alert"
-            className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
-          >
+          <p role="alert" className="mt-4 rounded-lg bg-crit-bg px-3 py-2 text-sm text-crit-fg">
             {error}
           </p>
         ) : null}

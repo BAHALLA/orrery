@@ -67,7 +67,7 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
             System
             {system.selfTest && !system.selfTest.ok ? (
               <span
-                className="ml-1.5 rounded-full bg-red-100 px-1.5 text-xs font-semibold text-red-700 dark:bg-red-950 dark:text-red-300"
+                className="ml-1.5 rounded-full bg-crit-bg px-1.5 text-xs font-semibold text-crit-fg"
                 title="Some environment checks failed"
               >
                 !
@@ -78,7 +78,7 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
         <button
           type="button"
           aria-label="Close inspector"
-          className="rounded p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           onClick={onClose}
         >
           <CloseIcon />

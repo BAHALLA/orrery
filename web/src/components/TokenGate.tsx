@@ -53,7 +53,7 @@ export function TokenGate({ onSubmit, error }: Props) {
           spellCheck={false}
         />
         {error ? (
-          <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+          <p role="alert" className="mt-2 text-sm text-crit-fg">
             {error}
           </p>
         ) : null}
@@ -64,7 +64,7 @@ export function TokenGate({ onSubmit, error }: Props) {
         >
           Connect
         </button>
-        <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">
+        <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
           The token is stored in your browser only and never leaves it except as an{" "}
           <code className="font-mono">Authorization</code> header to the API.
         </p>

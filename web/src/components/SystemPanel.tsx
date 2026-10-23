@@ -35,22 +35,20 @@ function CheckRow({ check }: { check: CheckResult }) {
                 />
               </span>
             )}
-            <span className="text-xs tabular-nums text-slate-400 dark:text-slate-500">
+            <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
               {check.duration_ms}ms
             </span>
           </div>
         </div>
         <p
           className={`mt-0.5 text-xs break-words ${
-            check.ok ? "text-slate-500 dark:text-slate-400" : "text-red-700 dark:text-red-300"
+            check.ok ? "text-slate-500 dark:text-slate-400" : "text-crit-fg"
           }`}
         >
           {check.detail}
         </p>
         {check.hint ? (
-          <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
-            {check.hint}
-          </p>
+          <p className="mt-1 rounded bg-warn-bg px-2 py-1 text-xs text-warn-fg">{check.hint}</p>
         ) : null}
       </div>
     </li>
@@ -72,7 +70,7 @@ export function SystemPanel({ system }: Props) {
       {meError ? (
         <p
           role="alert"
-          className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+          className="border-b border-warn-border bg-warn-bg px-4 py-2 text-xs text-warn-fg"
         >
           {meError}
         </p>
@@ -126,10 +124,7 @@ export function SystemPanel({ system }: Props) {
       </div>
 
       {error ? (
-        <p
-          role="alert"
-          className="mx-4 mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
-        >
+        <p role="alert" className="mx-4 mb-3 rounded-lg bg-crit-bg px-3 py-2 text-sm text-crit-fg">
           {error}
         </p>
       ) : null}
@@ -138,9 +133,7 @@ export function SystemPanel({ system }: Props) {
         <>
           <p
             className={`px-4 pb-2 text-sm font-medium ${
-              selfTest.ok
-                ? "text-green-700 dark:text-green-300"
-                : "text-amber-700 dark:text-amber-300"
+              selfTest.ok ? "text-ok-fg" : "text-warn-fg"
             }`}
             role="status"
           >

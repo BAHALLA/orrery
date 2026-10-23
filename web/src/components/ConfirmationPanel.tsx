@@ -1,5 +1,6 @@
 import type { PendingConfirmation } from "../api/types";
 import { AlertIcon, CheckIcon, CloseIcon, ShieldIcon } from "./icons";
+import { toneBorder, tonePill } from "./severity";
 
 interface Props {
   pending: PendingConfirmation;
@@ -11,14 +12,14 @@ const LEVELS: Record<string, { label: string; explain: string; tone: string; bad
   destructive: {
     label: "Destructive",
     explain: "This removes or restarts something and may not be reversible.",
-    tone: "border-red-300 dark:border-red-900",
-    badge: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    tone: toneBorder.crit,
+    badge: tonePill.crit,
   },
   confirm: {
     label: "Changes state",
     explain: "This changes a live system. Check the target before approving.",
-    tone: "border-amber-300 dark:border-amber-900",
-    badge: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+    tone: toneBorder.warn,
+    badge: tonePill.warn,
   },
 };
 
@@ -65,7 +66,7 @@ export function ConfirmationPanel({ pending, disabled, onDecide }: Props) {
               >
                 {pending.level ? level.label : "guarded"}
               </span>
-              <span className="text-xs text-slate-400 dark:text-slate-500">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
                 {ago(pending.created_at)}
               </span>
             </div>

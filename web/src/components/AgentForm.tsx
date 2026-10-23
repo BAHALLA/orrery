@@ -58,7 +58,7 @@ export function AgentForm({ active, initial, tools, onDone, onCancel }: Props) {
             type="button"
             aria-label="Close"
             onClick={onCancel}
-            className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             <CloseIcon />
           </button>
@@ -84,7 +84,7 @@ export function AgentForm({ active, initial, tools, onDone, onCancel }: Props) {
             </label>
             <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
               Description{" "}
-              <span className="font-normal text-slate-400">— what the coordinator routes on</span>
+              <span className="font-normal text-slate-500">— what the coordinator routes on</span>
               <input
                 className={`${input} mt-1`}
                 value={draft.description}
@@ -106,7 +106,7 @@ export function AgentForm({ active, initial, tools, onDone, onCancel }: Props) {
           <fieldset className="text-xs font-medium text-slate-600 dark:text-slate-300">
             <legend>Tools ({draft.tools.length} selected)</legend>
             <div className="relative mt-1">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-slate-400" />
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-slate-500" />
               <input
                 className={`${input} pl-8`}
                 value={filter}
@@ -126,7 +126,7 @@ export function AgentForm({ active, initial, tools, onDone, onCancel }: Props) {
                       onChange={() => toggle(t.ref)}
                     />
                     <span className="font-mono text-[12px] font-normal">{t.ref}</span>
-                    <span className="text-[11px] font-normal text-slate-400">{t.specialist}</span>
+                    <span className="text-[11px] font-normal text-slate-500">{t.specialist}</span>
                     <span
                       className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-normal text-slate-500 dark:text-slate-400"
                       title={t.reason || undefined}
@@ -138,7 +138,7 @@ export function AgentForm({ active, initial, tools, onDone, onCancel }: Props) {
                 </li>
               ))}
               {shown.length === 0 ? (
-                <li className="px-2 py-3 text-center font-normal text-slate-400">
+                <li className="px-2 py-3 text-center font-normal text-slate-500">
                   No tool matches “{filter}”.
                 </li>
               ) : null}

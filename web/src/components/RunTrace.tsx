@@ -2,6 +2,7 @@ import { memo } from "react";
 import type { Trace, TraceCall } from "../chat/trace";
 import { agentLabel, flatten, summarize } from "../chat/trace";
 import { AlertIcon, CheckIcon, ChevronIcon, LockIcon, OrbitSpinner } from "./icons";
+import { tonePill, toneText } from "./severity";
 
 interface Props {
   trace: Trace;
@@ -11,10 +12,10 @@ interface Props {
 }
 
 const stateStyle: Record<TraceCall["state"], string> = {
-  running: "text-brand-600 dark:text-brand-300",
-  ok: "text-emerald-600 dark:text-emerald-400",
-  error: "text-red-600 dark:text-red-400",
-  refused: "text-amber-600 dark:text-amber-400",
+  running: toneText.running,
+  ok: toneText.ok,
+  error: toneText.crit,
+  refused: toneText.refused,
 };
 
 const stateLabel: Record<TraceCall["state"], string> = {
@@ -46,12 +47,12 @@ function ToolChip({ call }: { call: TraceCall }) {
       <StateIcon state={call.state} />
       <span className="font-mono text-slate-700 dark:text-slate-200">{call.tool}</span>
       {call.guarded ? (
-        <span className="rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800 uppercase dark:bg-amber-950 dark:text-amber-300">
+        <span className={`rounded px-1 text-[10px] font-semibold uppercase ${tonePill.guarded}`}>
           guarded
         </span>
       ) : null}
       {call.elapsedMs != null ? (
-        <span className="text-slate-400 tabular-nums dark:text-slate-500">
+        <span className="text-slate-500 tabular-nums dark:text-slate-400">
           {formatMs(call.elapsedMs)}
         </span>
       ) : null}
@@ -74,7 +75,7 @@ function Delegation({ call }: { call: TraceCall }) {
           {call.state === "running" ? "working…" : stateLabel[call.state]}
         </span>
         {call.elapsedMs != null ? (
-          <span className="ml-auto text-xs text-slate-400 tabular-nums dark:text-slate-500">
+          <span className="ml-auto text-xs text-slate-500 tabular-nums dark:text-slate-400">
             {formatMs(call.elapsedMs)}
           </span>
         ) : null}

@@ -45,7 +45,7 @@ const UserMessage = memo(function UserMessage({ m }: { m: ChatMessage }) {
         ) : null}
         {parsed.text ? <p className="whitespace-pre-wrap break-words">{parsed.text}</p> : null}
       </div>
-      <div className="flex items-center gap-1.5 px-1 text-xs text-slate-400 dark:text-slate-500">
+      <div className="flex items-center gap-1.5 px-1 text-xs text-slate-500 dark:text-slate-400">
         <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
         <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
           <CopyButton value={parsed.text} label="Copy the message" />
@@ -63,7 +63,7 @@ const AssistantMessage = memo(function AssistantMessage({ m }: { m: ChatMessage 
         <OrreryMark className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="mb-1 flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+        <div className="mb-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
           <span className="font-semibold text-slate-700 dark:text-slate-200">Orrery</span>
           <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
           {m.text && !live ? (

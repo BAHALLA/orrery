@@ -29,7 +29,7 @@ export function AttachmentChip({ attachment, tone, onRemove }: Props) {
           type="button"
           onClick={onRemove}
           aria-label={`Remove ${attachment.name}`}
-          className="ml-0.5 rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+          className="ml-0.5 rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-100"
         >
           <CloseIcon size={12} />
         </button>

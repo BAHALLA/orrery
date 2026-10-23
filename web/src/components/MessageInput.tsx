@@ -192,10 +192,7 @@ export function MessageInput({ disabled, isSending, attachments, onSend, onStop 
         </div>
       </form>
       {fileErrors.length ? (
-        <ul
-          role="alert"
-          className="mx-auto mt-1.5 max-w-3xl px-2 text-xs text-red-600 dark:text-red-400"
-        >
+        <ul role="alert" className="mx-auto mt-1.5 max-w-3xl px-2 text-xs text-crit-fg">
           {fileErrors.map((err) => (
             <li key={err}>{err}</li>
           ))}
@@ -203,7 +200,7 @@ export function MessageInput({ disabled, isSending, attachments, onSend, onStop 
       ) : null}
       <p
         id="composer-hint"
-        className="mx-auto mt-1.5 hidden max-w-3xl px-2 text-[11px] text-slate-400 sm:block dark:text-slate-500"
+        className="mx-auto mt-1.5 hidden max-w-3xl px-2 text-[11px] text-slate-500 sm:block dark:text-slate-400"
       >
         <kbd className="font-sans">Enter</kbd> to send ·{" "}
         <kbd className="font-sans">Shift+Enter</kbd> for a new line ·{" "}

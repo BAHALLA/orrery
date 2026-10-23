@@ -80,7 +80,7 @@ export function Welcome({ onSuggest, onSweep }: Props) {
         >
           <span>
             <span className="font-medium">Full health sweep</span>
-            <span className="text-slate-400 dark:text-slate-500">
+            <span className="text-slate-500 dark:text-slate-400">
               {" "}
               — every specialist in parallel, one verdict
             </span>

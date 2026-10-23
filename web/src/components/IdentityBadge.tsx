@@ -76,7 +76,7 @@ export function IdentityBadge({ identity, me, onSignOut }: Props) {
         onClick={onSignOut}
         aria-label="Sign out"
         title="Sign out"
-        className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-200"
       >
         <LogOutIcon />
       </button>
