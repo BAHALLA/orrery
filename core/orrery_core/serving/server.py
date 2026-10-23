@@ -342,6 +342,10 @@ class PendingConfirmationInfo(BaseModel):
     level: str
     args: dict[str, object]
     created_at: float
+    #: The conversation that raised it, so a client can show the card there
+    #: rather than in every conversation. ``None`` when unknown (a pending
+    #: raised outside a gateway turn).
+    session_id: str | None = None
 
 
 class PendingResponse(BaseModel):
@@ -1007,6 +1011,7 @@ def create_app(
                 level=pending.level,
                 args=dict(pending.args),
                 created_at=pending.created_at,
+                session_id=pending.session_id or None,
             )
         )
 

@@ -639,6 +639,7 @@ def test_pending_returns_own_action_only(app_with_auth, pending_store):
             scope_key="alice",
             level="destructive",
             args={"name": "payment-api", "namespace": "prod"},
+            session_id="conv-1",
         )
     )
     pending_store.add(
@@ -658,6 +659,21 @@ def test_pending_returns_own_action_only(app_with_auth, pending_store):
     assert pending["tool_name"] == "restart_deployment"
     assert pending["level"] == "destructive"
     assert pending["args"] == {"name": "payment-api", "namespace": "prod"}
+    # The conversation that raised it, so the console shows it only there.
+    assert pending["session_id"] == "conv-1"
+
+
+def test_pending_without_session_reports_null(app_with_auth, pending_store):
+    from orrery_core.security.confirmation_store import PendingConfirmation
+
+    pending_store.add(
+        PendingConfirmation(
+            action_id="a1", tool_name="scale_deployment", requester="alice", scope_key="alice"
+        )
+    )
+    client = TestClient(app_with_auth)
+    r = client.get("/confirmations/pending", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.json()["pending"]["session_id"] is None
 
 
 # ── GET /session/{id}/triage (AEP-019 Milestone 2) ──────────────────

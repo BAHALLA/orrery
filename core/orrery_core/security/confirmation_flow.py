@@ -11,10 +11,12 @@ click), and the scope key a decision is matched under.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from ..observability.audit import audit_event
@@ -28,6 +30,31 @@ from .confirmation_store import AnyConfirmationStore, PendingConfirmation
 # (re-exported by ``guardrails.py``, the decorators' home).
 LEVEL_CONFIRM = "confirm"
 LEVEL_DESTRUCTIVE = "destructive"
+
+
+# The conversation's own session id for the current turn. A guarded tool is
+# usually reached through an ``AgentTool`` whose sub-session is throwaway, so
+# the tool context cannot say which conversation a pending belongs to — only
+# the gateway, which runs the turn, knows. It sets this for the whole turn
+# (ContextVars copy into AgentTool sub-runs and ``to_thread`` workers).
+_CONVERSATION_SESSION: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "orrery_conversation_session", default=None
+)
+
+
+@contextlib.contextmanager
+def conversation_scope(session_id: str) -> Iterator[None]:
+    """Attribute pendings raised inside this block to conversation *session_id*."""
+    token = _CONVERSATION_SESSION.set(session_id or None)
+    try:
+        yield
+    finally:
+        _CONVERSATION_SESSION.reset(token)
+
+
+def current_conversation_session() -> str | None:
+    """The session id set by :func:`conversation_scope`, if any."""
+    return _CONVERSATION_SESSION.get()
 
 
 def hash_args(args: dict[str, Any]) -> str:
@@ -57,7 +84,12 @@ def raise_pending(
     ``store`` is any object with the :class:`AnyConfirmationStore` surface
     (including the process-level holder used by strict mode). Registration
     replaces a prior pending for the same ``(scope_key, tool_name)``.
+
+    With no explicit ``session_id``, the conversation set by
+    :func:`conversation_scope` is recorded, so a transport can show the pending
+    in the conversation that raised it rather than in every one.
     """
+    session_id = session_id or current_conversation_session() or ""
     pending = PendingConfirmation(
         action_id=uuid.uuid4().hex[:12],
         tool_name=tool_name,
