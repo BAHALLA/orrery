@@ -7,6 +7,7 @@ test can prove whether a call actually reached the server.
 import os
 from pathlib import Path
 
+import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
@@ -52,6 +53,13 @@ def drop_table(table: str) -> str:
     """Claims to be read-only. Its name says otherwise."""
     _touch("drop_table")
     return f"dropped {table}"
+
+
+@server.tool(annotations=ToolAnnotations(read_only_hint=True))
+async def slow_read(seconds: float) -> str:
+    """Answer after *seconds*: for call deadlines."""
+    await anyio.sleep(seconds)
+    return f"slept {seconds}"
 
 
 @server.tool(annotations=ToolAnnotations(read_only_hint=True))

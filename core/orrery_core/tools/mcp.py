@@ -65,13 +65,20 @@ from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.base_tool import BaseTool
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..observability.audit import audit_event
 from ..plugins.safety_plugin import screen_text
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
-from .mcp_network import LOOPBACK_HOSTS, client_factory, is_public, literal_ip, ssl_context
+from .mcp_network import (
+    LOOPBACK_HOSTS,
+    client_factory,
+    is_public,
+    literal_ip,
+    never_allowed,
+    ssl_context,
+)
 
 try:
     from google.adk.tools.mcp_tool.mcp_session_manager import (
@@ -139,6 +146,12 @@ class McpServerConfig(BaseModel):
     #: A pinned tool whose text differs is withheld from the first call, restart
     #: or not; unpinned tools are pinned to what the process first sees.
     pinned: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("pinned")
+    @classmethod
+    def _lowercase_pins(cls, pinned: dict[str, str]) -> dict[str, str]:
+        return {tool: digest.strip().lower() for tool, digest in pinned.items()}
+
     instruction: str = ""
 
     @model_validator(mode="after")
@@ -187,6 +200,8 @@ class McpServerConfig(BaseModel):
                 )
             # An IP literal is checked here, once: there is no lookup to change it.
             address = literal_ip(parsed.hostname or "")
+            if address and never_allowed(address):
+                raise ValueError(f"{self.url!r} is a link-local or metadata address")
             if (
                 address
                 and not self.allow_private_network
@@ -478,18 +493,20 @@ def _with_deadline(tool: BaseTool, config: McpServerConfig) -> None:
         return
     run = tool.run_async
     seconds = config.call_timeout_seconds
+    # The name the model knows: ADK prefixes a copy, after this wrap.
+    name = f"{config.name}_{tool.name}"
 
     async def run_with_deadline(*, args: dict[str, Any], tool_context: Any) -> Any:
         try:
             async with asyncio.timeout(seconds):
                 return await run(args=args, tool_context=tool_context)
         except TimeoutError:
-            logger.warning("MCP tool %s timed out after %ss", tool.name, seconds)
+            logger.warning("MCP tool %s timed out after %ss", name, seconds)
             return {
                 "status": "error",
                 "error_type": "timeout",
                 "message": (
-                    f"{tool.name} did not answer within {seconds:g}s. It may still "
+                    f"{name} did not answer within {seconds:g}s. It may still "
                     "complete on the server: check before calling it again."
                 ),
             }

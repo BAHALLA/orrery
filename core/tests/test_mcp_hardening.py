@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -72,7 +74,7 @@ def _stdio(**over: Any) -> McpServerConfig:
 
 @pytest.mark.parametrize(
     "url",
-    ["https://10.0.0.5/mcp", "https://169.254.169.254/latest", "https://[fd00::1]/mcp"],
+    ["https://10.0.0.5/mcp", "https://100.64.0.1/mcp", "https://[fd00::1]/mcp"],
 )
 def test_a_private_address_needs_an_explicit_opt_in(url):
     with pytest.raises(ValidationError, match="allow_private_network"):
@@ -169,7 +171,7 @@ def _send(transport: GuardedTransport, url: str) -> Any:
 def test_a_name_resolving_to_a_private_address_is_refused(resolves_to, reached, address):
     resolves_to[:] = ["93.184.216.34", address]  # one bad answer is enough
     transport = GuardedTransport(url="https://mcp.example.com/mcp")
-    with pytest.raises(BlockedDestination, match="not a public address"):
+    with pytest.raises(BlockedDestination, match="not a public address|link-local or metadata"):
         _send(transport, "https://mcp.example.com/mcp")
     assert reached == []
 
@@ -219,6 +221,67 @@ def test_public_means_globally_routable_unicast():
     assert not is_public("224.0.0.1")  # multicast
 
 
+@pytest.mark.parametrize(
+    "address",
+    [
+        "64:ff9b::a9fe:a9fe",  # NAT64 → 169.254.169.254
+        "64:ff9b::a00:1",  # NAT64 → 10.0.0.1
+        "::a9fe:a9fe",  # IPv4-compatible → 169.254.169.254
+        "64:ff9b:1::a00:1",  # local-use NAT64: position unknown, refused
+    ],
+)
+def test_ipv4_embedded_in_ipv6_is_checked_as_the_ipv4_it_reaches(address):
+    assert not is_public(address)
+
+
+def test_nat64_of_a_public_address_stays_public():
+    assert is_public("64:ff9b::5db8:d822")  # 93.184.216.34
+
+
+@pytest.mark.parametrize(
+    "address", ["169.254.169.254", "fe80::1", "fd00:ec2::254", "64:ff9b::a9fe:a9fe"]
+)
+def test_metadata_stays_refused_with_the_private_network_allowed(resolves_to, reached, address):
+    resolves_to[:] = [address]
+    transport = GuardedTransport(url="https://mcp.internal/mcp", allow_private_network=True)
+    with pytest.raises(BlockedDestination, match="link-local or metadata"):
+        _send(transport, "https://mcp.internal/mcp")
+    assert reached == []
+
+
+@pytest.mark.parametrize("url", ["https://169.254.169.254/mcp", "https://[64:ff9b::a9fe:a9fe]/"])
+def test_a_metadata_literal_fails_startup_whatever_the_opt_in(url):
+    with pytest.raises(ValidationError, match="link-local or metadata"):
+        _http(url=url, allow_private_network=True)
+
+
+def test_an_unresolvable_host_is_a_connect_error(monkeypatch, reached):
+    async def fails(host: str, port: int) -> list[str]:
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr(mcp_network, "_resolve", fails)
+    with pytest.raises(httpx.ConnectError, match="did not resolve"):
+        _send(GuardedTransport(url="https://nowhere.invalid/mcp"), "https://nowhere.invalid/mcp")
+
+
+def test_an_ip_literal_url_is_checked_without_a_lookup(monkeypatch, reached):
+    """The rebinding-free path: a literal resolves to itself."""
+    seen: list[str] = []
+    real = mcp_network._resolve
+
+    async def spy(host: str, port: int) -> list[str]:
+        seen.append(host)
+        return await real(host, port)
+
+    monkeypatch.setattr(mcp_network, "_resolve", spy)
+    _send(GuardedTransport(url="https://93.184.216.34/mcp"), "https://93.184.216.34/mcp")
+    assert seen == ["93.184.216.34"] and len(reached) == 1
+
+
+def test_pins_are_compared_case_insensitively():
+    assert _http(pinned={"list_items": "A" * 64}).pinned == {"list_items": "a" * 64}
+
+
 def test_the_factory_keeps_the_sdk_signature():
     client = client_factory(url="https://mcp.example.com/mcp")(
         headers={"Authorization": "Bearer x"}, timeout=httpx.Timeout(5.0)
@@ -262,6 +325,8 @@ async def test_a_call_past_its_deadline_returns_a_failure_the_breaker_counts(ser
     result = await tool.run_async(args={}, tool_context=_NO_CONTEXT)
 
     assert result["error_type"] == "timeout"
+    # The name the model was given, prefixed, not the server's bare name.
+    assert result["message"].startswith("inv_purge_cache did not answer")
     assert "may still complete" in result["message"]
     assert classify_tool_outcome(result) is ToolOutcome.FAILURE
 
@@ -282,6 +347,24 @@ async def test_a_call_within_its_deadline_is_untouched(served):
         "isError": False,
         "args": {"x": 1},
     }
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_call_leaves_the_session_usable():
+    """Against a real server: the late answer is dropped, the next call works."""
+    config = _stdio(tools=["slow_read"], read_only=["slow_read"], call_timeout_seconds=1)
+    toolset = GuardedMcpToolset(config)
+    try:
+        (slow,) = await toolset.get_tools()
+        ctx = MagicMock()
+        late = await slow.run_async(args={"seconds": 5}, tool_context=ctx)
+        quick = await slow.run_async(args={"seconds": 0}, tool_context=ctx)
+    finally:
+        await toolset.close()
+
+    assert late["error_type"] == "timeout"
+    assert classify_tool_outcome(quick) is ToolOutcome.SUCCESS
+    assert "slept 0" in str(quick)
 
 
 def test_the_tool_list_is_cached_for_the_configured_time():

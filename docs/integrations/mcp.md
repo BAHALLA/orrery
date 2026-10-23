@@ -70,9 +70,9 @@ servers:
 | `timeout_seconds` | Connection timeout, default 10. |
 | `call_timeout_seconds` | Deadline for one tool call, default 60 (max 600). See below. |
 | `tool_list_cache_seconds` | How long a tool listing is reused before the server is asked again, default 300; `0` asks every turn. |
-| `allow_private_network` | Default `false`. Lets an HTTP server resolve to a private, link-local or loopback address. See below. |
-| `ca_file` / `client_cert_file` / `client_key_file` | TLS for HTTP transports: a private CA bundle, and a client certificate for mTLS (a key needs its certificate). Read at startup; a missing file fails it. |
-| `pinned` | `tool: sha256` fingerprints you reviewed. A pinned tool whose text differs is withheld from the first call. |
+| `allow_private_network` | Default `false`. Lets an HTTP server resolve to a private or loopback address (never link-local or metadata). See below. |
+| `ca_file` / `client_cert_file` / `client_key_file` | TLS for HTTP transports: a CA bundle, and a client certificate for mTLS (a key needs its certificate). `ca_file` **replaces** the system roots for that server rather than adding to them. Read at startup; a missing file fails it. |
+| `pinned` | `tool: sha256` fingerprints you reviewed (case-insensitive). A pinned tool whose text differs is withheld from the first call. |
 | `instruction` | Extra guidance appended to the specialist's prompt. |
 
 ## How tools are classified
@@ -124,7 +124,9 @@ also:
   (`MCP tool github_list_issues first seen, fingerprint …`). Copy the ones you
   reviewed under `pinned:` and the tool is checked against *that* value, in
   every process, from its first listing, so a server that changed between
-  your review and a restart is caught too.
+  your review and a restart is caught too. The fingerprint covers the
+  annotations as the MCP SDK spells them, so **re-pin after an MCP SDK major
+  upgrade**: until you do, pinned tools are withheld (it fails closed).
 
 Each withheld tool is logged once and audited as `mcp_tool_withheld`.
 
@@ -138,11 +140,19 @@ client is held to what you configured:
   follows redirects; anything pointing elsewhere is refused, and redirects are
   not followed at all.
 - **public addresses**: every request checks what the host resolves to, and
-  refuses a private, link-local (`169.254.169.254`, the cloud metadata
-  endpoint), loopback or otherwise non-public address. A server on your own
-  network needs `allow_private_network: true`; a private IP written in the URL
-  fails startup without it. A loopback URL (local development) may reach
-  loopback, and nothing else private.
+  refuses a private, loopback or otherwise non-public address. IPv4 carried in
+  IPv6 (mapped, NAT64 `64:ff9b::/96`, IPv4-compatible) is checked as the IPv4
+  address it reaches. A server on your own network needs
+  `allow_private_network: true`; a private IP written in the URL fails startup
+  without it. A loopback URL (local development) may reach loopback, and
+  nothing else private.
+- **never metadata**: link-local addresses (`169.254.169.254`, `fe80::/10`)
+  and cloud metadata endpoints (`fd00:ec2::254`) are refused even with
+  `allow_private_network`, so opening the private network for one internal
+  server doesn't also open the instance's credentials to a DNS change.
+- **no proxy**: the guarded client ignores `HTTPS_PROXY`/`HTTP_PROXY`. A proxy
+  resolves the name itself, out of reach of the address check. If your egress
+  must go through a proxy, MCP over HTTP needs a direct route to the server.
 
 !!! note "Residual: DNS rebinding"
     The check resolves the name, then the connection resolves it again, so a

@@ -14,10 +14,16 @@ into a request the operator never configured:
   credentials. Every request checks the addresses the host resolves to, and
   refuses non-public ones unless the server's config sets
   ``allow_private_network``. A loopback URL (local development) may reach
-  loopback, and nothing else private.
+  loopback, and nothing else private. Link-local and metadata addresses are
+  refused either way. IPv4 embedded in IPv6 (mapped, NAT64, compatible) is
+  checked as the IPv4 address it reaches.
 - **TLS trusts the wrong roots, or none.** A private CA and a client
   certificate (mTLS) are configured per server, as files, and go into one SSL
   context.
+
+Proxies: a client built with an explicit transport ignores ``HTTPS_PROXY``.
+That is deliberate: a proxy resolves the name itself, out of reach of the
+address check.
 
 Residual: the check resolves the name, then the connection pool resolves it
 again, so a DNS server answering differently within that window (rebinding) is
@@ -58,19 +64,52 @@ class BlockedDestination(httpx.ConnectError):  # ty: ignore[unsupported-base]
     """A request to a host or address this server's config does not allow."""
 
 
+# IPv6 ranges that carry an IPv4 address in their low 32 bits. Python's
+# ``ipaddress`` calls the NAT64 and IPv4-compatible ranges global, so without
+# unwrapping, ``64:ff9b::a9fe:a9fe`` (169.254.169.254 through a DNS64/NAT64
+# gateway, common on IPv6-only clusters) would pass as public.
+_EMBEDS_IPV4 = (
+    ipaddress.IPv6Network("64:ff9b::/96"),  # well-known NAT64 prefix
+    ipaddress.IPv6Network("::/96"),  # IPv4-compatible (deprecated)
+)
+# Local-use NAT64 places the IPv4 address by prefix length, which an address
+# alone doesn't say: refused outright.
+_LOCAL_NAT64 = ipaddress.IPv6Network("64:ff9b:1::/48")
+# Cloud metadata endpoints outside link-local (AWS's IPv6 IMDS is a ULA).
+_METADATA = frozenset({ipaddress.ip_address("fd00:ec2::254")})
+
+
+def _address(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """*address* parsed, with any embedded IPv4 address unwrapped."""
+    ip = ipaddress.ip_address(address.split("%", 1)[0])  # drop an IPv6 zone id
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped
+        if int(ip) > 1 and any(ip in net for net in _EMBEDS_IPV4):  # not :: or ::1
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
 def is_public(address: str) -> bool:
     """Whether *address* is a globally routable unicast address."""
-    ip = ipaddress.ip_address(address.split("%", 1)[0])  # drop an IPv6 zone id
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    ip = _address(address)
+    if ip in _LOCAL_NAT64:
+        return False
     return ip.is_global and not ip.is_multicast
 
 
+def never_allowed(address: str) -> bool:
+    """Link-local and metadata addresses: refused even with ``allow_private_network``.
+
+    Opening the private network for an internal server must not also open
+    ``169.254.169.254``, which a DNS change or rebinding would then reach.
+    """
+    ip = _address(address)
+    return ip.is_link_local or ip in _METADATA or ip in _LOCAL_NAT64
+
+
 def _is_loopback(address: str) -> bool:
-    ip = ipaddress.ip_address(address.split("%", 1)[0])
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return ip.is_loopback
+    return _address(address).is_loopback
 
 
 def literal_ip(host: str) -> str | None:
@@ -108,18 +147,27 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 f"{self._scheme}://{self._host}:{self._port} is configured",
                 request=request,
             )
-        if not self._allow_private:
-            for address in await _resolve(host, port):
-                if is_public(address):
-                    continue
-                if self._loopback_only and _is_loopback(address):
-                    continue
+        try:
+            addresses = await _resolve(host, port)
+        except OSError as exc:  # gaierror: surface it as the connect failure it is
+            raise httpx.ConnectError(f"MCP server {host} did not resolve: {exc}") from exc
+        for address in addresses:
+            if never_allowed(address):
                 raise BlockedDestination(
-                    f"MCP request to {host} refused: it resolves to {address}, which "
-                    "is not a public address (set allow_private_network for an "
-                    "internal server)",
+                    f"MCP request to {host} refused: it resolves to {address}, a "
+                    "link-local or metadata address",
                     request=request,
                 )
+            if self._allow_private or is_public(address):
+                continue
+            if self._loopback_only and _is_loopback(address):
+                continue
+            raise BlockedDestination(
+                f"MCP request to {host} refused: it resolves to {address}, which "
+                "is not a public address (set allow_private_network for an "
+                "internal server)",
+                request=request,
+            )
         return await super().handle_async_request(request)
 
 
