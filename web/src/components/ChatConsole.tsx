@@ -15,6 +15,7 @@ import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
+import { resolveSpecialists } from "../specialists";
 import { useSystem } from "../system/useSystem";
 
 interface Props {
@@ -164,6 +165,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     panel.focus({ preventScroll: true });
   }, []);
 
+  const specialists = useMemo(() => resolveSpecialists(system.me?.specialists), [system.me]);
   const announcement = useTurnAnnouncement(chat.isSending, chat.error !== null);
 
   // The reply being written, if any — drives the live status in the header.
@@ -289,6 +291,8 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                   isSending={chat.isSending}
                   onSuggest={onSuggest}
                   onSweep={onSweep}
+                  specialists={specialists}
+                  autonomy={system.me?.autonomy_level ?? null}
                 />
               </ShowApprovalContext.Provider>
 

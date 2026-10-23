@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef } from "react";
 import { splitAttachments } from "../chat/attachments";
+import type { SpecialistInfo } from "../api/types";
 import { decisionOf } from "../chat/decision";
 import type { ChatMessage, Decision } from "../chat/types";
 import { AttachmentChip } from "./AttachmentChip";
@@ -17,6 +18,9 @@ interface Props {
   /** Send a suggested prompt from the empty state. */
   onSuggest: (prompt: string) => void;
   onSweep: () => void;
+  /** For the empty state's copy and suggestions. */
+  specialists: readonly SpecialistInfo[];
+  autonomy: string | null;
 }
 
 function formatTime(at: number): string {
@@ -146,7 +150,14 @@ const AssistantMessage = memo(function AssistantMessage({ m }: { m: ChatMessage 
  * they are reports with tables and code, and a bubble squeezed them into a
  * column too narrow to read either.
  */
-export function MessageList({ messages, isSending, onSuggest, onSweep }: Props) {
+export function MessageList({
+  messages,
+  isSending,
+  onSuggest,
+  onSweep,
+  specialists,
+  autonomy,
+}: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
@@ -165,7 +176,14 @@ export function MessageList({ messages, isSending, onSuggest, onSweep }: Props) 
   }, [messages, isSending, streaming]);
 
   if (messages.length === 0 && !isSending) {
-    return <Welcome onSuggest={onSuggest} onSweep={onSweep} />;
+    return (
+      <Welcome
+        onSuggest={onSuggest}
+        onSweep={onSweep}
+        specialists={specialists}
+        autonomy={autonomy}
+      />
+    );
   }
 
   return (

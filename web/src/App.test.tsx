@@ -841,6 +841,48 @@ describe("resilience and safety posture", () => {
     );
   }
 
+  it("offers only the enabled specialists, and says what the autonomy level allows", async () => {
+    stubApi(() => Promise.resolve(jsonResponse({ session_id: "s1", response: "ok" })), {
+      subject: "alice",
+      role: "operator",
+      autonomy_level: "L2",
+      model_provider: "gemini",
+      model_name: "gemini-3-pro",
+      self_test_available: true,
+      specialists: [
+        { key: "kafka", name: "kafka_health_agent" },
+        { key: "k8s", name: "k8s_health_agent", label: "Kubernetes" },
+      ],
+    });
+    localStorage.setItem(storageKeys.token, token);
+    render(<App />);
+
+    expect(await screen.findByText(/read-only \(autonomy L2\)/)).toHaveTextContent(
+      "Ask about Kafka or Kubernetes.",
+    );
+    expect(screen.getByRole("button", { name: /kafka consumer lag/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /pods in trouble/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /elasticsearch health/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /firing alerts/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run triage/i })).toHaveAttribute(
+      "title",
+      "Run a full health sweep across Kafka and Kubernetes",
+    );
+  });
+
+  it("keeps the stock suggestions for a server that doesn't list specialists", async () => {
+    stubApi(() => Promise.resolve(jsonResponse({ session_id: "s1", response: "ok" })));
+    localStorage.setItem(storageKeys.token, token);
+    render(<App />);
+
+    expect(await screen.findByText(/destructive actions are off here/)).toHaveTextContent(
+      "Ask about Kafka, Kubernetes, Elasticsearch, Docker or your alerts.",
+    );
+    expect(
+      screen.getAllByRole("button", { name: /kafka|pods|elasticsearch|alerts/i }),
+    ).toHaveLength(4);
+  });
+
   it("shows the server-resolved autonomy level next to the role", async () => {
     stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));
     localStorage.setItem(storageKeys.token, token);

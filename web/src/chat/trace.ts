@@ -1,4 +1,5 @@
 import type { ProgressEvent } from "../api/types";
+import { specialistFor, specialistLabel, titleCase } from "../specialists";
 
 /** One tool call as the trace shows it. */
 export interface TraceCall {
@@ -151,8 +152,9 @@ export function flatten(trace: Trace): TraceCall[] {
   return trace.flatMap((c) => [c, ...flatten(c.children)]);
 }
 
-/** Human labels for the specialists an operator recognises. */
-const AGENT_LABELS: ReadonlyArray<[RegExp, string]> = [
+/** Names the stock specialists' agents have gone by, for a server that
+ * doesn't list its specialists (and for the root's own sub-agents). */
+const FALLBACK_LABELS: ReadonlyArray<[RegExp, string]> = [
   [/^kafka/, "Kafka"],
   [/^k8s/, "Kubernetes"],
   [/^elasticsearch|^es_/, "Elasticsearch"],
@@ -162,11 +164,16 @@ const AGENT_LABELS: ReadonlyArray<[RegExp, string]> = [
   [/^incident_triage/, "Incident triage"],
 ];
 
-/** "kafka_health_agent" → "Kafka"; unknown names become "Title case words". */
+/**
+ * "kafka_health_agent" → "Kafka". The deployment's own specialist list (from
+ * `/me`) wins, so a plugin specialist shows by its label; then the stock
+ * names; anything else becomes "Title case words".
+ */
 export function agentLabel(name: string): string {
-  for (const [match, label] of AGENT_LABELS) if (match.test(name)) return label;
-  const words = name.replace(/_(agent|specialist)$/, "").replace(/_/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  const known = specialistFor(name);
+  if (known) return specialistLabel(known);
+  for (const [match, label] of FALLBACK_LABELS) if (match.test(name)) return label;
+  return titleCase(name);
 }
 
 /** A one-line summary for a finished trace, e.g. "Kafka, Kubernetes · 7 calls". */

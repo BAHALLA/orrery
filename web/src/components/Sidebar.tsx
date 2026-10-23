@@ -3,6 +3,7 @@ import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
 import type { ConversationSummary } from "../conversations/useConversations";
 import { AgentsIcon, CloseIcon, PlusIcon, RadarIcon, ShieldIcon, TrashIcon } from "./icons";
+import { joinLabels, resolveSpecialists, systemLabels } from "../specialists";
 import { BREAKPOINT_LG, useFocusTrap, useMediaQuery } from "./a11y";
 import { IdentityBadge } from "./IdentityBadge";
 import { OrreryMark } from "./OrreryMark";
@@ -90,6 +91,11 @@ export const Sidebar = memo(function Sidebar({
   const ref = useRef<HTMLElement>(null);
   useFocusTrap(ref, drawer && open);
 
+  const systems = systemLabels(resolveSpecialists(me?.specialists));
+  const sweepTitle = systems.length
+    ? `Run a full health sweep across ${joinLabels(systems)}`
+    : "Run a full health sweep across every system";
+
   // On a narrow screen any navigation also closes the drawer.
   const then =
     <A extends unknown[]>(fn: (...args: A) => void) =>
@@ -145,7 +151,7 @@ export const Sidebar = memo(function Sidebar({
             disabled={isSending}
             className={secondaryButton}
             onClick={then(onRunTriage)}
-            title="Run a full health sweep across Kafka, K8s, Docker, Observability, and Elasticsearch"
+            title={sweepTitle}
           >
             <RadarIcon /> Run triage
           </button>

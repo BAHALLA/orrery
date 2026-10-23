@@ -140,6 +140,23 @@ export interface MeResponse {
   self_test_available: boolean;
   /** What a turn may attach (AEP-030); null when attachments are off. */
   attachments?: AttachmentsInfo | null;
+  /**
+   * The specialists the coordinator can delegate to in this deployment, after
+   * `ORRERY_SPECIALISTS` / `ORRERY_DISABLED_SPECIALISTS` and the admin catalog.
+   * Not sent by servers that predate it: the console then assumes the stock
+   * set. Display only — it never widens or narrows what the server allows.
+   */
+  specialists?: SpecialistInfo[] | null;
+}
+
+/** One enabled specialist, as `/me` lists it. */
+export interface SpecialistInfo {
+  /** Entry-point key: `kafka`, `k8s`, `elasticsearch`… */
+  key: string;
+  /** The agent's name, as progress steps and activity entries report it. */
+  name: string;
+  /** Human label ("Kubernetes"); derived from the key or name when absent. */
+  label?: string;
 }
 
 /** The server's attachment limits. The server re-checks everything by content. */
