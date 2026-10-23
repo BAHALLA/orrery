@@ -1,0 +1,152 @@
+name: Image Scan
+
+# The release workflow's Trivy gate only runs on push to main, so a pull
+# request that breaks it merges green and the release fails afterwards (seven
+# merges went in on a red release that way). This builds the image the same
+# way, without pushing, and runs the same gate (.github/actions/trivy-image-gate):
+#
+# - on pull requests that change what goes into the image. The workflow runs on
+#   every pull request and a first job decides, so "Build & scan image" can be
+#   a required check: a job skipped by `if:` counts as passing, whereas a
+#   workflow skipped by a `paths` filter leaves the check pending forever;
+# - daily on main, because a new advisory can fail an image nobody changed
+#   (that was the cause last time: a Go CVE in the bundled docker CLI). The
+#   daily run also scans the published `latest` image, which keeps its old
+#   packages until the next release.
+#
+# A scheduled failure notifies whoever last changed the cron line, and GitHub
+# pauses schedules after 60 days without repository activity.
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-scan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# The shared gate is referenced as `./.github/actions/...` after checkout.
+# zizmor suggests GitHub's newer `$/` self-repository syntax; kept on `./`
+# until the pinned actionlint understands it (hence the inline ignores).
+
+jobs:
+  changes:
+    name: Does this change the image?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2  # the PR merge commit and its base parent
+
+      # On a pull request the checkout is GitHub's merge commit, so its first
+      # parent is the base: the diff is exactly what the PR changes.
+      - name: Compare with the base
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          printf 'Changed files:\n%s\n' "$changed"
+          # What reaches the image or its gate: the Dockerfile and its context
+          # rules, Python dependencies, the web build's dependencies, the
+          # ignore list, and the gate's own definition.
+          pattern='^(Dockerfile|\.dockerignore|uv\.lock|(.+/)?pyproject\.toml|web/package(-lock)?\.json|\.trivyignore\.yaml|\.github/workflows/(image-scan|release)\.yml|\.github/actions/trivy-image-gate/.+)$'
+          if printf '%s\n' "$changed" | grep -qE "$pattern"; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  scan:
+    name: Build & scan image
+    needs: changes
+    # Fail-closed: scan unless `changes` positively answered "no". A failed
+    # `changes` would otherwise skip this job, and a skipped job passes a
+    # required check. !cancelled() rather than always(): a run superseded by
+    # a newer push has nothing left to gate.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Same daily cache key as the release build, so the `apt-get upgrade`
+      # layer reflects today's Debian fixes rather than a cached replay.
+      - name: Security-updates cache key
+        id: secdate
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      # amd64 only, loaded into the runner's daemon: the scan needs a local
+      # image. Release gates both architectures of the pushed image.
+      # Reads the release's build cache but never writes it.
+      - name: Build (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: orrery-image-scan:ci
+          build-args: |
+            SECURITY_UPDATES_DATE=${{ steps.secdate.outputs.date }}
+          cache-from: type=gha
+
+      - name: Trivy image scan (gate)
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
+        with:
+          image-ref: orrery-image-scan:ci
+
+  published:
+    name: Scan published image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # GHCR paths are lowercase. No login: the package is public. If it is
+      # ever made private, this needs `packages: read` and docker/login-action,
+      # or it fails on authentication rather than on a finding.
+      - name: Resolve image ref
+        id: ref
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "ref=ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]'):latest" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan (amd64)
+        id: amd64
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
+        with:
+          image-ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Trivy scan (arm64)
+        if: always() && steps.amd64.outcome != 'skipped'
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
+        with:
+          image-ref: ${{ steps.ref.outputs.ref }}
+          platform: linux/arm64
+          skip-setup-trivy: "true"

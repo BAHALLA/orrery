@@ -1,0 +1,58 @@
+name: Trivy image gate
+description: >
+  The one definition of Orrery's image vulnerability gate, used by release.yml
+  (the pushed image) and image-scan.yml (pull requests, and the daily scan).
+  Thresholds and ignores live here only, so the two can't drift apart.
+
+inputs:
+  image-ref:
+    description: Image to scan (a local tag or a registry reference).
+    required: true
+  platform:
+    description: Platform to scan in a multi-arch index (default the runner's, linux/amd64).
+    default: ""
+  format:
+    description: Trivy output format (table prints findings in the job log).
+    default: table
+  exit-code:
+    description: Exit code on findings; "1" gates, "0" only reports.
+    default: "1"
+  output:
+    description: File to write the report to (empty prints it).
+    default: ""
+  skip-setup-trivy:
+    description: Reuse the trivy binary installed by an earlier run of this action.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Trivy image scan
+      if: inputs.platform == ''
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        trivyignores: .trivyignore.yaml
+        image-ref: ${{ inputs.image-ref }}
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: ${{ inputs.exit-code }}
+        format: ${{ inputs.format }}
+        output: ${{ inputs.output }}
+        skip-setup-trivy: ${{ inputs.skip-setup-trivy }}
+
+    # A separate step rather than an empty TRIVY_PLATFORM, which trivy would
+    # read as a platform named "".
+    - name: Trivy image scan (${{ inputs.platform }})
+      if: inputs.platform != ''
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_PLATFORM: ${{ inputs.platform }}
+      with:
+        trivyignores: .trivyignore.yaml
+        image-ref: ${{ inputs.image-ref }}
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: ${{ inputs.exit-code }}
+        format: ${{ inputs.format }}
+        output: ${{ inputs.output }}
+        skip-setup-trivy: ${{ inputs.skip-setup-trivy }}
