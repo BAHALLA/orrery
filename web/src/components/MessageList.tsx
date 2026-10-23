@@ -50,7 +50,7 @@ const UserMessage = memo(function UserMessage({ m }: { m: ChatMessage }) {
       </div>
       <div className="flex items-center gap-1.5 px-1 text-xs text-slate-500 dark:text-slate-400">
         <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
-        <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+        <span className="opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
           <CopyButton value={parsed.text} label="Copy the message" />
         </span>
       </div>
@@ -115,7 +115,7 @@ const AssistantMessage = memo(function AssistantMessage({ m }: { m: ChatMessage 
           <span className="font-semibold text-slate-700 dark:text-slate-200">Orrery</span>
           <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
           {m.text && !live ? (
-            <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+            <span className="opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
               <CopyButton value={m.text} label="Copy the reply" />
             </span>
           ) : null}
@@ -172,9 +172,12 @@ export function MessageList({ messages, isSending, onSuggest, onSweep }: Props) 
     <div
       onScroll={handleScroll}
       className="orrery-scroll flex-1 overflow-y-auto"
+      // A log, but not a chatty one: it is busy while an answer is written, so
+      // assistive tech holds the stream instead of reading every token. The
+      // console's status line announces "working" and "answer ready".
       role="log"
       aria-label="Conversation transcript"
-      aria-live="polite"
+      aria-busy={streaming}
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
         {messages.map((m) => {

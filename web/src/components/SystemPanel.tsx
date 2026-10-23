@@ -28,7 +28,7 @@ function CheckRow({ check }: { check: CheckResult }) {
                 into a ticket or a shell; they can't be selected cleanly out of
                 a narrow panel. Shown on hover or keyboard focus. */}
             {check.ok ? null : (
-              <span className="opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+              <span className="opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
                 <CopyButton
                   value={`${check.label}: ${check.detail}${check.hint ? `\nHint: ${check.hint}` : ""}`}
                   label={`Copy the ${check.label} failure detail`}

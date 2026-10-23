@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Identity } from "../auth/token";
 import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
+import { useDeferredDelete } from "../conversations/useDeferredDelete";
 import { AgentsDashboard } from "./AgentsDashboard";
+import { useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { pendingPlacement } from "../chat/pending";
@@ -115,7 +117,33 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     setAgentsOpened(true);
     setView("agents");
   }, []);
-  const onDelete = useCallback((id: string) => void deleteConversation(id), [deleteConversation]);
+  // Deleting is held for a few seconds behind an Undo (the store delete is
+  // permanent). The row hides at once; if it was the open conversation, a new
+  // chat takes its place, and Undo brings it back.
+  const deleteNow = useCallback((id: string) => void deleteConversation(id), [deleteConversation]);
+  const deferred = useDeferredDelete(deleteNow);
+  const { schedule: scheduleDelete, undo: cancelDelete } = deferred;
+  const restoreOnUndo = useRef<string | null>(null);
+  const { history, activeId } = conversations;
+  const onDelete = useCallback(
+    (id: string) => {
+      const title = history.find((c) => c.id === id)?.title ?? "conversation";
+      restoreOnUndo.current = id === activeId ? id : null;
+      if (id === activeId) newConversation();
+      scheduleDelete(id, title);
+    },
+    [history, activeId, newConversation, scheduleDelete],
+  );
+  const undoDelete = useCallback(() => {
+    cancelDelete();
+    if (restoreOnUndo.current) selectConversation(restoreOnUndo.current);
+    restoreOnUndo.current = null;
+  }, [cancelDelete, selectConversation]);
+  const pendingDeleteId = deferred.pending?.id ?? null;
+  const visibleHistory = useMemo(
+    () => (pendingDeleteId ? history.filter((c) => c.id !== pendingDeleteId) : history),
+    [history, pendingDeleteId],
+  );
   const onSuggest = useCallback((prompt: string) => void send(prompt), [send]);
   const onSweep = useCallback(() => void runTriage(), [runTriage]);
 
@@ -136,6 +164,8 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     panel.focus({ preventScroll: true });
   }, []);
 
+  const announcement = useTurnAnnouncement(chat.isSending, chat.error !== null);
+
   // The reply being written, if any — drives the live status in the header.
   // A streaming reply is always the newest message: nothing is appended after it.
   const last = chat.messages.at(-1);
@@ -145,7 +175,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   return (
     <div className="flex h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar
-        history={conversations.history}
+        history={visibleHistory}
         activeId={conversations.activeId}
         isLoading={conversations.isLoading}
         error={conversations.error}
@@ -167,6 +197,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        {/* The one live region for a turn: "working", then "answer ready". */}
+        <p role="status" className="sr-only">
+          {announcement}
+        </p>
         <header className="flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80">
           <button
             type="button"
@@ -181,7 +215,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           </h2>
           {live ? (
             <span
-              role="status"
+              aria-hidden="true"
               className="hidden items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 sm:inline-flex dark:bg-brand-950/60 dark:text-brand-200"
             >
               <OrbitSpinner />
@@ -362,6 +396,32 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           </div>
         ) : null}
       </main>
+
+      {deferred.pending ? (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-50 flex w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm text-white shadow-xl shadow-slate-900/30 lg:left-4 lg:translate-x-0 dark:bg-slate-800"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            Deleted <span className="font-medium">{deferred.pending.title}</span>
+          </span>
+          <button
+            type="button"
+            onClick={undoDelete}
+            className="rounded-md px-2 py-1 font-semibold text-brand-200 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:outline-none"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss and delete now"
+            onClick={deferred.commit}
+            className="rounded-md p-1 text-slate-300 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:outline-none"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

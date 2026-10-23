@@ -207,7 +207,6 @@ export const RunTrace = memo(function RunTrace({ trace, live, durationMs }: Prop
     return (
       <section
         aria-label="Agent progress"
-        aria-live="polite"
         className="mb-3 rounded-xl border border-brand-200/70 bg-brand-50/50 p-3 dark:border-brand-900/60 dark:bg-brand-950/30"
       >
         <div className="mb-2 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">

@@ -1,8 +1,9 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
 import type { ConversationSummary } from "../conversations/useConversations";
 import { AgentsIcon, CloseIcon, PlusIcon, RadarIcon, ShieldIcon, TrashIcon } from "./icons";
+import { BREAKPOINT_LG, useFocusTrap, useMediaQuery } from "./a11y";
 import { IdentityBadge } from "./IdentityBadge";
 import { OrreryMark } from "./OrreryMark";
 import { ThemeToggle } from "./ThemeToggle";
@@ -82,6 +83,13 @@ export const Sidebar = memo(function Sidebar({
   onShowChat,
   onSignOut,
 }: Props) {
+  // Below `lg` the rail is a drawer: modal while open (focus moves in and
+  // stays), and inert while closed so Tab can't wander into it off-screen.
+  const wide = useMediaQuery(BREAKPOINT_LG);
+  const drawer = !wide;
+  const ref = useRef<HTMLElement>(null);
+  useFocusTrap(ref, drawer && open);
+
   // On a narrow screen any navigation also closes the drawer.
   const then =
     <A extends unknown[]>(fn: (...args: A) => void) =>
@@ -101,6 +109,10 @@ export const Sidebar = memo(function Sidebar({
         }`}
       />
       <aside
+        ref={ref}
+        aria-label="Navigation"
+        inert={drawer && !open}
+        {...(drawer && open ? { role: "dialog", "aria-modal": true } : {})}
         className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 lg:static lg:z-auto lg:translate-x-0 dark:border-slate-800 dark:bg-slate-900 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
@@ -211,7 +223,7 @@ export const Sidebar = memo(function Sidebar({
                     type="button"
                     aria-label={`Delete conversation: ${c.title}`}
                     onClick={() => deleteConversation(c.id)}
-                    className="absolute top-2 right-1.5 rounded-md p-1 text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-crit-bg hover:text-crit-fg focus:opacity-100"
+                    className="absolute top-2 right-1.5 rounded-md p-1 text-slate-500 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-crit-bg hover:text-crit-fg focus:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none pointer-coarse:opacity-100"
                   >
                     <TrashIcon size={14} />
                   </button>

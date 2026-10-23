@@ -38,7 +38,7 @@ function Pre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
   const code = textOf(children).replace(/\n$/, "");
   return (
     <div className="group relative">
-      <div className="absolute top-1.5 right-1.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="absolute top-1.5 right-1.5 opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100">
         <CopyButton
           value={code}
           label="Copy code block"
