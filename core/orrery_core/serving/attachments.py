@@ -131,6 +131,9 @@ class AttachmentLimits:
     #: to ``max_total_bytes`` until its files are prepared, which no decode
     #: limit covers; beyond this a request waits, then gets a 503.
     max_concurrent_uploads: int = 4
+    #: Multipart bodies one caller may have in flight. Without it one user
+    #: could hold every process-wide slot and stall everyone else's uploads.
+    max_uploads_per_user: int = 1
     #: Deadline for receiving a body. uvicorn has none, so a slow-drip client
     #: could otherwise hold a connection and its buffer indefinitely.
     read_timeout_seconds: float = 60.0
@@ -152,6 +155,9 @@ class AttachmentLimits:
             ),
             max_concurrent_uploads=max(
                 1, _env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS", d.max_concurrent_uploads)
+            ),
+            max_uploads_per_user=max(
+                1, _env_int("ORRERY_ATTACHMENT_MAX_UPLOADS_PER_USER", d.max_uploads_per_user)
             ),
             read_timeout_seconds=float(
                 max(1, _env_int("ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS", 60))

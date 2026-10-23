@@ -45,6 +45,7 @@ from google.adk.workflow import Workflow
 from google.genai import types
 
 from ..persistence.db import create_session_service
+from ..security.confirmation_flow import conversation_scope
 from ..security.guardrails import (
     ACTOR_STATE_KEY,
     CONFIRMATION_DECISION_STATE_KEY,
@@ -409,7 +410,7 @@ class AgentGateway:
         # those inside AgentTool specialists and to_thread workers, sees it.
         # Without one, an enclosing scope (service_scope for batch runs) stands.
         scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
-        with scope, attachment_scope(attachments):
+        with scope, conversation_scope(session_id), attachment_scope(attachments):
             async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
@@ -440,7 +441,15 @@ class AgentGateway:
         the same stamps.
         """
         delta = dict(state_delta or {})
-        delta.setdefault(ACTOR_STATE_KEY, user_id)
+        # These three keys are the gateway's alone. The actor is always the
+        # verified sender: the gate matches a decision's ``by`` (this same
+        # ``user_id``) against it, so any other value would either break
+        # approvals or let a delta name someone else as the requester. A
+        # caller-supplied decision or strict flag is dropped for the same
+        # reason — a decision is only ever classified from the message text.
+        delta.pop(CONFIRMATION_STRICT_STATE_KEY, None)
+        delta.pop(CONFIRMATION_DECISION_STATE_KEY, None)
+        delta[ACTOR_STATE_KEY] = user_id
         if self.verified_confirmation:
             delta[CONFIRMATION_STRICT_STATE_KEY] = True
             # Written on EVERY turn, including a clearing ``None``. A decision is

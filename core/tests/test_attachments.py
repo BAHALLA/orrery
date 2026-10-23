@@ -538,7 +538,9 @@ async def test_a_slow_body_gets_a_408(content_type):
 
 
 def test_uploads_wait_for_a_slot_then_get_a_503(chat_app):
-    client, llm = chat_app(AttachmentLimits(max_concurrent_uploads=1, read_timeout_seconds=0.2))
+    client, llm = chat_app(
+        AttachmentLimits(max_concurrent_uploads=1, max_uploads_per_user=2, read_timeout_seconds=0.2)
+    )
     held = threading.Event()
 
     async def hold_slot(request: Any, limits: Any) -> Any:
@@ -561,6 +563,34 @@ def test_uploads_wait_for_a_slot_then_get_a_503(chat_app):
 
     assert second.status_code == 503
     assert second.headers["retry-after"] == "5"
+    assert llm.requests == []
+
+
+def test_one_caller_cannot_hold_more_than_its_upload_share(chat_app):
+    """A second upload from the same caller is refused before it takes a global slot."""
+    client, llm = chat_app(AttachmentLimits(max_concurrent_uploads=4, read_timeout_seconds=5))
+    held = threading.Event()
+
+    async def hold_slot(request: Any, limits: Any) -> Any:
+        held.set()
+        await asyncio.sleep(0.5)
+        raise HTTPException(status_code=408)
+
+    with patch("orrery_core.serving.server.read_chat_input", side_effect=hold_slot):
+        first = threading.Thread(
+            target=client.post,
+            args=("/chat",),
+            kwargs={"files": [("files", ("a.log", b"x", "text/plain"))]},
+        )
+        first.start()
+        try:
+            assert held.wait(5)
+            second = client.post("/chat", files=[("files", ("b.log", b"y", "text/plain"))])
+        finally:
+            first.join()
+
+    assert second.status_code == 429
+    assert "previous upload" in second.json()["detail"]
     assert llm.requests == []
 
 
