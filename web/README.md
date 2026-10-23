@@ -50,8 +50,10 @@ Milestone 2 — triage view:
   (healthy / degraded / critical) as a color-coded badge with the full triage
   report rendered as prose in the inspector's Triage tab, which auto-opens when
   a verdict lands
-- **Live tool calls**: while a request is in flight the table is polled every
-  2.5s, so multi-specialist sweeps become visible as each specialist completes
+- **Live tool calls**: the streamed trace (`POST /chat/stream`) shows each
+  specialist's calls as they happen; the table, pending approval and triage
+  verdict are refreshed once, when the stream reports `done` (or when the
+  non-streaming `POST /chat` fallback returns) — no polling
 
 Remaining: per-system status chips, the remediation-loop trace (batch
 workflow only today), and Milestone 3 (onboarding wizard).
@@ -113,6 +115,16 @@ src/
   the server decides who may approve (requester-only, args-pinned, TTL'd).
 - **Same-origin by default.** `VITE_API_BASE_URL` is empty in production because
   FastAPI serves the bundle itself; a full URL is only for cross-origin dev.
+- **Copy follows the deployment.** The empty state's suggestions, the trace's
+  agent labels, the triage rollup and the sweep tooltip read the enabled
+  specialists from `GET /me` (`specialists: {key, name, label?}[]`) and the
+  autonomy level from `autonomy_level`; a server that doesn't send
+  `specialists` gets the stock set (`src/specialists.ts`). Display only — the
+  server decides what the coordinator can reach.
+- **Status colours are tokens.** `ok / warn / crit / guarded / running /
+refused` are CSS variables (light and dark) in `styles/index.css`, used via
+  `components/severity.ts`. A gate's refusal is `refused` (neutral), not an
+  error.
 - **Types are hand-maintained for now.** `src/api/types.ts` mirrors the FastAPI
   models; AEP-019 will generate them from the OpenAPI schema so the compiler
   catches contract drift.

@@ -92,7 +92,9 @@ type ConversationsAction =
   | { type: "select"; id: string }
   | { type: "delete"; id: string; fallback: Conversation }
   | { type: "patch"; patch: ConversationPatch; at: number }
-  | { type: "patchById"; id: string; patch: ConversationPatch; at: number }
+  /** `at` absent: the write isn't new activity (a streamed delta), so the
+   * conversation keeps its place in the history instead of re-sorting it. */
+  | { type: "patchById"; id: string; patch: ConversationPatch; at?: number }
   | { type: "hydrate"; listed: Conversation[] }
   | { type: "transcript"; id: string; title: string; messages: ChatMessage[] };
 
@@ -131,7 +133,7 @@ function reducer(state: ConversationsState, action: ConversationsAction): Conver
       const list = state.list.map((c) => {
         if (c.id !== target) return c;
         const delta = typeof action.patch === "function" ? action.patch(c) : action.patch;
-        return { ...c, ...delta, updatedAt: action.at };
+        return { ...c, ...delta, updatedAt: action.at ?? c.updatedAt };
       });
       return { ...state, list };
     }
@@ -183,8 +185,49 @@ export interface ConversationsController {
   patchActive: (patch: ConversationPatch) => void;
   /** Like {@link patchActive}, but for a named conversation — for writes that
    * arrive asynchronously (a streamed reply) and must land on the conversation
-   * that asked, even if the user has since switched to another. */
-  patchConversation: (id: string, patch: ConversationPatch) => void;
+   * that asked, even if the user has since switched to another.
+   *
+   * `touch: false` leaves `updatedAt` alone: a streamed delta is not new
+   * activity, and bumping the timestamp on each one re-sorted the history and
+   * re-rendered the sidebar dozens of times a second. */
+  patchConversation: (id: string, patch: ConversationPatch, options?: { touch?: boolean }) => void;
+  /** The sidebar's view of the list, newest first. Its identity only changes
+   * when a row would look different, so a streaming reply doesn't redraw it. */
+  history: ConversationSummary[];
+}
+
+/** What one history row shows. */
+export interface ConversationSummary {
+  id: string;
+  sessionId: string | null;
+  title: string;
+  updatedAt: number;
+  /** An unused draft ("New chat" with nothing sent). */
+  draft: boolean;
+}
+
+function sameSummaries(a: ConversationSummary[], b: ConversationSummary[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every(
+      (x, i) =>
+        x.id === b[i].id &&
+        x.sessionId === b[i].sessionId &&
+        x.title === b[i].title &&
+        x.updatedAt === b[i].updatedAt &&
+        x.draft === b[i].draft,
+    )
+  );
+}
+
+function summarize(list: Conversation[]): ConversationSummary[] {
+  return list.map((c) => ({
+    id: c.id,
+    sessionId: c.sessionId,
+    title: c.title,
+    updatedAt: c.updatedAt,
+    draft: isUntouchedDraft(c),
+  }));
 }
 
 /**
@@ -284,9 +327,16 @@ export function useConversations(token: string | null): ConversationsController 
 
   const selectConversation = useCallback((id: string) => dispatch({ type: "select", id }), []);
 
+  // Read at call time rather than closed over, so `deleteConversation` keeps
+  // one identity across the many list updates a streaming reply makes.
+  const listRef = useRef(list);
+  useEffect(() => {
+    listRef.current = list;
+  }, [list]);
+
   const deleteConversation = useCallback(
     async (id: string) => {
-      const target = list.find((c) => c.id === id);
+      const target = listRef.current.find((c) => c.id === id);
       // A draft was never stored; there is nothing to delete but the row.
       if (target?.sessionId) {
         try {
@@ -301,7 +351,7 @@ export function useConversations(token: string | null): ConversationsController 
       }
       dispatch({ type: "delete", id, fallback: emptyConversation() });
     },
-    [client, list],
+    [client],
   );
 
   const patchActive = useCallback(
@@ -310,12 +360,25 @@ export function useConversations(token: string | null): ConversationsController 
   );
 
   const patchConversation = useCallback(
-    (id: string, patch: ConversationPatch) =>
-      dispatch({ type: "patchById", id, patch, at: Date.now() }),
+    (id: string, patch: ConversationPatch, options: { touch?: boolean } = {}) =>
+      dispatch({
+        type: "patchById",
+        id,
+        patch,
+        ...(options.touch === false ? {} : { at: Date.now() }),
+      }),
     [],
   );
 
   const sorted = useMemo(() => [...list].sort((a, b) => b.updatedAt - a.updatedAt), [list]);
+
+  // Recomputed on every list change, but the *previous* array is kept when no
+  // row would look different — so a memoized sidebar skips the dozens of
+  // transcript updates a streaming reply makes. (State adjusted during render,
+  // React's documented alternative to an effect for derived values.)
+  const [history, setHistory] = useState<ConversationSummary[]>(() => summarize(sorted));
+  const nextHistory = summarize(sorted);
+  if (!sameSummaries(history, nextHistory)) setHistory(nextHistory);
 
   return {
     conversations: sorted,
@@ -328,5 +391,6 @@ export function useConversations(token: string | null): ConversationsController 
     deleteConversation,
     patchConversation,
     patchActive,
+    history: sameSummaries(history, nextHistory) ? history : nextHistory,
   };
 }

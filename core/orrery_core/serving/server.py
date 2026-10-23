@@ -63,6 +63,7 @@ from ..concurrency import configure_default_executor
 from ..observability.audit import audit_event
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
+from ..registry import key_of
 from ..security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
@@ -90,7 +91,7 @@ from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
-from .inventory import agent_inventory
+from .inventory import agent_inventory, specialist_entries
 from .onboarding import (
     IntegrationProbe,
     check_model_connectivity,
@@ -401,6 +402,16 @@ class AttachmentsInfo(BaseModel):
     image_types: list[str]
 
 
+class SpecialistInfo(BaseModel):
+    """A specialist the coordinator can delegate to, for the console's copy."""
+
+    #: Entry-point key (``kafka``), or the agent name when it has none.
+    key: str
+    #: Agent name (``kafka_health_agent``).
+    name: str
+    label: str | None = None
+
+
 class MeResponse(BaseModel):
     """Who the caller is and what this deployment will let them do.
 
@@ -419,6 +430,11 @@ class MeResponse(BaseModel):
     self_test_available: bool
     #: What a chat turn may attach, or ``null`` when attachments are off.
     attachments: AttachmentsInfo | None = None
+    #: The specialists the coordinator reaches right now (after
+    #: ``ORRERY_SPECIALISTS`` and catalog edits); empty for a root that
+    #: delegates to none. ``null`` only from servers older than this field,
+    #: which the console reads as "the stock set". Display only.
+    specialists: list[SpecialistInfo] | None = None
 
 
 class CheckResultModel(BaseModel):
@@ -1141,7 +1157,13 @@ def create_app(
         level actually in force, so a viewer can see up front why mutating tools
         are unavailable — rather than discovering it when a tool is refused.
         """
+        # Read per request: an admin catalog edit swaps the root agent.
+        reachable = specialist_entries(gateway.root_agent)
         return MeResponse(
+            specialists=[
+                SpecialistInfo(key=key_of(entry.name) or entry.name, name=entry.name)
+                for entry in reachable
+            ],
             subject=auth.subject,
             role=auth.role,
             autonomy_level=_resolve_autonomy_level(None),

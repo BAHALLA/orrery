@@ -300,3 +300,17 @@ def test_options_list_excluded_specialists_without_importing_them(monkeypatch):
     monkeypatch.setattr(admin, "installed_specialists", lambda: installed)
     billing = next(s for s in ChatAgentAdmin().options().specialists if s.key == "billing")
     assert not billing.available and billing.source == "plugin" and billing.agent_name == ""
+
+
+def test_the_console_lists_the_real_coordinators_specialists_not_its_helpers():
+    """What /me sends the console, against the shipped tree: the triage sweep
+    agent is an AgentTool too, but it is not a system to ask about."""
+    from orrery_core.registry import key_of
+    from orrery_core.serving.inventory import specialist_entries
+
+    entries = specialist_entries(chat.orrery_chat_agent)
+    names = {e.name for e in entries}
+
+    assert "incident_triage_agent" not in names
+    assert {"kafka_health_agent", "k8s_health_agent"} <= names
+    assert key_of("kafka_health_agent") == "kafka"

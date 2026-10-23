@@ -18,6 +18,32 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+function sseFrame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function progressStep(over: Record<string, unknown>) {
+  return {
+    call_id: "c",
+    phase: "start",
+    agent: "orrery_chat_agent",
+    tool: "t",
+    delegation: false,
+    guarded: false,
+    outcome: null,
+    status: "",
+    elapsed_ms: null,
+    ...over,
+  };
+}
+
+function sseResponse(frames: string[]): Response {
+  return new Response(frames.join(""), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -122,23 +148,21 @@ describe("App auth flow", () => {
       frame("message", { session_id: "s7", text: "Lag is flat." }),
       frame("done", {}),
     ].join("");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: RequestInfo | URL) => {
-        const u = String(url);
-        if (u.endsWith("/chat/stream")) {
-          return new Response(body, {
-            status: 200,
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        }
-        if (u.includes("/activity")) return jsonResponse({ session_id: "s7", entries: [] });
-        if (u.includes("/confirmations/pending")) return jsonResponse({ pending: null });
-        if (u.includes("/triage"))
-          return jsonResponse({ session_id: "s7", severity: null, report: null });
-        return jsonResponse({ sessions: [] });
-      }),
-    );
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      if (u.endsWith("/chat/stream")) {
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      if (u.includes("/activity")) return jsonResponse({ session_id: "s7", entries: [] });
+      if (u.includes("/confirmations/pending")) return jsonResponse({ pending: null });
+      if (u.includes("/triage"))
+        return jsonResponse({ session_id: "s7", severity: null, report: null });
+      return jsonResponse({ sessions: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
 
     const user = userEvent.setup();
@@ -155,6 +179,61 @@ describe("App auth flow", () => {
     // …and expands to the specialist's own tool call.
     await user.click(summary);
     expect(screen.getByText("get_consumer_lag")).toBeInTheDocument();
+    // No polling while the turn ran: the side panes are read once, on `done`.
+    const activityCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes("/activity"));
+    expect(activityCalls).toHaveLength(1);
+  });
+
+  it("tells a call awaiting approval apart from one a gate refused", async () => {
+    const end = (call_id: string, tool: string, status: string) =>
+      sseFrame(
+        "progress",
+        progressStep({ call_id, phase: "end", tool, guarded: true, outcome: "refused", status }),
+      );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        const u = String(url);
+        if (u.endsWith("/chat/stream")) {
+          return sseResponse([
+            sseFrame("session", { session_id: "s8" }),
+            end("a", "restart_container", "confirmation_required"),
+            end("b", "delete_topic", "BLOCKED"),
+            sseFrame("message", { session_id: "s8", text: "One needs you, one is off-limits." }),
+            sseFrame("done", {}),
+          ]);
+        }
+        if (u.includes("/confirmations/pending")) {
+          return jsonResponse({
+            pending: {
+              tool_name: "restart_container",
+              level: "confirm",
+              args: { name: "orders-worker" },
+              created_at: 1,
+            },
+          });
+        }
+        if (u.includes("/activity")) return jsonResponse({ session_id: "s8", entries: [] });
+        if (u.includes("/triage"))
+          return jsonResponse({ session_id: "s8", severity: null, report: null });
+        return jsonResponse({ sessions: [] });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["operator"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "fix orders");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const summary = await screen.findByText("2 tool calls · 1 awaiting approval · 1 refused");
+    await user.click(summary);
+    // The refusal says why, as policy rather than failure.
+    expect(screen.getByText(/not allowed at this autonomy level/)).toBeInTheDocument();
+    // The awaiting chip leads to the card that decides it.
+    const panel = await screen.findByRole("alertdialog", { name: /pending confirmation/i });
+    await user.click(screen.getByRole("button", { name: /restart_container.*review it/i }));
+    expect(panel).toHaveFocus();
   });
 
   it("restores history from the server in a browser that has never seen it", async () => {
@@ -273,7 +352,21 @@ describe("App auth flow", () => {
     const history = await screen.findByRole("navigation", { name: /conversation history/i });
     await waitFor(() => expect(within(history).getByText("check kafka")).toBeInTheDocument());
 
+    const isDeleted = () =>
+      fetchMock.mock.calls.some(
+        ([u, init]) => String(u).endsWith("/session/s1") && init?.method === "DELETE",
+      );
+
+    // The row goes at once, behind an Undo; nothing is deleted yet.
     await user.click(screen.getByRole("button", { name: /delete conversation: check kafka/i }));
+    expect(within(history).queryByText("check kafka")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(within(history).getByText("check kafka")).toBeInTheDocument();
+    expect(isDeleted()).toBe(false);
+
+    // Dismissing the notice deletes without waiting out the window.
+    await user.click(screen.getByRole("button", { name: /delete conversation: check kafka/i }));
+    await user.click(screen.getByRole("button", { name: /dismiss and delete now/i }));
 
     await waitFor(() =>
       expect(
@@ -364,6 +457,64 @@ describe("App auth flow", () => {
       const last = chatCalls[chatCalls.length - 1];
       expect(JSON.parse(String(last[1]?.body))).toMatchObject({ message: "approve" });
     });
+    // The transcript shows what was approved, not a bare "approve" bubble.
+    const transcript = screen.getByRole("log", { name: /conversation transcript/i });
+    expect(await within(transcript).findByText(/You approved/, { exact: false })).toHaveTextContent(
+      /You approved restart_deployment \(payment-api\)/,
+    );
+    expect(within(transcript).queryByText("approve")).not.toBeInTheDocument();
+  });
+
+  it("shows the approval card only in the conversation it is waiting in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        const path = new URL(String(url), "http://localhost").pathname;
+        if (path === "/sessions") {
+          return jsonResponse({
+            sessions: [
+              { session_id: "s2", title: "check kafka", last_update_time: 200 },
+              { session_id: "s1", title: "fix orders", last_update_time: 100 },
+            ],
+          });
+        }
+        if (path === "/confirmations/pending") {
+          return jsonResponse({
+            pending: {
+              tool_name: "restart_container",
+              level: "confirm",
+              args: { name: "orders-worker" },
+              created_at: 1,
+              session_id: "s1",
+            },
+          });
+        }
+        if (path.startsWith("/session/") && path.split("/").length === 3) {
+          return jsonResponse({
+            session_id: path.slice("/session/".length),
+            title: "",
+            messages: [],
+            last_update_time: 0,
+          });
+        }
+        return jsonResponse({ entries: [], severity: null, report: null });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["operator"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    // The newest conversation opens first: not where the action waits.
+    const pointer = await screen.findByText(/waiting for your approval in/i);
+    expect(pointer).toHaveTextContent("fix orders");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open fix orders" }));
+
+    const panel = await screen.findByRole("alertdialog", { name: /pending confirmation/i });
+    expect(panel).toHaveTextContent("restart_container");
+    expect(screen.queryByText(/waiting for your approval in/i)).not.toBeInTheDocument();
   });
 
   it("runs a triage and auto-opens the verdict report", async () => {
@@ -544,6 +695,81 @@ describe("App auth flow", () => {
   });
 });
 
+describe("accessibility", () => {
+  function stubQuiet() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        const u = String(url);
+        if (u.endsWith("/chat/stream") || u.endsWith("/chat")) {
+          return jsonResponse({ session_id: "s1", response: "All brokers up." });
+        }
+        return jsonResponse({ sessions: [], entries: [], pending: null, severity: null });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["admin"] }));
+  }
+
+  it("announces the turn once instead of reading every token", async () => {
+    stubQuiet();
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "brokers?");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(await screen.findByText("All brokers up.")).toBeInTheDocument();
+    const transcript = screen.getByRole("log", { name: /conversation transcript/i });
+    expect(transcript).not.toHaveAttribute("aria-live");
+    expect(transcript).toHaveAttribute("aria-busy", "false");
+    await waitFor(() =>
+      expect(screen.getAllByRole("status").some((s) => s.textContent === "Answer ready")).toBe(
+        true,
+      ),
+    );
+  });
+
+  it("inspector tabs follow the tabs pattern, and the drawer keeps and returns focus", async () => {
+    stubQuiet();
+    const user = userEvent.setup();
+    render(<App />);
+
+    const opener = await screen.findByRole("button", { name: /tool calls/i });
+    await user.click(opener);
+
+    // jsdom has no matchMedia, so this is the narrow layout: a modal drawer.
+    const drawer = await screen.findByRole("dialog", { name: /inspector/i });
+    expect(drawer).toContainElement(document.activeElement as HTMLElement);
+
+    const tools = within(drawer).getByRole("tab", { name: /tool calls/i });
+    expect(tools).toHaveAttribute("aria-selected", "true");
+    expect(tools).toHaveAttribute("tabindex", "0");
+    const panel = within(drawer).getByRole("tabpanel");
+    expect(tools).toHaveAttribute("aria-controls", panel.id);
+    expect(panel).toHaveAttribute("aria-labelledby", tools.id);
+
+    tools.focus();
+    await user.keyboard("{ArrowRight}");
+    const triage = within(drawer).getByRole("tab", { name: /triage/i });
+    expect(triage).toHaveAttribute("aria-selected", "true");
+    expect(triage).toHaveFocus();
+    expect(tools).toHaveAttribute("tabindex", "-1");
+    await user.keyboard("{End}");
+    expect(within(drawer).getByRole("tab", { name: /system/i })).toHaveFocus();
+
+    // Tab wraps inside the drawer rather than escaping behind the scrim.
+    const close = within(drawer).getByRole("button", { name: /close inspector/i });
+    for (let i = 0; i < 6; i++) {
+      await user.tab();
+      expect(drawer).toContainElement(document.activeElement as HTMLElement);
+    }
+    close.focus();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: /inspector/i })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+});
+
 describe("resilience and safety posture", () => {
   const token = makeToken({ sub: "alice", roles: ["operator"] });
 
@@ -614,6 +840,48 @@ describe("resilience and safety posture", () => {
       }),
     );
   }
+
+  it("offers only the enabled specialists, and says what the autonomy level allows", async () => {
+    stubApi(() => Promise.resolve(jsonResponse({ session_id: "s1", response: "ok" })), {
+      subject: "alice",
+      role: "operator",
+      autonomy_level: "L2",
+      model_provider: "gemini",
+      model_name: "gemini-3-pro",
+      self_test_available: true,
+      specialists: [
+        { key: "kafka", name: "kafka_health_agent" },
+        { key: "k8s", name: "k8s_health_agent", label: "Kubernetes" },
+      ],
+    });
+    localStorage.setItem(storageKeys.token, token);
+    render(<App />);
+
+    expect(await screen.findByText(/read-only \(autonomy L2\)/)).toHaveTextContent(
+      "Ask about Kafka or Kubernetes.",
+    );
+    expect(screen.getByRole("button", { name: /kafka consumer lag/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /pods in trouble/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /elasticsearch health/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /firing alerts/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run triage/i })).toHaveAttribute(
+      "title",
+      "Run a full health sweep across Kafka and Kubernetes",
+    );
+  });
+
+  it("keeps the stock suggestions for a server that doesn't list specialists", async () => {
+    stubApi(() => Promise.resolve(jsonResponse({ session_id: "s1", response: "ok" })));
+    localStorage.setItem(storageKeys.token, token);
+    render(<App />);
+
+    expect(await screen.findByText(/destructive actions are off here/)).toHaveTextContent(
+      "Ask about Kafka, Kubernetes, Elasticsearch, Docker or your alerts.",
+    );
+    expect(
+      screen.getAllByRole("button", { name: /kafka|pods|elasticsearch|alerts/i }),
+    ).toHaveLength(4);
+  });
 
   it("shows the server-resolved autonomy level next to the role", async () => {
     stubApi(async () => jsonResponse({ session_id: "s1", response: "hi" }));

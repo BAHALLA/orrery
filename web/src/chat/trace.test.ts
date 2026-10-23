@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProgressEvent } from "../api/types";
-import { agentLabel, applyProgress, flatten, summarize, type Trace } from "./trace";
+import { agentLabel, applyProgress, flatten, refusalReason, summarize, type Trace } from "./trace";
 
 function step(over: Partial<ProgressEvent>): ProgressEvent {
   return {
@@ -64,24 +64,48 @@ describe("applyProgress", () => {
     ]);
   });
 
-  it("records a refusal as refused, not as a failure", () => {
+  it("records a call paused for approval as awaiting, not refused", () => {
+    for (const status of ["confirmation_required", "AWAITING_CONFIRMATION"]) {
+      const trace = run([
+        step({ call_id: "t1", tool: "restart_deployment", guarded: true }),
+        step({
+          call_id: "t1",
+          phase: "end",
+          tool: "restart_deployment",
+          guarded: true,
+          outcome: "refused",
+          status,
+        }),
+      ]);
+
+      expect(trace[0]).toMatchObject({ state: "awaiting", status, guarded: true });
+    }
+  });
+
+  it.each([
+    "BLOCKED",
+    "access_denied",
+    "CALL_BUDGET_EXHAUSTED",
+    "DELEGATION_BUDGET_EXHAUSTED",
+    "REPEATED_FAILURE",
+    "error",
+  ])("records a gate's %s as refused, not as a failure", (status) => {
     const trace = run([
-      step({ call_id: "t1", tool: "restart_deployment", guarded: true }),
       step({
         call_id: "t1",
         phase: "end",
-        tool: "restart_deployment",
+        tool: "scale_deployment",
         guarded: true,
         outcome: "refused",
-        status: "confirmation_required",
+        status,
       }),
     ]);
+    expect(trace[0].state).toBe("refused");
+  });
 
-    expect(trace[0]).toMatchObject({
-      state: "refused",
-      status: "confirmation_required",
-      guarded: true,
-    });
+  it("keeps a tool's own error status a failure", () => {
+    const trace = run([step({ call_id: "t1", phase: "end", outcome: "error", status: "error" })]);
+    expect(trace[0].state).toBe("error");
   });
 
   it("accepts an end whose start it never saw", () => {
@@ -108,5 +132,24 @@ describe("labels and summary", () => {
 
     expect(flatten(trace)).toHaveLength(3);
     expect(summarize(trace)).toBe("Kafka · 2 tool calls");
+  });
+
+  it("counts awaiting and refused calls separately", () => {
+    const end = (call_id: string, status: string) =>
+      step({ call_id, phase: "end", outcome: "refused", status });
+    const trace = run([
+      end("a", "confirmation_required"),
+      end("b", "BLOCKED"),
+      end("c", "access_denied"),
+    ]);
+    expect(summarize(trace)).toBe("3 tool calls · 1 awaiting approval · 2 refused");
+  });
+
+  it("explains a refusal as policy, not as a fault", () => {
+    expect(refusalReason("BLOCKED")).toMatch(/autonomy level/);
+    expect(refusalReason("access_denied")).toMatch(/role/);
+    expect(refusalReason("CALL_BUDGET_EXHAUSTED")).toMatch(/budget/);
+    expect(refusalReason("error")).toMatch(/circuit open/);
+    expect(refusalReason("")).toBe("refused by a guard");
   });
 });

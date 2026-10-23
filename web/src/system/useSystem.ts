@@ -7,6 +7,7 @@ import type {
   MeResponse,
   SelfTestResponse,
 } from "../api/types";
+import { resolveSpecialists, setActiveSpecialists } from "../specialists";
 
 export interface SystemController {
   /** The server's own view of the caller — null until it loads. */
@@ -72,6 +73,8 @@ export function useSystem(token: string | null): SystemController {
       .me()
       .then((res) => {
         if (cancelled) return;
+        // Labels and rollups outside React read the deployment's specialists.
+        setActiveSpecialists(resolveSpecialists(res.specialists));
         setMe(res);
         setMeError(null);
       })

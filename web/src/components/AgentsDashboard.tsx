@@ -69,7 +69,7 @@ export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
       <div className="p-6">
         <p
           role="alert"
-          className="mx-auto max-w-6xl rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300"
+          className="mx-auto max-w-6xl rounded-lg bg-crit-bg px-3 py-2 text-sm text-crit-fg"
         >
           {agentsError}
         </p>
@@ -226,7 +226,7 @@ function Dashboard({
             </p>
           </div>
           {catalog ? (
-            <p className="text-xs text-slate-400 dark:text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Catalog version {catalog.catalog.version}
               {catalog.catalog.updated_by ? ` · last changed by ${catalog.catalog.updated_by}` : ""}
             </p>
@@ -236,7 +236,7 @@ function Dashboard({
         {savedVersion !== null && savedVersion === catalog?.catalog.version ? (
           <p
             role="status"
-            className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+            className="rounded-lg border border-ok-border bg-ok-bg px-3 py-2 text-sm text-ok-fg"
           >
             Saved as version {savedVersion} — new turns use these agents.
           </p>
@@ -277,7 +277,7 @@ function Dashboard({
                 ))}
               </ul>
               <div className="relative">
-                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-slate-400" />
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-slate-500" />
                 <input
                   type="search"
                   value={query}
@@ -308,12 +308,12 @@ function Dashboard({
             ))}
           </ul>
           {visible.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-400">
+            <p className="py-6 text-center text-sm text-slate-500">
               No agent or tool matches “{query}”.
             </p>
           ) : null}
           {excluded.length ? (
-            <p className="text-xs text-slate-400 dark:text-slate-500">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               Not in this deployment:{" "}
               {excluded.map((s, i) => (
                 <span key={s.key}>
@@ -375,7 +375,7 @@ function Dashboard({
                       {a.description}
                     </p>
                     <div className="mt-3 flex items-center gap-3 text-xs">
-                      <span className="text-slate-400">
+                      <span className="text-slate-500">
                         {a.tools.length} tool{a.tools.length === 1 ? "" : "s"}
                       </span>
                       <button
@@ -388,7 +388,7 @@ function Dashboard({
                       <button
                         type="button"
                         aria-label={`Remove agent ${a.name}`}
-                        className="font-medium text-red-600 hover:underline dark:text-red-400"
+                        className="font-medium text-crit-fg hover:underline"
                         onClick={() => setComposed((list) => list.filter((_, j) => j !== i))}
                       >
                         Remove
@@ -398,7 +398,7 @@ function Dashboard({
                 ))}
               </ul>
             ) : (
-              <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-400 dark:border-slate-700">
+              <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
                 None yet. Compose one to give the coordinator a focused brief over tools it already
                 has.
               </p>
@@ -411,7 +411,7 @@ function Dashboard({
         <div className="sticky bottom-0 mt-auto border-t border-slate-200 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
           <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
             {saveError ? (
-              <p role="alert" className="min-w-0 flex-1 text-sm text-red-600 dark:text-red-400">
+              <p role="alert" className="min-w-0 flex-1 text-sm text-crit-fg">
                 {saveError}
               </p>
             ) : (
@@ -536,7 +536,7 @@ function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | u
             <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
               <span className={`h-1.5 w-1.5 rounded-full ${guardDot[guard]}`} />
               {guardLabel[guard]}
-              <span className="text-slate-400 tabular-nums dark:text-slate-500">
+              <span className="text-slate-500 tabular-nums dark:text-slate-400">
                 {tools.length}
               </span>
             </p>
@@ -553,7 +553,7 @@ function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | u
             </ul>
           </div>
         ))}
-        {groups.length === 0 ? <p className="text-xs text-slate-400">No tools.</p> : null}
+        {groups.length === 0 ? <p className="text-xs text-slate-500">No tools.</p> : null}
       </div>
     </li>
   );

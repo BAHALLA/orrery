@@ -1,6 +1,9 @@
+import { memo } from "react";
 import type { Trace, TraceCall } from "../chat/trace";
-import { agentLabel, flatten, summarize } from "../chat/trace";
-import { AlertIcon, CheckIcon, ChevronIcon, LockIcon, OrbitSpinner } from "./icons";
+import { agentLabel, flatten, refusalReason, summarize } from "../chat/trace";
+import { useShowApproval } from "./approval";
+import { AlertIcon, CheckIcon, ChevronIcon, LockIcon, OrbitSpinner, ShieldIcon } from "./icons";
+import { toneChip, tonePill, toneText } from "./severity";
 
 interface Props {
   trace: Trace;
@@ -10,23 +13,26 @@ interface Props {
 }
 
 const stateStyle: Record<TraceCall["state"], string> = {
-  running: "text-brand-600 dark:text-brand-300",
-  ok: "text-emerald-600 dark:text-emerald-400",
-  error: "text-red-600 dark:text-red-400",
-  refused: "text-amber-600 dark:text-amber-400",
+  running: toneText.running,
+  ok: toneText.ok,
+  error: toneText.crit,
+  awaiting: toneText.warn,
+  refused: toneText.refused,
 };
 
 const stateLabel: Record<TraceCall["state"], string> = {
   running: "running",
   ok: "done",
   error: "failed",
-  refused: "needs approval or was refused",
+  awaiting: "awaiting your approval",
+  refused: "refused",
 };
 
 function StateIcon({ state }: { state: TraceCall["state"] }) {
   const cls = stateStyle[state];
   if (state === "running") return <OrbitSpinner className={cls} />;
   if (state === "ok") return <CheckIcon size={14} className={cls} />;
+  if (state === "awaiting") return <ShieldIcon size={14} className={cls} />;
   if (state === "refused") return <LockIcon size={14} className={cls} />;
   return <AlertIcon size={14} className={cls} />;
 }
@@ -36,25 +42,89 @@ function formatMs(ms: number | null | undefined): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** The chip's plain-language state, for the tooltip and screen readers. */
+function describe(call: TraceCall): string {
+  if (call.state === "refused") return `refused: ${refusalReason(call.status)}`;
+  return stateLabel[call.state];
+}
+
+const chipBase = "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs";
+
 function ToolChip({ call }: { call: TraceCall }) {
+  const showApproval = useShowApproval();
+
+  // Paused for approval: amber, and a shortcut to the card that decides it.
+  if (call.state === "awaiting") {
+    const body = (
+      <>
+        <StateIcon state="awaiting" />
+        <span className="font-mono">{call.tool}</span>
+        <span className="font-medium">awaiting approval</span>
+      </>
+    );
+    return (
+      <li className="inline-flex">
+        {showApproval ? (
+          <button
+            type="button"
+            onClick={showApproval}
+            title={`${call.tool} is waiting for your approval — review it`}
+            className={`${chipBase} ${toneChip.warn} cursor-pointer hover:brightness-95 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none`}
+          >
+            {body}
+            <span aria-hidden="true">↓</span>
+            <span className="sr-only">: review it</span>
+          </button>
+        ) : (
+          <span
+            className={`${chipBase} ${toneChip.warn}`}
+            title={`${call.tool}: paused for approval`}
+          >
+            {body}
+          </span>
+        )}
+      </li>
+    );
+  }
+
+  // A gate said no. Neutral and explained, never red: at autonomy L2 this is
+  // the platform answering a write exactly as configured.
+  if (call.state === "refused") {
+    const reason = refusalReason(call.status);
+    return (
+      <li
+        className={`${chipBase} border-dashed ${toneChip.refused}`}
+        title={`${call.tool} was refused: ${reason}${call.status ? ` (${call.status})` : ""}`}
+      >
+        <StateIcon state="refused" />
+        <span className="font-mono">{call.tool}</span>
+        <span>
+          <span className="sr-only">refused: </span>
+          <span aria-hidden="true">· </span>
+          {reason}
+        </span>
+      </li>
+    );
+  }
+
   return (
     <li
-      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-900"
-      title={`${call.tool}: ${stateLabel[call.state]}${call.status ? ` (${call.status})` : ""}`}
+      className={`${chipBase} border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900`}
+      title={`${call.tool}: ${describe(call)}${call.status ? ` (${call.status})` : ""}`}
     >
       <StateIcon state={call.state} />
       <span className="font-mono text-slate-700 dark:text-slate-200">{call.tool}</span>
       {call.guarded ? (
-        <span className="rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-800 uppercase dark:bg-amber-950 dark:text-amber-300">
+        <span className={`rounded px-1 text-[10px] font-semibold uppercase ${tonePill.guarded}`}>
           guarded
         </span>
       ) : null}
       {call.elapsedMs != null ? (
-        <span className="text-slate-400 tabular-nums dark:text-slate-500">
+        <span className="text-slate-500 tabular-nums dark:text-slate-400">
           {formatMs(call.elapsedMs)}
         </span>
       ) : null}
-      <span className="sr-only">{stateLabel[call.state]}</span>
+      <span className="sr-only">{describe(call)}</span>
     </li>
   );
 }
@@ -70,10 +140,10 @@ function Delegation({ call }: { call: TraceCall }) {
           {agentLabel(call.tool)}
         </span>
         <span className="text-xs text-slate-500 dark:text-slate-400">
-          {call.state === "running" ? "working…" : stateLabel[call.state]}
+          {call.state === "running" ? "working…" : describe(call)}
         </span>
         {call.elapsedMs != null ? (
-          <span className="ml-auto text-xs text-slate-400 tabular-nums dark:text-slate-500">
+          <span className="ml-auto text-xs text-slate-500 tabular-nums dark:text-slate-400">
             {formatMs(call.elapsedMs)}
           </span>
         ) : null}
@@ -130,14 +200,13 @@ function TraceBody({ trace }: { trace: Trace }) {
  * spinner. Finished, it folds into a one-line summary that expands on demand:
  * the answer is what the reader came for, the trace is the receipt.
  */
-export function RunTrace({ trace, live, durationMs }: Props) {
+export const RunTrace = memo(function RunTrace({ trace, live, durationMs }: Props) {
   if (live) {
     const running = flatten(trace).filter((c) => c.state === "running");
     const current = running.at(-1);
     return (
       <section
         aria-label="Agent progress"
-        aria-live="polite"
         className="mb-3 rounded-xl border border-brand-200/70 bg-brand-50/50 p-3 dark:border-brand-900/60 dark:bg-brand-950/30"
       >
         <div className="mb-2 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
@@ -170,4 +239,4 @@ export function RunTrace({ trace, live, durationMs }: Props) {
       </div>
     </details>
   );
-}
+});

@@ -7,12 +7,153 @@
    unchanged from when the console simply followed the OS. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* Self-hosted variable fonts (public/fonts, SIL OFL 1.1 — licences alongside).
+   Same-origin, so the CSP's `font-src 'self'` allows them; latin + latin-ext
+   only, split by unicode-range so a page in English fetches one file each. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/inter-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("/fonts/jetbrains-mono-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+/* Semantic status colours. One vocabulary for every badge, chip and dot, so
+   "healthy" is the same green in the triage report, the trace and the tool
+   table. Each status has a text tone (AA on its own background and on the page),
+   a soft background, a border and a solid tone for dots and accents.
+     ok       — succeeded / healthy
+     warn     — degraded; also "awaiting your approval"
+     crit     — failed / critical / destructive
+     guarded  — a tool that changes state (@confirm)
+     running  — in progress
+     refused  — a gate said no on purpose (autonomy level, role, budget):
+                deliberately neutral, so it never reads as an error */
+:root {
+  --status-ok-fg: #047857;
+  --status-ok-bg: #ecfdf5;
+  --status-ok-border: #a7f3d0;
+  --status-ok-solid: #10b981;
+  --status-warn-fg: #92400e;
+  --status-warn-bg: #fffbeb;
+  --status-warn-border: #fcd34d;
+  --status-warn-solid: #f59e0b;
+  --status-crit-fg: #b91c1c;
+  --status-crit-bg: #fef2f2;
+  --status-crit-border: #fca5a5;
+  --status-crit-solid: #ef4444;
+  --status-guarded-fg: #9a3412;
+  --status-guarded-bg: #fff7ed;
+  --status-guarded-border: #fdba74;
+  --status-guarded-solid: #f97316;
+  --status-running-fg: oklch(0.45 0.19 275);
+  --status-running-bg: oklch(0.97 0.02 275);
+  --status-running-border: oklch(0.87 0.08 275);
+  --status-running-solid: oklch(0.58 0.2 275);
+  --status-refused-fg: #334155;
+  --status-refused-bg: #f1f5f9;
+  --status-refused-border: #cbd5e1;
+  --status-refused-solid: #64748b;
+}
+[data-theme="dark"] {
+  --status-ok-fg: #6ee7b7;
+  --status-ok-bg: #022c22;
+  --status-ok-border: #065f46;
+  --status-ok-solid: #10b981;
+  --status-warn-fg: #fcd34d;
+  --status-warn-bg: #451a03;
+  --status-warn-border: #92400e;
+  --status-warn-solid: #f59e0b;
+  --status-crit-fg: #fca5a5;
+  --status-crit-bg: #450a0a;
+  --status-crit-border: #991b1b;
+  --status-crit-solid: #ef4444;
+  --status-guarded-fg: #fdba74;
+  --status-guarded-bg: #431407;
+  --status-guarded-border: #9a3412;
+  --status-guarded-solid: #f97316;
+  --status-running-fg: oklch(0.87 0.08 275);
+  --status-running-bg: oklch(0.23 0.08 275);
+  --status-running-border: oklch(0.38 0.15 275);
+  --status-running-solid: oklch(0.68 0.16 275);
+  --status-refused-fg: #cbd5e1;
+  --status-refused-bg: #1e293b;
+  --status-refused-border: #475569;
+  --status-refused-solid: #94a3b8;
+}
+
+/* Exposed as Tailwind colours: text-ok-fg, bg-warn-bg, border-crit-border,
+   bg-refused-solid… `inline` so the utilities read the variables at use time
+   and follow the theme switch. */
+@theme inline {
+  --color-ok-fg: var(--status-ok-fg);
+  --color-ok-bg: var(--status-ok-bg);
+  --color-ok-border: var(--status-ok-border);
+  --color-ok-solid: var(--status-ok-solid);
+  --color-warn-fg: var(--status-warn-fg);
+  --color-warn-bg: var(--status-warn-bg);
+  --color-warn-border: var(--status-warn-border);
+  --color-warn-solid: var(--status-warn-solid);
+  --color-crit-fg: var(--status-crit-fg);
+  --color-crit-bg: var(--status-crit-bg);
+  --color-crit-border: var(--status-crit-border);
+  --color-crit-solid: var(--status-crit-solid);
+  --color-guarded-fg: var(--status-guarded-fg);
+  --color-guarded-bg: var(--status-guarded-bg);
+  --color-guarded-border: var(--status-guarded-border);
+  --color-guarded-solid: var(--status-guarded-solid);
+  --color-running-fg: var(--status-running-fg);
+  --color-running-bg: var(--status-running-bg);
+  --color-running-border: var(--status-running-border);
+  --color-running-solid: var(--status-running-solid);
+  --color-refused-fg: var(--status-refused-fg);
+  --color-refused-bg: var(--status-refused-bg);
+  --color-refused-border: var(--status-refused-border);
+  --color-refused-solid: var(--status-refused-solid);
+}
+
 @theme {
   --font-sans:
-    "Inter var", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
   --font-mono:
-    ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo,
+    Consolas, monospace;
 
   /* Brand: a deep orbit-indigo for actions and focus, with the mark's sun
      amber reserved for the logo and the "live" signal — never for status, so

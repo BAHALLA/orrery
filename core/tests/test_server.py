@@ -879,6 +879,46 @@ def test_me_reports_no_autonomy_when_the_gate_is_off(app_with_auth, monkeypatch)
     assert client.get("/me", headers=_bearer()).json()["autonomy_level"] is None
 
 
+def test_me_lists_the_specialists_the_coordinator_reaches(patched_runner, monkeypatch):
+    """The console's copy follows the deployment, not a hard-coded list."""
+    from google.adk.agents import Agent
+    from google.adk.tools.agent_tool import AgentTool
+
+    from orrery_core import registry
+
+    kafka = Agent(name="kafka_health_agent", description="Kafka")
+    billing = Agent(name="billing_agent", description="Billing")
+    sweep = Agent(name="incident_triage_agent", description="Full sweep")
+    root = Agent(
+        name="root",
+        tools=[AgentTool(agent=kafka), AgentTool(agent=billing), AgentTool(agent=sweep)],
+    )
+    monkeypatch.setitem(registry._KEYS, "kafka_health_agent", "kafka")
+    monkeypatch.setitem(registry._SOURCES, "kafka_health_agent", "builtin")
+    monkeypatch.setitem(registry._SOURCES, "billing_agent", "declarative")
+    # The sweep agent has no recorded source: it is not a specialist.
+    app = create_app(
+        root_agent=root,
+        app_name="test",
+        plugins=[],
+        config=ServerConfig(
+            auth_enabled=True,
+            jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+        ),
+    )
+    body = TestClient(app).get("/me", headers=_bearer()).json()
+    assert body["specialists"] == [
+        {"key": "kafka", "name": "kafka_health_agent", "label": None},
+        # No entry point (declarative, MCP): the agent name stands in.
+        {"key": "billing_agent", "name": "billing_agent", "label": None},
+    ]
+
+
+def test_me_lists_no_specialists_for_a_root_without_any(app_with_auth):
+    # Empty, not null: null reads as "an older server" and shows the stock set.
+    assert TestClient(app_with_auth).get("/me", headers=_bearer()).json()["specialists"] == []
+
+
 def test_selftest_reports_each_integration(patched_runner):
     """The first-run question is 'is anything wired', and today the only answer
     is a stack trace several turns into a conversation."""

@@ -387,7 +387,7 @@ describe("ApiClient.chatStream", () => {
     );
 
     expect(res).toEqual({ session_id: "s9", response: "All good." });
-    expect(events).toEqual(["session", "progress", "delta:All ", "delta:good", "message"]);
+    expect(events).toEqual(["session", "progress", "delta:All ", "delta:good", "message", "done"]);
     const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toMatch(/\/chat\/stream$/);
     expect(init.headers.Authorization).toBe("Bearer tok");

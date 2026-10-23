@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Identity } from "../auth/token";
 import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
+import { useDeferredDelete } from "../conversations/useDeferredDelete";
 import { AgentsDashboard } from "./AgentsDashboard";
+import { useTurnAnnouncement } from "./a11y";
+import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
-import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon } from "./icons";
+import { pendingPlacement } from "../chat/pending";
+import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon, ShieldIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
-import { severityBadge } from "./severity";
+import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
+import { resolveSpecialists } from "../specialists";
 import { useSystem } from "../system/useSystem";
 
 interface Props {
@@ -63,10 +68,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     lastSeverity.current = sev;
   }, [chat.triage]);
 
-  const showChat = () => {
+  const showChat = useCallback(() => {
     setView("chat");
     setVerdictWaiting(false);
-  };
+  }, []);
 
   // Escape closes whichever overlay is on top.
   useEffect(() => {
@@ -79,18 +84,89 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [navOpen, inspectorOpen]);
 
-  const toggleInspector = (tab: InspectorTab) => {
-    if (view !== "chat") {
-      showChat();
-      setInspectorTab(tab);
-      setInspectorOpen(true);
-    } else if (inspectorOpen && inspectorTab === tab) {
-      setInspectorOpen(false);
-    } else {
-      setInspectorTab(tab);
-      setInspectorOpen(true);
-    }
-  };
+  const toggleInspector = useCallback(
+    (tab: InspectorTab) => {
+      if (view !== "chat") {
+        showChat();
+        setInspectorTab(tab);
+        setInspectorOpen(true);
+      } else if (inspectorOpen && inspectorTab === tab) {
+        setInspectorOpen(false);
+      } else {
+        setInspectorTab(tab);
+        setInspectorOpen(true);
+      }
+    },
+    [view, inspectorOpen, inspectorTab, showChat],
+  );
+
+  // Stable handlers: the sidebar and transcript are memoized, and a new
+  // closure per render would redraw them on every streamed frame.
+  const { newConversation, selectConversation, deleteConversation } = conversations;
+  const { send, runTriage } = chat;
+  const closeNav = useCallback(() => setNavOpen(false), []);
+  const onNewChat = useCallback(() => {
+    showChat();
+    newConversation();
+  }, [showChat, newConversation]);
+  const onRunTriage = useCallback(() => {
+    showChat();
+    void runTriage();
+  }, [showChat, runTriage]);
+  const onOpenSystem = useCallback(() => toggleInspector("system"), [toggleInspector]);
+  const onOpenAgents = useCallback(() => {
+    setAgentsOpened(true);
+    setView("agents");
+  }, []);
+  // Deleting is held for a few seconds behind an Undo (the store delete is
+  // permanent). The row hides at once; if it was the open conversation, a new
+  // chat takes its place, and Undo brings it back.
+  const deleteNow = useCallback((id: string) => void deleteConversation(id), [deleteConversation]);
+  const deferred = useDeferredDelete(deleteNow);
+  const { schedule: scheduleDelete, undo: cancelDelete } = deferred;
+  const restoreOnUndo = useRef<string | null>(null);
+  const { history, activeId } = conversations;
+  const onDelete = useCallback(
+    (id: string) => {
+      const title = history.find((c) => c.id === id)?.title ?? "conversation";
+      restoreOnUndo.current = id === activeId ? id : null;
+      if (id === activeId) newConversation();
+      scheduleDelete(id, title);
+    },
+    [history, activeId, newConversation, scheduleDelete],
+  );
+  const undoDelete = useCallback(() => {
+    cancelDelete();
+    if (restoreOnUndo.current) selectConversation(restoreOnUndo.current);
+    restoreOnUndo.current = null;
+  }, [cancelDelete, selectConversation]);
+  const pendingDeleteId = deferred.pending?.id ?? null;
+  const visibleHistory = useMemo(
+    () => (pendingDeleteId ? history.filter((c) => c.id !== pendingDeleteId) : history),
+    [history, pendingDeleteId],
+  );
+  const onSuggest = useCallback((prompt: string) => void send(prompt), [send]);
+  const onSweep = useCallback(() => void runTriage(), [runTriage]);
+
+  // The pending action is per user; show its card only in the conversation
+  // it is waiting in, and a pointer to that conversation everywhere else.
+  const placement = pendingPlacement(chat.pending, chat.sessionId);
+  const waitingIn =
+    placement === "elsewhere"
+      ? conversations.history.find((c) => c.sessionId === chat.pending?.session_id)
+      : undefined;
+
+  // The Approve/Deny card, for the transcript's "awaiting approval" chips.
+  const approvalRef = useRef<HTMLElement>(null);
+  const showApproval = useCallback(() => {
+    const panel = approvalRef.current;
+    if (!panel) return;
+    panel.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    panel.focus({ preventScroll: true });
+  }, []);
+
+  const specialists = useMemo(() => resolveSpecialists(system.me?.specialists), [system.me]);
+  const announcement = useTurnAnnouncement(chat.isSending, chat.error !== null);
 
   // The reply being written, if any — drives the live status in the header.
   // A streaming reply is always the newest message: nothing is appended after it.
@@ -101,32 +177,32 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   return (
     <div className="flex h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar
-        conversations={conversations}
+        history={visibleHistory}
+        activeId={conversations.activeId}
+        isLoading={conversations.isLoading}
+        error={conversations.error}
+        onSelect={selectConversation}
+        onDelete={onDelete}
         identity={identity}
         me={system.me}
         isSending={chat.isSending}
         open={navOpen}
-        onClose={() => setNavOpen(false)}
-        onNewChat={() => {
-          showChat();
-          conversations.newConversation();
-        }}
-        onRunTriage={() => {
-          showChat();
-          void chat.runTriage();
-        }}
-        onOpenSystem={() => toggleInspector("system")}
+        onClose={closeNav}
+        onNewChat={onNewChat}
+        onRunTriage={onRunTriage}
+        onOpenSystem={onOpenSystem}
         view={view}
         agentsDirty={agentsDirty}
-        onOpenAgents={() => {
-          setAgentsOpened(true);
-          setView("agents");
-        }}
+        onOpenAgents={onOpenAgents}
         onShowChat={showChat}
         onSignOut={onSignOut}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        {/* The one live region for a turn: "working", then "answer ready". */}
+        <p role="status" className="sr-only">
+          {announcement}
+        </p>
         <header className="flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80">
           <button
             type="button"
@@ -141,7 +217,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           </h2>
           {live ? (
             <span
-              role="status"
+              aria-hidden="true"
               className="hidden items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 sm:inline-flex dark:bg-brand-950/60 dark:text-brand-200"
             >
               <OrbitSpinner />
@@ -209,26 +285,61 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         {view === "chat" ? (
           <div className="relative flex min-h-0 flex-1">
             <section className="flex min-w-0 flex-1 flex-col">
-              <MessageList
-                messages={chat.messages}
-                isSending={chat.isSending}
-                onSuggest={(prompt) => void chat.send(prompt)}
-                onSweep={() => void chat.runTriage()}
-              />
+              <ShowApprovalContext.Provider value={placement === "here" ? showApproval : null}>
+                <MessageList
+                  messages={chat.messages}
+                  isSending={chat.isSending}
+                  onSuggest={onSuggest}
+                  onSweep={onSweep}
+                  specialists={specialists}
+                  autonomy={system.me?.autonomy_level ?? null}
+                />
+              </ShowApprovalContext.Provider>
 
-              {chat.pending ? (
+              {placement === "here" && chat.pending ? (
                 <ConfirmationPanel
+                  panelRef={approvalRef}
                   pending={chat.pending}
                   disabled={chat.isSending}
                   onDecide={(word) => void chat.decide(word)}
                 />
               ) : null}
 
+              {placement === "elsewhere" && chat.pending ? (
+                <div className="px-3 sm:px-6">
+                  <p
+                    role="status"
+                    className={`mx-auto mb-2 flex w-full max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border px-3 py-2 text-sm ${toneChip.warn}`}
+                  >
+                    <ShieldIcon size={15} />
+                    <span className="min-w-0">
+                      An action is waiting for your approval in{" "}
+                      <span className="font-medium">
+                        {waitingIn ? waitingIn.title : "another conversation"}
+                      </span>
+                    </span>
+                    {waitingIn ? (
+                      <button
+                        type="button"
+                        aria-label={`Open ${waitingIn.title}`}
+                        className="ml-auto font-medium underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+                        onClick={() => {
+                          showChat();
+                          selectConversation(waitingIn.id);
+                        }}
+                      >
+                        Open <span aria-hidden="true">→</span>
+                      </button>
+                    ) : null}
+                  </p>
+                </div>
+              ) : null}
+
               {chat.error ? (
                 <div className="px-3 sm:px-6">
                   <div
                     role="alert"
-                    className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-300"
+                    className="mx-auto mb-2 flex w-full max-w-3xl items-center justify-between gap-3 rounded-xl border border-crit-border bg-crit-bg px-3 py-2 text-sm text-crit-fg"
                   >
                     <span className="min-w-0">{chat.error.message}</span>
                     <span className="flex shrink-0 items-center gap-3">
@@ -289,6 +400,32 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           </div>
         ) : null}
       </main>
+
+      {deferred.pending ? (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-50 flex w-[min(28rem,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-xl bg-slate-900 px-4 py-2.5 text-sm text-white shadow-xl shadow-slate-900/30 lg:left-4 lg:translate-x-0 dark:bg-slate-800"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            Deleted <span className="font-medium">{deferred.pending.title}</span>
+          </span>
+          <button
+            type="button"
+            onClick={undoDelete}
+            className="rounded-md px-2 py-1 font-semibold text-brand-200 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:outline-none"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss and delete now"
+            onClick={deferred.commit}
+            className="rounded-md p-1 text-slate-300 hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-brand-300 focus-visible:outline-none"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

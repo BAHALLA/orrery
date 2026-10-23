@@ -1,4 +1,10 @@
-import type { ActivityEntry } from "../api/types";
+import type { ActivityEntry, SpecialistInfo } from "../api/types";
+import {
+  activeSpecialists,
+  specialistFor,
+  specialistLabel,
+  systemSpecialists,
+} from "../specialists";
 
 /** Per-specialist rollup of what a sweep actually did. */
 export interface SpecialistStatus {
@@ -12,18 +18,15 @@ export interface SpecialistStatus {
 }
 
 /**
- * Agent-name prefixes → the system they speak to. Both the chat specialists
+ * The systems a rollup row can be about: the deployment's specialists (from
+ * `/me`, or the stock set), minus the ops journal. Both the chat specialists
  * (`kafka_health_agent`) and the triage workflow's checker nodes
  * (`kafka_health_checker`) map to the same row, since to an operator they are
  * the same system being asked the same question.
  */
-const SPECIALISTS: ReadonlyArray<{ key: string; label: string; match: RegExp }> = [
-  { key: "kafka", label: "Kafka", match: /^kafka_/ },
-  { key: "k8s", label: "Kubernetes", match: /^k8s_/ },
-  { key: "elasticsearch", label: "Elasticsearch", match: /^elasticsearch_/ },
-  { key: "observability", label: "Observability", match: /^observability_/ },
-  { key: "docker", label: "Docker", match: /^docker_/ },
-];
+function systems(list: readonly SpecialistInfo[]): { key: string; label: string }[] {
+  return systemSpecialists(list).map((s) => ({ key: s.key, label: specialistLabel(s) }));
+}
 
 /** Statuses a tool result reports when the call did not succeed. */
 const FAILURE_STATUSES = new Set(["error", "access_denied", "blocked", "denied", "circuit_open"]);
@@ -50,12 +53,17 @@ function parseDetail(entry: ActivityEntry): { agent: string; status: string } {
  * log is structured and is what actually happened. A specialist that was never
  * called simply does not appear — "we didn't ask" is not the same as "healthy".
  */
-export function specialistStatuses(entries: ActivityEntry[]): SpecialistStatus[] {
+export function specialistStatuses(
+  entries: ActivityEntry[],
+  list: readonly SpecialistInfo[] = activeSpecialists(),
+): SpecialistStatus[] {
+  const rows = systems(list);
   const seen = new Map<string, SpecialistStatus>();
 
   for (const entry of entries) {
     const { agent, status } = parseDetail(entry);
-    const specialist = SPECIALISTS.find((s) => s.match.test(agent));
+    const owner = specialistFor(agent, list);
+    const specialist = owner && rows.find((r) => r.key === owner.key);
     if (!specialist) continue;
 
     const row = seen.get(specialist.key) ?? {
@@ -71,7 +79,7 @@ export function specialistStatuses(entries: ActivityEntry[]): SpecialistStatus[]
   }
 
   // Keep the declared order so the chips don't reshuffle between refreshes.
-  return SPECIALISTS.flatMap((s) => {
+  return rows.flatMap((s) => {
     const row = seen.get(s.key);
     if (!row) return [];
     const state = row.failures === 0 ? "ok" : row.failures === row.calls ? "failed" : "partial";

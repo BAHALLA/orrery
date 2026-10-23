@@ -1,7 +1,7 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ActivityEntry, TriageResponse } from "../api/types";
-import { severityAccent, severityBadge } from "./severity";
+import { severityAccent, severityBadge, tonePill } from "./severity";
 import { specialistStatuses } from "./systemStatus";
 
 interface Props {
@@ -11,9 +11,9 @@ interface Props {
 }
 
 const chipClass: Record<string, string> = {
-  ok: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
-  partial: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  failed: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  ok: tonePill.ok,
+  partial: tonePill.warn,
+  failed: tonePill.crit,
 };
 
 const chipIcon: Record<string, string> = { ok: "●", partial: "◐", failed: "✕" };
