@@ -42,6 +42,10 @@ auth = [
 server = [
     "orrery-core[server]",
 ]
+# Install with: uv sync --extra a2a
+a2a = [
+    "orrery-core[a2a]",
+]
 # Install with: uv sync --extra otel
 otel = [
     "orrery-core[otel]",

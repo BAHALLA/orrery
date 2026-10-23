@@ -74,6 +74,13 @@ mcp = [
     "google-adk[mcp]>=2.12.0",
     "pyyaml>=6.0.3",
 ]
+# Install with: uv sync --extra a2a
+# Expose the coordinator over the A2A protocol (ADR-007). a2a-sdk 1.x: the
+# protocol 1.0 server, with owner-scoped task stores (1.1.4+) and push URL
+# validation (1.2.3+). Imported lazily — off unless ORRERY_A2A_ENABLED.
+a2a = [
+    "a2a-sdk[http-server]>=1.2.3,<2",
+]
 # Install with: uv sync --extra knowledge
 # Elasticsearch-backed knowledge retrieval (AEP-025). Talks to the REST API
 # with requests in a worker thread, mirroring agents/elasticsearch — no

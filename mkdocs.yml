@@ -147,6 +147,7 @@ nav:
       - Overview: integrations.md
       - Web Console: integrations/web-console.md
       - MCP Servers: integrations/mcp.md
+      - A2A: integrations/a2a.md
       - Slack: integrations/slack.md
       - Google Chat:
         - Overview: integrations/google-chat.md

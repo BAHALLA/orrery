@@ -94,6 +94,27 @@ A thin, custom A2A adapter on the a2a-sdk (1.x, `orrery-core[a2a]`) whose
 - A hop header refuses calls that arrive from Orrery itself, so two agents
   cannot loop at the platform's model cost.
 
+## Implementation notes (first release)
+
+Where the shipped code differs from the decision above, and why:
+
+- **Conversation binding.** The a2a-sdk mints a `contextId` before the executor
+  sees the request, so the server cannot tell a minted id from a client's.
+  Instead of storing a binding, the ADK session id is derived:
+  `a2a-` + SHA-256(subject, contextId). Any id a client sends reaches only its
+  own conversation, the derivation needs no table and works on any replica, and
+  the prefix keeps it out of the console's id space.
+- **Task store.** In memory, owner-scoped. The server refuses to start with A2A
+  on and `ORRERY_MULTI_REPLICA` set until a shared store exists. The SDK's SQL
+  store needs extras that pull MySQL drivers; a Postgres-only store is a
+  follow-up.
+- **Public card.** The spec requires at least one skill, so the public card
+  carries one generic skill; the specialists stay in the extended card.
+- **Mounting.** `/a2a` on the HTTP app, behind the same middleware. Running it
+  as its own deployment and host needs no code (the same image, its own
+  release); the Helm values for that are a follow-up.
+- **Not yet:** `traceparent` span links, card signing.
+
 ## Consequences
 
 - More code than `to_a2a()`, all of it on paths that already exist (gateway,
