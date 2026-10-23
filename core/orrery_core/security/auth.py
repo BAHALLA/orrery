@@ -82,6 +82,10 @@ class AuthContext:
     client_id: str | None = None
     #: For a delegated principal, the agent acting for ``subject``.
     acting_agent: str | None = None
+    #: The bearer token that was verified, for token exchange (ADR-004). Out of
+    #: ``repr``, equality and :meth:`as_state`: it must never reach session
+    #: state, a log line or the model.
+    token: str | None = field(default=None, repr=False, compare=False)
 
     @property
     def can_decide(self) -> bool:
@@ -437,7 +441,7 @@ def verify_token(token: str, config: JWTConfig) -> AuthContext:
         raise AuthError("Token missing 'sub' claim")
 
     role = extract_role(payload, role_claim=config.role_claim)
-    return AuthContext(subject=str(subject), role=role, claims=payload)
+    return AuthContext(subject=str(subject), role=role, claims=payload, token=token)
 
 
 async def verify_token_async(token: str, config: JWTConfig) -> AuthContext:
