@@ -43,7 +43,7 @@ from ..observability.metrics import (
 )
 from .confirmation_flow import LEVEL_CONFIRM as LEVEL_CONFIRM
 from .confirmation_flow import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
-from .confirmation_flow import hash_args, raise_pending
+from .confirmation_flow import current_conversation_session, hash_args, raise_pending
 from .confirmation_store import AnyConfirmationStore as AnyConfirmationStore
 from .confirmation_store import ConfirmationStore as ConfirmationStore
 from .confirmation_store import PendingConfirmation as PendingConfirmation
@@ -179,9 +179,9 @@ class _ActivePendingStore:
         return self._resolve().mark_approved(action_id)
 
     def consume_approved(
-        self, scope: str, tool_name: str, args_hash: str
+        self, scope: str, tool_name: str, args_hash: str, *, session_id: str | None = None
     ) -> PendingConfirmation | None:
-        return self._resolve().consume_approved(scope, tool_name, args_hash)
+        return self._resolve().consume_approved(scope, tool_name, args_hash, session_id=session_id)
 
     def reset(self) -> None:
         """Drop all pendings (used by tests for isolation)."""
@@ -598,8 +598,14 @@ def _handle_strict(
     # same requester, can set the mark for a strict-mode scope, so this is a
     # second place for the same human to decide, not a new way to approve.
     # The exact args hash and the approval window still apply.
-    if not is_decision:
-        approved = _pending_confirmations.consume_approved(requester, tool.name, args_hash)
+    # Only in the conversation that raised the action: the same person's other
+    # threads, or another agent acting for them, must not spend the approval.
+    # Outside a gateway turn the conversation is unknown, so nothing matches.
+    conversation = current_conversation_session()
+    if not is_decision and conversation:
+        approved = _pending_confirmations.consume_approved(
+            requester, tool.name, args_hash, session_id=conversation
+        )
         if approved is not None:
             tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
             approved_at = approved.approved_at or time.time()

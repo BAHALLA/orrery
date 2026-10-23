@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from orrery_core.security.confirmation_flow import conversation_scope
 from orrery_core.security.guardrails import (
     _CONFIRMATION_TTL,
     ACTOR_STATE_KEY,
@@ -670,17 +672,50 @@ def test_out_of_band_approval_lets_the_retry_through_once(fake_tool, fake_ctx):
     ctx = _strict_ctx(fake_ctx)
     tool = _danger(fake_tool)
 
-    callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    with conversation_scope("thread-1"):
+        callback(tool=tool, args={"id": 1}, tool_context=ctx)
     pending = _alice_pending()
     decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")
 
     ctx._invocation_context.invocation_id = "inv-2"  # the resumed turn, no in-turn decision
-    assert callback(tool=tool, args={"id": 1}, tool_context=ctx) is None
-    # One approval, one execution.
+    with conversation_scope("thread-1"):
+        assert callback(tool=tool, args={"id": 1}, tool_context=ctx) is None
+        # One approval, one execution.
+        ctx._invocation_context.invocation_id = "inv-3"
+        assert callback(tool=tool, args={"id": 1}, tool_context=ctx)["status"] == (
+            "confirmation_required"
+        )
+
+
+@pytest.mark.parametrize("elsewhere", ["thread-2", None])
+def test_out_of_band_approval_is_spent_only_in_its_conversation(fake_tool, fake_ctx, elsewhere):
+    """Another thread of the same person, or another agent acting for them,
+    retrying the same call must not consume the approval."""
+    from orrery_core.security.guardrails import decide_out_of_band
+
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    with conversation_scope("thread-1"):
+        callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    pending = _alice_pending()
+    decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")
+
+    ctx._invocation_context.invocation_id = "inv-2"
+    scope = conversation_scope(elsewhere) if elsewhere else contextlib.nullcontext()
+    with scope:
+        assert callback(tool=tool, args={"id": 1}, tool_context=ctx)["status"] == (
+            "confirmation_required"
+        )
+    # That refused retry raised its own pending, which supersedes the approved
+    # one (one pending per person and tool): the person is asked again, and
+    # nothing runs on the stale approval.
     ctx._invocation_context.invocation_id = "inv-3"
-    assert callback(tool=tool, args={"id": 1}, tool_context=ctx)["status"] == (
-        "confirmation_required"
-    )
+    with conversation_scope("thread-1"):
+        assert callback(tool=tool, args={"id": 1}, tool_context=ctx)["status"] == (
+            "confirmation_required"
+        )
 
 
 def test_out_of_band_approval_is_pinned_to_the_arguments(fake_tool, fake_ctx):
@@ -690,12 +725,14 @@ def test_out_of_band_approval_is_pinned_to_the_arguments(fake_tool, fake_ctx):
     ctx = _strict_ctx(fake_ctx)
     tool = _danger(fake_tool)
 
-    callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    with conversation_scope("thread-1"):
+        callback(tool=tool, args={"id": 1}, tool_context=ctx)
     pending = _alice_pending()
     decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")
 
     ctx._invocation_context.invocation_id = "inv-2"
-    result = callback(tool=tool, args={"id": 2}, tool_context=ctx)
+    with conversation_scope("thread-1"):
+        result = callback(tool=tool, args={"id": 2}, tool_context=ctx)
     assert result["status"] == "confirmation_required"
 
 
