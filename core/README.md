@@ -62,17 +62,27 @@ runner = Runner(
 )
 ```
 
+Order matters: ADK's tool callback chains stop at the first plugin that returns a value.
+
 | Order | Plugin | Description |
 |-------|--------|-------------|
-| — | `TracingPlugin` | OpenTelemetry span enrichment. Prepended only when tracing is enabled (`enable_tracing` / `OTEL_TRACING_ENABLED`) |
-| — | `AuthPlugin` | Applies the verified JWT role each turn. Added only when `enable_auth=True` |
-| 1 | `GuardrailsPlugin` | RBAC (`authorize()`) + optional global `dry_run()` + `ensure_default_role()`. Per-tool confirmation is not here: `create_agent()` attaches `require_confirmation()` to each agent with a guarded tool |
-| 2 | `ResiliencePlugin` | Per-tool circuit breaker |
-| 3 | `MetricsPlugin` | Prometheus metrics (tool counts, latency, errors, circuit breaker state) |
-| 4 | `AuditPlugin` | Structured audit logging for every tool invocation |
-| 5 | `ActivityPlugin` | Records tool calls to session state for cross-agent visibility (when `enable_activity_tracking`) |
-| 6 | `MemoryPlugin` | Auto-saves sessions to long-term memory after the root agent completes (when `enable_memory`) |
-| 7 | `ErrorHandlerPlugin` | Graceful error recovery for tool and model failures (must be last) |
+| 1 | `IdentityStateGuardPlugin` | Reverts any tool-call write to identity/authorization state (when `enable_identity_guard`, default on) |
+| 2 | `TracingPlugin` | OpenTelemetry span enrichment. Only when tracing is enabled (`enable_tracing` / `OTEL_TRACING_ENABLED`) |
+| 3 | `SafetyScreenPlugin` | Blocks injected user messages, neutralizes injected text in tool results (default on) |
+| 4 | `AuthPlugin` | Applies the verified JWT role each turn. Only when `enable_auth=True` |
+| 5 | `PIIRedactionPlugin` | Redacts credentials in tool results, in place (default on) |
+| 6 | `AuditPlugin` | Structured audit logging for every tool invocation; before the gates so refused attempts are recorded |
+| 7 | `ToolLedgerPlugin` | Records guarded calls for a transport that armed a ledger (inert otherwise) |
+| 8 | `ProgressPlugin` | Streams tool-call progress for a transport that armed a sink (inert otherwise) |
+| 9 | `AutonomyPlugin` | L2/L3/L4 process autonomy. Always registered; inert with no configured level |
+| 10 | `GuardrailsPlugin` | RBAC (`authorize()`) + optional global `dry_run()` + `ensure_default_role()`. Per-tool confirmation is not here: `create_agent()` attaches `require_confirmation()` to each agent with a guarded tool |
+| 11 | `ResiliencePlugin` | Per-tool circuit breaker |
+| 12 | `CallBudgetPlugin`, `DelegationGuardPlugin`, `RepeatGuardPlugin` | Run budgets (each disabled by `0`) |
+| 13 | `MetricsPlugin` | Prometheus metrics (tool counts, latency, errors, circuit breaker state) |
+| 14 | `ActivityPlugin` | Records tool calls to session state for cross-agent visibility (when `enable_activity_tracking`) |
+| 15 | `MemoryPlugin` | Auto-saves sessions to long-term memory after the root agent completes (when `enable_memory`) |
+| 16 | `ToolOutputCapPlugin` | Per-result and per-run tool output caps; last among after-tool observers |
+| 17 | `ErrorHandlerPlugin` | Graceful error recovery for tool and model failures |
 
 Each plugin's ADK adapter lives in `orrery_core/plugins/<name>_plugin.py`; the
 mechanism it wraps lives under the matching aspect package (e.g.
@@ -83,7 +93,9 @@ Parameters:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `role_policy` | `None` | Custom `RolePolicy` for RBAC overrides |
-| `guardrail_mode` | `"confirm"` | `"confirm"`, `"dry_run"`, or `"none"` |
+| `guardrail_mode` | `"confirm"` | `"dry_run"` blocks every guarded tool with a preview; `"confirm"` and `"none"` both mean RBAC only |
+| `autonomy_level` | `None` | `"L2"`, `"L3"`, `"L4"`. `None` resolves from `ORRERY_AUTONOMY_LEVEL` |
+| `autonomy_l2_whitelist` / `autonomy_l3_blacklist` | `None` | Extra tools allowed at L2 / blocked at L3 |
 | `circuit_breaker_threshold` | `5` | Failures before circuit opens |
 | `circuit_breaker_timeout` | `60.0` | Recovery timeout in seconds |
 | `audit_log_path` | `None` | Optional local audit log file path |
@@ -92,27 +104,37 @@ Parameters:
 | `memory_min_events` | `4` | Minimum events before a session is saved to memory |
 | `enable_auth` | `False` | Add `AuthPlugin` to apply the verified JWT role each turn |
 | `require_auth` | `True` | With `enable_auth`, force `viewer` when no verified `_auth` payload is present |
-| `enable_tracing` | `None` | Prepend `TracingPlugin`. `None` resolves from `OTEL_TRACING_ENABLED` |
+| `enable_tracing` | `None` | Add `TracingPlugin`. `None` resolves from `OTEL_TRACING_ENABLED` |
+| `max_tool_result_bytes` | 4 MiB | Per-result output cap; `0` disables |
+| `enable_safety_screen` | `None` | `None` resolves from `ORRERY_SAFETY_SCREEN` (default on) |
+| `enable_pii_redaction` | `None` | `None` resolves from `ORRERY_PII_REDACTION` (default on) |
+| `redact_ips` | `None` | Also redact IPv4. `None` resolves from `ORRERY_REDACT_IPS` (default off) |
+| `enable_identity_guard` | `True` | Register `IdentityStateGuardPlugin` |
+| `max_tool_calls_per_run` | `None` | `None` resolves from `ORRERY_MAX_TOOL_CALLS_PER_RUN` (50) |
+| `max_delegations_per_run` | `None` | `None` resolves from `ORRERY_MAX_DELEGATIONS_PER_RUN` (4) |
+| `max_identical_failures` | `None` | `None` resolves from `ORRERY_REPEAT_GUARD_MAX_FAILURES` (2) |
+| `max_run_tool_bytes` | `None` | `None` resolves from `ORRERY_MAX_RUN_TOOL_BYTES` (8 MiB) |
 
 ### Individual plugins
 
-Each plugin can also be instantiated independently for custom configurations:
+Each plugin can also be instantiated independently for custom configurations. Keep the relative order of `default_plugins()`: the identity guard first, audit before the gates, the error handler last.
 
 ```python
 from orrery_core import (
-    GuardrailsPlugin,
-    ResiliencePlugin,
-    MetricsPlugin,
     AuditPlugin,
-    ActivityPlugin,
     ErrorHandlerPlugin,
+    GuardrailsPlugin,
+    IdentityStateGuardPlugin,
+    MetricsPlugin,
+    ResiliencePlugin,
 )
 
 plugins = [
+    IdentityStateGuardPlugin(),
+    AuditPlugin(log_path="audit.jsonl"),  # also write to local file
     GuardrailsPlugin(mode="dry_run"),  # dry-run mode for testing
     ResiliencePlugin(failure_threshold=3),  # custom threshold
     MetricsPlugin(),
-    AuditPlugin(log_path="audit.jsonl"),  # also write to local file
     ErrorHandlerPlugin(),
 ]
 ```
@@ -297,8 +319,10 @@ Apply `@with_retry` to **read-only** tools that call external services. Do not a
 Handles both tool and model errors globally. When a tool raises an exception, it returns a structured error dict so the LLM can reason about it:
 
 ```json
-{"status": "error", "error_type": "KafkaException", "message": "Tool 'get_kafka_cluster_health' failed: broker down"}
+{"status": "error", "error_type": "KafkaException", "message": "The 'get_kafka_cluster_health' tool failed with a KafkaException. The details were logged server-side; do not retry blindly."}
 ```
+
+The exception's own message is surfaced only for an HTTP 4xx error (it describes what was wrong with the request); anything else may carry internal hosts and paths, so it stays in the server log.
 
 When a model call fails, it returns a friendly `LlmResponse` message.
 
@@ -311,7 +335,7 @@ The underlying factories (`graceful_tool_error()`, `graceful_model_error()`) can
 Reusable validators for tool inputs. Each returns `None` on success or `{"status": "error", "message": ...}` on failure. Use the walrus operator for concise early-return:
 
 ```python
-from orrery_core.validation import validate_string, validate_positive_int, KAFKA_TOPIC_PATTERN
+from orrery_core.security.validation import validate_string, validate_positive_int, KAFKA_TOPIC_PATTERN
 
 
 async def create_kafka_topic(topic_name: str, num_partitions: int = 1) -> dict:
@@ -348,7 +372,7 @@ async def create_kafka_topic(topic_name: str, num_partitions: int = 1) -> dict:
 
 ## Guardrails
 
-Guardrails prevent destructive tools from executing without confirmation. They are enforced globally via the `GuardrailsPlugin`.
+Guardrails prevent guarded tools from executing without confirmation. Two pieces enforce them: the `GuardrailsPlugin` (RBAC, plus the optional global dry-run) and the `require_confirmation()` agent callback, which `create_agent()` attaches to every agent holding a guarded tool.
 
 ### Marking tools as destructive
 
@@ -360,15 +384,17 @@ from orrery_core import destructive
 async def delete_kafka_topic(topic_name: str) -> dict: ...
 ```
 
-The `@destructive()` decorator marks the function with metadata. The `GuardrailsPlugin` reads this metadata at runtime and gates execution.
+The `@destructive()` decorator marks the function with metadata. `GuardrailsPlugin` reads it to infer the required role, and `require_confirmation()` reads it to require approval.
 
 ### Confirmation flow
 
 1. User asks to delete a topic
 2. LLM calls `delete_kafka_topic`
-3. `GuardrailsPlugin` intercepts → returns `{"status": "confirmation_required", ...}`
+3. `GuardrailsPlugin` checks the role; `require_confirmation()` then intercepts → returns `{"status": "confirmation_required", ...}`
 4. LLM receives the message and asks the user to confirm
-5. User confirms → LLM calls the tool again → plugin allows it
+5. User confirms → LLM calls the tool again → the gate allows it
+
+Two confirmation modes exist. **Model-mediated** (the default for a bare `AgentGateway`, `adk web` and evals): the re-call counts as confirmed. **Requester-verified** (`AgentGateway(verified_confirmation=True)`, enabled on every shipped surface: HTTP server, persistent runner, Slack and Google Chat bots): the gate also needs a deliberate `approve`/`confirm`/`proceed`/`go ahead` recorded by the gateway from the same verified person who triggered the action, and given after the action was raised.
 
 ![Guardrails in action — destructive operation confirmation flow](../docs/images/guardrails-confirmation.png)
 
@@ -378,9 +404,9 @@ The `@destructive()` decorator marks the function with metadata. The `Guardrails
 
 | Mode | Behavior |
 |------|----------|
-| `"confirm"` (default) | Prompts for confirmation on `@confirm`/`@destructive` tools |
-| `"dry_run"` | Blocks all destructive tools permanently, showing what would have been done |
-| `"none"` | No confirmation gate (useful when the integration layer handles it, e.g., Slack buttons) |
+| `"confirm"` (default) | RBAC only; confirmation comes from the agent-level `require_confirmation()` |
+| `"dry_run"` | Blocks every `@confirm`/`@destructive` tool, returning what would have been done |
+| `"none"` | Same as `"confirm"`. It does not remove the agent-level confirmation gate; the Slack and Google Chat bots replace that gate with their own (`slack_confirmation` / `google_chat_confirmation`) |
 
 ---
 

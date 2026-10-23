@@ -30,7 +30,7 @@ outage. Skip to *Corpus is empty* below.
 ```bash
 export NS=orrery
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=500 \
-  | jq -r 'select(.name | test("knowledge")) | "\(.asctime) \(.message)"' | tail -20
+  | jq -r 'select(.logger | test("knowledge")) | "\(.timestamp) \(.message)"' | tail -20
 ```
 
 **Is the backend configured at all?**

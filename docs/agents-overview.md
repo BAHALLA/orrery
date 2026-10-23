@@ -14,13 +14,13 @@ For how agents are composed inside `orrery-assistant`, see [ADR-003: Graph Workf
 | [`observability`](#observability) | `agents/observability` | 16 | 2 | Prometheus queries, Loki logs, Alertmanager silences |
 | [`elasticsearch`](#elasticsearch) | `agents/elasticsearch` | 24 | 0 | ES cluster/index/shard diagnostics, search, ILM, snapshots, ECK-aware |
 | [`docker-agent`](#docker-agent) | `agents/docker-agent` | 17 | 6 | Container inspection and lifecycle ops |
-| [`ops-journal`](#ops-journal) | `agents/ops-journal` | 10 | 0 | Cross-session notes, preferences, and team bookmarks |
+| [`ops-journal`](#ops-journal) | `agents/ops-journal` | 10 | 1 | Cross-session notes, preferences, and team bookmarks |
 
 !!! info "Guarded tool counts"
     Counts reflect tools marked `@confirm` (operator+) or `@destructive` (admin-only). Unmarked tools are read-only and accessible to any `viewer`. See [Testing RBAC across surfaces](rbac-testing.md) to exercise each tier.
 
 !!! tip "Restricting *where*, not just *what*"
-    Set `ORRERY_PROTECTED_NAMESPACES` (comma-separated globs, e.g. `kube-system,kube-*,monitoring*`) to stop non-admins mutating in infrastructure namespaces. An operator can then restart an application Deployment but not one in `kube-system` — same tool, very different blast radius. Reads are never scoped, so diagnosis still works everywhere. See [RBAC](adr/001-rbac.md).
+    Set `ORRERY_PROTECTED_NAMESPACES` (comma-separated globs, e.g. `kube-system,kube-*,monitoring*`) to stop non-admins mutating in infrastructure namespaces. An operator can then scale an application Deployment but not one in `kube-system` — same tool, very different blast radius. Reads are never scoped, so diagnosis still works everywhere. See [RBAC](adr/001-rbac.md).
 
 ---
 
@@ -37,8 +37,8 @@ make run-triage              # Deterministic triage Workflow, one batch run
 ```
 
 **Exposed capabilities:**
-- `orrery_chat_agent` (interactive root) — conversational LLM that routes to `kafka_health`, `k8s_health`, `observability`, `elasticsearch`, `docker`, and `ops_journal` via `AgentTool`, plus `incident_triage_agent` for a single-turn full sweep and `LoadMemoryTool` (model-invoked `load_memory`) for cross-session recall
-- `orrery_triage_workflow` (batch root) — `health_join` barriers the 5 parallel subsystem checkers, then `triage_summarizer` → `journal_writer` → `triage_route`
+- `orrery_chat_agent` (interactive root) — conversational LLM that routes to `kafka_health_agent`, `k8s_health_agent`, `observability_agent`, `elasticsearch_agent`, `docker_agent`, and `ops_journal_agent` via `AgentTool`, plus `incident_triage_agent` for a single-turn full sweep and `LoadMemoryTool` (model-invoked `load_memory`) for cross-session recall
+- `orrery_triage_workflow` (batch root) — `health_join` barriers the parallel subsystem checkers (one per enabled specialist's `HealthCheck`), then `triage_summarizer` → `journal_writer` → `triage_route`
 - `remediation_actor` / `remediation_verifier` — closed-loop remediation subgraph that acts → verifies → retries up to 3 times via a `verify_route` state counter
 
 ---
@@ -104,8 +104,9 @@ Kubernetes control-plane tooling via the official Python client. Uses in-cluster
 | `list_configmaps`, `get_configmap` | viewer | ConfigMap keys and values (long values truncated) |
 | `top_nodes`, `top_pods` | viewer | Live CPU/memory usage via the metrics API; degrades cleanly when metrics-server is absent |
 | `scale_deployment` | operator (`@confirm`) | Change replica count |
-| `restart_deployment` | operator (`@confirm`) | Rolling restart via annotation bump |
+| `restart_deployment` | admin (`@destructive`) | Rolling restart via annotation bump |
 | `rollback_deployment` | admin (`@destructive`) | Revert to a previous revision |
+| `patch_deployment`, `patch_statefulset` | admin (`@destructive`) | Apply a strategic merge patch (image tag, resources) |
 
 **Operator-aware tools** — backed by `orrery_core.default_registry` (Strimzi + ECK built in; pluggable for others):
 
@@ -203,7 +204,8 @@ Container inspection and lifecycle via the Docker CLI (subprocess). No Docker SD
 | `list_networks`, `inspect_network` | viewer | Driver, subnets, and which containers are attached |
 | `list_volumes`, `inspect_volume` | viewer | Driver, mountpoint, labels |
 | `system_df` | viewer | Disk usage by images / containers / volumes / build cache — what to prune, before pruning |
-| `start_container`, `restart_container` | operator (`@confirm`) | Lifecycle control |
+| `start_container` | operator (`@confirm`) | Start a stopped container |
+| `restart_container` | admin (`@destructive`) | Restart, causing brief downtime |
 | `stop_container` | operator (`@confirm`) | Graceful stop with timeout |
 | `remove_image` | admin (`@destructive`) | `docker rmi` with force flag |
 | `prune_images` | admin (`@destructive`) | Remove unused images (dangling only unless `all_unused`) |

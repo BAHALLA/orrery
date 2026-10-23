@@ -15,7 +15,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--red">P0</span> | [AEP-011](aep-011-deployment-hardening.md) | Production Deployment Hardening | <span class="badge badge--green">completed</span> | High | Critical |
 | <span class="badge badge--red">P0</span> | [AEP-013](aep-013-security-hardening.md) | Security Hardening & Auth Layer | <span class="badge badge--green">completed</span> | High | Critical |
 | <span class="badge badge--red">P0</span> | [AEP-014](aep-014-supply-chain-security.md) | Supply Chain Security (SBOM, Signing, Scan) | <span class="badge badge--green">completed</span> | Medium | High |
-| <span class="badge badge--amber">P1</span> | [AEP-004](aep-004-loop-agent-remediation.md) | LoopAgent for Self-Healing Remediation | <span class="badge badge--green">completed</span> | Medium | High |
+| <span class="badge badge--amber">P1</span> | [AEP-004](aep-004-loop-agent-remediation.md) | Closed-Loop Remediation (graph `Workflow`, originally `LoopAgent`) | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-007](aep-007-context-caching.md) | Context Caching for LLM Cost Reduction | <span class="badge badge--green">completed</span> | Low | High |
 | <span class="badge badge--amber">P1</span> | [AEP-010](aep-010-observability-tracing.md) | Distributed Tracing & Observability | <span class="badge badge--green">completed</span> | Medium | High |
 | <span class="badge badge--amber">P1</span> | [AEP-015](aep-015-cost-observability.md) | Cost Observability & Per-Tenant Budgets | <span class="badge badge--amber">in-progress</span> | Medium | High |
@@ -70,7 +70,7 @@ complete**:
 Self-healing loops, cost control, distributed tracing, and on-call docs
 make agents truly autonomous and operable in production:
 
-- **AEP-004 ✅**: LoopAgent for detect → remediate → verify → repeat workflows
+- **AEP-004 ✅**: Closed-loop detect → remediate → verify → repeat, as a graph `Workflow` cycle (`verify_route`; first built on `LoopAgent`, migrated per ADR-003)
 - **AEP-007 ✅**: Context caching to reduce LLM costs (low effort, high impact)
 - **AEP-010 ✅**: OpenTelemetry distributed tracing across agent calls *(completed 2026-06-21)*
 - **AEP-015**: Per-tenant LLM cost tracking and budget alerts
@@ -86,10 +86,10 @@ make agents truly autonomous and operable in production:
 Cross-platform agent communication, artifact management, streaming,
 tool organization, and load/chaos coverage:
 
-- **AEP-005**: A2A protocol for cross-platform agent communication
+- **AEP-005**: A2A protocol for cross-platform agent communication — inbound exposition of the coordinator shipped ([ADR-007](../adr/007-a2a-exposition.md)); consuming remote agents is not built
 - **AEP-006**: Artifact storage for incident reports and triage snapshots
 - **AEP-008**: Skills-based tool grouping for cleaner agent composition
-- **AEP-009**: Streaming responses for real-time agent output
+- **AEP-009**: Streaming responses for real-time agent output — SSE turns and live tool progress shipped on the console, Slack and Google Chat; provider token streaming still to check
 - **AEP-016**: Load and chaos testing harness (Locust, LLM flakiness, circuit breaker exercises)
 - **AEP-019 ✅**: Web console for onboarding and safe operator usage (chat + tool timeline, confirmation UI, triage view, onboarding wizard) — sits behind the AEP-013 auth perimeter; token streaming tracked as AEP-009
 - **AEP-022**: Trajectory capture — harvest real runs into eval scenarios (and a fine-tune corpus)
@@ -97,6 +97,7 @@ tool organization, and load/chaos coverage:
 - **AEP-026**: Experience capture & REX — mine the platform's own incident history into reviewed runbooks
 - **AEP-028**: Plan-level approval — approve a declared multi-step change once, instead of a card per step, without widening authorization
 - **AEP-029**: User feedback on answers — 👍/👎 linked to the trace, feeding AEP-022's eval harvesting
+- **AEP-030 ✅**: Chat attachments — images and text files processed in memory for one turn, never stored *(completed 2026-10-19)*
 
 > **AEP-020 – 023** were identified by benchmarking Orrery against the mature
 > [Hermes agent architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture):
@@ -131,11 +132,17 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-07-19 | AEP-019: Milestone 1 complete | Tool-call timeline (GET /session/{id}/activity over ActivityPlugin's session_log, owner-scoped) and confirmation UI (GET /confirmations/pending + Approve/Deny panel sending the literal decision words through POST /chat) landed — the console now renders the orchestration and the guarded-action handshake, with the requester-verified gate unchanged as the sole approval authority. Milestones 2–3 (triage view, onboarding wizard) remain. |
 | 2026-07-25 | AEP-020: proposed → completed | Delivered by configuring ADK's native `EventsCompactionConfig` (ADK ≥ 1.16) rather than the hand-rolled `ContextEngine`/plugin the AEP originally specified. Native compaction also avoids splitting a `function_call` from its `function_response` — a bug the proposed slice-based design would have had — and preserves the original events by construction, so lineage needed no custom state. Effort dropped Medium → Low. |
 | 2026-07-19 | AEP-019: Milestone 2 triage view shipped | Run-triage button → incident_triage_agent; GET /session/{id}/triage exposes the recorded incident_severity + triage_report (AgentTool forwards sub-session state deltas to the parent session, verified against ADK 2.4); severity banner with collapsible markdown report; timeline polled every 2.5s while a request is in flight. Remaining for M2: per-system status chips and the remediation trace (batch-workflow-only today). |
+| 2026-07-25 | AEP-019: in-progress → completed | Milestone 3 (environment check, autonomy badge, stop/retry) completed the console; token streaming continues under AEP-009. |
 | 2026-08-22 | AEP-024 added (P1) | Audit review: the confirmation gate enforces requester-verified approval correctly but records no approval event. Refused approvals — a second person trying to approve someone else's destructive action — leave no trace at all. |
 | 2026-08-22 | AEP-025 added (P1) | Largest remaining capability gap: the agent reads live infrastructure through ~70 tools but cannot read anything a human wrote. No runbooks, postmortems or indexed docs exist, and memory recall is lexical. Scoped as two seams (sources, retrieval backends) so neither a document store nor a search vendor is hard-wired. |
 | 2026-08-22 | AEP-026 added (P2) | The platform records every session, tool outcome and triage verdict and never reads them in aggregate. Sequenced behind AEP-025, which gives generated REX documents somewhere to land. |
-| 2026-08-22 | AEP-017: proposed → completed | Eleven runbooks and `runbook_url` on all ten alert rules. Unblocked by AEP-025: the corpus now has somewhere to be retrieved from. One planned alert was dropped rather than shipped broken — prompt-injection detection exports no metric, so it cannot be alerted on today. |
+| 2026-08-22 | AEP-017: proposed → completed | Eleven runbooks and `runbook_url` on all ten alert rules. Unblocked by AEP-025: the corpus now has somewhere to be retrieved from. One planned alert was dropped rather than shipped broken — prompt-injection detection exported no metric. Closed the same day: `orrery_safety_screen_total` and two injection alerts (commit `4f397f1`). |
 | 2026-08-22 | AEP-025: proposed → completed | Phase 1 (seams, chunking, sync, Elasticsearch/BM25, `search_knowledge` on the tool path) then phase 2 (provider-agnostic `resolve_embedder()`, a hybrid pgvector backend fusing semantic and lexical ranks because pure vector search misses exact identifiers, and a Confluence source that refuses to auto-discover spaces). Retrieval-quality evals remain the one open acceptance criterion. |
 | 2026-08-22 | AEP-024: proposed → completed | Four confirmation lifecycle events on the audit stream, four counters and a decision-latency histogram, plus a critical alert on non-requester approval attempts. No `confirmation_id` column was needed — `action_id` was already a uuid primary key. |
 | 2026-10-03 | AEP-027 added and completed (P1) | Every existing bound was per call (breaker: failures of one tool; output cap: bytes of one result). Nothing bounded a run, where cost grows quadratically and four loop shapes — runaway search, re-asking a specialist, identical retries, cumulative overflow — slip past every per-call guard. |
+| 2026-10-03 | AEP-021: proposed → completed | Retry policy on every model call, plus `MODEL_FALLBACK_CHAIN` (`FallbackLlm`) moving to the next model on transient errors. |
+| 2026-10-03 | AEP-023: proposed → in-progress | Increment 1: `make run-triage` exits non-zero when a sweep's reads were refused or it produced no verdict, so a CronJob can alert on it. A scheduler and persisted run history remain. |
 | 2026-10-03 | AEP-028, AEP-029 added (P2) | Per-call approval degrades into approval fatigue on multi-step changes and remediation retries; a plan covering a closed set of `@confirm` tools fixes that without becoming a session bypass. Quality feedback had no channel, so AEP-022 had no signal for which runs to harvest. |
+| 2026-10-15 | AEP-009: proposed → in-progress | `POST /chat/stream` (SSE) with live tool progress via `ProgressPlugin`, then Slack and Google Chat progress. Provider token streaming remains to be checked. |
+| 2026-10-19 | AEP-030 added and completed (P2) | Chat attachments processed in memory under hard caps and never stored; the session keeps only a placeholder. |
+| 2026-10-23 | AEP-005: proposed → in-progress | Inbound A2A exposition of the coordinator shipped under [ADR-007](../adr/007-a2a-exposition.md), which supersedes the original design. Consuming remote agents is not built. |

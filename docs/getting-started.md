@@ -34,12 +34,19 @@ The quickest way to open the web UI and chat with the agent:
 ```bash
 docker pull ghcr.io/bahalla/orrery:latest
 
-docker run --rm -p 8000:8000 \
+docker run --rm -p 127.0.0.1:8000:8000 \
+  -e AUTH_ENABLED=false \
+  -e ORRERY_WEB_CONSOLE_ENABLED=true \
   -e GOOGLE_API_KEY=your-api-key \
   ghcr.io/bahalla/orrery:latest
 ```
 
 Open [http://localhost:8000](http://localhost:8000).
+
+The image defaults to authentication on and the console off, so both variables are
+needed: without `AUTH_ENABLED=false` the server refuses to start
+(`JWT_SECRET is required when JWT_ALGORITHM=HS256`), and without
+`ORRERY_WEB_CONSOLE_ENABLED=true` there is no console to open.
 
 !!! tip "Not using Gemini?"
     Swap the `GOOGLE_API_KEY` line for your provider's variables — e.g.
@@ -51,11 +58,15 @@ Open [http://localhost:8000](http://localhost:8000).
     (Kafka, Kubernetes, Prometheus) will report that those systems aren't
     reachable — use the Full stack option below for the complete experience.
 
-!!! warning "Dev mode — no authentication"
-    The Docker quick-start and `make run-dev` run **unauthenticated** on
-    purpose, so you can try the agent without setting up an IdP. **Do not
-    expose this on the public internet.** For any deployment beyond
-    localhost, enable JWT auth via `orrery_core.serving.server` — see
+!!! warning "Anonymous and read-only"
+    `AUTH_ENABLED=false` in the command above, and the compose `demo` profile
+    below, which sets it too, make every caller an anonymous **viewer**: the
+    agent can investigate, but RBAC refuses every change, so you won't see an
+    approval card. `make run-dev` (ADK Dev UI) is also unauthenticated. Auth is
+    on by default everywhere else. **Do not expose an anonymous front door
+    beyond localhost.** To try the approval flow, use [`make demo`](#demo), or
+    `make run-api` with a token from `make dev-token ROLE=operator`. For a real
+    deployment, see
     [Production deployment → Step 4](deployment.md#step-4-enable-authentication)
     and the [Security guide](config/security.md).
 
@@ -102,7 +113,7 @@ Orrery, it's the same three variables:
 
     ```bash
     MODEL_PROVIDER=gemini
-    MODEL_NAME=gemini-2.0-flash
+    MODEL_NAME=gemini-3.6-flash
     GOOGLE_API_KEY=your-api-key   # aistudio.google.com/apikey
     ```
 
@@ -134,7 +145,8 @@ Orrery, it's the same three variables:
 
 *   **Single container** — pass each as `-e`:
     ```bash
-    docker run --rm -p 8000:8000 \
+    docker run --rm -p 127.0.0.1:8000:8000 \
+      -e AUTH_ENABLED=false -e ORRERY_WEB_CONSOLE_ENABLED=true \
       -e MODEL_PROVIDER=anthropic \
       -e MODEL_NAME=anthropic/claude-sonnet-4-20250514 \
       -e ANTHROPIC_API_KEY=sk-ant-api03-... \
@@ -181,23 +193,27 @@ Follow these steps if you want to modify agents or contribute to the core librar
 
 4.  **Run the Orchestrator**:
     ```bash
-    make run-dev
+    make run-api                  # API + web console on http://localhost:8000
+    make dev-token ROLE=operator  # in another terminal: a token to sign in with
     ```
-    The ADK Dev UI will be available at [http://localhost:8000](http://localhost:8000).
+    `run-api` is the product: authenticated, with the approval flow. For the
+    unauthenticated ADK Dev UI instead (handy when working on an agent), run
+    `make run-dev`.
 
 !!! warning "Same port as the Docker demo"
-    Both `make run-dev` (ADK Dev UI) and `docker compose --profile demo up -d` bind `:8000`. If you're running the Docker demo, `make run-dev` will fail to start — `docker compose down` first, or change one of the ports.
+    `make run-api`, `make run-dev` (ADK Dev UI) and `docker compose --profile demo up -d` all bind `:8000`. If you're running the Docker demo, the local targets will fail to start — `docker compose down` first, or change one of the ports.
 
 ---
 
 ## A real incident in one command: `make demo` {: #demo }
 
 ```bash
-make install    # once
-make demo       # seeds the incident and opens the console on :8000
+make install           # once
+cp .env.example .env   # once; set your LLM key in .env
+make demo              # seeds the incident and opens the console on :8000
 ```
 
-`make demo` starts Kafka, kafka-exporter, Prometheus and Alertmanager, then breaks
+`make demo` starts Postgres, Kafka, kafka-exporter, Prometheus and Alertmanager, then breaks
 them on purpose (`scripts/demo/seed.py`):
 
 - a consumer group, `orders-processor`, **5,100 messages behind** on the `orders` topic,
@@ -235,6 +251,11 @@ Ask: **"List all pods in the kube-system namespace."**
 Ask: **"Scale the 'web-app' deployment to 3 replicas."**
 
 **The "Magic":** The agent identifies this as a mutating operation. It will present an **interactive confirmation** prompt before executing any changes.
+
+This needs at least the **operator** role and a reachable Kubernetes cluster: run
+`make run-api` and sign in with a token from `make dev-token ROLE=operator`. On the
+anonymous Docker quick-start every caller is a viewer, so the request is refused instead.
+[`make demo`](#demo) leaves Kubernetes off, but its "Fix it." step shows the same approval card.
 
 ---
 

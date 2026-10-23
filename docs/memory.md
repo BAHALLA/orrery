@@ -51,18 +51,22 @@ The `SecureMemoryService` wraps whichever backend it delegates to (in-memory or 
 
 All event content is redacted **at write time** — secrets never enter the memory store. The following patterns are automatically detected and replaced with `[REDACTED]`:
 
-- `password=...`, `token=...`, `secret=...`, `api_key=...`, `bearer=...`
+- `password=...`, `token=...`, `secret=...`, `api_key=...`, `bearer=...` (any key-value pair where the key matches common secret names)
 - PEM private key blocks (`-----BEGIN RSA PRIVATE KEY-----`)
-- Any key-value pair where the key matches common secret names
+- Provider tokens (`AKIA…`, `ghp_…`, `xox…`, `sk-…`) and JWTs
 
-You can also supply custom patterns:
+These are the same patterns `PIIRedactionPlugin` applies to tool results (`orrery_core.security.redaction.SECRET_VALUE_PATTERNS`).
+
+You can supply custom patterns. `sensitive_patterns` **replaces** the defaults rather than adding to them, so include the defaults to extend them:
 
 ```python
 import re
 from orrery_core import SecureMemoryService
+from orrery_core.security.redaction import SECRET_VALUE_PATTERNS
 
 memory = SecureMemoryService(
     sensitive_patterns=[
+        *(pattern for pattern, _triggers in SECRET_VALUE_PATTERNS),
         re.compile(r"(?i)my_custom_secret\s*[:=]\s*\S+"),
     ]
 )
@@ -165,20 +169,30 @@ matters more than per-turn cost.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `max_entries_per_user` | `500` | Maximum events stored per user; oldest evicted when exceeded |
-| `sensitive_patterns` | Built-in set | List of `re.Pattern` objects for custom redaction rules |
+| `sensitive_patterns` | Built-in set | List of `re.Pattern` objects for redaction. Replaces the built-in set |
 
 ## Plugin Order
 
-The `MemoryPlugin` is registered as part of `default_plugins()` when enabled. It runs after `ActivityPlugin` and before `ErrorHandlerPlugin`:
+The `MemoryPlugin` is registered as part of `default_plugins()` when enabled. It runs after `ActivityPlugin` and before `ToolOutputCapPlugin` and `ErrorHandlerPlugin`. The full order (optional plugins in parentheses):
 
 ```
-1. GuardrailsPlugin   — RBAC + confirmation
-2. ResiliencePlugin    — circuit breaker
-3. MetricsPlugin       — Prometheus metrics
-4. AuditPlugin         — structured audit logs
-5. ActivityPlugin      — session activity tracking
-6. MemoryPlugin        — cross-session memory persistence
-7. ErrorHandlerPlugin  — graceful error recovery
+ 1. IdentityStateGuardPlugin  — reverts tool writes to identity/authorization state
+ 2. (TracingPlugin)           — OpenTelemetry span enrichment
+ 3. (SafetyScreenPlugin)      — prompt-injection screening (default on)
+ 4. (AuthPlugin)              — verified identity → role
+ 5. (PIIRedactionPlugin)      — credential redaction in tool results (default on)
+ 6. AuditPlugin               — structured audit logs
+ 7. ToolLedgerPlugin          — guarded-call ledger for transports
+ 8. ProgressPlugin            — streaming progress
+ 9. AutonomyPlugin            — L2/L3/L4 process autonomy
+10. GuardrailsPlugin          — RBAC (+ optional dry-run)
+11. ResiliencePlugin          — circuit breaker
+12. (Call/Delegation/Repeat budget plugins)
+13. MetricsPlugin             — Prometheus metrics
+14. (ActivityPlugin)          — session activity tracking
+15. (MemoryPlugin)            — cross-session memory persistence
+16. ToolOutputCapPlugin       — per-result and per-run output caps
+17. ErrorHandlerPlugin        — graceful error recovery
 ```
 
 ## Production Considerations

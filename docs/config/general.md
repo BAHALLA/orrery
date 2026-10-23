@@ -10,6 +10,7 @@ The platform supports multiple LLM providers through [LiteLLM](https://docs.lite
 |----------|---------|-------------|
 | `MODEL_PROVIDER` | `gemini` | LLM backend: `gemini`, `anthropic`, `openai`, `ollama`, etc. |
 | `MODEL_NAME` | `gemini-3.6-flash` | Model identifier (provider prefix auto-added if missing) |
+| `GEMINI_MODEL_VERSION` | unset | Gemini only: used when `MODEL_NAME` is unset. `MODEL_NAME` wins when both are set. |
 
 ### Provider examples
 
@@ -18,7 +19,7 @@ The platform supports multiple LLM providers through [LiteLLM](https://docs.lite
 
 ```env
 MODEL_PROVIDER=gemini
-MODEL_NAME=gemini-2.5-pro
+MODEL_NAME=gemini-3.6-flash
 # Either Vertex AI:
 GOOGLE_GENAI_USE_ENTERPRISE=TRUE
 GOOGLE_CLOUD_PROJECT=your-project-id
@@ -238,6 +239,13 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | `ORRERY_SHUTDOWN_GRACE_SECONDS` | `30` | On shutdown, how long turns whose clients left may finish, after uvicorn's `--timeout-graceful-shutdown` (15 in the image) has waited for connected ones. Keep the sum under the pod's termination grace period minus its preStop sleep. |
 | `ORRERY_MCP_CONFIG` | unset | YAML file of [MCP servers](../integrations/mcp.md) to expose as gated specialists. Needs the `[mcp]` extra. |
 
+## Process
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_MAX_WORKER_THREADS` | 8 per CPU of the cgroup quota, 8–64 | Size of the thread pool blocking tool calls run on. The default reads the container's CPU limit, not the host's core count. |
+| `LOG_LEVEL` | `INFO` | Log level for the JSON logs on stdout (`DEBUG`, `INFO`, `WARNING`, …). |
+
 ## HTTP front door
 
 | Variable | Default | Description |
@@ -245,6 +253,8 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | `ORRERY_CHAT_RATE_LIMIT` | `30/minute` | Per-user limit on `/chat` and `/chat/stream` (one shared bucket). |
 | `ORRERY_SELFTEST_RATE_LIMIT` | `10/minute` | Per-user limit on the environment self-test. |
 | `ORRERY_RATE_LIMIT_STORAGE_URI` | `memory://` | Counter storage. `memory://` counts per replica; `redis://host:6379` shares counters. |
+| `ORRERY_CONFIRMATION_BACKEND` | `memory` | Where pending approvals live: `postgres` (via `DATABASE_URL`) shares them across replicas. See [Guardrails](../guardrails.md). |
+| `ORRERY_MULTI_REPLICA` | unset | Set by the Helm chart when more than one pod serves traffic. The server then refuses to start without `DATABASE_URL`, with a confirmation backend other than `postgres`, or with A2A enabled. |
 
 A refused request is a `429` with `Retry-After`, which the console shows as "retry in Ns".
 
@@ -326,6 +336,7 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 |---------|------|-------------|
 | Kafka | `9092` | Kafka broker (running in KRaft mode) |
 | PostgreSQL | `5432` | Shared session storage for agents |
+| pgAdmin | `127.0.0.1:5050` | Database browser for the session store (loopback only) |
 | Kafka UI | `8080` | Web UI for browsing topics and consumer groups |
 | Kafka Exporter | `9308` | Prometheus exporter for Kafka metrics |
 | Prometheus | `9090` | Metrics collection and alerting rules |
@@ -333,8 +344,11 @@ The included `docker-compose.yml` starts the local diagnostic stack.
 | Alertmanager | `9093` | Alert routing and silence management |
 | Tempo | `4317` / `3200` | OTLP span ingest + Tempo query API (`tracing` profile) |
 | Grafana | `3001` | Trace/metric visualization (`tracing` profile) |
-| Elasticsearch | `9200` | Elasticsearch REST endpoint |
-| Kibana | `5601` | Kibana web UI |
+| Keycloak | `8081` | Local identity provider, realm `orrery` (`sso` profile) |
+| Elasticsearch | `9200` | Elasticsearch REST endpoint (`elastic` profile) |
+| Kibana | `5601` | Kibana web UI (`elastic` profile) |
+
+`make up` starts every profile listed here; `make up PROFILES=…` narrows it.
 
 ### Management Commands
 
@@ -355,3 +369,4 @@ make down # stop the tracing stack
 | `docker compose --profile slack up -d` | Infrastructure + Slack bot on `:3000` |
 | `docker compose --profile tracing up -d` | Tempo (OTLP `:4317`) + Grafana (`:3001`) |
 | `docker compose --profile elastic up -d` | Elasticsearch + Kibana |
+| `docker compose --profile sso up -d` | Keycloak on `:8081` (for `make run-api SSO=1`) |

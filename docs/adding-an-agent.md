@@ -59,7 +59,8 @@ async def get_status(name: str) -> dict:
     try:
         # Use asyncio.to_thread for blocking SDK calls
         result = await asyncio.to_thread(_blocking_api_call, name)
-        return ToolResult.ok(data=result).to_dict()
+        # ok() takes keyword fields; to_dict() promotes them to the top level.
+        return ToolResult.ok(name=name, state=result).to_dict()
     except Exception as e:
         return ToolResult.error(f"Failed to get status: {e}").to_dict()
 
@@ -187,10 +188,11 @@ specialist = SpecialistSpec(
         tools=(get_status,),
     ),
     # Optional: what the unattended remediation loop may do. Guarded tools only.
+    # (Both tools come from step 2; each must be one of root_agent's tools.)
     remediation=Remediation(
-        actions=(restart_worker,),
-        playbook="restart_worker when a worker is wedged; the target is a worker id.",
-        verify=(get_worker_status,),
+        actions=(update_resource,),
+        playbook="update_resource when a resource is misconfigured; the target is its name.",
+        verify=(get_status,),
     ),
     # Optional: where findings are saved (the ops journal declares one).
     # journal=Journal(save=save_note, log=log_operation),
@@ -221,6 +223,11 @@ unattended and an instruction saying "take no action" is not a control:
   `delete_…`, see `orrery_core.looks_mutating`);
 - `Remediation.actions` must be guarded, so each one stops at the
   confirmation gate.
+
+Separately, `agents/orrery-assistant/tests/test_confirmation_wiring.py` fails the
+build on any tool whose name looks mutating (`looks_mutating`) but carries no
+`@confirm`/`@destructive`; `STATE_ONLY_TOOLS` in that file is the reviewed
+exemption for tools that only touch the agent's own state.
 
 An entry point may still name a bare agent: it registers with no
 contributions, routed by its `description` (one line, at most 200
@@ -355,6 +362,6 @@ make fmt      # auto-fix linting and formatting
 ```
 
 Agents are normally reached through the orchestrator (`make run-dev`) rather
-than run standalone, so you don't need a per-agent run target. If your agent is
-also useful on its own, add a `make run-<name>` target to the root `Makefile`
-next to the existing run targets (`make help` lists them all).
+than run standalone, and the `Makefile` has one run target per surface, not per
+agent. To try your agent on its own, run the ADK Dev UI from its directory:
+`cd agents/my-agent && uv run adk web`.

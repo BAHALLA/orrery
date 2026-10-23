@@ -53,7 +53,7 @@ export NS=orrery
 
 # What has the actor actually done? Audit records every attempt.
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=1000 \
-  | jq -r 'select(.message | test("tool_attempt")) | "\(.asctime) \(.agent) \(.tool)"' \
+  | jq -r 'select(.message | test("tool_attempt")) | "\(.timestamp) \(.agent) \(.tool)"' \
   | grep remediation
 ```
 
@@ -85,7 +85,9 @@ Anything other than `L2` for a scheduled sweep is the finding.
 
 ## Immediate mitigation
 
-**Stop the sweeps first, ask why second.**
+**Stop the sweeps first, ask why second.** The Helm chart does not ship a
+triage CronJob; `orrery-triage` below is an example name, so use whatever
+schedules `run_triage.py` in your deployment.
 
 ```bash
 kubectl -n $NS patch cronjob orrery-triage -p '{"spec":{"suspend":true}}'

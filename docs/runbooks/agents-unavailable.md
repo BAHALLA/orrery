@@ -6,7 +6,7 @@
 ## Symptom
 
 No replica is passing readiness. Slack and Google Chat stop answering, the web
-console returns 502/503, and `up{job="orrery"}` is 0. Pods may be
+console returns 502/503, and `up{job="agents"}` is 0. Pods may be
 `CrashLoopBackOff`, or `Running` but never `Ready`.
 
 ## Is this Orrery, or is Orrery telling you the truth?
@@ -42,18 +42,21 @@ Look for these, in rough order of frequency:
 | `Unknown ORRERY_KNOWLEDGE_BACKEND=…` | Typo in the knowledge backend name | Correct it or unset it — `none` disables retrieval |
 | `ValidationError` from pydantic-settings | A config value has the wrong type | The message names the field |
 
-**`Running` but not `Ready` — the process is up, a dependency is not.**
-`/readyz` runs the integration probes; `/healthz` only proves the process is
-alive, which is why liveness is not also failing.
+**`Running` but not `Ready` — the process is up, its session database is not.**
+`/readyz` checks only the session database (`DATABASE_URL`): never the model
+provider or the systems Orrery monitors. `/healthz` only proves the process is
+alive, which is why liveness is not also failing. Both are served by the front
+door on its HTTP port, 8000.
 
 ```bash
-kubectl -n $NS port-forward deploy/orrery-assistant 8081:8081 &
-curl -s localhost:8081/readyz | jq
+kubectl -n $NS port-forward deploy/orrery-assistant 8000:8000 &
+curl -s localhost:8000/readyz | jq
 ```
 
-The response body names the failing check. A failing dependency probe is
-usually the monitored infrastructure, not Orrery — at which point this is
-*Orrery telling you the truth*, and the fix belongs to that system's owner.
+The response body names the failing check; continue with
+[session-db-unreachable](session-db-unreachable.md). A broken integration
+(Kafka, Kubernetes, Elasticsearch) never fails readiness: it shows up as tool
+errors instead.
 
 **`OOMKilled` or `Evicted` — resource pressure.**
 
@@ -104,9 +107,9 @@ Once traffic is served again:
   `curl -s localhost:9100/metrics | grep orrery_context_compaction_total`.
   A flat counter on a long-lived deployment means `ORRERY_CONTEXT_COMPACTION`
   is disabled or the threshold is never reached.
-- If a dependency probe failed, ask why the probe passed at deploy time. A
-  readiness check that only fails hours later is usually a credential
-  expiring, not a network change.
+- If readiness failed on the database, ask why it passed at deploy time. A
+  readiness check that only fails hours later is usually a database
+  credential expiring, not a network change.
 
 ## Permanent fix
 

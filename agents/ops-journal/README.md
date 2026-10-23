@@ -23,7 +23,7 @@ Tools receive a `ToolContext` (alias for `Context`) as their first parameter. AD
 from google.adk.tools import ToolContext
 
 
-def save_note(ctx: ToolContext, title: str, content: str) -> dict:
+async def save_note(ctx: ToolContext, title: str, content: str) -> dict:
     notes = ctx.state.get("user:notes", [])  # read
     notes.append({"title": title, "content": content})
     ctx.state["user:notes"] = notes  # write
@@ -77,7 +77,7 @@ Without `DATABASE_URL` this runs in-memory; set a PostgreSQL `DATABASE_URL` so `
 ## Running
 
 ```bash
-# ADK Dev UI (in-memory state — resets on restart)
+# Terminal mode (in-memory state — resets on restart)
 make run-cli
 
 # Terminal mode with persistence (in-memory, or PostgreSQL via DATABASE_URL)

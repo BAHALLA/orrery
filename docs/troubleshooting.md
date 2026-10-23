@@ -16,7 +16,11 @@ The HTTP front door (`orrery_core.serving.server`) requires a valid JWT bearer t
 Full setup recipes: [Security & auth](config/security.md).
 
 ### `JWT_SECRET is required when JWT_ALGORITHM=HS256` at startup
-The chart was rendered with `auth.enabled=true` but no secret reached the pod. Either:
+Authentication is on (`AUTH_ENABLED` defaults to `true`) but no secret reached the process.
+
+**Bare `docker run` of the image:** for a local try-out, pass `-e AUTH_ENABLED=false` (anonymous, every caller is a viewer) plus `-e ORRERY_WEB_CONSOLE_ENABLED=true` for the console, as in [Getting Started](getting-started.md#kick-the-tires-single-container-30-seconds). Otherwise pass `-e JWT_SECRET=…` (at least 32 bytes for HS256) or the `JWT_JWKS_URL` setup in [Security & auth](config/security.md).
+
+**Helm:** the chart was rendered with `auth.enabled=true` but no secret reached the pod. Either:
 
 - Set `JWT_SECRET` under the chart's `secrets:` block (Helm-managed), or
 - Add it to the `existingSecret` you reference, or
@@ -28,7 +32,7 @@ The chart was rendered with `auth.enabled=true` but no secret reached the pod. E
 Three things to check, in order:
 
 1. The `JWT_ROLE_CLAIM` env var matches the claim your IdP actually puts roles in (Auth0 typically namespaces it as `https://YOUR_API/roles`).
-2. The role value is one of `admin` / `operator` / `viewer` — or one of the aliases (`orrery-admin`, `orrery_operator`). Custom names need an explicit `RolePolicy`.
+2. The role value is one of `admin` / `operator` / `viewer`, or an alias: `orrery-admin`, `orrery_admin`, `orrery-operator`, `orrery_operator` (case-insensitive). The HTTP front door accepts no other names, so map your IdP's role to one of these in the IdP (a role mapper or claim rule). `extract_role(admin_values=…, operator_values=…)` takes custom names only in your own integration code. (`RolePolicy` is unrelated: it maps *tools* to minimum roles.)
 3. The HTTP front door re-stamps `_auth` on every `POST /chat`, and `AuthPlugin.before_agent_callback` re-applies `set_user_role` on every turn — so the role tracks the verified token live. If you're not going through `/chat` (e.g. you're inside the Slack or Google Chat handler), the role is whatever the transport set at session creation; restart the thread to pick up env-var changes.
 
 ### `401 Unauthorized: Invalid ID token` (Google Chat)
@@ -94,9 +98,11 @@ The bot uses `auto_create_session=True`, so this shouldn't normally fire. If it 
 
 ### Pods crash-loop on startup
 Usually one of:
-- Missing `GOOGLE_API_KEY` / `ANTHROPIC_API_KEY` — the LLM call fails and readiness times out.
+- Auth on with no `JWT_SECRET` / `JWT_JWKS_URL` — see [above](#jwt_secret-is-required-when-jwt_algorithmhs256-at-startup).
 - `DATABASE_URL` points to a host the pod can't reach. Test from a debug pod: `kubectl run -it --rm psql --image=postgres:16 -- psql $DATABASE_URL`.
 - Missing Postgres driver — rebuild the image with `uv sync --extra postgres` (the provided `Dockerfile` does this by default).
+
+A missing `GOOGLE_API_KEY` / `ANTHROPIC_API_KEY` does **not** crash the pod or fail readiness: `/readyz` checks only the session database. The process starts, and every chat turn fails on the model call. The console's **Check my environment** button reports it.
 
 ### Readiness probe flaps
 The startup probe allows up to 60 seconds (12 × 5s). Slow cold starts usually come from LLM warm-up calls or blocking client initialization. Full guidance: [Deployment → Readiness probe flaps](deployment.md#readiness-probe-flaps).
@@ -113,7 +119,7 @@ Both `make run-dev` (ADK Dev UI) and `docker compose --profile demo up -d` bind 
 - Is the tool actually decorated? `@confirm("reason")` and `@destructive("reason")` both attach the metadata the callback reads.
 
 ### Confirmation loops / agent keeps asking
-The confirmation key is `args-hash + invocation-id`. If the LLM retries with slightly different arguments, the key changes and the gate fires again. This is by design — it prevents "yes" being reused across different destructive operations.
+A pending confirmation is keyed by the tool and a hash of its arguments, and kept for 300 s. The invocation id only tells a re-call (a later turn) from the first call. If the LLM retries with slightly different arguments, the hash changes and the gate fires again. This is by design — it prevents "yes" being reused across different destructive operations.
 
 ---
 

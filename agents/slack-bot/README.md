@@ -9,8 +9,8 @@ Slack message / @mention
   → Socket Mode (WebSocket) or HTTP webhook
     → slack-bolt event handler
       → ADK Runner (orrery-assistant root_agent)
-        → AgentTools (kafka, k8s, docker, observability, journal)
-        → sub-agents (incident triage workflow)
+        → AgentTools (kafka, k8s, elasticsearch, docker, observability, journal)
+        → AgentTool incident_triage_agent (single-turn health sweep)
       → response posted in-thread
 
 Guarded tools → Block Kit buttons [Approve] [Deny]
@@ -26,7 +26,7 @@ For quick setup using the app manifest, see the [Slack integration guide](../int
 
 1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
 2. Enable **Socket Mode** → generate App-Level Token (scope: `connections:write`)
-3. Add bot scopes: `chat:write`, `channels:history`, `groups:history`, `im:history`, `app_mentions:read`
+3. Add bot scopes: `chat:write`, `channels:history`, `groups:history`, `im:history`, `app_mentions:read` (plus `users:read` and `users:read.email` if you enable [impersonation](../integrations/slack.md#acting-as-the-user))
 4. Subscribe to events: `message.channels`, `message.groups`, `message.im`, `app_mention`
 5. Enable **Interactivity**
 6. Install to workspace
@@ -103,6 +103,11 @@ Sessions are in-memory by default; set `SLACK_DB_URL` or `DATABASE_URL` to a Pos
 | `SLACK_APP_TOKEN` | — | App-level token for Socket Mode (`xapp-...`) |
 | `SLACK_BOT_PORT` | `3000` | Port for webhook mode |
 | `SLACK_DB_URL` | _(empty → in-memory)_ | PostgreSQL session URL; `DATABASE_URL` takes precedence |
+| `SLACK_ADMIN_USERS` | _(empty)_ | Comma-separated Slack user IDs with the `admin` role |
+| `SLACK_OPERATOR_USERS` | _(empty)_ | Comma-separated Slack user IDs with the `operator` role; everyone else is `viewer` |
+| `SLACK_RATE_LIMIT` | `60/minute` | Per-source-IP limit on `/slack/events` (webhook mode) |
+| `SLACK_PROGRESS_UPDATES` | `true` | Edit an in-thread status message while a slow turn runs |
+| `SLACK_TRUSTED_PROXY_HOPS` | `0` | Proxy hops to trust for `X-Forwarded-For`; leave `0` when exposed directly |
 
 ## Testing
 
@@ -110,4 +115,4 @@ Sessions are in-memory by default; set `SLACK_DB_URL` or `DATABASE_URL` to a Pos
 uv run pytest agents/slack-bot/tests/ -v
 ```
 
-35 tests, all mocked — no running Slack or infrastructure required.
+All tests are mocked — no running Slack or infrastructure required.

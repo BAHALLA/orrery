@@ -12,10 +12,17 @@ A single agent with tools for monitoring and managing Docker containers and imag
 | `get_container_stats` | Resource usage: CPU, memory, network, and block IO | — |
 | `docker_compose_status`| Status of services in a Docker Compose project | — |
 | `list_images` | List available Docker images on the host | — |
+| `list_networks` | List Docker networks | — |
+| `inspect_network` | Driver, subnets and attached containers | — |
+| `list_volumes` | List Docker volumes | — |
+| `inspect_volume` | Driver, mountpoint and labels | — |
+| `system_df` | Disk usage by images, containers, volumes and build cache | — |
 | `start_container` | Start a stopped container | `@confirm` |
 | `stop_container` | Stop a running container | `@confirm` |
 | `restart_container` | Trigger a container restart | `@destructive` |
 | `remove_image` | Delete a Docker image from the host | `@destructive` |
+| `prune_containers` | Remove all stopped containers | `@destructive` |
+| `prune_images` | Remove unused images (dangling only unless `all_unused`) | `@destructive` |
 
 ## Diagnosis Flow
 

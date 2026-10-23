@@ -21,15 +21,15 @@ Before every agent turn, `GuardrailsPlugin.before_agent_callback` runs `ensure_d
 | Surface | Default role | How to change |
 |---------|--------------|---------------|
 | ADK Web (`adk web`) | `viewer` | Edit session state: set `user_role` **and** `_role_set_by_server: true`, then start a **new session** |
-| ADK CLI (`adk run <agent>`) | `viewer` | No env-var knob — wrap the agent with `core.runner.run_persistent_cli()` or write a small script |
+| ADK CLI (`adk run <agent>`) | `viewer` | No env-var knob — run the agent through `orrery_core.serving.runner.run_persistent()` or write a small script |
 | Persistent CLI (`make run-cli PERSIST=1`) | `admin` (hard-coded) | Edit the role stamped in `core/orrery_core/serving/runner.py` to change |
-| Slack bot | `viewer` unless mapped | Set `SLACK_ADMIN_USERS` / `SLACK_OPERATOR_USERS`; start a **new thread** |
-| Google Chat bot | `viewer` unless mapped | Set `GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`; start a **new thread** |
+| Slack bot | `viewer` unless mapped | Set `SLACK_ADMIN_USERS` / `SLACK_OPERATOR_USERS`; restart the bot |
+| Google Chat bot | `viewer` unless mapped | Set `GOOGLE_CHAT_ADMIN_EMAILS` / `GOOGLE_CHAT_OPERATOR_EMAILS`; restart the bot |
 | HTTP front door (`orrery_core.serving.server`) | Derived from JWT every request | Mint a JWT with the matching `JWT_ROLE_CLAIM` value (`admin` / `operator` / `viewer` or aliases) |
 | Custom `Runner` in Python | Whatever your code sets | Call `set_user_role(initial_state, role)` before `create_session()` |
 
-!!! warning "Roles are baked into the session at creation time"
-    Once a session exists with a given `user_role`, changing env vars and sending another message in the **same** session / thread does **not** change the role. Always start a new session / new thread after swapping roles.
+!!! note "The chat bots stamp the role every turn"
+    Slack and Google Chat call `set_user_role()` on every message, so a new role applies from the next message, in the same thread. The role mappings are read from the environment at startup, so changing them needs a bot restart.
 
 ## Picking a test tool
 
@@ -37,10 +37,10 @@ Every agent has at least one tool per role tier. Good candidates for quickly exe
 
 | Role required | Tool | Agent |
 |---------------|------|-------|
-| `viewer` | `list_topics` | `kafka-health` |
+| `viewer` | `list_kafka_topics` | `kafka-health` |
 | `operator` (`@confirm`) | `create_kafka_topic` | `kafka-health` |
 | `admin` (`@destructive`) | `delete_kafka_topic` | `kafka-health` |
-| `admin` (`@destructive`) | `delete_pod` | `k8s-health` |
+| `admin` (`@destructive`) | `rollback_deployment` | `k8s-health` |
 
 A denial response looks like this (from `authorize()`):
 
@@ -89,22 +89,21 @@ Workarounds, ordered by convenience:
 make run-cli PERSIST=1
 ```
 
-To test a non-admin role here, temporarily edit `core/orrery_core/serving/runner.py` — change `set_user_role(initial_state, "admin")` to `"operator"` or `"viewer"` and re-run.
+To test a non-admin role here, temporarily edit `core/orrery_core/serving/runner.py` — change `set_user_role(admin_delta, "admin")` to `"operator"` or `"viewer"` and re-run.
 
 **B. Write a 10-line script** using the core helper directly. Save as `scripts/try_role.py`:
 
 ```python
 import asyncio
-from orrery_core import set_user_role
-from orrery_core.serving.runner import run_persistent_cli
+from orrery_core.serving.runner import run_persistent
 from orrery_assistant.agent import root_agent
 
-# Patch the initial state by monkey-patching set_user_role's default.
-# Simpler: just spin up your own Runner — see the "Custom Runner" section below.
+# run_persistent() stamps "admin". For another role, spin up your own
+# Runner instead — see the "Custom Runner" section below.
 
 asyncio.run(
-    run_persistent_cli(
-        agent=root_agent,
+    run_persistent(
+        root_agent,
         app_name="orrery_assistant",
         user_id="taoufiq@example.com",
     )
@@ -113,7 +112,7 @@ asyncio.run(
 
 ## Testing with the Slack bot
 
-Slack resolves the role from the Slack user ID on the first message in a thread.
+Slack resolves the role from the Slack user ID on every message.
 
 1. Find your Slack user ID: profile → ⋮ → *Copy member ID* (looks like `U01ABC123`).
 2. In `agents/slack-bot/.env`:
@@ -122,8 +121,8 @@ Slack resolves the role from the Slack user ID on the first message in a thread.
    SLACK_OPERATOR_USERS=U02DEF456
    ```
 3. Restart the bot: `make run-slack MODE=socket` (Socket Mode, no public URL needed).
-4. Open a **new thread** in a channel the bot is in and @-mention it.
-5. To retest with a different role: edit `.env`, restart, start **another new thread**. The existing thread keeps the role it was created with.
+4. @-mention the bot in a channel it is in.
+5. To retest with a different role: edit `.env` and restart. The next message uses the new role, in a new thread or the existing one.
 
 See [Slack integration → RBAC](integrations/slack.md#role-based-access-control) for the full mapping table.
 
@@ -138,17 +137,17 @@ Google Chat resolves the role from the signed-in user's email claim in the token
    ```
 2. Restart: `make run-chat` (and ensure ngrok / the endpoint URL still matches `GOOGLE_CHAT_AUDIENCE` byte-for-byte).
 3. DM the bot (or @-mention it in a space) from an account whose email matches.
-4. To retest, change `.env`, restart, and start a **new thread** — same caveat as Slack, the role is locked in for the life of the thread's session.
+4. To retest, change `.env` and restart. As with Slack, the role is stamped on every message, so the existing thread picks it up.
 
 !!! note "Swapping users is easier than swapping roles"
     If you control multiple Workspace accounts, the fastest way to exercise all three tiers is to list one account per tier in the env vars and @-mention from each one. No restart needed.
 
 ## Testing with the HTTP front door (`orrery_core.serving.server`)
 
-The JWT front door is the production replacement for `adk web`. The role is **verified per request** from the JWT — there is no env-var knob, and there is no per-thread session sticky like Slack / Google Chat. Unlike the chat transports, role changes apply immediately on the next call rather than at the next thread.
+The JWT front door is the production replacement for `adk web`. The role is **verified per request** from the JWT — there is no env-var knob; role changes apply on the next call.
 
 1. Start the server with `AUTH_ENABLED=true` and either `JWT_SECRET` (HS256) or `JWT_JWKS_URL` (RS256). See [Security & auth](config/security.md) for full setup.
-2. Mint a test token. Easiest path for HS256:
+2. Mint a test token. With `make run-api`, `make dev-token ROLE=operator` mints one against the local secret. By hand, for HS256:
 
     ```bash
     python -c '
@@ -162,6 +161,9 @@ The JWT front door is the production replacement for `adk web`. The role is **ve
     }, "your-shared-secret", algorithm="HS256"))
     '
     ```
+
+    !!! note "Human clients"
+        Neither token carries an `azp` or `client_id` claim. That is fine while `ORRERY_HUMAN_CLIENTS` is unset (every token is treated as a person, with a startup warning). If it is set, such a token is classified as a **service** principal: its role is capped at `viewer`, autonomy is pinned to L2, and it cannot approve actions. Add an `azp` claim naming a listed client to test as a person. See [ADR-006](adr/006-caller-principals.md).
 
 3. Call `/chat`:
 
@@ -207,7 +209,7 @@ runner = Runner(
 )
 ```
 
-Subsequent turns on this session will carry `operator` authority. To simulate a privilege escalation attempt, try writing `user_role = "admin"` via a tool's `tool_context.state` — `ensure_default_role()` won't reset it mid-run (the lock flag is already `True`), but the `GuardrailsPlugin` treats `state_delta` writes from tools as untrusted relative to the initial role. That's the integration contract: only the server-side entry point should ever call `set_user_role()`.
+Subsequent turns on this session will carry `operator` authority. To simulate a privilege escalation attempt, try writing `user_role = "admin"` via a tool's `tool_context.state`: `IdentityStateGuardPlugin` (registered first by `default_plugins()`) snapshots the identity and authorization keys before every tool call and reverts any change the call made. That's the integration contract: only the server-side entry point should ever call `set_user_role()`.
 
 ## Troubleshooting
 
@@ -217,7 +219,7 @@ You forgot `_role_set_by_server: true`. Without the lock, `ensure_default_role()
 
 ### "I changed `SLACK_ADMIN_USERS` but I'm still viewer"
 
-Slack resolves the role **once per thread**, at session creation. Start a new thread — the existing one has the old role baked in.
+The mapping is read from the environment when the bot starts. Restart the bot; the next message (in any thread) uses the new role.
 
 ### "Tool confirmation was expected but I got `access_denied` instead"
 

@@ -34,6 +34,8 @@ ADMIN (2)    →  can also call @destructive tools (irreversible)
    ```
    RBAC blocks unauthorized users. Tool confirmation is handled natively by ADK's `FunctionTool(require_confirmation=True)` — see [AEP-001](../enhancements/aep-001-adk-native-confirmation.md).
 
+   **Update (2026-10-23):** confirmation is no longer `FunctionTool(require_confirmation=True)`. It is the `require_confirmation()` agent `before_tool_callback`, which `create_agent()` attaches to every agent holding a guarded tool (see [Guardrails](../guardrails.md#why-confirmation-is-wired-at-the-agent-level-not-the-plugin)). ADK-native `request_confirmation` is used only by `AutonomyPlugin` for destructive tools at autonomy level L4.
+
 4. **`RolePolicy` for overrides** — A policy object allows per-tool overrides when the inferred role isn't appropriate:
    ```python
    policy = RolePolicy(overrides={"sensitive_read": Role.OPERATOR})
@@ -97,17 +99,27 @@ runner = Runner(
 
 ### Plugin execution order
 
+**Update (2026-10-23):** the sequence below reflects the current `default_plugins()` order and the agent-level confirmation gate; the original listed `FunctionTool(require_confirmation=True)` as the last step.
+
 ```
 GuardrailsPlugin.before_agent_callback  →  ensures default viewer role if not server-set
-GuardrailsPlugin.before_tool_callback   →  authorize() blocks if user role < tool's required role
-FunctionTool(require_confirmation=True)  →  ADK natively asks "are you sure?" for guarded tools
+
+Before each tool call, in registration order (abridged; the first non-None answer stops the chain):
+IdentityStateGuardPlugin   →  snapshots identity/authorization keys (reverts tool writes after the call)
+AuditPlugin                →  records the attempt, even if a later gate refuses it
+AutonomyPlugin             →  refuses what the process's autonomy level (L2/L3/L4) forbids
+GuardrailsPlugin           →  authorize(): role check, then namespace scope
+ResiliencePlugin, run budgets  →  circuit breaker, call/delegation/repeat budgets
+agent before_tool_callback →  require_confirmation(), attached by create_agent()
 ```
 
-A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm by ADK's native confirmation flow.
+A viewer requesting `create_kafka_topic` (`@confirm` → requires OPERATOR) gets denied by `authorize()` **before** reaching the confirmation prompt. An operator gets past `authorize()` but is then asked to confirm by `require_confirmation()`.
 
 ### Namespace scope: restricting *where*, not just *what*
 
 **Update (2026-07-24):** the role check answers which tool a caller may run. It does not answer where, and on a Kubernetes platform that gap matters: `restart_deployment` is the same `@confirm` tool whether it targets `payments` or `kube-system`, but the blast radius is not remotely the same. An operator who is trusted to bounce an application pod is not thereby trusted to bounce the cluster's DNS.
+
+**Correction (2026-10-23):** `restart_deployment` is `@destructive` (admin), not `@confirm`, so the example above does not apply to it as written. The guard covers `@confirm` tools such as `scale_deployment` the same way.
 
 `NamespaceScopeGuard` adds that second axis, opt-in via `ORRERY_PROTECTED_NAMESPACES` (comma-separated `fnmatch` globs — unset leaves it inert, so existing deployments are unchanged):
 

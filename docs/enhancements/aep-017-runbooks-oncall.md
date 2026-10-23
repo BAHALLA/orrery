@@ -16,11 +16,18 @@
 >   Orrery, or something Orrery is correctly reporting on. That distinction
 >   turned out to be the first question in nearly every scenario, so it is a
 >   fixed section in the template rather than prose inside each page.
-> - `OrreryPromptInjectionDetected` is **not** shipped as an alert. It cannot
->   fire: `SafetyScreenPlugin` exports no metric and `MetricsPlugin` bounds the
->   `status` label to four values, so a `BLOCKED` result records as `ok`.
->   Detection is log-only and the runbook says so. Shipping an alert that can
->   never fire would be worse than not having one.
+> - `OrreryPromptInjectionDetected` was **not** shipped as an alert at first. It
+>   could not fire: `SafetyScreenPlugin` exported no metric and `MetricsPlugin`
+>   bounds the `status` label to four values, so a `BLOCKED` result recorded as
+>   `ok`. Shipping an alert that can never fire would be worse than not having one.
+>
+> **Update:** the same day (commit `4f397f1`), the screen gained a metric,
+> `orrery_safety_screen_total` (labelled by `direction` and `source`), and two
+> alerts on it: `OrreryDirectInjectionAttempts` and
+> `OrreryIndirectInjectionDetected`. Detection is no longer log-only. As of
+> 2026-10-23 there are fourteen pages under `docs/runbooks/` (including
+> README, template, checklist and escalation) and a `runbook_url` on all
+> fifteen alert rules.
 >
 > The runbooks are indexed by `make knowledge-sync`
 > ([AEP-025](aep-025-knowledge-retrieval.md)), so the agent retrieves them
@@ -208,12 +215,12 @@ is a nice-to-have and can follow after the core runbooks land.
 
 ## Acceptance Criteria
 
-- [ ] `docs/runbooks/` directory exists with README, template, and checklist
-- [ ] At least 5 high-priority runbooks written with concrete diagnosis commands
-- [ ] Every alert in `infra/alert_rules.yml` has a `runbook_url` annotation
-- [ ] On-call checklist documented and linked from `docs/deployment.md`
-- [ ] Escalation policy documented (even if it's just "ping #ai-platform")
-- [ ] Runbooks published via mkdocs and cross-linked from alerts
+- [x] `docs/runbooks/` directory exists with README, template, and checklist
+- [x] At least 5 high-priority runbooks written with concrete diagnosis commands
+- [x] Every alert in `infra/alert_rules.yml` has a `runbook_url` annotation
+- [x] On-call checklist documented and linked from `docs/deployment.md`
+- [x] Escalation policy documented (even if it's just "ping #ai-platform")
+- [x] Runbooks published via mkdocs and cross-linked from alerts
 - [ ] First dry-run: a new engineer can resolve a simulated incident using only the runbook
 
 ## Notes

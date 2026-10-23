@@ -17,8 +17,8 @@ Google Chat event
   → HTTP webhook (FastAPI) OR Pub/Sub subscription (pull)
     → GoogleChatHandler
       → ADK Runner (orrery-assistant root_agent)
-        → AgentTools (kafka, k8s, docker, observability, journal)
-        → sub-agents (incident triage workflow)
+        → AgentTools (kafka, k8s, elasticsearch, docker, observability, journal)
+        → AgentTool incident_triage_agent (single-turn health sweep)
       → reply posted in-thread (sync or async via Chat REST API)
 
 Guarded tools → Card v2 [Approve] [Deny]
@@ -90,7 +90,7 @@ The handshake lives on the platform confirmation store (`orrery_core`, shared wi
 | New thread | New session |
 | Reply in thread | Continues session |
 
-Sessions are persisted in the shared Postgres store (same as Slack).
+Sessions are persisted in Postgres when `DATABASE_URL` is set (same as Slack), and in memory otherwise.
 
 ## Configuration Reference
 

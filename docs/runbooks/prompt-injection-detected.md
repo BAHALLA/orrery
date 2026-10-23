@@ -63,11 +63,11 @@ Then read the detections themselves. The counter says *how much*; the log says
 
 ```bash
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=2000 \
-  | jq -r 'select(.name | test("safety")) | "\(.asctime) \(.message)"' | tail -30
+  | jq -r 'select(.logger=="orrery.safety") | "\(.timestamp) \(.message)"' | tail -30
 ```
 
-**Which direction?** A blocked run names the user; a neutralized result names
-the tool. That single fact routes the rest of this runbook.
+**Which direction?** A blocked run logs `blocked potential prompt injection` with
+the message text; a neutralized result names the tool. That single fact routes the rest of this runbook.
 
 **For an indirect hit, find the source.** The tool that returned it tells you
 where to look — a pod annotation, a log line, an indexed document:
@@ -87,8 +87,11 @@ space with broad edit rights is a supply chain into the agent's context.
 
 ```bash
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=2000 \
-  | jq -r 'select(.name | test("safety")) | .user_id' | sort | uniq -c | sort -rn
+  | jq -r 'select(.event=="tool_attempt") | "\(.timestamp) \(.user_id) \(.session_id) \(.tool)"'
 ```
+
+The `orrery.safety` lines carry no caller, so match their timestamps against the
+`tool_attempt` audit lines above (which carry `user_id` and `session_id`).
 
 ## Immediate mitigation
 

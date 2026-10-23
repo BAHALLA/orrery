@@ -8,12 +8,12 @@ This document analyzes the platform's architecture against the [Google Cloud Age
 | :--- | :--- | :--- |
 | **Multi-Agent (MAS)** | Coordinator | `orrery_chat_agent` uses `AgentTool` to route requests. |
 | | Workflow Graph | `orrery_triage_workflow` is an ADK 2.0 graph executing a fixed pipeline. |
-| | JoinNode Barrier | `health_join` synchronizes concurrent K8s, Kafka, and Docker checks. |
-| | Hierarchical | Root Orchestrator → Specialist Workers / Triage Sub-agent. |
+| | JoinNode Barrier | `health_join` synchronizes the concurrent checkers, one generated per enabled specialist's `HealthCheck`. |
+| | Hierarchical | Root Orchestrator → Specialist Workers / triage agent (all `AgentTool`s). |
 | **Iterative & Feedback** | ReAct | Default behavior for all `LlmAgent` instances (Thought/Action/Observation). |
 | | Graph Cycles | Remediation subgraph uses `verify_route` to loop: act → verify → retry. |
 | | Generator/Critic | Evaluation framework uses LLM-as-a-judge (AEP-002). |
-| **Specialized** | Human-in-the-Loop | `GuardrailsPlugin` gates tools with `@confirm` and `@destructive`. |
+| **Specialized** | Human-in-the-Loop | `require_confirmation()` (attached by `create_agent()`) gates tools with `@confirm` and `@destructive`; `GuardrailsPlugin` enforces RBAC first. |
 | | Custom Logic | Enforced via native Python `FunctionNode`s like `triage_route`. |
 
 ## Composition at a Glance
@@ -25,17 +25,18 @@ graph TD
     ROOT -->|AgentTool| KAFKA[kafka_health_agent]
     ROOT -->|AgentTool| K8S[k8s_health_agent]
     ROOT -->|AgentTool| OBS[observability_agent]
+    ROOT -->|AgentTool| ES[elasticsearch_agent]
     ROOT -->|AgentTool| DOCKER[docker_agent]
     ROOT -->|AgentTool| JOURNAL[ops_journal_agent]
     ROOT -->|AgentTool| TRIAGE[incident_triage_agent]
     
     WORKFLOW[orrery_triage_workflow<br/>Graph]
     WORKFLOW -->|START| HC[health_checkers<br/>Parallel edges]
-    HC --> HC1[kafka_checker]
-    HC --> HC2[k8s_checker]
-    HC --> HC3[docker_checker]
-    HC --> HC4[obs_checker]
-    HC --> HC5[es_checker]
+    HC --> HC1[kafka_health_checker]
+    HC --> HC2[k8s_health_checker]
+    HC --> HC3[docker_health_checker]
+    HC --> HC4[observability_health_checker]
+    HC --> HC5[elasticsearch_health_checker]
     HC1 & HC2 & HC3 & HC4 & HC5 --> HJ[health_join<br/>JoinNode]
     HJ --> SUM[triage_summarizer]
     SUM --> JW[journal_writer]
@@ -69,7 +70,7 @@ Every individual agent in the project follows the **ReAct (Reason and Act)** pat
 
 **Iterative Refinement** is implemented in the remediation layer using a graph-based cyclic subgraph:
 
-1.  **Act**: The `remediation_actor` attempts a fix (restart, scale, or rollback a deployment).
+1.  **Act**: The `remediation_actor` attempts a fix, using the actions the enabled specialists declare in `SpecialistSpec.remediation` (for Kubernetes: restart, scale, or roll back a deployment).
 2.  **Verify**: The `remediation_verifier` checks system health using diagnostic tools.
 3.  **Decide**: The `verify_route` node (a deterministic `FunctionNode`) increments a state counter. If resolved, it routes to `"done"`. If still failing, it routes back to `"retry"` — up to 3 iterations.
 
@@ -77,8 +78,8 @@ Every individual agent in the project follows the **ReAct (Reason and Act)** pat
 
 ### 3. Specialized Patterns
 
-The platform implements a robust **Human-in-the-Loop** pattern via the `GuardrailsPlugin`. 
-*   **Safety Gating:** Tools marked with `@confirm` or `@destructive` decorators are intercepted by the `before_tool_callback`.
+The platform implements a robust **Human-in-the-Loop** pattern. `GuardrailsPlugin` enforces RBAC; the confirmation itself is `require_confirmation()`, an agent `before_tool_callback` that `create_agent()` attaches to every agent holding a guarded tool.
+*   **Safety Gating:** Tools marked with `@confirm` or `@destructive` decorators are intercepted by that `before_tool_callback`.
 *   **Bypass Prevention:** The system uses an arguments-hash and invocation-ID tracking mechanism to ensure that the agent only proceeds if the user has explicitly provided confirmation for the *exact* operation requested.
 
 ---
@@ -115,11 +116,14 @@ with the reasoning behind each.
 
 | Agent | Tools | Status |
 | :--- | :--- | :--- |
-| `kafka_health_agent` | 4–8 | ✅ in sweet spot |
-| `k8s_health_agent` | 11–12 | ✅ in sweet spot |
-| `docker_agent` | 3–5 | ✅ in sweet spot |
-| `observability_agent` | 4 | ✅ in sweet spot |
-| `ops_journal_agent` | 2 | ✅ in sweet spot |
+| `kafka_health_agent` | 24 | ⚠️ near the hard ceiling |
+| `k8s_health_agent` | 26 | ❌ over the ~25 hard ceiling |
+| `elasticsearch_agent` | 24 | ⚠️ near the hard ceiling |
+| `docker_agent` | 17 | ⚠️ past the sweet spot |
+| `observability_agent` | 16 | ⚠️ past the sweet spot |
+| `ops_journal_agent` | 10 | ✅ in sweet spot |
+
+Most specialists have grown past these budgets as tools were added. `k8s_health_agent` is over the hard ceiling and is the first candidate for a split (for example, its six operator-aware tools); per-agent evals are the check that the larger surfaces still route correctly.
 
 ### Agent count per orchestrator
 
@@ -128,15 +132,16 @@ with the reasoning behind each.
 | Sweet spot | **3–7 direct children** | Routing is tool-selection in disguise; same limits apply. |
 | Hard ceiling | **~10 direct children** | Misrouting becomes the dominant eval failure. |
 
-The `orrery_assistant` root currently exposes **6 AgentTools + 1 sub-agent** — right in
-the pocket. Adding a 7th specialist should retire or merge an existing one.
+The `orrery_assistant` root currently exposes **6 specialist AgentTools, the
+`incident_triage_agent` AgentTool and `load_memory`**, with no sub-agents — 8 tools, inside
+the hard ceiling. Adding another specialist should retire or merge an existing one.
 
 ### Hierarchy depth
 
 - **Keep it shallow: 2–3 levels.** Each level = one extra LLM turn = added latency (~1–3 s),
   added token cost (context re-summarisation), and a new routing failure mode.
-- Current project depth: 3 (`root → triage → health_check → specialist_checker`). That is
-  the ceiling, not a floor to exceed.
+- Current project depth: 2 (`root → specialist` or `root → incident_triage_agent`, which
+  holds the health-check tools directly). Stay within 3.
 
 ### When to split an agent
 
@@ -146,7 +151,7 @@ Split when **any** of these holds:
 2. Tools span **different privilege tiers** (viewer / operator / admin) — splitting
    mirrors RBAC cleanly (see [ADR-001](adr/001-rbac.md)).
 3. Tools touch **different external systems** with distinct failure modes — per-system
-   circuit breakers ([resilience](https://github.com/BAHALLA/orrery/blob/main/core/orrery_core/resilience.py)) work better when
+   circuit breakers ([resilience](https://github.com/BAHALLA/orrery/blob/main/core/orrery_core/reliability/resilience.py)) work better when
    isolated.
 4. The system prompt starts containing *"if the user asks X use tool Y; if Z use tool W"* —
    that routing belongs in sub-agent selection, not prose.
@@ -216,8 +221,11 @@ supports it (Gemini today).
 
 ## When to Reach for A2A (Scaling Across Processes)
 
-The in-process model (sub-agents + `AgentTool`) is the right default. Reach for the
-**A2A protocol** (see [AEP-005](enhancements/aep-005-a2a-protocol.md)) only when one of the
+The in-process model (`AgentTool`) is the right default. Orrery already **exposes** its
+coordinator over A2A ([ADR-007](adr/007-a2a-exposition.md),
+[A2A integration](integrations/a2a.md)), so other agents can call it. **Consuming** remote
+agents (ADK's `RemoteA2aAgent` as a specialist) is not built. Reach for A2A between
+specialists (see [AEP-005](enhancements/aep-005-a2a-protocol.md)) only when one of the
 following is true — not to feel more "distributed":
 
 1. **Independent deployment cadence.** A team needs to ship the Kafka agent without
@@ -250,9 +258,9 @@ following is true — not to feel more "distributed":
 
 | Scale stage | Pattern | Typical trigger |
 | :--- | :--- | :--- |
-| Single process | `AgentTool` + `sub_agents` (today) | ≤ a few hundred QPS, one team. |
+| Single process | `AgentTool` (today) | ≤ a few hundred QPS, one team. |
 | Single process, horizontally replicated | Same, behind a load balancer with shared session store | State isolation + stateless agents. |
-| A2A per agent | `A2AServer` / `RemoteA2aAgent` (AEP-005) | Independent deploy, scale, or ownership. |
+| A2A per agent | Inbound exposition (shipped, ADR-007) + `RemoteA2aAgent` consumption (not built, AEP-005) | Independent deploy, scale, or ownership. |
 | A2A + async bus | A2A + Pub/Sub for long-running work (see google-chat-bot worker) | Work exceeds HTTP timeouts; needs retry/DLQ semantics. |
 
 Each step up adds operational surface area — take it only when the prior step can't
@@ -271,6 +279,6 @@ absorb the load or organisational constraint.
 *   [ADR-002: AgentTool vs Sub-Agents](adr/002-agent-tool-vs-sub-agents.md) (superseded by ADR-003)
 *   [ADR-003: Graph Workflow Inversion](adr/003-graph-workflow-inversion.md)
 *   [AEP-002: Agent Evaluation Framework](enhancements/aep-002-agent-evaluation.md)
-*   [AEP-004: LoopAgent for Self-Healing](enhancements/aep-004-loop-agent-remediation.md)
+*   [AEP-004: Closed-loop remediation](enhancements/aep-004-loop-agent-remediation.md)
 *   [AEP-005: A2A Protocol Support](enhancements/aep-005-a2a-protocol.md)
 *   [AEP-007: Context Caching](enhancements/aep-007-context-caching.md)

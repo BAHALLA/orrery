@@ -28,6 +28,20 @@ This creates:
 - **Workload Identity** bindings for GKE.
 - Optional **Vertex AI User** binding for the Gemini provider.
 
+!!! warning "Match the Kubernetes service account name"
+    Workload Identity binds the GSA to exactly `<k8s_namespace>/<k8s_service_account>`.
+    The Helm chart names the worker's service account `<release fullname>-pubsub-worker`
+    by default (e.g. `orrery-assistant-pubsub-worker`), not `orrery-chat-bot`. Set one
+    side to match the other, for example in your Helm values:
+
+    ```yaml
+    pubsubWorker:
+      serviceAccount:
+        name: orrery-chat-bot
+        annotations:
+          iam.gke.io/gcp-service-account: <gsa_email from terraform output>
+    ```
+
 ### Module variables
 
 | Variable | Default | Purpose |

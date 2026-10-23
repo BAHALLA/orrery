@@ -15,12 +15,15 @@ budgets, redaction and the audit trail all apply.
 ## Enabling it
 
 ```bash
-uv sync --extra a2a                          # the a2a-sdk (opt-in)
+uv sync --extra a2a                          # source installs only: the a2a-sdk (opt-in)
 export ORRERY_A2A_ENABLED=true
 export ORRERY_A2A_JWT_AUDIENCE=orrery-a2a    # the audience agent tokens are issued for
 export ORRERY_A2A_PUBLIC_URL=https://orrery.example.com/a2a
 make run-api
 ```
+
+The published image (`ghcr.io/bahalla/orrery`, from 0.7.0) already includes
+the `a2a` extra, so in a container you only set the environment variables.
 
 | Variable | Default | Meaning |
 |---|---|---|

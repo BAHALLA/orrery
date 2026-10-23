@@ -92,5 +92,5 @@ if result.status == "error":
 ## Why use ToolResult?
 
 1.  **Consistency**: All agents speak the same "language" for success and failure.
-2.  **Remediation**: The `remediation_hints` field is directly consumed by the remediation subgraph (`remediation_actor` → `remediation_verifier` → `verify_route`) in `orrery-assistant` to decide the next step when a tool fails.
+2.  **Remediation**: The `remediation_hints` field travels with the result into the model's context, so an agent (for example the remediation subgraph in `orrery-assistant`) can read it when deciding the next step. No code reads it programmatically; it is guidance for the model.
 3.  **Type Safety**: Prevents common bugs like missing status fields or inconsistent key naming for errors.

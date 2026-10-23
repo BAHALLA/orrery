@@ -18,9 +18,17 @@ operators via `orrery_core.default_registry`.
 | `list_deployments` | List deployments with replica status and images | — |
 | `get_deployment_status` | Detailed rollout status and conditions | — |
 | `get_events` | Recent events with optional field selector filter | — |
+| `list_services` | List services with type, cluster IP and ports | — |
+| `describe_service` | Service spec plus ready vs not-ready endpoints | — |
+| `list_configmaps` | List ConfigMaps in a namespace | — |
+| `get_configmap` | ConfigMap keys and values (long values truncated) | — |
+| `top_nodes` | Live node CPU/memory usage (needs metrics-server) | — |
+| `top_pods` | Live pod CPU/memory usage (needs metrics-server) | — |
 | `scale_deployment` | Scale a deployment to N replicas | `@confirm` |
 | `restart_deployment` | Trigger a rolling restart | `@destructive` |
 | `rollback_deployment` | Revert to the previous revision | `@destructive` |
+| `patch_deployment` | Apply a strategic merge patch to a deployment | `@destructive` |
+| `patch_statefulset` | Apply a strategic merge patch to a statefulset | `@destructive` |
 
 ## Operator-aware tools
 

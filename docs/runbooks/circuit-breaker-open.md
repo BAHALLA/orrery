@@ -38,11 +38,19 @@ kubectl -n $NS port-forward svc/orrery-assistant 9100:9100 &
 # Which tools are open? 0=closed 1=open 2=half-open
 curl -s localhost:9100/metrics | grep '^orrery_circuit_breaker_state' | grep -v ' 0$'
 
-# What kind of failure preceded it?
+# Which tools have been failing? (raised or returned errors)
+curl -s localhost:9100/metrics | grep '^orrery_tool_calls_total' | grep 'status="error"' \
+  | sort -t' ' -k2 -rn | head
+
+# What kind of failure? (only tools that raised an exception)
 curl -s localhost:9100/metrics | grep '^orrery_tool_errors_total' | sort -t' ' -k2 -rn | head
 ```
 
-The `error_type` label decides which reading applies:
+Most tools return `{"status": "error", ...}` instead of raising, and those
+calls have no `error_type`: read the reason from the `tool_call` audit lines
+(`kubectl logs ... | jq -c 'select(.status=="error") | {timestamp, tool, response}'`).
+When the reason, or the `error_type` label, is available, it decides which
+reading applies:
 
 | `error_type` | Reading | Next step |
 |---|---|---|
