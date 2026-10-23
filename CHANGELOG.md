@@ -19,18 +19,40 @@ smoother streaming, clearer approval states and accessibility fixes.
 **Upgrade notes.**
 
 - **Name your human clients.** Set `ORRERY_HUMAN_CLIENTS` to the OAuth client
-  id(s) people sign in with (the console's). Unset keeps the old behaviour,
-  where every console token counts as a person, and logs a warning at startup.
-  Once set, any other client is a service principal: viewer by default
-  (`ORRERY_SERVICE_CLIENTS=client=role` to raise it), pinned to autonomy L2,
-  and never able to approve.
-- **MCP servers on internal addresses need `allow_private_network: true`.**
-  HTTP MCP servers that resolve to a private or link-local address are now
-  refused (a `localhost` URL may still reach loopback). Link-local and cloud metadata
-  addresses are refused even with the opt-in. The MCP client also ignores
-  `HTTPS_PROXY`.
+  id(s) people sign in with (the console's, matched on `azp`, else
+  `client_id`). Once set, any other client, and any token carrying neither
+  claim (a hand-minted HS256 test token, for one), is a service principal:
+  viewer by default (`ORRERY_SERVICE_CLIENTS=client=role` to raise it), pinned
+  to autonomy L2, never able to approve, and, with `ORRERY_IMPERSONATION` on,
+  refused by Kubernetes and Elasticsearch (it acts for no one). Unset, every
+  console token still counts as a person and a warning is logged at startup,
+  with two exceptions that apply either way: a token with a verified RFC 8693
+  `act` claim (a token-exchange token) is *delegated* (role capped at its
+  client's ceiling, viewer by default, never able to approve), and a client
+  listed in `ORRERY_SERVICE_CLIENTS` is a service principal.
+- **Some MCP configs that loaded on 0.6.9 now stop startup.** Validation
+  rejects: a private IP-literal URL without `allow_private_network: true`;
+  any link-local or metadata URL, opt-in or not; `auth` together with an
+  `Authorization` entry in `headers_from_env`; TLS or network settings on a
+  stdio server.
+- **MCP calls behave differently at runtime.** A hostname resolving to a
+  private or link-local address is refused per request unless
+  `allow_private_network: true` (a `localhost` URL may still reach loopback;
+  link-local and metadata addresses are refused even with the opt-in).
+  Redirects are no longer followed, so a server behind an http→https or path
+  redirect needs its final URL. `HTTPS_PROXY` is ignored. Every call has a
+  60 s deadline (`call_timeout_seconds`, up to 600). Tool lists are cached for
+  300 s (`tool_list_cache_seconds: 0` lists every time, as before).
+- **One upload at a time per user.** `ORRERY_ATTACHMENT_MAX_UPLOADS_PER_USER`
+  (default 1) refuses a user's concurrent second upload; raise it if your
+  users attach from several tabs at once.
+- **Decisions come from messages only.** The gateway drops
+  `_confirmation_decision` / `_confirmation_strict` from a caller's
+  `state_delta` and always writes `actor` itself; an integration that injected
+  a decision that way must send the approve/deny text instead.
 - A2A is off unless `ORRERY_A2A_ENABLED`; it needs `ORRERY_A2A_JWT_AUDIENCE`
-  and refuses `ORRERY_MULTI_REPLICA`.
+  and refuses `ORRERY_MULTI_REPLICA`. The published image includes the `[a2a]`
+  extra.
 
 ### Added
 
@@ -97,6 +119,16 @@ smoother streaming, clearer approval states and accessibility fixes.
 - A workspace specialist missing from the registry's builtin list fails a
   test instead of being silently skipped.
 - A stream that errors keeps the text already received in the console.
+- The compose `demo` profile mounted an undeclared `devops-data` volume and
+  failed to start; it uses `assistant-data`.
+
+### Known issues
+
+- Only the Slack bot serves Prometheus metrics on `:9100`. The HTTP front
+  door, the Google Chat bot and the persistent runner don't start the metrics
+  server, so the chart's scrape annotations point at a closed port and
+  `OrreryAgentDown` can fire on a healthy pod. Pre-existing; to be fixed in a
+  patch release.
 
 ### Security
 

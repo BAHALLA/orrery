@@ -350,7 +350,7 @@ services:
       LOKI_URL: http://loki:3100
       ALERTMANAGER_URL: http://alertmanager:9093
     volumes:
-      - devops-data:/app/data
+      - assistant-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command: ["uvicorn", "orrery_assistant.app:api", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]
 
