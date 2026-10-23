@@ -6,7 +6,8 @@ import { NEW_CONVERSATION_TITLE } from "../conversations/types";
 import { refsFor } from "./attachments";
 import { createFrameBatcher } from "./frameBatcher";
 import { applyProgress } from "./trace";
-import type { ChatError, ChatMessage } from "./types";
+import { decisionFor } from "./decision";
+import type { ChatError, ChatMessage, Decision } from "./types";
 
 let idCounter = 0;
 function nextId(): string {
@@ -154,7 +155,11 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   }, [isSending, sessionId, activeId]);
 
   const send = useCallback(
-    async (raw: string, files: File[] = [], options: { replay?: boolean } = {}) => {
+    async (
+      raw: string,
+      files: File[] = [],
+      options: { replay?: boolean; decision?: Decision } = {},
+    ) => {
       const text = raw.trim();
       const { isSending, sessionId, activeId } = latest.current;
       if ((!text && !files.length) || isSending) return;
@@ -215,6 +220,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
                   text,
                   at: startedAt,
                   ...(files.length ? { attachments: refsFor(files) } : {}),
+                  ...(options.decision ? { decision: options.decision } : {}),
                 },
                 placeholder,
               ],
@@ -338,9 +344,13 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     [client, patchConversation, refreshSidePanes],
   );
 
-  // The decision is a plain chat message: the requester-verified gate on the
-  // server decides whether it authorizes anything. The panel is a renderer.
-  const decide = useCallback((word: "approve" | "deny") => send(word), [send]);
+  // The decision is a plain chat message: the literal word goes to the server,
+  // whose requester-verified gate decides whether it authorizes anything. The
+  // snapshot of what was pending only changes how the transcript shows it.
+  const decide = useCallback(
+    (word: "approve" | "deny") => send(word, [], { decision: decisionFor(word, pending) }),
+    [send, pending],
+  );
 
   const runTriage = useCallback(() => send(TRIAGE_PROMPT), [send]);
 

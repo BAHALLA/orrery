@@ -443,6 +443,12 @@ describe("App auth flow", () => {
       const last = chatCalls[chatCalls.length - 1];
       expect(JSON.parse(String(last[1]?.body))).toMatchObject({ message: "approve" });
     });
+    // The transcript shows what was approved, not a bare "approve" bubble.
+    const transcript = screen.getByRole("log", { name: /conversation transcript/i });
+    expect(await within(transcript).findByText(/You approved/, { exact: false })).toHaveTextContent(
+      /You approved restart_deployment \(payment-api\)/,
+    );
+    expect(within(transcript).queryByText("approve")).not.toBeInTheDocument();
   });
 
   it("runs a triage and auto-opens the verdict report", async () => {

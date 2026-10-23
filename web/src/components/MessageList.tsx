@@ -1,11 +1,14 @@
 import { memo, useEffect, useRef } from "react";
 import { splitAttachments } from "../chat/attachments";
-import type { ChatMessage } from "../chat/types";
+import { decisionOf } from "../chat/decision";
+import type { ChatMessage, Decision } from "../chat/types";
 import { AttachmentChip } from "./AttachmentChip";
 import { AgentMarkdown } from "./AgentMarkdown";
 import { CopyButton } from "./CopyButton";
+import { CheckIcon, CloseIcon } from "./icons";
 import { OrreryMark } from "./OrreryMark";
 import { RunTrace } from "./RunTrace";
+import { toneChip } from "./severity";
 import { Welcome } from "./Welcome";
 
 interface Props {
@@ -51,6 +54,51 @@ const UserMessage = memo(function UserMessage({ m }: { m: ChatMessage }) {
           <CopyButton value={parsed.text} label="Copy the message" />
         </span>
       </div>
+    </div>
+  );
+});
+
+/**
+ * An approve/deny click, as a compact line rather than a one-word bubble:
+ * "You approved restart_container (orders-worker) · 10:05". It records what
+ * the user said, not what happened — the server's gate decides that, and the
+ * reply below says how it went.
+ */
+const DecisionRow = memo(function DecisionRow({
+  m,
+  decision,
+}: {
+  m: ChatMessage;
+  decision: Decision;
+}) {
+  const approved = decision.word === "approve";
+  return (
+    <div className="flex justify-center">
+      <p
+        className={`inline-flex max-w-full flex-wrap items-center justify-center gap-x-1.5 rounded-full border px-3 py-1 text-xs ${
+          approved ? toneChip.ok : toneChip.neutral
+        }`}
+      >
+        {approved ? (
+          <CheckIcon size={13} aria-hidden="true" />
+        ) : (
+          <CloseIcon size={13} aria-hidden="true" />
+        )}
+        <span>
+          You {approved ? "approved" : "denied"}
+          {decision.tool ? (
+            <>
+              {" "}
+              <span className="font-mono font-medium">{decision.tool}</span>
+            </>
+          ) : (
+            " the pending action"
+          )}
+          {decision.target ? <span className="break-all"> ({decision.target})</span> : null}
+        </span>
+        <span aria-hidden="true">·</span>
+        <time dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>
+      </p>
     </div>
   );
 });
@@ -129,13 +177,15 @@ export function MessageList({ messages, isSending, onSuggest, onSweep }: Props) 
       aria-live="polite"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
-        {messages.map((m) =>
-          m.role === "user" ? (
-            <UserMessage key={m.id} m={m} />
+        {messages.map((m) => {
+          if (m.role === "assistant") return <AssistantMessage key={m.id} m={m} />;
+          const decision = decisionOf(m);
+          return decision ? (
+            <DecisionRow key={m.id} m={m} decision={decision} />
           ) : (
-            <AssistantMessage key={m.id} m={m} />
-          ),
-        )}
+            <UserMessage key={m.id} m={m} />
+          );
+        })}
         <div ref={endRef} />
       </div>
     </div>

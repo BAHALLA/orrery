@@ -21,6 +21,20 @@ export interface ChatMessage {
   /** Files sent with a user message. Reloaded messages carry them as
    * placeholder lines in `text` instead; see `chat/attachments.ts`. */
   attachments?: AttachmentRef[];
+  /** A user message that is an approve/deny click: shown as a compact
+   * decision row instead of a bubble. Display only — the server's gate is
+   * what decides whether the word authorizes anything. */
+  decision?: Decision;
+}
+
+/** What the transcript shows for an approve/deny click. */
+export interface Decision {
+  word: "approve" | "deny";
+  /** The pending action at click time; null when it isn't known (a reloaded
+   * transcript keeps only the word that was sent). */
+  tool: string | null;
+  /** Its most identifying argument (a name, container, topic…), if any. */
+  target: string | null;
 }
 
 /** What the transcript shows of an attachment: never its content. */
