@@ -115,6 +115,13 @@ Where the shipped code differs from the decision above, and why:
   as its own deployment and host needs no code (the same image, its own
   release); the Helm values for that are a follow-up.
 - **Not yet:** `traceparent` span links, card signing.
+- **Known gap: A2A threads live under the user's id.** The ADK `user_id` is
+  the subject so the person can approve, which also means the console sees
+  them: `GET /sessions` lists a user's agents' `a2a-*` threads, and a
+  delegated token issued for the *console* audience could continue one through
+  `POST /chat`. Only an IdP that mints delegated console tokens is exposed.
+  Fix: refuse delegated principals on the console, or keep A2A sessions out
+  of console lookups.
 
 ## Consequences
 

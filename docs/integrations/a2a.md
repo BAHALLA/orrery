@@ -143,5 +143,7 @@ async with httpx.AsyncClient(headers=headers, timeout=300) as http:
 - A shared task store, for running the A2A surface on several replicas.
 - Card signing (JWS, spec §8.4).
 - Linking an inbound `traceparent` to the turn's trace.
+- Keeping A2A threads out of the console: today a user's
+  `GET /sessions` also lists the threads their agents opened.
 - Orrery *calling* remote A2A agents. That will be wrapped like MCP toolsets:
   allowlisted cards, delegation treated as destructive, replies screened.
