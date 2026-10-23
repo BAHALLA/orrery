@@ -1,0 +1,77 @@
+name: Image Scan
+
+# The release workflow's Trivy gate only runs on push to main, so a pull
+# request that breaks it merges green and the release fails afterwards (seven
+# merges went in on a red release that way). This builds the image the same
+# way, without pushing, and runs the same gate:
+#
+# - on pull requests that change what goes into the image;
+# - daily on main, because a new advisory can fail an image nobody changed
+#   (that was the cause last time: a Go CVE in the bundled docker CLI).
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - uv.lock
+      - "**/pyproject.toml"
+      - .trivyignore.yaml
+      - .github/workflows/image-scan.yml
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-scan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Build & scan image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Same daily cache key as the release build, so the `apt-get upgrade`
+      # layer reflects today's Debian fixes rather than a cached replay.
+      - name: Security-updates cache key
+        id: secdate
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      # amd64 only, loaded into the runner's daemon: the scan needs a local
+      # image, and the release's arm64 build uses the same pinned inputs.
+      # Reads the release's build cache but never writes it.
+      - name: Build (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: orrery-image-scan:ci
+          build-args: |
+            SECURITY_UPDATES_DATE=${{ steps.secdate.outputs.date }}
+          cache-from: type=gha
+
+      # Mirrors release.yml's gate: same action, ignores file and thresholds.
+      - name: Trivy image scan (gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          trivyignores: .trivyignore.yaml
+          image-ref: orrery-image-scan:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
