@@ -409,7 +409,7 @@ class GuardedMcpToolset(McpToolset):
         except CredentialUnavailable as exc:
             # This caller can't act on the server: it offers them nothing,
             # and the turn goes on with the other tools.
-            log = logger.warning if exc.transient else logger.info
+            log = logger.info if exc.is_refusal else logger.warning
             log("MCP server %s offers no tools here: %s", self.server_config.name, exc)
             return []
         allowed = set(self.server_config.tools)
@@ -567,7 +567,7 @@ def _with_deadline(
             # A refusal is an answer (the tool never ran), so the breaker
             # ignores it; an unreachable IdP is a failure it counts.
             return {
-                "status": "error" if exc.transient else "access_denied",
+                "status": "access_denied" if exc.is_refusal else "error",
                 "error_type": "credential_unavailable",
                 "message": f"{name}: {exc}",
             }

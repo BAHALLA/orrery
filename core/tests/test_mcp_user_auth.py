@@ -93,6 +93,7 @@ class FakeIdP:
         response.json.return_value = {
             "access_token": f"x-{form['subject_token']}-{form['audience']}",
             "token_type": "Bearer",
+            "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
             "expires_in": 300,
         }
         return response
@@ -208,10 +209,10 @@ async def test_a_call_whose_credential_is_refused_is_answered_not_raised(http_se
     url, _ = http_server
 
     class Refusing(TokenBroker):
-        transient = False
+        reason: Any = "refused"
 
         async def token_for(self, audience: str, scope: str | None = None) -> str:
-            raise CredentialUnavailable("the IdP refused", transient=self.transient)
+            raise CredentialUnavailable("the IdP refused", reason=self.reason)
 
     toolset = GuardedMcpToolset(_config(url=url), broker=_broker())
     ctx = MagicMock()
@@ -223,7 +224,7 @@ async def test_a_call_whose_credential_is_refused_is_answered_not_raised(http_se
         toolset._broker = broker
         with _as("console-alice", "alice"):
             refused = await tool.run_async(args={}, tool_context=ctx)
-            broker.transient = True
+            broker.reason = "unavailable"
             unreachable = await tool.run_async(args={}, tool_context=ctx)
     finally:
         await toolset.close()

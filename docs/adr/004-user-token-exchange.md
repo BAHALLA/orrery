@@ -64,8 +64,16 @@ supports it), on demand, per user and per target:
   user's token gets its own session. The credential is resolved in the call
   wrapper before ADK runs, because ADK turns an exception from its header
   provider into a bare `{"error": ...}`. A refusal is `access_denied`, so the
-  breaker ignores it; an unreachable IdP is `error`, which it counts. A caller
-  without a token is offered no tools from the server.
+  breaker ignores it; an unreachable IdP is `error`, which it counts, and so is
+  a misconfigured client (`401`, `invalid_client`, `unauthorized_client`),
+  which is also logged at ERROR and audited, since it fails every user at once.
+  A caller without a token is offered no tools from the server.
+- Failures are cached per key (a refusal for 30 s, an outage with exponential
+  backoff), and exchanges run on a dedicated four-thread pool, so a refused
+  user or an IdP brownout costs neither an IdP call per model step nor the
+  default executor the blocking tools share.
+- Only `token_type: Bearer` with `issued_token_type` of an access token is
+  sent: RFC 8693's `N_A` marks a token that is not an access token.
 
 ## Alternatives considered
 

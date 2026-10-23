@@ -120,14 +120,18 @@ def _response_field(response: Any, field: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _mcp_error(response: Any) -> bool:
-    """An MCP failure: the server flagged ``isError``, or ADK caught an exception.
+#: How ADK's ``McpTool`` words a call it caught failing (connection refused,
+#: session closed). Matched by prefix: ``FunctionTool`` also answers a bare
+#: ``{"error": ...}`` (a missing argument, a confirmation pause), and those are
+#: the model's doing, not the tool's health.
+_ADK_MCP_ERRORS = ("MCP tool execution failed:", "Unexpected error during MCP tool execution:")
 
-    ADK's ``McpTool`` reports a failed call (connection refused, session
-    closed, a header provider raising) as a bare ``{"error": "..."}``.
-    """
+
+def _mcp_error(response: Any) -> bool:
+    """An MCP failure: the server flagged ``isError``, or ADK caught an exception."""
     if isinstance(response, dict) and set(response) == {"error"}:
-        return True
+        error = response["error"]
+        return isinstance(error, str) and error.startswith(_ADK_MCP_ERRORS)
     for field in ("isError", "is_error"):
         value = (
             response.get(field) if isinstance(response, dict) else getattr(response, field, None)

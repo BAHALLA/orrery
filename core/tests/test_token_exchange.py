@@ -117,7 +117,7 @@ async def test_no_signed_in_caller_means_no_token(token):
     idp = FakeIdP(300)
     with _as(token), pytest.raises(CredentialUnavailable, match="no signed-in user") as err:
         await _broker(idp).token_for("github-mcp")
-    assert err.value.transient is False
+    assert err.value.reason == "no_caller" and err.value.is_refusal
     assert idp.calls == []
 
 
@@ -136,7 +136,7 @@ async def test_a_refusal_is_final_and_its_description_never_logged(caplog):
     with _as(SUBJECT), pytest.raises(CredentialUnavailable, match="refused") as err:
         await _broker(idp).token_for("github-mcp")
 
-    assert err.value.transient is False
+    assert err.value.reason == "refused" and err.value.is_refusal
     assert "invalid_grant" in caplog.text
     assert SUBJECT not in caplog.text
 
@@ -151,10 +151,36 @@ async def test_a_refusal_is_final_and_its_description_never_logged(caplog):
         requests.Timeout("slow"),
     ],
 )
-async def test_an_unavailable_idp_is_transient(answer):
+async def test_an_unavailable_idp_is_a_failure_not_a_refusal(answer):
     with _as(SUBJECT), pytest.raises(CredentialUnavailable) as err:
         await _broker(FakeIdP(answer)).token_for("github-mcp")
-    assert err.value.transient is True
+    assert err.value.reason == "unavailable" and not err.value.is_refusal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        FakeResponse(401, {"error": "invalid_client"}),  # a rotated client secret
+        FakeResponse(400, {"error": "unauthorized_client"}),  # exchange not permitted
+        FakeResponse(401, ValueError("html error page")),
+    ],
+)
+async def test_a_wrong_platform_client_is_a_loud_misconfiguration(answer, caplog, monkeypatch):
+    from orrery_core.security import token_exchange
+
+    audited: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        token_exchange, "audit_event", lambda event, **f: audited.append((event, f))
+    )
+    caplog.set_level(logging.INFO, logger="orrery.token_exchange")
+    with _as(SUBJECT), pytest.raises(CredentialUnavailable) as err:
+        await _broker(FakeIdP(answer)).token_for("github-mcp")
+
+    assert err.value.reason == "misconfigured" and not err.value.is_refusal
+    assert any(r.levelno == logging.ERROR for r in caplog.records)
+    assert [event for event, _ in audited] == ["token_exchange_misconfigured"]
+    assert "s3cret" not in caplog.text and SUBJECT not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -163,7 +189,15 @@ async def test_an_unavailable_idp_is_transient(answer):
     [
         {"token_type": "Bearer"},  # no token
         {"access_token": "", "token_type": "Bearer"},
-        {"access_token": "t", "token_type": "mac"},  # not a bearer token
+        {"access_token": "t", "token_type": "mac", "issued_token_type": ACCESS_TOKEN_TYPE},
+        # N_A: an issued token that is not an access token is never a bearer.
+        {"access_token": "t", "token_type": "N_A", "issued_token_type": ACCESS_TOKEN_TYPE},
+        {
+            "access_token": "t",
+            "token_type": "Bearer",
+            "issued_token_type": "urn:ietf:params:oauth:token-type:id_token",
+        },
+        {"access_token": "t", "token_type": "Bearer"},  # issued_token_type is REQUIRED
         ValueError("not json"),
         ["a", "list"],
     ],
@@ -206,13 +240,77 @@ async def test_a_cached_token_is_dropped_before_it_expires():
 
 
 @pytest.mark.asyncio
-async def test_a_token_too_short_lived_to_reuse_is_not_cached():
-    idp = FakeIdP(10)
-    broker = _broker(idp)
+async def test_a_short_lived_token_is_reused_for_half_its_life():
+    idp, clock = FakeIdP(10), Clock()
+    broker = _broker(idp, clock=clock)
     with _as(SUBJECT):
         await broker.token_for("github-mcp")
+        clock.now += 4
+        await broker.token_for("github-mcp")  # the call's second use: no second exchange
+        assert len(idp.calls) == 1
+        clock.now += 2
         await broker.token_for("github-mcp")
     assert len(idp.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_remembered_before_the_idp_is_asked_again():
+    idp, clock = FakeIdP(FakeResponse(403, {"error": "access_denied"}), 300), Clock()
+    broker = _broker(idp, clock=clock)
+    with _as(SUBJECT):
+        for _ in range(3):
+            with pytest.raises(CredentialUnavailable, match="refused"):
+                await broker.token_for("github-mcp")
+        assert len(idp.calls) == 1
+        clock.now += 31
+        assert await broker.token_for("github-mcp")  # granted since
+    assert len(idp.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_idp_outage_backs_off_exponentially():
+    outage = FakeResponse(503, {})
+    idp, clock = FakeIdP(outage, outage, outage, 300), Clock()
+    broker = _broker(idp, clock=clock)
+    with _as(SUBJECT):
+        for wait in (5, 10):  # 5 s after the first failure, then 10 s
+            with pytest.raises(CredentialUnavailable):
+                await broker.token_for("github-mcp")
+            calls = len(idp.calls)
+            clock.now += wait - 1
+            with pytest.raises(CredentialUnavailable):  # still backing off
+                await broker.token_for("github-mcp")
+            assert len(idp.calls) == calls
+            clock.now += 1
+        with pytest.raises(CredentialUnavailable):
+            await broker.token_for("github-mcp")
+        clock.now += 20
+        assert await broker.token_for("github-mcp")  # recovered: the failure is forgotten
+    assert len(idp.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_failures_are_remembered_per_key():
+    idp = FakeIdP(FakeResponse(403, {"error": "access_denied"}), 300)
+    broker = _broker(idp)
+    with _as(SUBJECT), pytest.raises(CredentialUnavailable):
+        await broker.token_for("github-mcp")
+    with _as("console-token-of-bob", subject="bob"):
+        assert await broker.token_for("github-mcp")  # bob is not refused for alice
+
+
+@pytest.mark.asyncio
+async def test_exchanges_run_on_their_own_threads():
+    names: list[str] = []
+
+    class Recording(FakeIdP):
+        def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            names.append(threading.current_thread().name)
+            return super().post(url, **kwargs)
+
+    with _as(SUBJECT):
+        await _broker(Recording(300)).token_for("github-mcp")
+    assert names and names[0].startswith("orrery-token-exchange")
 
 
 @pytest.mark.asyncio

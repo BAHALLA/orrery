@@ -203,11 +203,26 @@ Orrery, and a server holding it could replay it against Orrery.
 - **Fail-closed:** a refused exchange answers the call with
   `status: access_denied`, which the circuit breaker ignores; an unreachable
   identity provider is `status: error`, which it counts.
+- **Misconfiguration is loud:** an IdP answering `401`, `invalid_client` or
+  `unauthorized_client` means *Orrery's* exchange client is wrong (a rotated
+  secret, a missing exchange permission), for everyone. It is logged at ERROR
+  as `Token exchange is misconfigured`, audited as
+  `token_exchange_misconfigured`, and counted as a failure. If every user
+  suddenly sees no tools from a server, look for that line first.
 - **Isolation:** sessions and tool listings are pooled by header, so each
   user's token gets its own MCP session; one session never carries two
   people's tokens.
 - **Cache:** exchanged tokens stay in memory, per caller token, audience and
-  scope, until 30 s before they expire. Concurrent calls share one exchange.
+  scope, until 30 s before they expire (a token living a minute or less, for
+  half its life). Concurrent calls share one exchange. Failures are remembered
+  per key too: a refusal for 30 s, an IdP outage with a backoff from 5 s to
+  60 s. Exchanges run on four threads of their own, so an IdP brownout can't
+  starve the tools that share the default executor.
+- **One tool text for everyone:** the allowlist screen and fingerprint pins
+  are per server, not per user. A server that tailors a tool's description or
+  schema to each user would see the first user's text pinned and everyone
+  else's withheld as changed. Per-user servers must serve the same tool text
+  to every user (what they *return* may differ freely).
 
 Settings, required once any server uses `auth` (startup fails without them):
 
