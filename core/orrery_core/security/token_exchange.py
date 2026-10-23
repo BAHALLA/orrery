@@ -174,6 +174,10 @@ class TokenBroker:
             max_workers=EXCHANGE_WORKERS, thread_name_prefix="orrery-token-exchange"
         )
 
+    def close(self) -> None:
+        """Release the exchange threads; an exchange in flight finishes first."""
+        self._executor.shutdown(wait=False)
+
     async def token_for(self, audience: str, scope: str | None = None) -> str:
         """A token for *audience* acting as the turn's caller.
 
@@ -300,8 +304,14 @@ class TokenBroker:
                 "token exchange is misconfigured on this deployment", reason="misconfigured"
             )
         if status != 200:
-            logger.info(
-                "Token exchange for %s refused: %s %s", audience, status, error or "unknown_error"
+            # A 403 is a refusal, but Keycloak also answers a client missing the
+            # exchange permission with one, for everyone: louder than a 400.
+            logger.log(
+                logging.WARNING if status == 403 else logging.INFO,
+                "Token exchange for %s refused: %s %s",
+                audience,
+                status,
+                error or "unknown_error",
             )
             raise CredentialUnavailable(f"the identity provider refused a token for {audience}")
         token = body.get("access_token")
@@ -348,4 +358,6 @@ def default_broker() -> TokenBroker:
 def reset_default_broker() -> None:
     """Forget the process-wide broker (tests, settings reload)."""
     global _broker
+    if _broker is not None:
+        _broker.close()
     _broker = None

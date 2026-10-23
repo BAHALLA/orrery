@@ -208,7 +208,11 @@ Orrery, and a server holding it could replay it against Orrery.
   secret, a missing exchange permission), for everyone. It is logged at ERROR
   as `Token exchange is misconfigured`, audited as
   `token_exchange_misconfigured`, and counted as a failure. If every user
-  suddenly sees no tools from a server, look for that line first.
+  suddenly sees no tools from a server, look for that line first. Keycloak
+  answers a client that lacks the exchange permission with
+  `403 access_denied` instead, which reads as a per-user refusal; 403s are
+  therefore logged at WARNING (`Token exchange for … refused: 403`). Seen for
+  every user, it means the client's permission, not the users'.
 - **Isolation:** sessions and tool listings are pooled by header, so each
   user's token gets its own MCP session; one session never carries two
   people's tokens.

@@ -349,6 +349,26 @@ async def test_a_cancelled_caller_does_not_cancel_the_exchange_for_others():
     assert len(idp.calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_a_403_refusal_is_logged_louder(caplog):
+    """Keycloak's answer to a client missing the exchange permission."""
+    idp = FakeIdP(FakeResponse(403, {"error": "access_denied"}))
+    caplog.set_level(logging.INFO, logger="orrery.token_exchange")
+    with _as(SUBJECT), pytest.raises(CredentialUnavailable) as err:
+        await _broker(idp).token_for("github-mcp")
+    assert err.value.is_refusal
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+def test_resetting_the_default_broker_releases_its_threads(monkeypatch):
+    from orrery_core.security import token_exchange
+
+    broker = _broker(FakeIdP(300))
+    monkeypatch.setattr(token_exchange, "_broker", broker)
+    token_exchange.reset_default_broker()
+    assert broker._executor._shutdown
+
+
 # ── Settings ─────────────────────────────────────────────────────────
 
 
