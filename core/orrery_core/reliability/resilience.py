@@ -120,6 +120,16 @@ def _response_field(response: Any, field: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _mcp_error(response: Any) -> bool:
+    for field in ("isError", "is_error"):
+        value = (
+            response.get(field) if isinstance(response, dict) else getattr(response, field, None)
+        )
+        if value is True:
+            return True
+    return False
+
+
 def classify_tool_outcome(response: Any) -> ToolOutcome:
     """Decide what a completed tool call means for the circuit breaker.
 
@@ -140,7 +150,10 @@ def classify_tool_outcome(response: Any) -> ToolOutcome:
     """
     status = _response_field(response, "status")
     if status is None:
-        return ToolOutcome.SUCCESS
+        # An MCP ``CallToolResult`` has no status: the server reports a failed
+        # call with ``isError`` (``is_error`` in mcp 2.x model dumps). Read as a
+        # success, a dead MCP server could never open its circuit.
+        return ToolOutcome.FAILURE if _mcp_error(response) else ToolOutcome.SUCCESS
     if status in _NEUTRAL_STATUSES:
         return ToolOutcome.IGNORE
     if status in _FAILURE_STATUSES:

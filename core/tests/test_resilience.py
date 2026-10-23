@@ -361,6 +361,18 @@ class TestClassifyToolOutcome:
     def test_missing_status_is_a_success(self):
         assert classify_tool_outcome({"topics": ["a", "b"], "count": 2}) is ToolOutcome.SUCCESS
 
+    @pytest.mark.parametrize("field", ["isError", "is_error"])
+    def test_an_mcp_error_result_is_a_failure(self, field):
+        """A CallToolResult has no status; a failed call says so with isError."""
+        result = {"content": [{"type": "text", "text": "upstream 503"}], field: True}
+        assert classify_tool_outcome(result) is ToolOutcome.FAILURE
+        assert classify_tool_outcome({**result, field: False}) is ToolOutcome.SUCCESS
+
+    def test_an_mcp_call_timeout_is_a_failure(self):
+        assert classify_tool_outcome({"status": "error", "error_type": "timeout"}) is (
+            ToolOutcome.FAILURE
+        )
+
     def test_subsystem_health_verdict_is_not_a_tool_failure(self):
         """A checker reporting an unhealthy subsystem still *worked*."""
         assert classify_tool_outcome({"status": "fail", "summary": "pod crashlooping"}) is (

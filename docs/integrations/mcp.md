@@ -68,6 +68,11 @@ servers:
 | `read_only` / `destructive` | Your reviewed classification. Always wins. |
 | `trust_annotations` | Default `false`. See below. |
 | `timeout_seconds` | Connection timeout, default 10. |
+| `call_timeout_seconds` | Deadline for one tool call, default 60 (max 600). See below. |
+| `tool_list_cache_seconds` | How long a tool listing is reused before the server is asked again, default 300; `0` asks every turn. |
+| `allow_private_network` | Default `false`. Lets an HTTP server resolve to a private or loopback address (never link-local or metadata). See below. |
+| `ca_file` / `client_cert_file` / `client_key_file` | TLS for HTTP transports: a CA bundle, and a client certificate for mTLS (a key needs its certificate). `ca_file` **replaces** the system roots for that server rather than adding to them. Read at startup; a missing file fails it. |
+| `pinned` | `tool: sha256` fingerprints you reviewed (case-insensitive). A pinned tool whose text differs is withheld from the first call. |
 | `instruction` | Extra guidance appended to the specialist's prompt. |
 
 ## How tools are classified
@@ -115,8 +120,55 @@ also:
   to lower the guard), the tool is withheld until Orrery restarts. A restart
   pins whatever the server then serves, so review the change on the server
   first.
+- **pinned by you**, optionally: first sight logs each tool's fingerprint
+  (`MCP tool github_list_issues first seen, fingerprint …`). Copy the ones you
+  reviewed under `pinned:` and the tool is checked against *that* value, in
+  every process, from its first listing, so a server that changed between
+  your review and a restart is caught too. The fingerprint covers the
+  annotations as the MCP SDK spells them, so **re-pin after an MCP SDK major
+  upgrade**: until you do, pinned tools are withheld (it fails closed).
 
 Each withheld tool is logged once and audited as `mcp_tool_withheld`.
+
+## Where the client connects
+
+An HTTP server is a URL called with credentials, from inside your network. The
+client is held to what you configured:
+
+- **one origin**: requests go only to the configured scheme, host and port.
+  The SSE transport takes its POST endpoint from the server, and the SDK
+  follows redirects; anything pointing elsewhere is refused, and redirects are
+  not followed at all.
+- **public addresses**: every request checks what the host resolves to, and
+  refuses a private, loopback or otherwise non-public address. IPv4 carried in
+  IPv6 (mapped, NAT64 `64:ff9b::/96`, IPv4-compatible) is checked as the IPv4
+  address it reaches. A server on your own network needs
+  `allow_private_network: true`; a private IP written in the URL fails startup
+  without it. A loopback URL (local development) may reach loopback, and
+  nothing else private.
+- **never metadata**: link-local addresses (`169.254.169.254`, `fe80::/10`)
+  and cloud metadata and credential endpoints (AWS `fd00:ec2::/32`, Alibaba
+  `100.100.100.200`) are refused even with
+  `allow_private_network`, so opening the private network for one internal
+  server doesn't also open the instance's credentials to a DNS change.
+  With the opt-in, every request still resolves the name to run this check.
+- **no proxy**: the guarded client ignores `HTTPS_PROXY`/`HTTP_PROXY`. A proxy
+  resolves the name itself, out of reach of the address check. If your egress
+  must go through a proxy, MCP over HTTP needs a direct route to the server.
+
+!!! note "Residual: DNS rebinding"
+    The check resolves the name, then the connection resolves it again, so a
+    DNS server answering differently in between is not caught. Where that
+    matters, configure the server by IP address (with `ca_file` if its
+    certificate names the IP): a literal is checked exactly.
+
+## Calls have a deadline
+
+A tool call that hasn't answered within `call_timeout_seconds` is abandoned and
+the model gets `{"status": "error", "error_type": "timeout"}`, telling it the
+call may still complete on the server, so it checks before retrying a
+mutation. The circuit breaker counts it as a failure, as it does a result the
+server flagged `isError`.
 
 ## What else applies
 

@@ -50,6 +50,7 @@ Requires the ``[mcp]`` extra (``uv sync --extra mcp``).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -64,12 +65,20 @@ from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.base_tool import BaseTool
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..observability.audit import audit_event
 from ..plugins.safety_plugin import screen_text
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
+from .mcp_network import (
+    LOOPBACK_HOSTS,
+    client_factory,
+    is_public,
+    literal_ip,
+    never_allowed,
+    ssl_context,
+)
 
 try:
     from google.adk.tools.mcp_tool.mcp_session_manager import (
@@ -90,7 +99,8 @@ logger = logging.getLogger("orrery.tools.mcp")
 MCP_CONFIG_ENV = "ORRERY_MCP_CONFIG"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
-_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_LOOPBACK = LOOPBACK_HOSTS
 
 
 class McpServerConfig(BaseModel):
@@ -116,7 +126,32 @@ class McpServerConfig(BaseModel):
     destructive: list[str] = Field(default_factory=list)
     trust_annotations: bool = False
     allow_insecure_http: bool = False
+    #: Reach a server that resolves to a private, link-local or loopback address.
+    #: Off by default: an internal address is how a URL reaches the cloud
+    #: metadata endpoint or a cluster service (see :mod:`.mcp_network`).
+    allow_private_network: bool = False
+    #: Connection timeout.
     timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    #: Longest one tool call may take, end to end. A call past it returns an
+    #: error result, which the circuit breaker counts.
+    call_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    #: How long a ``tools/list`` answer is reused. ``0`` lists on every model
+    #: request. The guards (allowlist, screen, pins) run on every call either way.
+    tool_list_cache_seconds: float = Field(default=300.0, ge=0, le=3600)
+    #: TLS: a private CA bundle, and a client certificate and key for mTLS.
+    ca_file: str | None = None
+    client_cert_file: str | None = None
+    client_key_file: str | None = None
+    #: Reviewed fingerprints, tool -> sha256 (logged when a tool is first seen).
+    #: A pinned tool whose text differs is withheld from the first call, restart
+    #: or not; unpinned tools are pinned to what the process first sees.
+    pinned: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("pinned")
+    @classmethod
+    def _lowercase_pins(cls, pinned: dict[str, str]) -> dict[str, str]:
+        return {tool: digest.strip().lower() for tool, digest in pinned.items()}
+
     instruction: str = ""
 
     @model_validator(mode="after")
@@ -130,11 +165,22 @@ class McpServerConfig(BaseModel):
                 raise ValueError(f"{field} lists tools missing from `tools`: {sorted(unknown)}")
         if both := set(self.read_only) & set(self.destructive):
             raise ValueError(f"tools declared both read_only and destructive: {sorted(both)}")
+        if unknown := set(self.pinned) - allowed:
+            raise ValueError(f"pinned lists tools missing from `tools`: {sorted(unknown)}")
+        if bad := [t for t, digest in self.pinned.items() if not _SHA256.match(digest)]:
+            raise ValueError(f"pinned fingerprints must be 64 hex characters: {sorted(bad)}")
+        if self.client_key_file and not self.client_cert_file:
+            raise ValueError("client_key_file needs client_cert_file")
         if self.transport == "stdio":
             if not self.command:
                 raise ValueError("transport stdio needs `command`")
             if self.url or self.headers_from_env:
                 raise ValueError("transport stdio takes no `url` / `headers_from_env`")
+            if self.ca_file or self.client_cert_file or self.allow_private_network:
+                raise ValueError(
+                    "transport stdio takes no TLS or network settings "
+                    "(`ca_file`, `client_cert_file`, `allow_private_network`)"
+                )
         else:
             if not self.url:
                 raise ValueError(f"transport {self.transport} needs `url`")
@@ -151,6 +197,20 @@ class McpServerConfig(BaseModel):
             if self.command or self.args or self.env_from:
                 raise ValueError(
                     f"transport {self.transport} takes no `command` / `args` / `env_from`"
+                )
+            # An IP literal is checked here, once: there is no lookup to change it.
+            address = literal_ip(parsed.hostname or "")
+            if address and never_allowed(address):
+                raise ValueError(f"{self.url!r} is a link-local or metadata address")
+            if (
+                address
+                and not self.allow_private_network
+                and not is_public(address)
+                and parsed.hostname not in _LOOPBACK
+            ):
+                raise ValueError(
+                    f"{self.url!r} is a private address; set allow_private_network: true "
+                    "for an internal server"
                 )
         return self
 
@@ -293,6 +353,7 @@ class GuardedMcpToolset(McpToolset):
             connection_params=_connection_params(config),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
+            tool_list_cache_ttl_seconds=config.tool_list_cache_seconds or None,
         )
         self._reported_missing = False
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
@@ -325,6 +386,7 @@ class GuardedMcpToolset(McpToolset):
                 tool.name, getattr(raw, "annotations", None), self.server_config
             )
             set_guard(tool, level, reason)
+            _with_deadline(tool, self.server_config)
             exposed.append(tool)
         if not self._reported_missing:
             self._reported_missing = True
@@ -342,6 +404,20 @@ class GuardedMcpToolset(McpToolset):
         if any(screen_text(t) is not None for t in _texts(text)):
             return "its description or schema reads like an instruction to the model"
         digest = fingerprint(text)
+        if (reviewed := self.server_config.pinned.get(tool.name)) is not None:
+            if digest != reviewed:
+                return (
+                    f"its description, schema or annotations (sha256 {digest}) differ from "
+                    "the reviewed fingerprint pinned in the MCP config"
+                )
+            return None
+        if tool.name not in self._pinned:
+            logger.info(
+                "MCP tool %s_%s first seen, fingerprint %s (pin it under `pinned:` once reviewed)",
+                self.server_config.name,
+                tool.name,
+                digest,
+            )
         pinned = self._pinned.setdefault(tool.name, digest)
         if pinned != digest:
             return (
@@ -379,10 +455,64 @@ def _connection_params(
         header: _secret_env(var, what=f"MCP server {config.name} header {header}")
         for header, var in config.headers_from_env.items()
     }
-    params_cls = (
-        SseConnectionParams if config.transport == "sse" else StreamableHTTPConnectionParams
+    factory = client_factory(
+        url=config.url or "",
+        allow_private_network=config.allow_private_network,
+        verify=ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
     )
-    return params_cls(url=config.url or "", headers=headers, timeout=config.timeout_seconds)
+    if config.transport == "sse":
+        # The SSE stream idles between calls, so its read timeout cannot be the
+        # call deadline; `_with_deadline` bounds each call instead.
+        return SseConnectionParams(
+            url=config.url or "",
+            headers=headers,
+            timeout=config.timeout_seconds,
+            httpx_client_factory=factory,
+        )
+    return StreamableHTTPConnectionParams(
+        url=config.url or "",
+        headers=headers,
+        timeout=config.timeout_seconds,
+        sse_read_timeout=config.call_timeout_seconds,
+        httpx_client_factory=factory,
+    )
+
+
+_DEADLINE_MARK = "_orrery_deadline"
+
+
+def _with_deadline(tool: BaseTool, config: McpServerConfig) -> None:
+    """Bound every call of *tool* by ``call_timeout_seconds``, once per object.
+
+    A timed-out call returns an error result rather than raising: it flows
+    through the after-tool chain like any failure, so audit records it and the
+    circuit breaker counts it. The remote side effect may still happen; the
+    message says so, and the call is never retried here.
+    """
+    if getattr(tool, _DEADLINE_MARK, False):
+        return
+    run = tool.run_async
+    seconds = config.call_timeout_seconds
+    # The name the model knows: ADK prefixes a copy, after this wrap.
+    name = f"{config.name}_{tool.name}"
+
+    async def run_with_deadline(*, args: dict[str, Any], tool_context: Any) -> Any:
+        try:
+            async with asyncio.timeout(seconds):
+                return await run(args=args, tool_context=tool_context)
+        except TimeoutError:
+            logger.warning("MCP tool %s timed out after %ss", name, seconds)
+            return {
+                "status": "error",
+                "error_type": "timeout",
+                "message": (
+                    f"{name} did not answer within {seconds:g}s. It may still "
+                    "complete on the server: check before calling it again."
+                ),
+            }
+
+    object.__setattr__(tool, "run_async", run_with_deadline)
+    object.__setattr__(tool, _DEADLINE_MARK, True)
 
 
 # ── Specialists ──────────────────────────────────────────────────────
