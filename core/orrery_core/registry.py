@@ -78,6 +78,15 @@ def source_of(agent_name: str) -> Source | None:
     return _SOURCES.get(agent_name)
 
 
+# agent name -> its entry-point key (``kafka``); read by the console's ``/me``.
+_KEYS: dict[str, str] = {}
+
+
+def key_of(agent_name: str) -> str | None:
+    """The entry-point key a specialist was registered under, if discovered."""
+    return _KEYS.get(agent_name)
+
+
 @dataclass(frozen=True)
 class HealthCheck:
     """A specialist's part of a health sweep ("is everything healthy?").
@@ -485,6 +494,7 @@ def discover_specialists(
         )
         if record:
             record_source(spec.agent.name, entry.source)
+            _KEYS[spec.agent.name] = key
     return selected
 
 

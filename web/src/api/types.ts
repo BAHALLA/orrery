@@ -156,7 +156,7 @@ export interface SpecialistInfo {
   /** The agent's name, as progress steps and activity entries report it. */
   name: string;
   /** Human label ("Kubernetes"); derived from the key or name when absent. */
-  label?: string;
+  label?: string | null;
 }
 
 /** The server's attachment limits. The server re-checks everything by content. */

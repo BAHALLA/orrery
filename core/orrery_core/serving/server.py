@@ -60,6 +60,7 @@ from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
+from ..registry import key_of
 from ..security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
@@ -367,6 +368,16 @@ class AttachmentsInfo(BaseModel):
     image_types: list[str]
 
 
+class SpecialistInfo(BaseModel):
+    """A specialist the coordinator can delegate to, for the console's copy."""
+
+    #: Entry-point key (``kafka``), or the agent name when it has none.
+    key: str
+    #: Agent name (``kafka_health_agent``).
+    name: str
+    label: str | None = None
+
+
 class MeResponse(BaseModel):
     """Who the caller is and what this deployment will let them do.
 
@@ -385,6 +396,10 @@ class MeResponse(BaseModel):
     self_test_available: bool
     #: What a chat turn may attach, or ``null`` when attachments are off.
     attachments: AttachmentsInfo | None = None
+    #: The specialists the coordinator reaches right now (after
+    #: ``ORRERY_SPECIALISTS`` and catalog edits), or ``null`` for a root that
+    #: delegates to none (a graph workflow). Display only: it decides nothing.
+    specialists: list[SpecialistInfo] | None = None
 
 
 class CheckResultModel(BaseModel):
@@ -1021,7 +1036,14 @@ def create_app(
         level actually in force, so a viewer can see up front why mutating tools
         are unavailable — rather than discovering it when a tool is refused.
         """
+        # Read per request: an admin catalog edit swaps the root agent.
+        reachable = agent_inventory(gateway.root_agent)
         return MeResponse(
+            specialists=[
+                SpecialistInfo(key=key_of(entry.name) or entry.name, name=entry.name)
+                for entry in reachable
+            ]
+            or None,
             subject=auth.subject,
             role=auth.role,
             autonomy_level=_resolve_autonomy_level(None),
