@@ -49,7 +49,7 @@ server = [
     # Chat attachments (AEP-030): a size-capped streaming multipart parser, and
     # image validation + re-encoding before anything reaches the model.
     "python-multipart>=0.0.32",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
 ]
 # Install with: uv sync --extra kubernetes
 # The shared, timeout-bounded Kubernetes API client (orrery_core.tools.kube)
