@@ -1,8 +1,13 @@
 # AEP-005: Agent-to-Agent (A2A) Protocol Support
 
+!!! warning "Superseded"
+    The design below predates ADK 2.x. The accepted design is
+    [ADR-007: Exposing Orrery over A2A](../adr/007-a2a-exposition.md), built on
+    [ADR-006: caller principals](../adr/006-caller-principals.md).
+
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> (superseded by ADR-007) |
 | **Priority** | <span class="badge badge--amber">P1</span> |
 | **Effort** | High (5-7 days) |
 | **Impact** | High |
