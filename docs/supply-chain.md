@@ -10,7 +10,7 @@ consumers verify it.
 |----------|-------|-----|
 | Multi-arch image (amd64/arm64) | `ghcr.io/bahalla/orrery:<version>` | `docker/build-push-action` with `provenance: true` + `sbom: true` (BuildKit attestations) |
 | Keyless signature | Sigstore transparency log (Rekor) | `cosign sign` against the GitHub Actions OIDC identity — no long-lived keys to rotate or leak |
-| Python SBOM (CycloneDX) | `sbom-python.cdx.json` release asset | `uv export --frozen` → `cyclonedx-py`; covers the full locked Python graph, including transitive LLM-provider SDKs that OS-layer scanners miss |
+| Python SBOM (CycloneDX) | `sbom-python.cdx.json` release asset | `uv export --frozen` with the image's extras (read from the Dockerfile) → `cyclonedx-py`; covers the locked Python graph the image installs, including transitive LLM-provider SDKs that OS-layer scanners miss |
 | Pinned digest list | `docker-images.txt` release asset | tag@digest references for reproducible pulls |
 | Vulnerability scan | GitHub Code Scanning (SARIF) | Trivy scans the pushed image; HIGH/CRITICAL fixable CVEs **fail the release** |
 

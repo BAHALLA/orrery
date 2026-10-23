@@ -356,6 +356,28 @@ class MetricsCollector:
             logger.info("Prometheus metrics server started on port %d", resolved_port)
 
 
+def start_metrics_server_if_enabled() -> bool:
+    """Start the ``/metrics`` server when ``ENABLE_METRICS_SERVER`` is true.
+
+    The switch for long-running hosts (the HTTP front door, the persistent
+    runner, the Google Chat bot): off unless set, so tests and ``adk web`` never
+    bind a port. The port comes from ``METRICS_PORT`` (default 9100). A port
+    that can't be bound is logged, not raised: metrics are worth less than the
+    agent, and the scrape target going down is itself the alert.
+
+    Returns:
+        ``True`` if the server is running after the call.
+    """
+    if os.getenv("ENABLE_METRICS_SERVER", "").strip().lower() not in ("1", "true", "yes"):
+        return False
+    try:
+        MetricsCollector.start_server()
+    except OSError, ValueError:
+        logger.exception("Could not start the Prometheus metrics server")
+        return False
+    return True
+
+
 def track_llm_tokens(agent_name: str, input_tokens: int, output_tokens: int) -> None:
     """Record LLM token usage.
 

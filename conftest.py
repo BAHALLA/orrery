@@ -23,3 +23,6 @@ import os
 
 def pytest_configure(config):
     os.environ["OTEL_TRACING_ENABLED"] = "false"
+    # `.env.example` turns the /metrics server on; a test that enters a FastAPI
+    # lifespan must not bind :9100 (or fail on a port another run holds).
+    os.environ["ENABLE_METRICS_SERVER"] = "false"

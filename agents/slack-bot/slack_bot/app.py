@@ -162,10 +162,14 @@ async def lifespan(app: FastAPI):
         config=config,
     )
 
-    # Start Prometheus metrics server for scraping
+    # Start Prometheus metrics server for scraping (METRICS_PORT, default
+    # 9100). A port that can't be bound is logged, as on every other host.
     metrics_plugin = next((p for p in plugins if isinstance(p, MetricsPlugin)), None)
     if metrics_plugin:
-        metrics_plugin.start_server(port=9100)
+        try:
+            metrics_plugin.start_server()
+        except OSError, ValueError:
+            logger.exception("Could not start the Prometheus metrics server")
 
     logger.info("Slack bot started — ADK runner ready")
     yield

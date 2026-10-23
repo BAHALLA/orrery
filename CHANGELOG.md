@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `/metrics` is served by the processes Prometheus scrapes. The HTTP front
+  door (what the image and the Helm chart run), the persistent runner and the
+  Google Chat bot start the metrics server when `ENABLE_METRICS_SERVER=true`,
+  on `METRICS_PORT` (default 9100). Before, only the Slack bot did, so the
+  chart's scrape annotations pointed at a closed port and `OrreryAgentDown`
+  could fire on a healthy pod. A port that can't be bound is logged, not
+  fatal. The Slack bot now honours `METRICS_PORT` too.
+- `LOG_LEVEL` is read: `setup_logging()` uses it when no level is passed
+  (default `INFO`; an unknown name falls back to `INFO` with a warning).
+- The release's Python SBOM includes the extras the image installs (`mcp`,
+  `a2a-sdk`, `pyjwt`, ...), read from the Dockerfile so the two can't drift.
+
 ## [0.7.0] - 2026-10-23
 
 Orrery can now be called by other agents over A2A, through the same gateway,

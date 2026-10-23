@@ -120,7 +120,7 @@ The confirmation key is `args-hash + invocation-id`. If the LLM retries with sli
 ## Observability
 
 ### No data on the Prometheus `/metrics` endpoint
-`MetricsPlugin` registers the collector but **does not** auto-bind the HTTP server. The Slack and Google Chat bots call `metrics_plugin.start_server()` in their FastAPI lifespan; the persistent runner does it when `ENABLE_METRICS_SERVER=true`. For a custom integration, call it yourself — see [Metrics Quick Start](metrics.md#quick-start).
+`MetricsPlugin` registers the collector but **does not** bind the HTTP server itself. The HTTP front door, the persistent runner and the Google Chat bot start it when `ENABLE_METRICS_SERVER=true` (port `METRICS_PORT`, default 9100); the Slack bot always does. Check that the variable is set and look for `Could not start the Prometheus metrics server` in the logs (usually the port is taken). For a custom integration, call it yourself — see [Metrics Quick Start](metrics.md#quick-start).
 
 ### Circuit breaker always open for a specific tool
 Check `orrery_circuit_breaker_state{tool="<name>"} == 1` — the breaker opens after 5 failures in a row (default) and stays open for 60 seconds. If the underlying system is genuinely down, you'll see it flip back to half-open on the next probe.

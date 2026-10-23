@@ -33,13 +33,13 @@ runner = Runner(
 )
 
 # Expose /metrics on port 9100 (call once at startup).
-# The Slack and Google Chat bots do this in their FastAPI lifespan.
+# Shipped hosts do this for you (see the note below).
 metrics_plugin = next(p for p in plugins if isinstance(p, MetricsPlugin))
 metrics_plugin.start_server()
 ```
 
 !!! note "`default_plugins()` does not auto-start the metrics server"
-    The `MetricsPlugin` is registered, but the `/metrics` HTTP server is only started when a host calls `start_server()` explicitly. This is intentional — the ADK CLI and tests don't want a port binding. The Slack bot (`agents/slack-bot/slack_bot/app.py`) and Google Chat bot start it in their FastAPI `lifespan`; the persistent runner starts it when `ENABLE_METRICS_SERVER=true`.
+    The `MetricsPlugin` is registered, but the `/metrics` HTTP server is only started by a host, so the ADK CLI and tests never bind a port. The HTTP front door (what the image and the Helm chart run), the persistent runner and the Google Chat bot (HTTP and Pub/Sub) start it at startup when `ENABLE_METRICS_SERVER=true`, on `METRICS_PORT` (default 9100); the chart, compose file, `Makefile` and `.env.example` set it. The Slack bot always starts it. A port that can't be bound is logged and the host keeps running. Metrics are per process: with several workers or containers sharing one port, only the first binds and the scrape sees only its counters. For a custom host, call `start_metrics_server_if_enabled()` (`orrery_core.observability.metrics`) or `start_server()` yourself.
 
 ### Available metrics
 

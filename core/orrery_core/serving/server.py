@@ -61,6 +61,7 @@ from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, c
 from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
 from ..observability.audit import audit_event
+from ..observability.metrics import start_metrics_server_if_enabled
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
 from ..registry import key_of
@@ -622,6 +623,7 @@ def create_app(
         # *host* CPU count, which in a container has nothing to do with the
         # quota the pod is limited to.
         configure_default_executor()
+        start_metrics_server_if_enabled()
         if catalog is not None:
             await catalog.start()
         try:

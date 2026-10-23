@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sys
 from contextvars import ContextVar
@@ -127,15 +128,23 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
-def setup_logging(level: int | str = logging.INFO) -> None:
+def setup_logging(level: int | str | None = None) -> None:
     """Configure the root logger with structured JSON output to stdout.
 
     Safe to call multiple times — idempotent. Removes any existing
     handlers on the root logger before adding the JSON handler.
 
     Args:
-        level: Logging level (default: INFO).
+        level: Logging level. Defaults to the ``LOG_LEVEL`` environment
+            variable, else INFO. An unknown name falls back to INFO with a
+            warning rather than failing startup.
     """
+    invalid: str | None = None
+    if level is None:
+        name = os.getenv("LOG_LEVEL", "").strip().upper() or "INFO"
+        level = logging.getLevelNamesMapping().get(name)
+        if level is None:
+            invalid, level = name, logging.INFO
     root = logging.getLogger()
     root.setLevel(level)
 
@@ -146,3 +155,5 @@ def setup_logging(level: int | str = logging.INFO) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JSONFormatter())
     root.addHandler(handler)
+    if invalid is not None:
+        logging.getLogger(__name__).warning("Unknown LOG_LEVEL %r; using INFO", invalid)

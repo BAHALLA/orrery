@@ -836,6 +836,16 @@ def test_startup_sizes_the_worker_pool(patched_runner):
     configure.assert_called_once()
 
 
+def test_startup_starts_the_metrics_server(patched_runner):
+    """The image runs this app: without it nothing serves the scraped :9100."""
+    with (
+        patch("orrery_core.serving.server.start_metrics_server_if_enabled") as start,
+        TestClient(_limited_app(patched_runner)),
+    ):
+        pass
+    start.assert_called_once()
+
+
 # ── /me and the onboarding self-test (AEP-019 M3) ───────────────────
 
 

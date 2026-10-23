@@ -22,6 +22,7 @@ from google.adk.runners import Runner
 
 from orrery_core import AgentGateway, create_events_compaction_config
 from orrery_core.agent.base import load_agent_env
+from orrery_core.observability.metrics import start_metrics_server_if_enabled
 from orrery_core.persistence.db import create_session_service
 from orrery_core.plugins import default_plugins
 
@@ -91,6 +92,9 @@ async def build_handler(*, require_chat_client: bool = False) -> GoogleChatHandl
             synchronous response channel — replies must go via
             ``spaces.messages.create`` or they are lost.
     """
+    # Both transports run as long-lived processes Prometheus scrapes.
+    start_metrics_server_if_enabled()
+
     # 1. Session service — PostgreSQL if DATABASE_URL is set, else in-memory.
     session_service = create_session_service(os.getenv("DATABASE_URL"))
 
