@@ -107,7 +107,7 @@ lint-workflows: ## Lint GitHub Actions workflows (actionlint + zizmor security a
 	@# local run passed while CI (whose runner ships shellcheck) failed.
 	uvx --with shellcheck-py==$(SHELLCHECK_VERSION) --from actionlint-py==$(ACTIONLINT_VERSION) \
 		actionlint .github/workflows/*.yml
-	uvx zizmor==$(ZIZMOR_VERSION) --offline --min-severity low .github/workflows/
+	uvx zizmor==$(ZIZMOR_VERSION) --offline --min-severity low .github/workflows/ .github/actions/
 
 # Derived from the workspace members (core + every agents/* with a pyproject),
 # so a newly added agent is picked up automatically — no manual edit needed.

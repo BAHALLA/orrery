@@ -149,34 +149,42 @@ jobs:
         run: |
           echo "ref=$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')@${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      # The shared gate is referenced as `./.github/actions/...` after checkout.
+      # zizmor suggests GitHub's newer `$/` self-repository syntax; kept on `./`
+      # until the pinned actionlint understands it (hence the inline ignores).
+      #
       # Two passes: the table run is the gate and prints the findings in the
       # job log (a SARIF-only gate fails without showing what it found); the
       # SARIF run reuses the cached scan and feeds code scanning either way.
+      # Thresholds and ignores live in the shared action, which image-scan.yml
+      # uses too.
       - name: Trivy image scan (gate)
         id: trivy_gate
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
         with:
-          trivyignores: .trivyignore.yaml
           image-ref: ${{ steps.imageref.outputs.ref }}
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
+
+      # The index resolves to the runner's platform, so arm64 is gated
+      # explicitly: an arm64-only package or binary would pass otherwise.
+      - name: Trivy image scan (gate, arm64)
+        if: always() && steps.trivy_gate.outcome != 'skipped'
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
+        with:
+          image-ref: ${{ steps.imageref.outputs.ref }}
+          platform: linux/arm64
+          skip-setup-trivy: "true"
 
       - name: Trivy image scan (SARIF for code scanning)
         # always() so findings reach code scanning when the gate fails — but
         # only if the gate ran: it installs trivy, which skip-setup-trivy reuses.
         if: always() && steps.trivy_gate.outcome != 'skipped'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
         with:
-          trivyignores: .trivyignore.yaml
           image-ref: ${{ steps.imageref.outputs.ref }}
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '0'
+          exit-code: "0"
           format: sarif
           output: trivy-image.sarif
-          skip-setup-trivy: true
+          skip-setup-trivy: "true"
 
       - name: Upload Trivy SARIF to code scanning
         if: always() && steps.trivy_gate.outcome != 'skipped'

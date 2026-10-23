@@ -3,21 +3,22 @@ name: Image Scan
 # The release workflow's Trivy gate only runs on push to main, so a pull
 # request that breaks it merges green and the release fails afterwards (seven
 # merges went in on a red release that way). This builds the image the same
-# way, without pushing, and runs the same gate:
+# way, without pushing, and runs the same gate (.github/actions/trivy-image-gate):
 #
-# - on pull requests that change what goes into the image;
+# - on pull requests that change what goes into the image. The workflow runs on
+#   every pull request and a first job decides, so "Build & scan image" can be
+#   a required check: a job skipped by `if:` counts as passing, whereas a
+#   workflow skipped by a `paths` filter leaves the check pending forever;
 # - daily on main, because a new advisory can fail an image nobody changed
-#   (that was the cause last time: a Go CVE in the bundled docker CLI).
+#   (that was the cause last time: a Go CVE in the bundled docker CLI). The
+#   daily run also scans the published `latest` image, which keeps its old
+#   packages until the next release.
+#
+# A scheduled failure notifies whoever last changed the cron line, and GitHub
+# pauses schedules after 60 days without repository activity.
 
 on:
   pull_request:
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - uv.lock
-      - "**/pyproject.toml"
-      - .trivyignore.yaml
-      - .github/workflows/image-scan.yml
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
@@ -29,9 +30,51 @@ concurrency:
   group: image-scan-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# The shared gate is referenced as `./.github/actions/...` after checkout.
+# zizmor suggests GitHub's newer `$/` self-repository syntax; kept on `./`
+# until the pinned actionlint understands it (hence the inline ignores).
+
 jobs:
+  changes:
+    name: Does this change the image?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2  # the PR merge commit and its base parent
+
+      # On a pull request the checkout is GitHub's merge commit, so its first
+      # parent is the base: the diff is exactly what the PR changes.
+      - name: Compare with the base
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          printf 'Changed files:\n%s\n' "$changed"
+          # What reaches the image or its gate: the Dockerfile and its context
+          # rules, Python dependencies, the web build's dependencies, the
+          # ignore list, and the gate's own definition.
+          pattern='^(Dockerfile|\.dockerignore|uv\.lock|(.+/)?pyproject\.toml|web/package(-lock)?\.json|\.trivyignore\.yaml|\.github/workflows/(image-scan|release)\.yml|\.github/actions/trivy-image-gate/.+)$'
+          if printf '%s\n' "$changed" | grep -qE "$pattern"; then
+            echo "image=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "image=false" >> "$GITHUB_OUTPUT"
+          fi
+
   scan:
     name: Build & scan image
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -50,7 +93,7 @@ jobs:
         run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       # amd64 only, loaded into the runner's daemon: the scan needs a local
-      # image, and the release's arm64 build uses the same pinned inputs.
+      # image. Release gates both architectures of the pushed image.
       # Reads the release's build cache but never writes it.
       - name: Build (not pushed)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -65,13 +108,39 @@ jobs:
             SECURITY_UPDATES_DATE=${{ steps.secdate.outputs.date }}
           cache-from: type=gha
 
-      # Mirrors release.yml's gate: same action, ignores file and thresholds.
       - name: Trivy image scan (gate)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
         with:
-          trivyignores: .trivyignore.yaml
           image-ref: orrery-image-scan:ci
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
+
+  published:
+    name: Scan published image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # GHCR paths are lowercase.
+      - name: Resolve image ref
+        id: ref
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "ref=ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]'):latest" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy scan (amd64)
+        id: amd64
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
+        with:
+          image-ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Trivy scan (arm64)
+        if: always() && steps.amd64.outcome != 'skipped'
+        uses: ./.github/actions/trivy-image-gate  # zizmor: ignore[self-repository]
+        with:
+          image-ref: ${{ steps.ref.outputs.ref }}
+          platform: linux/arm64
+          skip-setup-trivy: "true"
