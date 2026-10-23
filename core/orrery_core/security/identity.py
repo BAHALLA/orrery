@@ -37,7 +37,7 @@ import os
 import re
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 logger = logging.getLogger("orrery.identity")
@@ -83,6 +83,10 @@ class CallerIdentity:
     #: What target systems know the person as (email by default).
     username: str
     groups: tuple[str, ...] = ()
+    #: The verified bearer token this identity came from, for token exchange
+    #: (ADR-004, :mod:`.token_exchange`). Kept out of ``repr`` and equality so
+    #: it never reaches a log line; ``None`` where the transport holds none.
+    subject_token: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -218,7 +222,9 @@ def _claim(claims: Mapping[str, Any], path: str) -> Any:
     return value
 
 
-def identity_from_claims(subject: str, claims: Mapping[str, Any]) -> CallerIdentity:
+def identity_from_claims(
+    subject: str, claims: Mapping[str, Any], *, subject_token: str | None = None
+) -> CallerIdentity:
     """Build the caller from verified JWT claims.
 
     ``ORRERY_IMPERSONATE_USER_CLAIM`` (default ``email``, falling back to the
@@ -246,4 +252,5 @@ def identity_from_claims(subject: str, claims: Mapping[str, Any]) -> CallerIdent
         subject=subject,
         username=user if isinstance(user, str) and user else subject,
         groups=tuple(g for g in groups if isinstance(g, str)) if isinstance(groups, list) else (),
+        subject_token=subject_token,
     )

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-user MCP credentials (ADR-004).** An MCP server with
+  `auth: {type: token_exchange, audience, scope}` receives, on every call, a
+  token the identity provider issued for the requesting user (RFC 8693),
+  exchanged from their console or A2A token and cached in memory until shortly
+  before it expires. Each user gets their own MCP session. Callers without a
+  token (Slack, Google Chat, the triage sweep, service principals) are offered
+  no tools from that server. Configure `ORRERY_TOKEN_EXCHANGE_URL`,
+  `_CLIENT_ID` and `_CLIENT_SECRET`.
+- **MCP client hardening.** HTTP MCP connections are pinned to the configured
+  origin with redirects off, and refuse non-public resolved addresses unless
+  `allow_private_network` (link-local and metadata endpoints are refused
+  either way, and IPv4 inside IPv6 is checked as the address it reaches).
+  New per-server settings: `call_timeout_seconds`, `tool_list_cache_seconds`,
+  `ca_file` / `client_cert_file` / `client_key_file` (mTLS) and `pinned`
+  fingerprints.
+
+### Changed
+
+- The MCP HTTP client ignores `HTTPS_PROXY`: a proxy would resolve the name
+  out of reach of the address check. With `allow_private_network`, every
+  request still resolves the name.
+- The circuit breaker counts an MCP result flagged `isError`, and ADK's bare
+  `{"error": ...}` for a failed MCP call, as failures.
+
 ## [0.6.9] - 2026-10-19
 
 Chat attachments: screenshots and text files, processed in memory and never

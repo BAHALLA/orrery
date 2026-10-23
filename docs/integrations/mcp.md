@@ -72,6 +72,7 @@ servers:
 | `tool_list_cache_seconds` | How long a tool listing is reused before the server is asked again, default 300; `0` asks every turn. |
 | `allow_private_network` | Default `false`. Lets an HTTP server resolve to a private or loopback address (never link-local or metadata). See below. |
 | `ca_file` / `client_cert_file` / `client_key_file` | TLS for HTTP transports: a CA bundle, and a client certificate for mTLS (a key needs its certificate). `ca_file` **replaces** the system roots for that server rather than adding to them. Read at startup; a missing file fails it. |
+| `auth` | Per-user credentials: `{type: token_exchange, audience, scope}`. See [Per-user credentials](#per-user-credentials). Excludes an `Authorization` entry in `headers_from_env`. |
 | `pinned` | `tool: sha256` fingerprints you reviewed (case-insensitive). A pinned tool whose text differs is withheld from the first call. |
 | `instruction` | Extra guidance appended to the specialist's prompt. |
 
@@ -170,6 +171,55 @@ call may still complete on the server, so it checks before retrying a
 mutation. The circuit breaker counts it as a failure, as it does a result the
 server flagged `isError`.
 
+## Per-user credentials
+
+By default every call to a server uses the shared token from
+`headers_from_env`, so the server sees Orrery, not the person asking. With
+`auth`, each call carries a token issued for *that user*, so the server's own
+permissions and audit apply to them:
+
+```yaml
+  - name: github
+    transport: streamable_http
+    url: https://mcp.github.example.com/mcp
+    auth:
+      type: token_exchange
+      audience: github-mcp        # the audience the IdP issues tokens for
+      scope: "issues:read"        # optional
+    tools: [list_issues, get_issue]
+    read_only: [list_issues, get_issue]
+```
+
+The signed-in caller's token is exchanged at your identity provider
+([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693), see
+[ADR-004](../adr/004-user-token-exchange.md)) for a short-lived token with the
+server's audience. The caller's own token is never forwarded: it is scoped to
+Orrery, and a server holding it could replay it against Orrery.
+
+- **Who has a token:** console users and A2A agents acting for a user (a
+  delegated token). Slack, Google Chat, the triage sweep and service
+  principals hold none, so the server offers them **no tools**, rather than
+  falling back to a shared credential.
+- **Fail-closed:** a refused exchange answers the call with
+  `status: access_denied`, which the circuit breaker ignores; an unreachable
+  identity provider is `status: error`, which it counts.
+- **Isolation:** sessions and tool listings are pooled by header, so each
+  user's token gets its own MCP session; one session never carries two
+  people's tokens.
+- **Cache:** exchanged tokens stay in memory, per caller token, audience and
+  scope, until 30 s before they expire. Concurrent calls share one exchange.
+
+Settings, required once any server uses `auth` (startup fails without them):
+
+| Variable | Description |
+|---|---|
+| `ORRERY_TOKEN_EXCHANGE_URL` | The IdP token endpoint (https; plain http only on loopback). Keycloak: `https://<host>/realms/<realm>/protocol/openid-connect/token`. |
+| `ORRERY_TOKEN_EXCHANGE_CLIENT_ID` | A confidential client allowed to exchange tokens. |
+| `ORRERY_TOKEN_EXCHANGE_CLIENT_SECRET` | Its secret. |
+
+On the IdP side, allow that client to exchange tokens issued to the console
+(and A2A) audiences for each server's `audience`, and nothing more.
+
 ## What else applies
 
 Tool results from MCP servers pass through the same plugins as any other tool:
@@ -179,9 +229,9 @@ appear in the live trace under their specialist.
 
 ## Deployment notes
 
-- **Credentials are static per server.** Every user's call uses the token in
-  `headers_from_env`. Acting with each user's own identity is the next step on
-  the roadmap (per-user OAuth / token exchange).
+- **Credentials are static per server** unless it sets `auth`: every
+  user's call then uses the token in `headers_from_env`. See
+  [Per-user credentials](#per-user-credentials).
 - **stdio servers run as child processes of the agent**, one per specialist.
   For anything long-lived or shared, prefer a remote server over
   `streamable_http`.

@@ -1,6 +1,6 @@
 # ADR-004: Per-user tokens for systems that can't impersonate
 
-**Status:** Proposed · **Date:** 2026-10-15 · **Related:** [Acting as the user](../impersonation.md)
+**Status:** Accepted (MCP implemented; Kafka and HTTP integrations pending) · **Date:** 2026-10-15 · **Related:** [Acting as the user](../impersonation.md)
 
 ## Context
 
@@ -47,6 +47,25 @@ supports it), on demand, per user and per target:
   elsewhere. Linking chat users to IdP sessions is a separate piece of work.
 - Refresh tokens are never stored. A user whose token has expired re-authenticates
   in the console, the same as for any other call.
+
+## Implementation notes (MCP)
+
+- The verified bearer is kept on `AuthContext.token` and
+  `CallerIdentity.subject_token`, both out of `repr` and equality, and never in
+  `AuthContext.as_state()`. It reaches the broker through the turn's existing
+  caller ContextVar, so only surfaces that build a `CallerIdentity` (the
+  console and A2A, not a service principal) have one.
+- `security/token_exchange.py`: `TokenBroker` caches by the subject token's
+  digest, audience and scope rather than by user, so nothing outlives the token
+  it came from. An exchange runs in its own task, so a caller cancelled
+  mid-exchange doesn't cancel it for others waiting on the same key.
+- MCP servers opt in with `auth: {type: token_exchange, audience, scope}`. ADK
+  pools MCP sessions and caches tool lists by the merged headers, so each
+  user's token gets its own session. The credential is resolved in the call
+  wrapper before ADK runs, because ADK turns an exception from its header
+  provider into a bare `{"error": ...}`. A refusal is `access_denied`, so the
+  breaker ignores it; an unreachable IdP is `error`, which it counts. A caller
+  without a token is offered no tools from the server.
 
 ## Alternatives considered
 

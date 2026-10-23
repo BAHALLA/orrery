@@ -56,7 +56,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -71,6 +71,7 @@ from ..observability.audit import audit_event
 from ..plugins.safety_plugin import screen_text
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
+from ..security.token_exchange import CredentialUnavailable, TokenBroker, default_broker
 from .mcp_network import (
     LOOPBACK_HOSTS,
     client_factory,
@@ -103,6 +104,23 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _LOOPBACK = LOOPBACK_HOSTS
 
 
+class McpAuth(BaseModel):
+    """Per-user credentials for an HTTP server (ADR-004).
+
+    ``token_exchange``: each call carries a token the identity provider issued
+    for this server's *audience*, exchanged from the signed-in caller's own
+    (:mod:`orrery_core.security.token_exchange`). A caller without one (Slack,
+    Google Chat, the triage sweep, a service principal) gets no tools from the
+    server, rather than the platform's credentials.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["token_exchange"]
+    audience: str = Field(min_length=1, description="The audience the IdP issues tokens for.")
+    scope: str | None = Field(default=None, description="Space-separated scopes to request.")
+
+
 class McpServerConfig(BaseModel):
     """One MCP server, as an operator declares it. Validated at startup."""
 
@@ -121,6 +139,8 @@ class McpServerConfig(BaseModel):
     env_from: dict[str, str] = Field(default_factory=dict)
     #: HTTP headers: header -> name of the env var holding its full value.
     headers_from_env: dict[str, str] = Field(default_factory=dict)
+    #: Per-user credentials instead of a shared ``Authorization`` header.
+    auth: McpAuth | None = None
     tools: list[str] = Field(min_length=1, description="Allowlist; nothing else is exposed.")
     read_only: list[str] = Field(default_factory=list)
     destructive: list[str] = Field(default_factory=list)
@@ -169,13 +189,17 @@ class McpServerConfig(BaseModel):
             raise ValueError(f"pinned lists tools missing from `tools`: {sorted(unknown)}")
         if bad := [t for t, digest in self.pinned.items() if not _SHA256.match(digest)]:
             raise ValueError(f"pinned fingerprints must be 64 hex characters: {sorted(bad)}")
+        if self.auth and any(h.lower() == "authorization" for h in self.headers_from_env):
+            # Two sources for one header: the shared one would be sent whenever
+            # the per-user one is missing, which is exactly when it must not.
+            raise ValueError("`auth` sets Authorization; remove it from `headers_from_env`")
         if self.client_key_file and not self.client_cert_file:
             raise ValueError("client_key_file needs client_cert_file")
         if self.transport == "stdio":
             if not self.command:
                 raise ValueError("transport stdio needs `command`")
-            if self.url or self.headers_from_env:
-                raise ValueError("transport stdio takes no `url` / `headers_from_env`")
+            if self.url or self.headers_from_env or self.auth:
+                raise ValueError("transport stdio takes no `url` / `headers_from_env` / `auth`")
             if self.ca_file or self.client_cert_file or self.allow_private_network:
                 raise ValueError(
                     "transport stdio takes no TLS or network settings "
@@ -347,13 +371,18 @@ class GuardedMcpToolset(McpToolset):
     which keep them.
     """
 
-    def __init__(self, config: McpServerConfig) -> None:
+    def __init__(self, config: McpServerConfig, *, broker: TokenBroker | None = None) -> None:
         self.server_config = config
+        # Built now, so missing exchange settings fail startup, not a call.
+        self._broker = (broker or default_broker()) if config.auth else None
         super().__init__(
             connection_params=_connection_params(config),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
             tool_list_cache_ttl_seconds=config.tool_list_cache_seconds or None,
+            # ADK pools sessions and caches tool lists by these headers, so each
+            # user's token gets its own session and listing.
+            header_provider=self._user_headers if config.auth else None,
         )
         self._reported_missing = False
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
@@ -361,8 +390,28 @@ class GuardedMcpToolset(McpToolset):
         #: Tools already reported as withheld, so a refusal is logged once.
         self._withheld: set[str] = set()
 
+    async def _credential(self) -> str:
+        """The caller's exchanged token; raises :class:`CredentialUnavailable`."""
+        auth, broker = self.server_config.auth, self._broker
+        assert auth is not None and broker is not None  # only used with auth
+        return await broker.token_for(auth.audience, auth.scope)
+
+    async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
+        return {"Authorization": f"Bearer {await self._credential()}"}
+
     async def get_tools(self, readonly_context: ReadonlyContext | None = None) -> list[BaseTool]:
-        tools = await super().get_tools(readonly_context)
+        if self.server_config.auth and readonly_context is None:
+            # ADK only asks the header provider when there is a context: listing
+            # without one would go out unauthenticated.
+            return []
+        try:
+            tools = await super().get_tools(readonly_context)
+        except CredentialUnavailable as exc:
+            # This caller can't act on the server: it offers them nothing,
+            # and the turn goes on with the other tools.
+            log = logger.warning if exc.transient else logger.info
+            log("MCP server %s offers no tools here: %s", self.server_config.name, exc)
+            return []
         allowed = set(self.server_config.tools)
         exposed: list[BaseTool] = []
         for tool in tools:
@@ -386,7 +435,11 @@ class GuardedMcpToolset(McpToolset):
                 tool.name, getattr(raw, "annotations", None), self.server_config
             )
             set_guard(tool, level, reason)
-            _with_deadline(tool, self.server_config)
+            _with_deadline(
+                tool,
+                self.server_config,
+                credential=self._credential if self.server_config.auth else None,
+            )
             exposed.append(tool)
         if not self._reported_missing:
             self._reported_missing = True
@@ -481,7 +534,12 @@ def _connection_params(
 _DEADLINE_MARK = "_orrery_deadline"
 
 
-def _with_deadline(tool: BaseTool, config: McpServerConfig) -> None:
+def _with_deadline(
+    tool: BaseTool,
+    config: McpServerConfig,
+    *,
+    credential: Callable[[], Awaitable[str]] | None = None,
+) -> None:
     """Bound every call of *tool* by ``call_timeout_seconds``, once per object.
 
     A timed-out call returns an error result rather than raising: it flows
@@ -499,7 +557,20 @@ def _with_deadline(tool: BaseTool, config: McpServerConfig) -> None:
     async def run_with_deadline(*, args: dict[str, Any], tool_context: Any) -> Any:
         try:
             async with asyncio.timeout(seconds):
+                if credential is not None:
+                    # Resolved here, where a refusal can be answered as one: ADK
+                    # turns an exception from its header provider into a bare
+                    # error. The provider then reads the broker's cache.
+                    await credential()
                 return await run(args=args, tool_context=tool_context)
+        except CredentialUnavailable as exc:
+            # A refusal is an answer (the tool never ran), so the breaker
+            # ignores it; an unreachable IdP is a failure it counts.
+            return {
+                "status": "error" if exc.transient else "access_denied",
+                "error_type": "credential_unavailable",
+                "message": f"{name}: {exc}",
+            }
         except TimeoutError:
             logger.warning("MCP tool %s timed out after %ss", name, seconds)
             return {

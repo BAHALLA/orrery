@@ -270,6 +270,18 @@ own permissions apply too. Full guide: [Acting as the user](../impersonation.md)
 | `ORRERY_IMPERSONATE_K8S_GROUP_PREFIX` | (none) | Prepended to each impersonated Kubernetes group; match `--oidc-groups-prefix`. A `system:` user or group is always refused. |
 | `ORRERY_IMPERSONATION_FALLBACK` | unset | `service` uses the service account when no user is known. A rollout aid; leave unset afterwards, so unknown callers are refused. |
 
+## Per-user tokens (token exchange)
+
+MCP servers with `auth: {type: token_exchange}` receive a token the identity
+provider issued for the requesting user (RFC 8693, [ADR-004](../adr/004-user-token-exchange.md)).
+Full guide: [MCP servers](../integrations/mcp.md#per-user-credentials).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_TOKEN_EXCHANGE_URL` | unset | IdP token endpoint. https only (http on loopback). Required once a server uses `auth`. |
+| `ORRERY_TOKEN_EXCHANGE_CLIENT_ID` | unset | Confidential client allowed to exchange tokens. |
+| `ORRERY_TOKEN_EXCHANGE_CLIENT_SECRET` | unset | Its secret. |
+
 ## What this does **not** cover (intentionally)
 
 - **Vault / GCP Secret Manager / AWS Secrets Manager adapters** —

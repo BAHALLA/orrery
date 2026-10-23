@@ -368,6 +368,17 @@ class TestClassifyToolOutcome:
         assert classify_tool_outcome(result) is ToolOutcome.FAILURE
         assert classify_tool_outcome({**result, field: False}) is ToolOutcome.SUCCESS
 
+    @pytest.mark.parametrize(
+        ("response", "outcome"),
+        [
+            ({"error": "Unexpected error during MCP tool execution: closed"}, ToolOutcome.FAILURE),
+            # Only ADK's bare shape: a result that merely has an `error` field is data.
+            ({"error": "none", "items": []}, ToolOutcome.SUCCESS),
+        ],
+    )
+    def test_adk_reports_a_failed_mcp_call_as_a_bare_error(self, response, outcome):
+        assert classify_tool_outcome(response) is outcome
+
     def test_an_mcp_call_timeout_is_a_failure(self):
         assert classify_tool_outcome({"status": "error", "error_type": "timeout"}) is (
             ToolOutcome.FAILURE

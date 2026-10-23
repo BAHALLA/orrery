@@ -121,6 +121,13 @@ def _response_field(response: Any, field: str) -> str | None:
 
 
 def _mcp_error(response: Any) -> bool:
+    """An MCP failure: the server flagged ``isError``, or ADK caught an exception.
+
+    ADK's ``McpTool`` reports a failed call (connection refused, session
+    closed, a header provider raising) as a bare ``{"error": "..."}``.
+    """
+    if isinstance(response, dict) and set(response) == {"error"}:
+        return True
     for field in ("isError", "is_error"):
         value = (
             response.get(field) if isinstance(response, dict) else getattr(response, field, None)

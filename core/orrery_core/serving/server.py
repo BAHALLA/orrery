@@ -734,7 +734,7 @@ def create_app(
         """
         if not cfg.auth_enabled or auth.principal_kind == PrincipalKind.SERVICE:
             return None
-        return identity_from_claims(auth.subject, auth.claims)
+        return identity_from_claims(auth.subject, auth.claims, subject_token=auth.token)
 
     # Rate limit per *caller*, not per IP: behind an ingress every user shares a
     # source address, so an IP key would let one noisy client throttle everyone.
