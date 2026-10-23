@@ -136,12 +136,23 @@ if __name__ == "__main__":
 
 ## 5. Register in Workspace
 
-Add your new agent to the root `pyproject.toml` workspace members:
+The workspace glob (`members = ["core", "agents/*"]`) already picks your
+package up, but being a workspace member does not install it. Three edits make
+it part of the product:
 
-```toml
-[tool.uv.workspace]
-members = ["core", "agents/*"]
-```
+1. **Root `pyproject.toml`**: add the distribution to `[project] dependencies`
+   and to `[tool.uv.sources]` (`my-agent = { workspace = true }`), and its
+   import package to ruff's `known-first-party`. Without the dependency,
+   `uv sync` never installs it, so its entry point does not exist.
+2. **`agents/orrery-assistant/pyproject.toml`**: the same dependency and source,
+   so the coordinator's own package pulls it in.
+3. **`core/orrery_core/registry.py`**: add the distribution name to
+   `_WORKSPACE_DISTRIBUTIONS`. Anything not on that list is treated as a
+   third-party plugin and is **not loaded** unless `ORRERY_SPECIALISTS` names
+   it. `core/tests/test_registry.py` fails if you forget.
+
+Then run `uv sync --all-extras`. Entry points are package metadata, so they
+appear only after a sync.
 
 Then **register the agent with the coordinator** through an entry point in
 your package's `pyproject.toml`. There's no edit to `orrery_assistant/agent.py`:
@@ -290,12 +301,18 @@ remove declarative agents with a tool picker that shows each tool's guard level.
 - **No lost edits.** Every save names the version it was edited from. If
   someone else saved first, you get a 409 and reapply your change to the new
   version, instead of a silent last-write-wins.
-- **Applies live, everywhere.** The edit is stored next to the sessions
+- **Applies live to the HTTP server.** The edit is stored next to the sessions
   (Postgres when `DATABASE_URL` is set). Turns already running finish on the
-  agents they started with; new turns use the new set. Other replicas pick the
-  change up within `ORRERY_CATALOG_POLL_SECONDS` (default 15).
+  agents they started with; new turns use the new set. Other server replicas
+  pick the change up within `ORRERY_CATALOG_POLL_SECONDS` (default 15).
+  **The Slack and Google Chat bots, the CLI and the batch triage run do not
+  read the catalog yet.** They keep the set chosen by `ORRERY_SPECIALISTS` /
+  `ORRERY_DISABLED_SPECIALISTS`, so switch a specialist off there too when it
+  must stop everywhere.
 - **Audited.** Each save emits an `agent_catalog_updated` audit event with the
-  admin, the version, and what's switched off or added.
+  admin, the version, and what's switched off or added. A refused edit (not an
+  admin, editing disabled, a stale version, an invalid catalog) emits
+  `agent_catalog_update_refused` with the reason.
 
 Reading the catalog needs only the admin role. Writing also needs the
 deployment flag, which is off by default.
@@ -340,4 +357,4 @@ make fmt      # auto-fix linting and formatting
 Agents are normally reached through the orchestrator (`make run-dev`) rather
 than run standalone, so you don't need a per-agent run target. If your agent is
 also useful on its own, add a `make run-<name>` target to the root `Makefile`
-following the pattern of `run-assistant` / `run-console` (`make help` lists them all).
+next to the existing run targets (`make help` lists them all).

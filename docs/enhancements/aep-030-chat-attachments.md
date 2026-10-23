@@ -139,6 +139,7 @@ chart sets by default together with `proxy-body-size: 25m`.
 | `ORRERY_ATTACHMENT_MAX_TEXT_CHARS` | `200000` | Text the model sees per file. |
 | `ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES` | `2` | Image decodes at once, per process. |
 | `ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS` | `4` | Multipart bodies read and prepared at once, per process; then `503`. |
+| `ORRERY_ATTACHMENT_MAX_UPLOADS_PER_USER` | `1` | Multipart bodies one caller may have in flight; then `429`. |
 | `ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS` | `60` | Deadline for receiving a body; then `408`. |
 
 A reverse proxy in front must allow the body size (nginx `client_max_body_size`)
