@@ -147,9 +147,11 @@ client is held to what you configured:
   without it. A loopback URL (local development) may reach loopback, and
   nothing else private.
 - **never metadata**: link-local addresses (`169.254.169.254`, `fe80::/10`)
-  and cloud metadata endpoints (`fd00:ec2::254`) are refused even with
+  and cloud metadata and credential endpoints (AWS `fd00:ec2::/32`, Alibaba
+  `100.100.100.200`) are refused even with
   `allow_private_network`, so opening the private network for one internal
   server doesn't also open the instance's credentials to a DNS change.
+  With the opt-in, every request still resolves the name to run this check.
 - **no proxy**: the guarded client ignores `HTTPS_PROXY`/`HTTP_PROXY`. A proxy
   resolves the name itself, out of reach of the address check. If your egress
   must go through a proxy, MCP over HTTP needs a direct route to the server.

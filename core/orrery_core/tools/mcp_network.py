@@ -75,8 +75,13 @@ _EMBEDS_IPV4 = (
 # Local-use NAT64 places the IPv4 address by prefix length, which an address
 # alone doesn't say: refused outright.
 _LOCAL_NAT64 = ipaddress.IPv6Network("64:ff9b:1::/48")
-# Cloud metadata endpoints outside link-local (AWS's IPv6 IMDS is a ULA).
-_METADATA = frozenset({ipaddress.ip_address("fd00:ec2::254")})
+# Cloud metadata and credential endpoints outside link-local: AWS's IPv6
+# twins of its link-local services (IMDS fd00:ec2::254, EKS Pod Identity
+# fd00:ec2::23) and Alibaba's metadata service, which sits in CGNAT space.
+_METADATA = (
+    ipaddress.IPv6Network("fd00:ec2::/32"),
+    ipaddress.IPv4Network("100.100.100.200/32"),
+)
 
 
 def _address(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
@@ -105,7 +110,7 @@ def never_allowed(address: str) -> bool:
     ``169.254.169.254``, which a DNS change or rebinding would then reach.
     """
     ip = _address(address)
-    return ip.is_link_local or ip in _METADATA or ip in _LOCAL_NAT64
+    return ip.is_link_local or ip in _LOCAL_NAT64 or any(ip in net for net in _METADATA)
 
 
 def _is_loopback(address: str) -> bool:

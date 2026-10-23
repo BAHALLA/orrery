@@ -239,7 +239,15 @@ def test_nat64_of_a_public_address_stays_public():
 
 
 @pytest.mark.parametrize(
-    "address", ["169.254.169.254", "fe80::1", "fd00:ec2::254", "64:ff9b::a9fe:a9fe"]
+    "address",
+    [
+        "169.254.169.254",
+        "fe80::1",
+        "fd00:ec2::254",  # AWS IMDS over IPv6
+        "fd00:ec2::23",  # EKS Pod Identity agent
+        "100.100.100.200",  # Alibaba metadata, in CGNAT space
+        "64:ff9b::a9fe:a9fe",
+    ],
 )
 def test_metadata_stays_refused_with_the_private_network_allowed(resolves_to, reached, address):
     resolves_to[:] = [address]
