@@ -139,6 +139,8 @@ nav:
       - "ADR-003: Graph Workflow & Conversational Root": adr/003-graph-workflow-inversion.md
       - "ADR-004: Per-user Token Exchange": adr/004-user-token-exchange.md
       - "ADR-005: Specialist Declarations": adr/005-specialist-selection.md
+      - "ADR-006: Caller Principals": adr/006-caller-principals.md
+      - "ADR-007: A2A Exposition": adr/007-a2a-exposition.md
   - Operate:
     - Production Deployment: deployment.md
     - Integrations:
