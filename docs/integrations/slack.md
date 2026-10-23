@@ -26,6 +26,9 @@ The platform includes a Slack bot that lets you interact with the DevOps agent d
 }
 ```
 
+   If you enable [impersonation](#acting-as-the-user), also add the `users:read`
+   and `users:read.email` bot scopes.
+
 2. Generate an **App-Level Token** (Basic Information → App-Level Tokens, scope: `connections:write`)
 3. **Install to Workspace** and copy the Bot Token
 4. Configure `agents/slack-bot/.env`:
@@ -91,7 +94,7 @@ SLACK_OPERATOR_USERS=U04XYZ789
 | **operator** | Read-only + `@confirm` tools | Add user ID to `SLACK_OPERATOR_USERS` |
 | **admin** | All tools including `@destructive` | Add user ID to `SLACK_ADMIN_USERS` |
 
-The role is resolved when a new thread starts. To test a different role, change the env var, restart the bot, and start a **new thread**.
+The role is resolved on every turn, so an existing thread picks up a change. The role lists are read from the environment at startup: to test a different role, change the env var and restart the bot. No new thread is needed.
 
 For a side-by-side walk-through of exercising each role from Slack, ADK Web, and the CLI, see [Testing RBAC across surfaces](../rbac-testing.md).
 

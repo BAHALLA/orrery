@@ -29,6 +29,30 @@ settings here.
 
 ## Configuration
 
+### Settings
+
+The HTTP front door (`ServerConfig.from_env()`, `JWTConfig.from_env()`) reads:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_ENABLED` | `true` | Verify a bearer JWT on every request. `false` makes every caller an anonymous **viewer** (local try-outs only). With it on, the JWT settings below must be valid or the server refuses to start. |
+| `JWT_ALGORITHM` | `HS256` | `HS256`/`HS384`/`HS512` (shared secret) or `RS*`/`ES*` (JWKS). |
+| `JWT_SECRET` | unset | Shared secret for `HS*`; at least 32/48/64 bytes. |
+| `JWT_JWKS_URL` | unset | The IdP's JWKS endpoint, required for `RS*`/`ES*`. |
+| `JWT_AUDIENCE` | unset | Expected `aud`. Recommended in production. |
+| `JWT_ISSUER` | unset | Expected `iss`. Recommended in production. |
+| `JWT_ROLE_CLAIM` | `roles` | Claim holding the roles; may be a dotted path (see [Role mapping](#role-mapping)). |
+| `JWT_LEEWAY_SECONDS` | `30` | Clock-skew allowance on `exp`/`nbf`. |
+| `ORRERY_WEB_CONSOLE_ENABLED` | `false` | Serve the built web console. |
+| `ORRERY_DOCS_ENABLED` | on only when auth is off | Serve the interactive `/docs` schema. |
+| `ORRERY_CONSOLE_OIDC_ISSUER`, `_CLIENT_ID`, `_SCOPE`, `_ROLE_CLAIM` | unset | Console SSO, served at runtime. The issuer must match `JWT_ISSUER`. See [Web console](../integrations/web-console.md). |
+| `ORRERY_CORS_ORIGINS` | unset | Comma-separated origins allowed to call the API from a browser. |
+| `ORRERY_CSP_EXTRA_ORIGINS` | unset | Origins the console may connect to besides its own and `JWT_ISSUER`'s. |
+| `ORRERY_HUMAN_CLIENTS` | unset | Clients people sign in through. See [People, agents and services](#people-agents-and-services-adr-006). |
+| `ORRERY_SERVICE_CLIENTS` | unset | `client=role` ceilings for machine clients ([ADR-006](../adr/006-caller-principals.md)). |
+| `ORRERY_PROTECTED_NAMESPACES` | unset | Comma-separated namespace globs where only admins may mutate ([ADR-001](../adr/001-rbac.md)). Reads are never scoped. |
+| `ORRERY_AUTONOMY_LEVEL` | unset | `L2`, `L3` or `L4`. See [Autonomy levels](#autonomy-levels). |
+
 ### Minimal HS256 setup (single-binary deployments)
 
 ```bash
@@ -82,8 +106,9 @@ Common JWKS endpoints:
 1. The claim may be a list (`["operator", "billing"]`) or a single
    space/comma-separated string (`"operator,billing"`).
 2. Any token matching `admin` (or the aliases `orrery-admin`,
-   `orrery_admin`) returns `admin`.
-3. Otherwise, any token matching `operator` returns `operator`.
+   `orrery_admin`) returns `admin`. Matching ignores case.
+3. Otherwise, any token matching `operator` (or `orrery-operator`,
+   `orrery_operator`) returns `operator`.
 4. Otherwise, `viewer`.
 
 `JWT_ROLE_CLAIM` may be a **dotted path** into nested claims, because the
@@ -101,7 +126,31 @@ fails closed. The console reads the same claim for its role badge
 
 Custom role names are supported by passing `admin_values=` /
 `operator_values=` when calling `extract_role` directly. The HTTP path
-uses the defaults.
+uses the defaults and has no setting for other names, so map your IdP's
+roles onto the names above in the IdP. (`RolePolicy` is a different
+thing: it sets the minimum role per *tool*.)
+
+---
+
+## Autonomy levels
+
+RBAC decides *who* may call a tool; the autonomy level decides what this
+*process* may do at all, whoever asks. `AutonomyPlugin` reads
+`ORRERY_AUTONOMY_LEVEL`:
+
+| Level | Allows |
+|-------|--------|
+| `L2` | Read-only. Only unguarded tools run; every `@confirm`/`@destructive` tool is refused. |
+| `L3` | Mutations, but `@destructive` tools are refused. |
+| `L4` | Everything, with `@destructive` tools behind a confirmation. |
+
+Unset (or `off`/`none`), no process-wide level applies; the plugin still
+pins service principals to `L2` per request ([ADR-006](../adr/006-caller-principals.md)).
+An unrecognised value is treated as `L2`. A refused call returns
+`{"status": "BLOCKED"}`. Per-tool exceptions (an L2 whitelist, an L3
+blacklist) are code-only: `default_plugins(autonomy_l2_whitelist=…,
+autonomy_l3_blacklist=…)`. Pin unattended runs such as the triage sweep
+to `L2` unless you want them to act.
 
 ---
 

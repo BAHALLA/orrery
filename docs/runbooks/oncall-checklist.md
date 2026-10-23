@@ -60,7 +60,7 @@ kubectl -n $NS get pods -l app.kubernetes.io/name=orrery-assistant
 
 # What has it been doing? (structured JSON — jq is your friend)
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=200 \
-  | jq -r 'select(.levelname=="ERROR") | "\(.asctime) \(.name) \(.message)"'
+  | jq -r 'select(.level=="ERROR") | "\(.timestamp) \(.logger) \(.message)"'
 
 # What does it think of itself?
 kubectl -n $NS port-forward svc/orrery-assistant 9100:9100 &

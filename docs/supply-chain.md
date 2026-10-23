@@ -12,7 +12,7 @@ consumers verify it.
 | Keyless signature | Sigstore transparency log (Rekor) | `cosign sign` against the GitHub Actions OIDC identity — no long-lived keys to rotate or leak |
 | Python SBOM (CycloneDX) | `sbom-python.cdx.json` release asset | `uv export --frozen` with the image's extras (read from the Dockerfile) → `cyclonedx-py`; covers the locked Python graph the image installs, including transitive LLM-provider SDKs that OS-layer scanners miss |
 | Pinned digest list | `docker-images.txt` release asset | tag@digest references for reproducible pulls |
-| Vulnerability scan | GitHub Code Scanning (SARIF) | Trivy scans the pushed image; HIGH/CRITICAL fixable CVEs **fail the release** |
+| Vulnerability scan | GitHub Code Scanning (SARIF) | Trivy scans the image (amd64 and arm64) *after* it is pushed, tagged and signed; HIGH/CRITICAL fixable CVEs fail the build job, which blocks only the GitHub Release job. The image tags are already published by then |
 
 ## Verifying an image signature
 
@@ -85,24 +85,42 @@ Before adding one, exhaust the alternatives in order:
 Only then triage, and write the reasoning into `statement`. A reader at 03:00
 needs to know why the finding was accepted, not the CVE id they already have.
 
-The file is wired through the `trivyignores` input on every Trivy step, in both
-`ci.yml` and `release.yml`: Trivy auto-loads a plain `.trivyignore`, but only
+The file is wired through the `trivyignores` input on every Trivy step: the
+filesystem scan in `ci.yml` and the shared image gate,
+`.github/actions/trivy-image-gate`: Trivy auto-loads a plain `.trivyignore`, but only
 the YAML form supports expiry, and the YAML form is not auto-loaded.
 
-## Two scans, two failure modes
+## Filesystem scan and image gate
 
-They are separate workflows and fail independently, which is worth knowing when
-one is red and the other is green:
+Two different scans, which fail independently — worth knowing when one is red
+and the other is green:
 
 | | Where | Scans |
 |---|---|---|
 | **CI → Security Scan** | every PR and push | the repo filesystem: `uv.lock`, `web/package-lock.json`, Helm/K8s/Terraform config, committed secrets |
-| **Release & Publish → Trivy image scan** | pushes to `main` | the *built image*: OS packages, installed Python distributions, and any compiled binary copied in |
+| **Image gate** (`.github/actions/trivy-image-gate`) | see below | the *built image*: OS packages, installed Python distributions, and any compiled binary copied in |
+
+The image gate is defined once, in the composite action (severity, ignores,
+optional `platform`), and used in three places:
+
+- **Release & Publish** (pushes to `main` and `v*` tags): scans the pushed image
+  by digest, amd64 and arm64, after push and signing. A failure fails the
+  build job; on a tag that blocks the GitHub Release.
+- **Image Scan → Build & scan image** (every pull request): a `changes` job
+  checks whether the PR touches what reaches the image (`Dockerfile`,
+  `.dockerignore`, `uv.lock`, any `pyproject.toml`, the web package files,
+  `.trivyignore.yaml`, the gate itself). If so, it builds the image (amd64, not
+  pushed) and gates it; if not, the job is skipped, which counts as passing, so
+  the check can be required. It fails closed if `changes` itself fails.
+- **Image Scan, daily on `main`**: rebuilds `main` and gates it, and also
+  scans the published `latest` image (amd64 and arm64), since a new advisory
+  can fail an image nobody changed.
 
 A vulnerable binary that is copied into the image but has no manifest in the
 repo — the bundled Docker CLI is the standing example — is invisible to the
-first and caught only by the second. `main` can therefore have a green CI badge
-and a failing release, so check both before concluding the branch is healthy.
+filesystem scan and caught only by the image gate. `main` can therefore have a
+green CI badge and a failing release, so check both before concluding the
+branch is healthy.
 
 ## Admission-time enforcement (optional)
 

@@ -40,10 +40,14 @@
 <p align="center"><sub>Live: specialists consulted in parallel, every tool call visible, and nothing changes until you approve. (<code>make demo</code> runs this incident for real.)</sub></p>
 
 ```bash
-docker run --rm -p 8000:8000 -e GOOGLE_API_KEY=your-key ghcr.io/bahalla/orrery:latest
+docker run --rm -p 127.0.0.1:8000:8000 -e AUTH_ENABLED=false -e ORRERY_WEB_CONSOLE_ENABLED=true \
+  -e GOOGLE_API_KEY=your-key ghcr.io/bahalla/orrery:latest
 ```
 
 Then open <http://localhost:8000>. Works with Gemini, Claude, OpenAI, or a local Ollama model.
+This front door is anonymous, so every caller is a viewer: it can investigate but not change
+anything. For the approval flow, run `make demo`, or `make run-api` with a token from
+`make dev-token ROLE=operator`.
 
 - **Investigates, not just alerts.** Consumer lag, pod state, logs and metrics are checked in
   parallel and correlated in one answer, with every tool call shown as it runs.
@@ -78,10 +82,11 @@ to point at production:
 ## Quick start
 
 The one-liner at the top runs the web console with in-memory sessions and whichever provider
-you configured — Gemini, Claude, OpenAI, or a local Ollama model (no key needed).
+you configured — Gemini, Claude, OpenAI, or a local Ollama model (no key needed). It is
+anonymous and read-only (every caller is a viewer).
 
-For the full local stack (Kafka, Postgres, Prometheus, Loki, Alertmanager, Elasticsearch) —
-still no clone required:
+For the full local stack (Kafka, Postgres, Prometheus, Loki, Alertmanager) — still no clone
+required, and just as anonymous. Add `--profile elastic` for Elasticsearch and Kibana:
 
 ```bash
 curl -O https://raw.githubusercontent.com/BAHALLA/orrery/main/docker-compose.yml
@@ -91,7 +96,8 @@ GOOGLE_API_KEY=your-key docker compose --profile demo up -d
 From source: `make install && make up && make run-api`, then `make dev-token ROLE=admin` for a
 token to sign in with. `make help` lists every target.
 
-**See it handle an incident in a minute:** `make install && make demo`. It breaks things on
+**See it handle an incident in a minute:** `make install && cp .env.example .env` (add your LLM
+key), then `make demo`. It breaks things on
 purpose on the local stack: a consumer group 5,100 messages behind, because its worker is
 OOM-killed in a loop. Then it opens the console. Ask *"Why is the orders consumer lagging?"*,
 then ask it to fix what it finds. Nothing is mocked: the agents find what is really there
@@ -140,8 +146,9 @@ is a plugin applied once to all of them.
   model while the full record stays intact for audit and replay.
 - **Any LLM provider** — Gemini, Claude, OpenAI or Ollama via one env var; context caching and
   safety settings applied automatically on Gemini.
-- **Five surfaces, one gate** — web console (OIDC/PKCE SSO or JWT), CLI, ADK dev UI, Slack, Google
-  Chat. The confirmation and RBAC rules are identical on every one.
+- **Six surfaces, one gate** — web console (OIDC/PKCE SSO or JWT), CLI, ADK dev UI, Slack, Google
+  Chat, and A2A for other agents. The confirmation and RBAC rules are identical on every one; an
+  agent calling over A2A never approves, its user does.
 - **Observable by design** — Prometheus metrics, OpenTelemetry traces with log↔trace correlation,
   and a `runbook_url` on every alert rule pointing at an
   [on-call runbook](https://bahalla.github.io/orrery/runbooks/).
@@ -193,7 +200,7 @@ on the patterns that generalise beyond this codebase.
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security reports go
 through [SECURITY.md](SECURITY.md), not the public tracker. `make check` runs the whole gate
-(lint, types, ~1,400 Python tests, web console tests) and mirrors CI.
+(lint, types, ~2,200 Python tests, web console tests) and mirrors CI.
 
 ## License
 

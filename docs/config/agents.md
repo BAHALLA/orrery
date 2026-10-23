@@ -25,11 +25,23 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | **slack-bot** | `SLACK_OPERATOR_USERS` | — | Comma-separated Slack user IDs with `operator` role |
 | **slack-bot** | `SLACK_RATE_LIMIT` | `60/minute` | Per-IP limit on `/slack/events` |
 | **slack-bot** | `SLACK_PROGRESS_UPDATES` | `true` | Edit an in-thread status message while slow turns run ([details](../integrations/slack.md#live-progress-on-slow-turns)) |
+| **slack-bot** | `SLACK_TRUSTED_PROXY_HOPS` | `0` | Proxy hops to trust in `X-Forwarded-For` for the rate limit. Leave `0` unless behind a proxy, or clients can spoof their IP |
 | **google-chat** | `GOOGLE_CHAT_AUDIENCE` | — | Token audience (must match bot URL) |
 | **google-chat** | `GOOGLE_CHAT_ADMIN_EMAILS` | — | Comma-separated emails with `admin` role |
 | **google-chat** | `GOOGLE_CHAT_OPERATOR_EMAILS` | — | Comma-separated emails with `operator` role |
 | **google-chat** | `GOOGLE_CHAT_ASYNC_RESPONSE` | `true` | Enable async replies via Chat REST API |
 | **google-chat** | `GOOGLE_CHAT_SERVICE_ACCOUNT_FILE` | — | Optional override for REST API identity |
+| **google-chat** | `GOOGLE_CHAT_VERIFY_TOKEN` | `true` | Verify Google-signed tokens on the webhook. `false` for local dev only |
+| **google-chat** | `GOOGLE_CHAT_IDENTITIES` | `chat@system.gserviceaccount.com` | Comma-separated identities accepted as the Chat system caller |
+| **google-chat** | `GOOGLE_CHAT_INTERACTIVE_BUTTONS` | `false` | Clickable Approve/Deny buttons. HTTP-endpoint deployments only; otherwise users reply `approve`/`deny` in the card's thread |
+| **google-chat** | `GOOGLE_CHAT_TURN_TIMEOUT_SECONDS` | `600` | Wall-clock budget for one agent turn (`0` disables) |
+| **google-chat** | `GOOGLE_CHAT_SHUTDOWN_GRACE_SECONDS` | `20` | How long in-flight turns may finish on shutdown |
+| **google-chat** (Pub/Sub) | `GOOGLE_CHAT_PUBSUB_SUBSCRIPTION` | — | Subscription ID or full path, read by the Pub/Sub worker ([details](../integrations/google-chat.md)) |
+| **google-chat** (Pub/Sub) | `GOOGLE_CHAT_PUBSUB_PROJECT` | `GOOGLE_CLOUD_PROJECT` | Project qualifying a short subscription ID |
+| **google-chat** (Pub/Sub) | `GOOGLE_CHAT_PUBSUB_MAX_MESSAGES` | `4` | Messages held at once by the subscriber |
+| **google-chat** (Pub/Sub) | `GOOGLE_CHAT_PUBSUB_HANDLER_TIMEOUT_SECONDS` | `600` | Cap on one message's dispatch |
+| **google-chat** (Pub/Sub) | `GOOGLE_CHAT_PUBSUB_IDEMPOTENCY_BACKEND` | `memory` | Duplicate-delivery guard; `postgres` (via `DATABASE_URL`) is required for more than one replica |
+| **google-chat** (Pub/Sub) | `GOOGLE_CHAT_PUBSUB_IDEMPOTENCY_TTL_SECONDS` | `3600` | How long a claimed event id is remembered; match the subscription's retention |
 
 ## Centralized Environment
 

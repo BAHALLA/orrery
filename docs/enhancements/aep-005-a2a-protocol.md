@@ -8,7 +8,7 @@
 | Field | Value |
 |-------|-------|
 | **Status** | <span class="badge badge--amber">in-progress</span> (superseded by ADR-007) |
-| **Priority** | <span class="badge badge--amber">P1</span> |
+| **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High (5-7 days) |
 | **Impact** | High |
 | **Dependencies** | None |
@@ -149,12 +149,20 @@ def create_orrery_assistant():
 
 ## Acceptance Criteria
 
+**Shipped under [ADR-007](../adr/007-a2a-exposition.md)** (inbound exposition of the coordinator, not per-agent servers):
+
+- [x] The coordinator is reachable over A2A (`POST /a2a`, JSON-RPC) with an agent card
+- [x] Inter-agent communication works over HTTP, with a dedicated JWT audience
+- [x] RBAC and plugins still apply: A2A turns go through the same gateway, and every A2A caller is a delegated or service principal ([ADR-006](../adr/006-caller-principals.md))
+- [x] Guarded actions pause as `input-required` and are approved by the user out of band
+
+**Original criteria, not built** (consuming remote agents is a separate, later decision):
+
 - [ ] Each agent can be deployed as an independent A2A server
 - [ ] Orrery-assistant can consume agents locally or remotely (env var toggle)
 - [ ] Docker Compose config for multi-agent deployment
 - [ ] Agent discovery via registry config
-- [ ] Inter-agent communication works over HTTP
-- [ ] RBAC and plugins still apply when agents are remote
+- [ ] RBAC and plugins still apply when *specialists* are remote
 - [ ] Health checks work across agent boundaries
 - [ ] Latency impact documented (local vs remote)
 

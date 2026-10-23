@@ -29,8 +29,9 @@ contributions are **new specialist agents**, **new tools on existing agents**, a
    make run-dev     # ADK Dev UI at http://localhost:8000
    ```
    Agents are composed by `orrery-assistant`, so you generally run the
-   orchestrator rather than each agent standalone. `make help` lists every run
-   target (`run-assistant-cli`, `run-console`, `run-slack-bot`, `run-triage`, …).
+   orchestrator rather than each agent standalone. There is one target per
+   surface (`run-dev`, `run-cli`, `run-api`, `run-web`, `run-slack`, `run-chat`,
+   `run-triage`); `make help` lists them all.
 
 ## Project Structure
 
@@ -63,8 +64,10 @@ guardrails, RBAC, validation, plugins).
 The most impactful contribution. Follow the
 [Adding a New Agent](docs/adding-an-agent.md) walkthrough. Key points:
 
-- Create a package under `agents/` and register it in the root `pyproject.toml`
-  workspace sources.
+- Create a package under `agents/` and register it as in
+  [step 5](docs/adding-an-agent.md#5-register-in-workspace): the root and
+  `orrery-assistant` dependencies, `registry._WORKSPACE_DISTRIBUTIONS`, and an
+  `orrery.specialists` entry point.
 - Use `create_agent()` from `orrery_core` — don't reinvent the factory.
 - Define every tool as `async def`; offload blocking I/O with
   `asyncio.to_thread()` (or `create_subprocess_exec`).
@@ -74,8 +77,8 @@ The most impactful contribution. Follow the
 - **No callback wiring needed** — cross-cutting concerns (RBAC, guardrails, audit,
   metrics, PII redaction, …) are applied globally by plugins on the Runner.
 - Add tests under `agents/<your-agent>/tests/` and a `README.md` in the package.
-- Compose the agent into `orrery-assistant` as an `AgentTool` so it's reachable
-  from the chat root and the triage workflow.
+- No edit to `orrery-assistant`: the entry point is how the chat root and the
+  triage workflow discover the agent.
 
 ### Improving Existing Agents & Core
 

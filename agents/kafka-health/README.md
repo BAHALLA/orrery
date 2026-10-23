@@ -14,9 +14,14 @@ KafkaTopic, KafkaUser, KafkaConnect, etc.) via `orrery_core.default_registry`.
 | `list_consumer_groups` | List all consumer groups | — |
 | `describe_consumer_groups` | Get members, assignments, and state of consumer groups | — |
 | `get_consumer_lag` | Calculate per-partition lag for a consumer group | — |
+| `get_topic_config` | Topic config, split into overridden vs cluster defaults (sensitive values masked) | — |
 | `create_kafka_topic` | Create a topic with configurable partitions and replication | `@confirm` |
 | `update_kafka_partitions` | Increase partition count for a topic | `@confirm` |
+| `tune_topic_config` | Set a topic setting that cannot delete data (message size, compression, min ISR) | `@confirm` |
+| `alter_topic_config` | Set `retention.*` / `cleanup.policy` (a low retention discards data) | `@destructive` |
 | `delete_kafka_topic` | Delete a topic (irreversible — all data lost) | `@destructive` |
+| `reset_consumer_group_offsets` | Reset an inactive group to earliest or latest | `@destructive` |
+| `delete_consumer_group` | Delete an inactive group and its committed offsets | `@destructive` |
 
 ## Strimzi tools — Kubernetes control plane
 

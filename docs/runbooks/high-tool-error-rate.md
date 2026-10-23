@@ -14,15 +14,20 @@ This alert usually fires **before**
 
 ## Is this Orrery, or is Orrery telling you the truth?
 
-The `error_type` label answers this directly, and it is the first thing to
-look at:
+Most tools catch their own exceptions and return `{"status": "error", ...}`.
+Those calls count in `orrery_tool_calls_total{status="error"}` but carry **no**
+`error_type`: `orrery_tool_errors_total{error_type}` only increments when a
+tool *raises*. So start from `orrery_tool_calls_total` by tool, then read the
+`tool_call` audit lines (they carry the returned `status`) for the reason.
+When `orrery_tool_errors_total` does have samples, its `error_type` label reads
+like this:
 
 | `error_type` | Reading |
 |---|---|
 | `ConnectionError`, `TimeoutError` | Monitored system is unhealthy — **Orrery is working** |
 | `AuthenticationError`, `PermissionError` | Orrery's credentials or RBAC drifted |
 | `ValidationError` | The **model** is calling tools with bad arguments |
-| `KnowledgeBackendError` | See [knowledge-index-unavailable](knowledge-index-unavailable.md) |
+| `KnowledgeBackendError` (in the `search_knowledge` result, not the metric) | See [knowledge-index-unavailable](knowledge-index-unavailable.md) |
 
 `ValidationError` is the interesting one: it means no backend was ever
 contacted. Nothing is down; the agent is failing to use its own tools, which is
@@ -34,11 +39,12 @@ a prompt, schema or model-quality problem.
 export NS=orrery
 kubectl -n $NS port-forward svc/orrery-assistant 9100:9100 &
 
-# Which tool, and what kind of error?
-curl -s localhost:9100/metrics | grep '^orrery_tool_errors_total' | sort -t' ' -k2 -rn | head -20
+# Which tool? (every error, raised or returned)
+curl -s localhost:9100/metrics | grep '^orrery_tool_calls_total' | grep 'status="error"' \
+  | sort -t' ' -k2 -rn | head -20
 
-# Error share per tool
-curl -s localhost:9100/metrics | grep '^orrery_tool_calls_total' | grep 'status="error"'
+# What kind of error? (only tools that raised)
+curl -s localhost:9100/metrics | grep '^orrery_tool_errors_total' | sort -t' ' -k2 -rn | head -20
 ```
 
 **Concentrated on one tool** → that tool's backend, or that tool's schema.
@@ -51,7 +57,11 @@ Read a few actual failures rather than only the counters:
 
 ```bash
 kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=500 \
-  | jq -r 'select(.levelname=="ERROR") | "\(.asctime) \(.name): \(.message)"' | tail -30
+  | jq -r 'select(.level=="ERROR") | "\(.timestamp) \(.logger): \(.message)"' | tail -30
+
+# Returned errors: the audit line has the tool's status and a trimmed response
+kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=500 \
+  | jq -c 'select(.status=="error") | {timestamp, agent, tool, response}' | tail -30
 ```
 
 Client exception strings are scrubbed of internal hosts and paths before they

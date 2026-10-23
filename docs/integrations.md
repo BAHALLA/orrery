@@ -35,7 +35,7 @@ A headless interface for terminal-based interactions and CI/CD automation.
 - **Features**: Persistent session support (in-memory or PostgreSQL), structured JSON logging, and a health probe server for readiness checks.
 - **Best For**: Scripted diagnostics and automated remediation triggers.
 - **Run Commands**: `make run-cli` (ephemeral REPL via `adk run`) or `make run-cli PERSIST=1` (session store + memory + health probes via `run_persistent()`).
-- **Entry point**: [`core.runner.run_persistent`](core/README.md) — this is also what the production container runs.
+- **Entry point**: [`core.runner.run_persistent`](core/README.md). The production container runs the HTTP front door instead (`uvicorn orrery_assistant.app:api`).
 
 ### 6. MCP servers (tool sources, not a frontend)
 Connect any Model Context Protocol server, and each one becomes a specialist the coordinator can route to, behind the same RBAC, autonomy, confirmation and audit gates as the built-in tools.
@@ -47,7 +47,7 @@ Connect any Model Context Protocol server, and each one becomes a specialist the
 Other agents ask Orrery to investigate, and propose changes a person approves, over the A2A protocol 1.0. Every turn runs through the same gateway as the console's.
 - **Never a person**: an agent's token is a delegated or service principal; its messages never approve anything. The user approves out of band, then the agent resumes the task.
 - **Isolated**: conversations and tasks are scoped to the verified caller; text parts only; a running turn can't be cancelled.
-- **Enable**: `uv sync --extra a2a`, `ORRERY_A2A_ENABLED=true`, `ORRERY_A2A_JWT_AUDIENCE=…`.
+- **Enable**: `ORRERY_A2A_ENABLED=true`, `ORRERY_A2A_JWT_AUDIENCE=…` (from source, also `uv sync --extra a2a`; the published image includes it).
 - **Setup Guide**: [A2A](integrations/a2a.md)
 
 ---
@@ -58,9 +58,9 @@ Other agents ask Orrery to investigate, and propose changes a person approves, o
 Expanding support for enterprise collaboration environments.
 - **Target Pattern**: Adaptive Cards for tool confirmation and incident reporting.
 
-### 2. Custom API Gateway
-A REST/SSE interface for embedding agents into internal developer portals (IDP).
-- **Target Pattern**: Standardized `/run_sse` endpoints for real-time streaming to custom web frontends.
+Embedding Orrery in an internal developer portal no longer needs a new
+surface: the HTTP front door already streams a turn as Server-Sent Events on
+`POST /chat/stream` (the same endpoint the web console uses).
 
 ---
 

@@ -51,6 +51,17 @@ To test the HTTP transport locally, use `ngrok` to create a secure tunnel:
     ```
 3.  **Update Console**: Copy the `https://...` URL from ngrok, paste it into the Chat API **Connection settings**, and update `GOOGLE_CHAT_AUDIENCE` in your `.env`.
 
+!!! warning "Port 3001 clashes with Grafana"
+    `make up` starts Grafana (the `tracing` profile) on host port 3001, so `make run-chat`
+    fails with "address already in use" while it runs. The port is fixed in the Makefile;
+    either stop Grafana (`docker compose stop grafana`) or start the bot on another port
+    and tunnel that one instead:
+
+    ```bash
+    cd agents/google-chat-bot && uv run uvicorn google_chat_bot.app:api --host 0.0.0.0 --port 3002
+    ngrok http 3002
+    ```
+
 !!! tip "Use a static domain"
     Free ngrok URLs change on every restart. Claim a free static domain at [ngrok.com](https://dashboard.ngrok.com/domains) to keep your configuration stable.
 

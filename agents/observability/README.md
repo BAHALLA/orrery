@@ -8,9 +8,13 @@ A single agent with tools for querying Prometheus metrics, searching Loki logs, 
 |------|-------------|-----------|
 | `query_prometheus` | Execute an instant PromQL query | — |
 | `query_prometheus_range` | Execute a range PromQL query over a time window | — |
+| `list_prometheus_metrics` | Discover metric names, optionally filtered | — |
+| `get_prometheus_metadata` | Type, help and unit for a metric | — |
+| `get_prometheus_rules` | Configured alerting and recording rules with their state | — |
 | `get_prometheus_alerts` | List all alerting rules and their states (firing/pending/inactive) | — |
 | `get_prometheus_targets` | List all scrape targets and their health (up/down) | — |
 | `query_loki_logs` | Run a LogQL query to search logs | — |
+| `query_loki_range` | LogQL over a relative window ("the last N hours") | — |
 | `get_loki_labels` | List all known label names in Loki | — |
 | `get_loki_label_values` | Get all values for a specific label | — |
 | `get_active_alerts` | List currently firing alerts from Alertmanager | — |
@@ -53,7 +57,7 @@ make run-cli  # Terminal mode
 Start the full observability stack with Docker Compose:
 
 ```bash
-make up   # Starts Prometheus, Loki, Alertmanager (+ Kafka, Zookeeper)
+make up   # Starts Prometheus, Loki, Alertmanager (+ Kafka and the rest of the stack)
 ```
 
 This provisions demo alert rules (`TargetDown`, `HighPrometheusScrapeLatency`) so you have real firing alerts to test against immediately. Config files live in `infra/`.

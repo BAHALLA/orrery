@@ -28,9 +28,13 @@ graph TD
     DEP --> LLM[LLM providers<br/>egress HTTPS]
 ```
 
-The Slack bot, Google Chat bot, and ADK web UI run as separate
-Deployments (same image, different entry points) so they can be scaled
-independently. All share the Postgres session store.
+The chart ships one Deployment: the HTTP front door
+(`uvicorn orrery_assistant.app:api`), which also serves the web console when
+`ORRERY_WEB_CONSOLE_ENABLED=true`. The only other Deployment is the optional
+Google Chat Pub/Sub worker (`pubsubWorker.enabled`), same image, scaled
+independently. Both share the Postgres session store. The Slack bot and the
+HTTP-mode Google Chat bot are not part of the chart; run them yourself from
+the same image if you need them.
 
 ---
 
@@ -125,6 +129,7 @@ config:
   MODEL_NAME: gemini-3.6-flash
   KAFKA_BOOTSTRAP_SERVERS: kafka.data.svc.cluster.local:9092
   PROMETHEUS_URL: http://prometheus.observability.svc.cluster.local:9090
+  ORRERY_WEB_CONSOLE_ENABLED: "true"   # serve the web console at / (default off)
 
 # Sessions and pending approvals in Postgres (DATABASE_URL from Step 2).
 # Required for more than one replica: the chart refuses to render
@@ -284,17 +289,16 @@ kubectl -n orrery get pods -l app.kubernetes.io/name=orrery-assistant
 # Tail logs
 kubectl -n orrery logs -l app.kubernetes.io/name=orrery-assistant -f
 
-# Health endpoints
-kubectl -n orrery port-forward svc/orrery-assistant 8080:8080
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
+# Health endpoints (served by the front door on the http port)
+kubectl -n orrery port-forward svc/orrery-assistant 8000:8000
+curl http://localhost:8000/healthz
+curl http://localhost:8000/readyz
 
 # Metrics endpoint (Prometheus scrape target)
 kubectl -n orrery port-forward svc/orrery-assistant 9100:9100
 curl http://localhost:9100/metrics | head -40
 
-# ADK web UI
-kubectl -n orrery port-forward svc/orrery-assistant 8000:8000
+# Web console (needs ORRERY_WEB_CONSOLE_ENABLED=true, Step 3)
 open http://localhost:8000
 ```
 
@@ -339,8 +343,9 @@ explosions on traffic spikes; scale-down requires a 5-minute stabilization
 window.
 
 For LLM-cost-sensitive workloads, consider switching to a custom metric
-via the Prometheus Adapter (e.g. `llm_requests_in_flight`) — see the
-forthcoming **AEP-015: Cost Observability** for per-tenant budgets.
+via the Prometheus Adapter (e.g. the rate of `orrery_llm_tokens_total`) — see
+[AEP-015: Cost Observability](enhancements/aep-015-cost-observability.md) for
+per-tenant budgets.
 
 ---
 
@@ -358,8 +363,9 @@ forthcoming **AEP-015: Cost Observability** for per-tenant budgets.
 
 Check the logs — the most common causes are:
 
-- Missing `GOOGLE_API_KEY` / `ANTHROPIC_API_KEY` — the agent fails to
-  reach its LLM and the readiness probe times out.
+- Missing `GOOGLE_API_KEY` / `ANTHROPIC_API_KEY` does not fail startup or
+  readiness (readiness checks only the database): chat turns fail at the
+  first model call instead. Look for the provider's auth error in the logs.
 - `DATABASE_URL` points to a host the pod can't reach (wrong namespace,
   NetworkPolicy blocking egress). Test with a debug pod:
   `kubectl run -it --rm psql --image=postgres:16 -- psql $DATABASE_URL`
@@ -415,7 +421,7 @@ If you see `Using in-memory session store`, the env var isn't wired
 
 ### LLM costs spike unexpectedly
 
-Check the Prometheus metrics `llm_tokens_total` and the context cache
+Check the Prometheus metrics `orrery_llm_tokens_total` and the context cache
 hit rate. The most common cause is that context caching is disabled
 (Gemini-only) or the minimum token threshold is too high. See
 [metrics.md](metrics.md) for the full dashboard.
@@ -425,6 +431,6 @@ hit rate. The most common cause is that context caching is disabled
 ## Related AEPs
 
 - [AEP-011](enhancements/aep-011-deployment-hardening.md) — this guide's implementation
-- [AEP-013](enhancements/aep-013-security-hardening.md) — security hardening; JWT auth landed in Step 4 above. PII redaction + prompt-injection screening + Gemini safety filters are the remaining sub-PRs.
-- AEP-014 — supply chain security (SBOM, cosign signing, image scan gate)
-- AEP-015 — cost observability and per-tenant budgets
+- [AEP-013](enhancements/aep-013-security-hardening.md) — security hardening; JWT auth landed in Step 4 above. PII redaction, prompt-injection screening and Gemini safety filters have also shipped, all on by default.
+- [AEP-014](enhancements/aep-014-supply-chain-security.md) — supply chain security (SBOM, cosign signing, image scan gate)
+- [AEP-015](enhancements/aep-015-cost-observability.md) — cost observability and per-tenant budgets

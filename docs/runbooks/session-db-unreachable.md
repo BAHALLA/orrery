@@ -10,6 +10,13 @@ were already running, chat turns fail when the store is touched. Conversation
 history, long-term memory, pending approvals and Pub/Sub idempotency claims all
 sit in the same Postgres, so they degrade together.
 
+**Which alert you get depends on when the database went away.**
+`OrreryDatabaseUnreachable` keys on `orrery_tool_errors_total{error_type=…}`,
+so it only fires when a *tool* raises a database error (for example
+`load_memory`) on a running pod. A store that is unreachable at startup makes
+the pod exit with `DatabaseUnavailableError` and crashloop, and that pages as
+[`OrreryAgentDown`](agents-unavailable.md) instead.
+
 ## Why it crashes instead of degrading
 
 This is deliberate and worth knowing before you "fix" it. Orrery **fails fast**
@@ -34,7 +41,9 @@ kubectl -n $NS logs -l app.kubernetes.io/name=orrery-assistant --tail=50 \
 The DSN is masked in logs (`mask_dsn`), so you will see the host without the
 password.
 
-**Is Postgres up?**
+**Is Postgres up?** The Helm chart does not ship a database, so the
+`postgresql` names below are examples: adapt them to how your Postgres is
+deployed (or run the `psql` checks from any pod that can reach it).
 
 ```bash
 kubectl -n $NS get pods -l app.kubernetes.io/name=postgresql

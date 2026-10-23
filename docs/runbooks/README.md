@@ -29,7 +29,17 @@ you should expect, not abstract prose.
 | [High LLM spend](high-llm-spend.md) | `OrreryHighTokenBurn` | warning |
 | [Prompt injection detected](prompt-injection-detected.md) | `OrreryIndirectInjectionDetected`, `OrreryDirectInjectionAttempts` | warning |
 | [Unauthorized approval attempt](unauthorized-approval-attempt.md) | `OrreryUnauthorizedApprovalAttempt` | critical |
+| [Unauthorized approval attempt](unauthorized-approval-attempt.md) | `OrreryUnattributableApprovals` | warning |
 | [Knowledge index unavailable](knowledge-index-unavailable.md) | — (surfaces as tool errors) | warning |
+
+Four rules in `infra/alert_rules.yml` have no dedicated page:
+
+| Alert | Severity | Where to look |
+|-------|----------|---------------|
+| `TargetDown` | critical | Any scrape target is down. If it is Orrery (`job="agents"`), use [Agents unavailable](agents-unavailable.md); otherwise check that target's own pod or container. |
+| `HighPrometheusScrapeLatency` | warning | A target is slow to serve `/metrics`. Usually load on that target or Prometheus itself, not Orrery. |
+| `KafkaConsumerGroupLag` | warning | Monitored infrastructure, not Orrery. Same diagnosis as [Kafka consumer lag](kafka-consumer-lag.md). |
+| `KafkaUnderReplicatedPartitions` | critical | Monitored infrastructure: a broker is down or lagging. Hand to the Kafka owner; Orrery's Kafka specialist can show which partitions and brokers. |
 
 ## Two things to know before you touch anything
 

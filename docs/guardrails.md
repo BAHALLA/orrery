@@ -12,8 +12,8 @@ Related pages:
 
 | Decorator | Risk | Minimum role | Example |
 |-----------|------|--------------|---------|
-| *(none)* | Read-only | `viewer` | `list_topics`, `get_nodes`, `query_prometheus` |
-| `@confirm("reason")` | Mutating but reversible | `operator` | `create_kafka_topic`, `scale_deployment`, `restart_container` |
+| *(none)* | Read-only | `viewer` | `list_kafka_topics`, `get_nodes`, `query_prometheus` |
+| `@confirm("reason")` | Mutating but reversible | `operator` | `create_kafka_topic`, `scale_deployment`, `stop_container` |
 | `@destructive("reason")` | Irreversible | `admin` | `delete_kafka_topic`, `rollback_deployment`, `remove_image` |
 
 The decorator just attaches metadata — it doesn't change tool behavior at import time. The plugin and callback machinery reads that metadata when the tool is invoked.
@@ -66,7 +66,7 @@ Two independent callbacks fire before every tool call:
 graph TD
     CALL([Tool call]) --> RBAC["1 · GuardrailsPlugin.before_tool_callback<br/>authorize() reads user_role"]
     RBAC -->|role too low| DENY["access_denied"]
-    RBAC -->|authorized| CONF["2 · Agent before_tool_callback<br/>require_confirmation()<br/>args-hash + invocation-id"]
+    RBAC -->|authorized| CONF["2 · Agent before_tool_callback<br/>require_confirmation()<br/>args-hash + TTL"]
     CONF -->|not yet approved| WAIT["confirmation_required"]
     CONF -->|approved| RUN(["Tool executes"])
 ```
@@ -74,6 +74,24 @@ graph TD
 RBAC runs first by design. A viewer asking for `delete_kafka_topic` is denied before they ever see a confirmation prompt — there's no "will you confirm? oh wait, you can't do this anyway" round-trip.
 
 See [ADR-001 § Plugin execution order](adr/001-rbac.md#plugin-execution-order) for the full sequence.
+
+## Autonomy levels
+
+RBAC answers *who* may call a tool. `AutonomyPlugin` answers a separate question: what this *process* is allowed to do at all. Set `ORRERY_AUTONOMY_LEVEL` (or `default_plugins(autonomy_level=...)`):
+
+| Level | Allows |
+|-------|--------|
+| `L2` | Read-only, fail-closed: only unguarded tools plus an explicit whitelist |
+| `L3` | Mutations, but `@destructive` tools (and a blacklist) are refused |
+| `L4` | Destructive tools too, each after an ADK-native `request_confirmation` |
+
+The plugin is always registered, ahead of `GuardrailsPlugin`, so a tool the level forbids is refused (`{"status": "BLOCKED"}`) before anyone is asked to approve it. With no level configured it is inert, except for a level the server pins per request (a service principal is pinned to L2). A per-request level in session state counts only when written through `set_autonomy_level()`; a bare value is ignored.
+
+## Who may approve
+
+Only a person decides. The HTTP front door classifies every verified token as **human**, **delegated** (an agent acting for a user, RFC 8693 `act` claim) or **service** ([ADR-006](adr/006-caller-principals.md), [Security → People, agents and services](config/security.md#people-agents-and-services-adr-006)). A message from a delegated or service caller never counts as an approval, whatever it says.
+
+When a machine caller (for example an A2A client) raises a guarded action, the person it acts for approves it out of band with `POST /confirmations/{action_id}/decision`. Only the requester can approve; anyone can deny; an unknown action and someone else's action both return 404. The approval takes effect when the tool is retried with the same arguments.
 
 ## Why confirmation is wired at the agent level (not the plugin)
 
@@ -134,7 +152,7 @@ async def list_audit_log() -> dict:
 
 ### Slack and Google Chat bots
 
-Both bots replace text-based confirmation with an interactive surface. The handlers set `guardrail_mode="none"` on `default_plugins()` to skip the plugin's confirmation gate, then wire a custom `before_tool_callback` that emits the platform-native UI instead:
+Both bots replace text-based confirmation with an interactive surface. They swap the agents' `require_confirmation()` callback for a platform gate that emits the native UI instead. (They also pass `guardrail_mode="none"` to `default_plugins()`, which behaves exactly like the default `"confirm"`: the plugin enforces RBAC either way and holds no confirmation gate.)
 
 Both bots run the same two-phase handshake over the **shared platform confirmation store** (`core/orrery_core/security/confirmation_store.py`, backend via `ORRERY_CONFIRMATION_BACKEND`): the callback registers a pending scoped by the conversation (thread/space for Chat, channel/thread for Slack), the decision handler verifies the decider **is the requester** (`orrery_core.approval_refusal` — fail-closed; deny is open to anyone) and marks the entry approved, and the LLM's retry consumes it by `(scope, tool_name, args_hash)` within a 120s validity window — one-shot, args-hash pinned. The store (not session state) is load-bearing: many guarded tools live on `AgentTool`-wrapped specialist agents whose ADK sub-sessions are ephemeral and don't propagate state writes back to the parent session, so an in-state retry flag would be lost. What differs per transport is only the surface:
 
@@ -149,11 +167,11 @@ Sub-agents keep the `require_confirmation()` that `create_agent()` gave them as 
 plugins = default_plugins(guardrail_mode="dry_run")
 ```
 
-Every guarded tool returns a `{"status": "dry_run", "would_execute": ...}` payload without actually running. Useful for demos, CI, or when operators want to preview a plan before enabling real writes.
+Every guarded tool returns a `{"status": "dry_run", "message": "[DRY RUN] Would have called ..."}` payload without actually running. Useful for demos, CI, or when operators want to preview a plan before enabling real writes.
 
 ## What confirmation actually checks
 
-`require_confirmation()` builds a key from `(tool_name, args-hash, invocation-id)` and stores it in session state. The tool runs only when the LLM's follow-up call matches the same key with a confirmation flag set.
+`require_confirmation()` records a pending entry per tool in session state: the hash of the call's arguments, a timestamp (valid for 300 s), the invocation id and the requester. In the default model-mediated mode, the tool runs when the same tool is called again with the same arguments, within the TTL, from a *later* invocation; a retry inside the same invocation re-prompts. On every shipped surface (requester-verified mode) it also needs an approve message from the same person, sent after the action was raised.
 
 Consequences:
 - **Arg drift breaks the cache.** If the LLM retries `delete_topic(name="logs")` with `name="logs-v2"`, that's a fresh confirmation.
@@ -194,7 +212,8 @@ circuit, and `ToolLedgerPlugin` records them as refusals, not as calls that ran.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `guardrail_mode` (arg to `default_plugins`) | `"confirm"` | `"dry_run"` preview mode, `"none"` for integrations with their own UX |
+| `guardrail_mode` (arg to `default_plugins`) | `"confirm"` | `"dry_run"` blocks every guarded tool with a preview. `"confirm"` and `"none"` are equivalent (RBAC only); neither adds or removes the agent-level confirmation gate |
+| `ORRERY_AUTONOMY_LEVEL` | *(unset — inert)* | `L2` / `L3` / `L4`, see [Autonomy levels](#autonomy-levels) |
 | `ORRERY_CONFIRMATION_BACKEND` | `memory` | Strict-mode pending store: `postgres` shares approvals across replicas via `DATABASE_URL` (required for multi-replica HTTP) |
 | `role_policy` (arg to `default_plugins`) | `None` | Per-tool role overrides via `RolePolicy` |
 | `ORRERY_PROTECTED_NAMESPACES` | *(unset — inert)* | Comma-separated globs naming namespaces where only `admin` may mutate. Reads are never scoped. See [ADR-001](adr/001-rbac.md#namespace-scope-restricting-where-not-just-what) |
