@@ -74,7 +74,11 @@ jobs:
   scan:
     name: Build & scan image
     needs: changes
-    if: needs.changes.outputs.image == 'true'
+    # Fail-closed: scan unless `changes` positively answered "no". A failed
+    # `changes` would otherwise skip this job, and a skipped job passes a
+    # required check. !cancelled() rather than always(): a run superseded by
+    # a newer push has nothing left to gate.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -124,7 +128,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # GHCR paths are lowercase.
+      # GHCR paths are lowercase. No login: the package is public. If it is
+      # ever made private, this needs `packages: read` and docker/login-action,
+      # or it fails on authentication rather than on a finding.
       - name: Resolve image ref
         id: ref
         env:
