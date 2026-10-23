@@ -413,3 +413,19 @@ async def test_explicit_resolver_reuses_existing_and_creates_when_absent():
     # Unknown id → new session.
     svc.get_session = AsyncMock(return_value=None)
     assert await r.resolve(session_service=svc, app_name="a", user_id="u", key="ghost") == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_that_cannot_decide_never_records_a_decision():
+    """An agent typing 'approve' is model output, not consent (ADR-006)."""
+    resolver = MagicMock()
+    resolver.resolve = AsyncMock(return_value="sid")
+    gw, captured = _make_gateway(resolver=resolver)
+    gw.verified_confirmation = True
+
+    msg = InboundMessage(
+        text="approve", user_id="alice", conversation_key="k", channel="a2a", can_decide=False
+    )
+    await gw.run(msg)
+
+    assert captured["state_delta"]["_confirmation_decision"] is None

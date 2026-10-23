@@ -130,6 +130,17 @@ def test_memory_mark_approved_then_consume_approved():
     assert store.consume_approved("threads/T1", "delete_topic", "feedface") is None
 
 
+def test_memory_consume_approved_is_pinned_to_the_conversation():
+    store = ConfirmationStore()
+    p = _pending(session_id="s1")
+    store.add(p)
+    store.mark_approved(p.action_id)
+
+    assert store.consume_approved("threads/T1", "delete_topic", "feedface", session_id="s2") is None
+    consumed = store.consume_approved("threads/T1", "delete_topic", "feedface", session_id="s1")
+    assert consumed is not None and consumed.action_id == p.action_id
+
+
 def test_memory_consume_approved_requires_approval_and_hash():
     store = ConfirmationStore()
     p = _pending()
@@ -246,6 +257,18 @@ def test_pg_mark_approved_persists_for_fresh_reader(pg_store):
     assert marked is not None and marked.approved is True
     fetched = pg_store.get(p.action_id)
     assert fetched is not None and fetched.approved is True
+
+
+def test_pg_consume_approved_is_pinned_to_the_conversation(pg_store):
+    p = _pending(session_id="s1")
+    pg_store.add(p)
+    pg_store.mark_approved(p.action_id)
+
+    assert (
+        pg_store.consume_approved("threads/T1", "delete_topic", "feedface", session_id="s2") is None
+    )
+    consumed = pg_store.consume_approved("threads/T1", "delete_topic", "feedface", session_id="s1")
+    assert consumed is not None and consumed.action_id == p.action_id
 
 
 def test_pg_mark_latest_then_consume_approved(pg_store):

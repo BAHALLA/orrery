@@ -43,6 +43,13 @@ Connect any Model Context Protocol server, and each one becomes a specialist the
 - **Enable**: `uv sync --extra mcp` and `ORRERY_MCP_CONFIG=/path/to/mcp.yaml`.
 - **Setup Guide**: [MCP Servers](integrations/mcp.md)
 
+### 7. A2A (other agents calling Orrery)
+Other agents ask Orrery to investigate, and propose changes a person approves, over the A2A protocol 1.0. Every turn runs through the same gateway as the console's.
+- **Never a person**: an agent's token is a delegated or service principal; its messages never approve anything. The user approves out of band, then the agent resumes the task.
+- **Isolated**: conversations and tasks are scoped to the verified caller; text parts only; a running turn can't be cancelled.
+- **Enable**: `uv sync --extra a2a`, `ORRERY_A2A_ENABLED=true`, `ORRERY_A2A_JWT_AUDIENCE=…`.
+- **Setup Guide**: [A2A](integrations/a2a.md)
+
 ---
 
 ## Upcoming Integrations (Roadmap)

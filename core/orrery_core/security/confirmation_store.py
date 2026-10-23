@@ -196,14 +196,16 @@ class ConfirmationStore:
     # ── one-shot consumption ─────────────────────────────────────────
 
     def consume_approved(
-        self, scope: str, tool_name: str, args_hash: str
+        self, scope: str, tool_name: str, args_hash: str, *, session_id: str | None = None
     ) -> PendingConfirmation | None:
         """Pop an approved pending matching ``(scope, tool, args_hash)``.
 
         Two-phase flow: the decision event marked the entry approved; the
         LLM's retry lands here. The match requires the exact ``args_hash`` and
         an approval within :data:`_APPROVAL_VALIDITY` — a stale approval can't
-        auto-execute a fresh request later.
+        auto-execute a fresh request later. With *session_id*, only a pending
+        raised in that conversation matches: an approval given out of band for
+        one conversation must not be spent by another turn of the same person.
         """
         cutoff = time.time() - _APPROVAL_VALIDITY
         with self._lock:
@@ -214,6 +216,7 @@ class ConfirmationStore:
                     and pending.tool_name == tool_name
                     and pending.args_hash == args_hash
                     and (pending.approved_at or 0) >= cutoff
+                    and (session_id is None or pending.session_id == session_id)
                     and self._matches_scope(pending, scope)
                 ):
                     return self._pending.pop(pending.action_id)
@@ -445,25 +448,29 @@ class PostgresConfirmationStore:
     # ── one-shot consumption ─────────────────────────────────────────
 
     def consume_approved(
-        self, scope: str, tool_name: str, args_hash: str
+        self, scope: str, tool_name: str, args_hash: str, *, session_id: str | None = None
     ) -> PendingConfirmation | None:
         """Pop an approved pending matching ``(scope, tool, args_hash)``.
 
         Single transaction with ``FOR UPDATE``: exactly one replica wins a
         race, and stale approvals (outside :data:`_APPROVAL_VALIDITY`) are
         ignored so a lingering entry can't auto-execute a fresh request later.
+        With *session_id*, only a pending raised in that conversation matches.
         """
         cutoff = time.time() - _APPROVAL_VALIDITY
+        conditions = [
+            _confirmations.c.approved.is_(True),
+            _confirmations.c.tool_name == tool_name,
+            _confirmations.c.args_hash == args_hash,
+            _confirmations.c.approved_at >= cutoff,
+            self._scope_clause(scope),
+        ]
+        if session_id is not None:
+            conditions.append(_confirmations.c.session_id == session_id)
         with self._engine.begin() as conn:
             row = conn.execute(
                 sa.select(_confirmations)
-                .where(
-                    _confirmations.c.approved.is_(True),
-                    _confirmations.c.tool_name == tool_name,
-                    _confirmations.c.args_hash == args_hash,
-                    _confirmations.c.approved_at >= cutoff,
-                    self._scope_clause(scope),
-                )
+                .where(*conditions)
                 .order_by(_confirmations.c.created_at.desc())
                 .limit(1)
                 .with_for_update()

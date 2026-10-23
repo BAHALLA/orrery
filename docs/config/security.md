@@ -105,6 +105,42 @@ uses the defaults.
 
 ---
 
+## People, agents and services ([ADR-006](../adr/006-caller-principals.md))
+
+A guarded action waits for a human decision, and only the person who raised it
+may approve it. That only holds if the caller is a person. Orrery classifies
+every verified token:
+
+| Kind | Recognised by | Role | Can approve |
+|---|---|---|---|
+| **human** | Its client (`azp`, else `client_id`) is in `ORRERY_HUMAN_CLIENTS` | From the role claim | Its own actions |
+| **delegated** | A verified RFC 8693 `act` claim (an agent acting for a user) | The lower of the user's role and the agent's ceiling | Never in the agent's messages; the user approves out of band |
+| **service** | Anything else, or a client in `ORRERY_SERVICE_CLIENTS` | The client's ceiling (default `viewer`), and pinned to autonomy **L2** | Never |
+
+```bash
+ORRERY_HUMAN_CLIENTS=orrery-console,orrery-cli          # clients people sign in through
+ORRERY_SERVICE_CLIENTS=ci-bot=viewer,partner-agent=operator  # machine clients and their ceilings
+```
+
+!!! warning "Set `ORRERY_HUMAN_CLIENTS` in production"
+    Unset, every console token counts as a person (the behaviour before
+    ADR-006), so a client-credentials token with the operator role could
+    approve its own action. The server logs a warning at startup.
+
+A machine caller's message is never recorded as a decision, whatever it
+says. To approve an action an agent raised for you, use the console or:
+
+```bash
+curl -X POST https://orrery.example.com/confirmations/<action_id>/decision \
+  -H "Authorization: Bearer $YOUR_TOKEN" -d '{"decision": "approve"}'
+```
+
+Approve works only for your own action (anything else is a 404, the same as an
+unknown id); deny is open to anyone. The approval applies when the agent
+retries the same call with the same arguments, within two minutes.
+
+---
+
 ## Wiring the AuthPlugin
 
 `AuthPlugin` consumes the `_auth` payload the HTTP front door stashes

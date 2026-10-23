@@ -1185,3 +1185,128 @@ def test_console_config_js_csp_lets_the_console_reach_its_issuer(patched_runner,
     csp = TestClient(app).get("/").headers["content-security-policy"]
     connect = next(d for d in csp.split(";") if d.strip().startswith("connect-src"))
     assert "https://sso.example.org" in connect
+
+
+# ── Caller principals and out-of-band decisions (ADR-006) ────────────
+
+
+def _token(sub: str, *, azp: str | None = None, roles=("operator",), **extra) -> dict:
+    claims = {"sub": sub, "roles": list(roles), "exp": int(time.time()) + 600, "aud": "orrery"}
+    if azp:
+        claims["azp"] = azp
+    return {"Authorization": f"Bearer {_hs256({**claims, **extra})}"}
+
+
+def _app_with_principals(monkeypatch, patched_runner, **env):
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return create_app(
+        root_agent=MagicMock(name="root"),
+        app_name="test",
+        plugins=[],
+        config=ServerConfig(
+            auth_enabled=True,
+            jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+        ),
+    )
+
+
+def _alice_pending(store, action_id="a1"):
+    from orrery_core.security.confirmation_store import PendingConfirmation
+
+    store.add(
+        PendingConfirmation(
+            action_id=action_id,
+            tool_name="scale_deployment",
+            requester="alice",
+            scope_key="alice",
+            level="confirm",
+            args={"replicas": 3},
+        )
+    )
+
+
+def test_pending_carries_its_action_id(app_with_auth, pending_store):
+    _alice_pending(pending_store)
+    r = TestClient(app_with_auth).get("/confirmations/pending", headers=_token("alice"))
+    assert r.json()["pending"]["action_id"] == "a1"
+
+
+def test_the_requester_approves_out_of_band(app_with_auth, pending_store):
+    _alice_pending(pending_store)
+    client = TestClient(app_with_auth)
+
+    r = client.post(
+        "/confirmations/a1/decision", headers=_token("alice"), json={"decision": "approve"}
+    )
+
+    assert r.status_code == 200, r.text
+    approved = pending_store.get("a1")
+    assert approved is not None and approved.approved
+
+
+def test_someone_else_cannot_approve_and_learns_nothing(app_with_auth, pending_store):
+    _alice_pending(pending_store)
+    client = TestClient(app_with_auth)
+
+    theirs = client.post(
+        "/confirmations/a1/decision", headers=_token("bob"), json={"decision": "approve"}
+    )
+    missing = client.post(
+        "/confirmations/zz/decision", headers=_token("bob"), json={"decision": "approve"}
+    )
+
+    assert theirs.status_code == missing.status_code == 404
+    assert theirs.json() == missing.json()
+    untouched = pending_store.get("a1")
+    assert untouched is not None and not untouched.approved
+
+
+def test_a_machine_cannot_decide_even_on_its_own_action(monkeypatch, patched_runner, pending_store):
+    app = _app_with_principals(monkeypatch, patched_runner, ORRERY_HUMAN_CLIENTS="orrery-console")
+    _alice_pending(pending_store)  # raised under the service's own subject
+
+    r = TestClient(app).post(
+        "/confirmations/a1/decision",
+        headers=_token("alice", azp="ci-bot"),
+        json={"decision": "approve"},
+    )
+
+    assert r.status_code == 403
+    untouched = pending_store.get("a1")
+    assert untouched is not None and not untouched.approved
+
+
+def test_a_person_signed_in_through_a_human_client_can_decide(
+    monkeypatch, patched_runner, pending_store
+):
+    app = _app_with_principals(monkeypatch, patched_runner, ORRERY_HUMAN_CLIENTS="orrery-console")
+    _alice_pending(pending_store)
+
+    r = TestClient(app).post(
+        "/confirmations/a1/decision",
+        headers=_token("alice", azp="orrery-console"),
+        json={"decision": "approve"},
+    )
+
+    assert r.status_code == 200
+
+
+def test_a_machine_token_is_capped_to_its_ceiling(monkeypatch, patched_runner):
+    app = _app_with_principals(monkeypatch, patched_runner, ORRERY_HUMAN_CLIENTS="orrery-console")
+    me = TestClient(app).get("/me", headers=_token("ci", azp="ci-bot", roles=("admin",)))
+    assert me.json()["role"] == "viewer"
+
+
+def test_anonymous_mode_cannot_decide(app_no_auth, pending_store):
+    _alice_pending(pending_store)
+    r = TestClient(app_no_auth).post("/confirmations/a1/decision", json={"decision": "approve"})
+    assert r.status_code == 403
+
+
+def test_a_decision_must_be_approve_or_deny(app_with_auth, pending_store):
+    _alice_pending(pending_store)
+    r = TestClient(app_with_auth).post(
+        "/confirmations/a1/decision", headers=_token("alice"), json={"decision": "yes"}
+    )
+    assert r.status_code == 422

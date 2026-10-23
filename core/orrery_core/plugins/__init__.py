@@ -196,8 +196,8 @@ def _env_int(name: str, default: int) -> int:
 def _resolve_autonomy_level(autonomy_level: str | None) -> str | None:
     """Resolve the autonomy level: explicit argument first, then the env var.
 
-    Returns ``None`` (plugin not registered) when unset, empty, or an explicit
-    ``"off"``/``"none"``.
+    Returns ``None`` (no process-wide level; the plugin only honours per-request
+    pins) when unset, empty, or an explicit ``"off"``/``"none"``.
     """
     level = autonomy_level if autonomy_level is not None else os.getenv("ORRERY_AUTONOMY_LEVEL", "")
     level = level.strip()
@@ -245,8 +245,9 @@ def default_plugins(
         autonomy_level: Autonomy mode — ``"L2"`` (read-only), ``"L3"``
             (mutating, destructive blocked), ``"L4"`` (destructive after
             ADK-native confirmation). ``None`` resolves from the
-            ``ORRERY_AUTONOMY_LEVEL`` env var; unset/empty/``"off"`` skips the
-            plugin entirely (the pre-autonomy behavior).
+            ``ORRERY_AUTONOMY_LEVEL`` env var; unset/empty/``"off"`` leaves the
+            plugin inert (the pre-autonomy behavior) except for a level the
+            server pins per request, such as L2 for a service principal.
         autonomy_l2_whitelist: Extra tool names allowed at L2 beyond read tools.
         autonomy_l3_blacklist: Extra tool names blocked at L3 beyond
             ``@destructive`` tools.
@@ -369,14 +370,16 @@ def default_plugins(
     # before anyone is asked to approve it. Registered the other way round, an L2
     # deployment prompted the user to confirm a mutation that L2 would refuse the
     # instant they said yes.
-    if resolved_level := _resolve_autonomy_level(autonomy_level):
-        plugins.append(
-            AutonomyPlugin(
-                level=resolved_level,
-                l2_whitelist=autonomy_l2_whitelist,
-                l3_blacklist=autonomy_l3_blacklist,
-            )
+    #
+    # Always registered: with no level configured it is inert, except for a level
+    # the server pins per request (a service principal is read-only; ADR-006).
+    plugins.append(
+        AutonomyPlugin(
+            level=_resolve_autonomy_level(autonomy_level),
+            l2_whitelist=autonomy_l2_whitelist,
+            l3_blacklist=autonomy_l3_blacklist,
         )
+    )
 
     plugins.append(GuardrailsPlugin(role_policy=role_policy, mode=guardrail_mode))
 

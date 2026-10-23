@@ -27,6 +27,30 @@ members = [
 overrides = [{ name = "litellm", specifier = ">=1.105.1" }]
 
 [[package]]
+name = "a2a-sdk"
+version = "1.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core" },
+    { name = "googleapis-common-protos" },
+    { name = "httpx" },
+    { name = "json-rpc" },
+    { name = "packaging" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/5a/2b5ff74f3f0dbec13787c7139cb1047a562544c9b8b062d0eaa9392c79f9/a2a_sdk-1.2.3.tar.gz", hash = "sha256:a28bc40b010d088ea4a10d05a5ba021d183f02cacab15929072ea5b34cde3fe6", size = 434137, upload-time = "2026-10-19T10:11:31.052Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/df/138f64f3138db7b44b9798426909357d27429c868715af8751ace6083238/a2a_sdk-1.2.3-py3-none-any.whl", hash = "sha256:a89529ab7d026900170aefc1515f35c68d9a14b6a9133f8cc775c8fe598f8ae7", size = 278339, upload-time = "2026-10-19T10:11:29.102Z" },
+]
+
+[package.optional-dependencies]
+http-server = [
+    { name = "sse-starlette" },
+    { name = "starlette" },
+]
+
+[[package]]
 name = "absl-py"
 version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1663,6 +1687,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5e/73/e01e4c5e11ad0494f4407a3f623ad4d87714909f50b17a06ed121034ff6e/jsmin-3.0.1.tar.gz", hash = "sha256:c0959a121ef94542e807a674142606f7e90214a2b3d1eb17300244bbb5cc2bfc", size = 13925, upload-time = "2022-01-16T20:35:59.13Z" }
 
 [[package]]
+name = "json-rpc"
+version = "1.15.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/9e/59f4a5b7855ced7346ebf40a2e9a8942863f644378d956f68bcef2c88b90/json-rpc-1.15.0.tar.gz", hash = "sha256:e6441d56c1dcd54241c937d0a2dcd193bdf0bdc539b5316524713f554b7f85b9", size = 28854, upload-time = "2023-06-11T09:45:49.078Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/9e/820c4b086ad01ba7d77369fb8b11470a01fac9b4977f02e18659cf378b6b/json_rpc-1.15.0-py2.py3-none-any.whl", hash = "sha256:4a4668bbbe7116feb4abbd0f54e64a4adcf4b8f648f19ffa0848ad0f6606a9bf", size = 39450, upload-time = "2023-06-11T09:45:47.136Z" },
+]
+
+[[package]]
 name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2436,6 +2469,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+a2a = [
+    { name = "orrery-core", extra = ["a2a"] },
+]
 auth = [
     { name = "orrery-core", extra = ["auth"] },
 ]
@@ -2482,6 +2518,7 @@ requires-dist = [
     { name = "ops-journal", editable = "agents/ops-journal" },
     { name = "orrery-assistant", editable = "agents/orrery-assistant" },
     { name = "orrery-core", editable = "core" },
+    { name = "orrery-core", extras = ["a2a"], marker = "extra == 'a2a'", editable = "core" },
     { name = "orrery-core", extras = ["auth"], marker = "extra == 'auth'", editable = "core" },
     { name = "orrery-core", extras = ["mcp"], marker = "extra == 'mcp'", editable = "core" },
     { name = "orrery-core", extras = ["otel"], marker = "extra == 'otel'", editable = "core" },
@@ -2489,7 +2526,7 @@ requires-dist = [
     { name = "orrery-core", extras = ["server"], marker = "extra == 'server'", editable = "core" },
     { name = "slack-bot", editable = "agents/slack-bot" },
 ]
-provides-extras = ["postgres", "auth", "server", "otel", "mcp"]
+provides-extras = ["postgres", "auth", "server", "a2a", "otel", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2547,6 +2584,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+a2a = [
+    { name = "a2a-sdk", extra = ["http-server"] },
+]
 auth = [
     { name = "pyjwt", extra = ["crypto"] },
 ]
@@ -2582,6 +2622,7 @@ server = [
 
 [package.metadata]
 requires-dist = [
+    { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a'", specifier = ">=1.2.3,<2" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.141.1" },
     { name = "google-adk", extras = ["eval", "db"], specifier = ">=2.12.0" },
@@ -2605,7 +2646,7 @@ requires-dist = [
     { name = "requests", marker = "extra == 'knowledge'", specifier = ">=2.34.2" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.54.0" },
 ]
-provides-extras = ["postgres", "auth", "server", "kubernetes", "otel", "mcp", "knowledge", "knowledge-pg"]
+provides-extras = ["postgres", "auth", "server", "kubernetes", "otel", "mcp", "a2a", "knowledge", "knowledge-pg"]
 
 [[package]]
 name = "packaging"

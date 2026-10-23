@@ -248,6 +248,8 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 
 A refused request is a `429` with `Retry-After`, which the console shows as "retry in Ns".
 
+A2A exposition (`ORRERY_A2A_*`) has its own table in [A2A](../integrations/a2a.md#enabling-it).
+
 ### Chat attachments
 
 Images and UTF-8 text files on `/chat` and `/chat/stream` (multipart), processed in memory for one

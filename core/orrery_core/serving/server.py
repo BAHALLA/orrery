@@ -38,6 +38,7 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
@@ -71,7 +72,14 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
-from ..security.identity import caller_scope, identity_from_claims
+from ..security.identity import CallerIdentity, caller_scope, identity_from_claims
+from ..security.principal import (
+    PrincipalKind,
+    PrincipalPolicy,
+    as_principal,
+    warn_if_unclassified,
+)
+from .a2a_config import A2A_ENABLED_ENV, A2AConfig
 from .agent_admin import AgentAdmin
 from .attachments import (
     AttachmentError,
@@ -160,6 +168,8 @@ class ServerConfig:
     console: ConsoleConfig = field(default_factory=ConsoleConfig)
     #: Chat attachments (AEP-030): ``ORRERY_ATTACHMENT*``.
     attachments: AttachmentLimits = field(default_factory=AttachmentLimits)
+    #: Agents exposed over A2A (ADR-007): ``ORRERY_A2A_*``.
+    a2a: A2AConfig = field(default_factory=A2AConfig)
 
     @property
     def serve_docs(self) -> bool:
@@ -205,6 +215,8 @@ class ServerConfig:
         - ``ORRERY_ATTACHMENTS`` (default ``true``) and ``ORRERY_ATTACHMENT_*``
           — what a chat turn may attach (see :class:`AttachmentLimits`). Set
           ``ORRERY_ATTACHMENT_IMAGES=false`` for a model without vision.
+        - ``ORRERY_A2A_*`` — expose the coordinator over A2A (see
+          :class:`~.a2a_config.A2AConfig`). Off by default.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
@@ -229,6 +241,7 @@ class ServerConfig:
             ),
             console=ConsoleConfig.from_env(),
             attachments=AttachmentLimits.from_env(),
+            a2a=A2AConfig.from_env(),
         )
 
 
@@ -345,6 +358,8 @@ _UPLOAD_SLOT_WAIT_SECONDS = 5.0
 class PendingConfirmationInfo(BaseModel):
     """The caller's guarded action awaiting an approve/deny decision."""
 
+    #: Addresses the action for ``POST /confirmations/{action_id}/decision``.
+    action_id: str
     tool_name: str
     level: str
     args: dict[str, object]
@@ -357,6 +372,15 @@ class PendingConfirmationInfo(BaseModel):
 
 class PendingResponse(BaseModel):
     pending: PendingConfirmationInfo | None
+
+
+class DecisionRequest(BaseModel):
+    decision: Literal["approve", "deny"]
+
+
+class DecisionResponse(BaseModel):
+    action_id: str
+    decision: str
 
 
 class TriageResponse(BaseModel):
@@ -461,6 +485,11 @@ def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
         problems.append(
             f"{CONFIRMATION_BACKEND_ENV}={backend} (approvals would be per-pod; use postgres)"
         )
+    if cfg.a2a.enabled:
+        problems.append(
+            f"{A2A_ENABLED_ENV} is set (A2A tasks are kept per process; run the A2A "
+            "surface as a single replica)"
+        )
     if problems:
         raise RuntimeError(
             f"{MULTI_REPLICA_ENV} is set, so this server runs as one of several replicas, "
@@ -526,9 +555,11 @@ def create_app(
 
     # Validate JWT config eagerly when auth is on — fail fast at startup
     # rather than on the first request.
+    principal_policy = PrincipalPolicy.from_env()  # a malformed policy fails startup
     if cfg.auth_enabled:
         cfg.jwt.validate()
         logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)
+        warn_if_unclassified(principal_policy)
     else:
         logger.warning(
             "Auth DISABLED. Do not run this configuration in production — "
@@ -536,6 +567,8 @@ def create_app(
         )
 
     _require_shared_state_when_replicated(cfg)
+    if cfg.a2a.enabled:
+        cfg.a2a.validate(auth_enabled=cfg.auth_enabled)
     cfg.console.validate(cfg.jwt.issuer if cfg.auth_enabled else None)
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
@@ -672,7 +705,7 @@ def create_app(
             )
 
         try:
-            return await verify_token_async(credentials.credentials, cfg.jwt)
+            verified = await verify_token_async(credentials.credentials, cfg.jwt)
         except AuthUnavailableError as exc:
             # The IdP's key set is unreachable. Not the caller's fault and not
             # something a new token fixes — say "try again", not "bad token",
@@ -690,6 +723,18 @@ def create_app(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
+        return as_principal(verified, principal_policy)
+
+    def caller_identity(auth: AuthContext) -> CallerIdentity | None:
+        """Who downstream systems should see: the person, never a service.
+
+        Anonymous mode has no person behind it, and a service principal acts for
+        no one, so impersonating systems refuse both (fail-closed). A delegated
+        principal acts for the user its token names.
+        """
+        if not cfg.auth_enabled or auth.principal_kind == PrincipalKind.SERVICE:
+            return None
+        return identity_from_claims(auth.subject, auth.claims)
 
     # Rate limit per *caller*, not per IP: behind an ingress every user shares a
     # source address, so an IP key would let one noisy client throttle everyone.
@@ -824,7 +869,9 @@ def create_app(
             state_delta=state_delta,
             # From the verified token only. Anonymous mode has no person behind
             # it, so impersonating systems refuse (fail-closed).
-            identity=identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None,
+            identity=caller_identity(auth),
+            # Only a person's own words approve; an agent's are model output.
+            can_decide=auth.can_decide,
             attachments=prepared,
         )
 
@@ -1056,6 +1103,7 @@ def create_app(
             return PendingResponse(pending=None)
         return PendingResponse(
             pending=PendingConfirmationInfo(
+                action_id=pending.action_id,
                 tool_name=pending.tool_name,
                 level=pending.level,
                 args=dict(pending.args),
@@ -1063,6 +1111,40 @@ def create_app(
                 session_id=pending.session_id or None,
             )
         )
+
+    @api.post(
+        "/confirmations/{action_id}/decision",
+        response_model=DecisionResponse,
+        dependencies=[Depends(chat_rate_limit)],
+    )
+    async def decide_confirmation(
+        action_id: str,
+        body: DecisionRequest,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> DecisionResponse:
+        """Approve or deny a pending guarded action outside the chat turn (ADR-006).
+
+        For actions an agent raised on the user's behalf (A2A), whose own
+        messages can never decide, and for the console's buttons. Only a verified
+        person may call it; approve only for their own action. An approval takes
+        effect when the tool is retried with the same arguments.
+        """
+        if not cfg.auth_enabled or not auth.can_decide:
+            # Anonymous mode has no verified person, and a machine never decides.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only a signed-in person can decide on a pending action",
+            )
+        from ..security.guardrails import OutOfBandDecisionError, decide_out_of_band
+
+        try:
+            # The postgres backend is a synchronous engine: off the event loop.
+            await asyncio.to_thread(
+                decide_out_of_band, action_id, body.decision, decider=auth.subject
+            )
+        except OutOfBandDecisionError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        return DecisionResponse(action_id=action_id, decision=body.decision)
 
     @api.get("/me", response_model=MeResponse)
     async def me(
@@ -1227,7 +1309,7 @@ def create_app(
         # with no caller is refused (fail-closed) and would read as "Kubernetes
         # unreachable". Never service_scope(): a viewer must not probe with the
         # service account's reach. The tasks copy the context when created.
-        identity = identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None
+        identity = caller_identity(auth)
         scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
         with scope:
             model_check, probe_results = await asyncio.gather(
@@ -1243,6 +1325,22 @@ def create_app(
         return SelfTestResponse(
             ok=all(r.ok for r in results),
             checks=[CheckResultModel(**r.as_dict()) for r in results],
+        )
+
+    if cfg.a2a.enabled:
+        # Imported only here: the a2a-sdk is the optional `[a2a]` extra.
+        from .a2a_server import mount_a2a
+
+        mount_a2a(
+            api,
+            gateway=gateway,
+            config=cfg.a2a,
+            jwt=cfg.jwt,
+            policy=principal_policy,
+            limiter=limiter,
+            caller_identity=caller_identity,
+            name=app_name,
+            description=getattr(root_agent, "description", "") or app_name,
         )
 
     # Mount the web console last so the explicit API routes above always win

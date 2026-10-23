@@ -291,6 +291,7 @@ package.
 | `GET /session/{id}/activity` | Tool-call timeline, scoped to the caller's own session. |
 | `GET /session/{id}/triage` | Recorded severity + report for that session. |
 | `GET /confirmations/pending` | The caller's own pending guarded action, for rendering. |
+| `POST /confirmations/{action_id}/decision` | Approve or deny a pending action outside the chat turn. People only; approve only your own ([ADR-006](../adr/006-caller-principals.md)). |
 | `GET /me` | Server-resolved role, active autonomy level, configured model. |
 | `POST /onboarding/selftest` | Model connectivity + integration probes. |
 | `GET /admin/catalog` | **Admin only.** The editable agent catalog (switched-off specialists, composed agents, version) and what it may contain. |
