@@ -101,10 +101,11 @@ Where the shipped code differs from the decision above, and why:
 - **Conversation binding.** The a2a-sdk mints a `contextId` before the executor
   sees the request, so the server cannot tell a minted id from a client's.
   Instead of storing a binding, the ADK session id is derived:
-  `a2a-` + SHA-256(subject, contextId). Any id a client sends reaches only its
-  own conversation, the derivation needs no table and works on any replica, and
+  `a2a-` + SHA-256(principal, contextId), where the principal is kind, client,
+  acting agent and subject (two agents delegated by one user share a subject).
+  Any id a client sends reaches only its own conversation, the derivation needs no table and works on any replica, and
   the prefix keeps it out of the console's id space.
-- **Task store.** In memory, owner-scoped. The server refuses to start with A2A
+- **Task store.** In memory, scoped by the same principal key. The server refuses to start with A2A
   on and `ORRERY_MULTI_REPLICA` set until a shared store exists. The SDK's SQL
   store needs extras that pull MySQL drivers; a Postgres-only store is a
   follow-up.

@@ -10,11 +10,12 @@ replaces what sits behind it, so every turn goes through
   verified by the console's code. The caller is never a person
   (``machine_surface``): a token with a verified ``act`` claim is a *delegated*
   principal acting for that user, anything else a *service* (ADR-006).
-- **Which conversation.** The ADK session is derived from the verified subject
-  *and* the ``contextId``, so a client cannot reach another caller's session,
-  nor one of its user's console conversations, whatever id it sends.
-- **Which tasks.** The task store is scoped by owner, so ``GetTask``,
-  ``ListTasks`` and ``CancelTask`` see only the caller's own tasks.
+- **Which conversation.** The ADK session is derived from the caller's whole
+  principal (kind, client, acting agent, subject) *and* the ``contextId``, so a
+  client cannot reach another caller's session, even another agent acting for
+  the same user, nor one of its user's console conversations.
+- **Which tasks.** The task store is scoped by the same principal key, so
+  ``GetTask``, ``ListTasks`` and ``CancelTask`` see only the caller's own tasks.
 - **What it may say.** Text parts only. A data or file part is refused, so a
   client cannot dress a payload up as an ADK function response.
 - **Who approves.** A turn that ends on a pending guarded action moves the task
@@ -31,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
 import logging
 from collections import Counter
 from collections.abc import Callable
@@ -98,15 +100,30 @@ logger = logging.getLogger("orrery.a2a")
 _AUTH_SCOPE_KEY = "orrery.a2a.auth"
 
 
-def session_id_for(subject: str, context_id: str) -> str:
-    """The ADK session behind *context_id*, for *subject* only.
+def principal_key(auth: AuthContext) -> str:
+    """Who owns A2A conversations and tasks: the whole principal, not the subject.
+
+    Two agents delegated by the same user share a subject (the user's). Keyed
+    on the subject alone, each could list, read and continue the other's tasks
+    and spend approvals raised in them. The kind keeps a service token whose
+    ``sub`` equals a user's apart from that user's agents. JSON, so no value can
+    forge a separator.
+    """
+    return json.dumps(
+        [auth.principal_kind, auth.client_id or "", auth.acting_agent or "", auth.subject],
+        separators=(",", ":"),
+    )
+
+
+def session_id_for(owner: str, context_id: str) -> str:
+    """The ADK session behind *context_id*, for *owner* (:func:`principal_key`) only.
 
     Derived rather than stored: the same pair always lands on the same session,
     on any replica, and no other pair can. The prefix keeps it out of the
     console's id space, so a delegated agent acting for a user cannot continue
     one of that user's own conversations by sending its id as a ``contextId``.
     """
-    digest = hashlib.sha256(f"{subject}\0{context_id}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{owner}\0{context_id}".encode()).hexdigest()
     return f"a2a-{digest[:32]}"
 
 
@@ -122,7 +139,8 @@ class _VerifiedUser(User):
 
     @property
     def user_name(self) -> str:
-        return self.auth.subject
+        # The task store's owner scope: per principal, not per subject.
+        return principal_key(self.auth)
 
 
 class _CallContextBuilder(ServerCallContextBuilder):
@@ -215,6 +233,7 @@ class OrreryAgentExecutor(AgentExecutor):
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         auth = _caller(context)
+        owner = principal_key(auth)
         task_id, context_id = context.task_id, context.context_id
         if not task_id or not context_id:
             raise RuntimeError("A2A request context has no task or context id")
@@ -232,7 +251,7 @@ class OrreryAgentExecutor(AgentExecutor):
                 updater.new_agent_message([new_text_part("Only text parts are accepted.")])
             )
             return
-        if self._in_flight[auth.subject] >= self.max_tasks_in_flight:
+        if self._in_flight[owner] >= self.max_tasks_in_flight:
             audit_event("a2a_turn_refused", subject=auth.subject, reason="too_many_in_flight")
             await updater.reject(
                 updater.new_agent_message(
@@ -241,22 +260,22 @@ class OrreryAgentExecutor(AgentExecutor):
             )
             return
 
-        self._in_flight[auth.subject] += 1
+        self._in_flight[owner] += 1
         try:
             await self._run(auth, text, context_id, updater)
         except Exception:
             logger.exception("A2A turn failed (task=%s)", task_id)
             await updater.failed(updater.new_agent_message([new_text_part("The turn failed.")]))
         finally:
-            self._in_flight[auth.subject] -= 1
-            if self._in_flight[auth.subject] <= 0:
-                del self._in_flight[auth.subject]
+            self._in_flight[owner] -= 1
+            if self._in_flight[owner] <= 0:
+                del self._in_flight[owner]
 
     async def _run(
         self, auth: AuthContext, text: str, context_id: str, updater: TaskUpdater
     ) -> None:
         await updater.start_work()
-        session_id = await self._ensure_session(auth.subject, context_id)
+        session_id = await self._ensure_session(auth, context_id)
         audit_event(
             "a2a_turn",
             subject=auth.subject,
@@ -288,8 +307,11 @@ class OrreryAgentExecutor(AgentExecutor):
         await updater.add_artifact([new_text_part(reply.text)], name="reply")
         await updater.complete()
 
-    async def _ensure_session(self, subject: str, context_id: str) -> str:
-        session_id = session_id_for(subject, context_id)
+    async def _ensure_session(self, auth: AuthContext, context_id: str) -> str:
+        # The ADK user stays the subject: it is the requester of any pending
+        # action, so the person can approve it. The session id carries the rest.
+        subject = auth.subject
+        session_id = session_id_for(principal_key(auth), context_id)
         sessions = self.gateway.sessions
         app_name = self.gateway.app_name
         if await sessions.get_session(app_name=app_name, user_id=subject, session_id=session_id):
@@ -441,7 +463,7 @@ def mount_a2a(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         auth = as_principal(verified, policy, machine_surface=True)
-        limiter.hit(rate, f"a2a:{auth.subject}")
+        limiter.hit(rate, f"a2a:{principal_key(auth)}")
         request.scope[_AUTH_SCOPE_KEY] = auth
         return await dispatch(request)
 
@@ -461,6 +483,7 @@ __all__ = [
     "build_public_card",
     "live_skills",
     "mount_a2a",
+    "principal_key",
     "session_id_for",
     "task_owner",
 ]

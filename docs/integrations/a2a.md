@@ -60,12 +60,16 @@ A call carrying `X-Orrery-Hop` came from an Orrery deployment and is refused
 
 ## Conversations and tasks
 
+- A *caller* is the whole principal: its kind, client, acting agent and
+  subject. Two agents acting for the same user are two callers, and neither
+  sees the other's conversations or tasks.
 - A `contextId` is one conversation. The session behind it is derived from the
-  caller's verified subject *and* the id, so another caller sending the same
-  `contextId` lands in a different, empty conversation, and a delegated agent
-  cannot continue one of its user's console conversations.
+  caller *and* the id, so another caller sending the same `contextId` lands in
+  a different, empty conversation, and a delegated agent cannot continue one of
+  its user's console conversations.
 - A `taskId` is one turn. `GetTask`, `ListTasks` and a follow-up message on a
   task see only the caller's own tasks; anything else is `TaskNotFound`.
+- An approval is spent only in the conversation that raised the action.
 - Messages must be text parts only. A data or file part rejects the task.
 - `CancelTask` is refused: a turn may already have sent a change to a cluster,
   and stopping the wait would not stop it.

@@ -221,8 +221,42 @@ def test_a_context_maps_to_a_session_of_that_caller_only(turns):
     client.post("/a2a", json=_send(context_id=ctx), headers=_headers("intruder"))
 
     bot_1, bot_2, intruder = (c["session_id"] for c in turns)
-    assert bot_1 == bot_2 == session_id_for("bot", ctx)
-    assert intruder == session_id_for("intruder", ctx) != bot_1
+    assert bot_1 == bot_2
+    assert intruder != bot_1
+
+
+def _agent_for_alice(agent: str) -> dict:
+    return _headers("alice", azp=agent, act={"sub": agent})
+
+
+def test_two_agents_acting_for_one_user_are_isolated(turns):
+    """Same subject (alice), different agents: neither sees the other's work."""
+    client = TestClient(_app())
+    a_task = _result(client.post("/a2a", json=_send("A's question"), headers=_agent_for_alice("a")))
+    listing = {"jsonrpc": "2.0", "id": "2", "method": "ListTasks", "params": {}}
+    get = {"jsonrpc": "2.0", "id": "3", "method": "GetTask", "params": {"id": a_task["id"]}}
+
+    b = _agent_for_alice("b")
+    assert client.post("/a2a", json=listing, headers=b).json()["result"]["tasks"] == []
+    assert client.post("/a2a", json=get, headers=b).json()["error"]["code"] == _TASK_NOT_FOUND
+    client.post("/a2a", json=_send(context_id=a_task["contextId"]), headers=b)
+
+    a_turn, b_turn = turns
+    # Both run as alice, so alice can approve either's actions...
+    assert a_turn["user_id"] == b_turn["user_id"] == "alice"
+    # ...but B's message on A's contextId lands in a session of its own.
+    assert a_turn["session_id"] != b_turn["session_id"]
+
+
+def test_a_service_sharing_a_users_subject_is_not_that_users_agent(turns):
+    client = TestClient(_app())
+    a_task = _result(client.post("/a2a", json=_send(), headers=_agent_for_alice("a")))
+    listing = {"jsonrpc": "2.0", "id": "2", "method": "ListTasks", "params": {}}
+
+    service = _headers("alice", azp="a")  # no act claim: a service principal
+    assert client.post("/a2a", json=listing, headers=service).json()["result"]["tasks"] == []
+    client.post("/a2a", json=_send(context_id=a_task["contextId"]), headers=service)
+    assert turns[0]["session_id"] != turns[1]["session_id"]
 
 
 def test_a_context_never_names_a_console_session():
