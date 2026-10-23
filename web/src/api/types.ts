@@ -105,6 +105,12 @@ export interface PendingConfirmation {
   level: string;
   args: Record<string, unknown>;
   created_at: number;
+  /**
+   * The conversation (session) the action is waiting in. The endpoint is per
+   * user, so without this the card would show in every conversation. Absent
+   * or null from a server that predates it: shown wherever the user is.
+   */
+  session_id?: string | null;
 }
 
 /** GET /confirmations/pending response. */

@@ -451,6 +451,58 @@ describe("App auth flow", () => {
     expect(within(transcript).queryByText("approve")).not.toBeInTheDocument();
   });
 
+  it("shows the approval card only in the conversation it is waiting in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        const path = new URL(String(url), "http://localhost").pathname;
+        if (path === "/sessions") {
+          return jsonResponse({
+            sessions: [
+              { session_id: "s2", title: "check kafka", last_update_time: 200 },
+              { session_id: "s1", title: "fix orders", last_update_time: 100 },
+            ],
+          });
+        }
+        if (path === "/confirmations/pending") {
+          return jsonResponse({
+            pending: {
+              tool_name: "restart_container",
+              level: "confirm",
+              args: { name: "orders-worker" },
+              created_at: 1,
+              session_id: "s1",
+            },
+          });
+        }
+        if (path.startsWith("/session/") && path.split("/").length === 3) {
+          return jsonResponse({
+            session_id: path.slice("/session/".length),
+            title: "",
+            messages: [],
+            last_update_time: 0,
+          });
+        }
+        return jsonResponse({ entries: [], severity: null, report: null });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["operator"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    // The newest conversation opens first: not where the action waits.
+    const pointer = await screen.findByText(/waiting for your approval in/i);
+    expect(pointer).toHaveTextContent("fix orders");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open fix orders" }));
+
+    const panel = await screen.findByRole("alertdialog", { name: /pending confirmation/i });
+    expect(panel).toHaveTextContent("restart_container");
+    expect(screen.queryByText(/waiting for your approval in/i)).not.toBeInTheDocument();
+  });
+
   it("runs a triage and auto-opens the verdict report", async () => {
     const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       const u = String(url);

@@ -6,11 +6,12 @@ import { useConversations } from "../conversations/useConversations";
 import { AgentsDashboard } from "./AgentsDashboard";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
-import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon } from "./icons";
+import { pendingPlacement } from "../chat/pending";
+import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon, ShieldIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
-import { severityBadge } from "./severity";
+import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
 import { useSystem } from "../system/useSystem";
 
@@ -117,6 +118,14 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const onDelete = useCallback((id: string) => void deleteConversation(id), [deleteConversation]);
   const onSuggest = useCallback((prompt: string) => void send(prompt), [send]);
   const onSweep = useCallback(() => void runTriage(), [runTriage]);
+
+  // The pending action is per user; show its card only in the conversation
+  // it is waiting in, and a pointer to that conversation everywhere else.
+  const placement = pendingPlacement(chat.pending, chat.sessionId);
+  const waitingIn =
+    placement === "elsewhere"
+      ? conversations.history.find((c) => c.sessionId === chat.pending?.session_id)
+      : undefined;
 
   // The Approve/Deny card, for the transcript's "awaiting approval" chips.
   const approvalRef = useRef<HTMLElement>(null);
@@ -240,7 +249,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         {view === "chat" ? (
           <div className="relative flex min-h-0 flex-1">
             <section className="flex min-w-0 flex-1 flex-col">
-              <ShowApprovalContext.Provider value={chat.pending ? showApproval : null}>
+              <ShowApprovalContext.Provider value={placement === "here" ? showApproval : null}>
                 <MessageList
                   messages={chat.messages}
                   isSending={chat.isSending}
@@ -249,13 +258,43 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                 />
               </ShowApprovalContext.Provider>
 
-              {chat.pending ? (
+              {placement === "here" && chat.pending ? (
                 <ConfirmationPanel
                   panelRef={approvalRef}
                   pending={chat.pending}
                   disabled={chat.isSending}
                   onDecide={(word) => void chat.decide(word)}
                 />
+              ) : null}
+
+              {placement === "elsewhere" && chat.pending ? (
+                <div className="px-3 sm:px-6">
+                  <p
+                    role="status"
+                    className={`mx-auto mb-2 flex w-full max-w-3xl flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border px-3 py-2 text-sm ${toneChip.warn}`}
+                  >
+                    <ShieldIcon size={15} />
+                    <span className="min-w-0">
+                      An action is waiting for your approval in{" "}
+                      <span className="font-medium">
+                        {waitingIn ? waitingIn.title : "another conversation"}
+                      </span>
+                    </span>
+                    {waitingIn ? (
+                      <button
+                        type="button"
+                        aria-label={`Open ${waitingIn.title}`}
+                        className="ml-auto font-medium underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none"
+                        onClick={() => {
+                          showChat();
+                          selectConversation(waitingIn.id);
+                        }}
+                      >
+                        Open <span aria-hidden="true">→</span>
+                      </button>
+                    ) : null}
+                  </p>
+                </div>
               ) : null}
 
               {chat.error ? (

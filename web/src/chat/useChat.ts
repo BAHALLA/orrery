@@ -100,21 +100,26 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
   // triage state are rendering data, so a failed refresh never surfaces as a
   // chat error.
   const refreshSidePanes = useCallback(
-    async (sessionId: string, forConversation: string) => {
+    async (sessionId: string | null, forConversation: string) => {
       // The caller names the conversation this session belongs to. If the user
       // switches away while the requests are in flight, discard the results —
       // otherwise a slow response for the previous conversation clobbers the
       // inspector of the one now on screen. (Reading the *current* active id
       // here instead would compare it against itself and never fire.)
+      //
+      // A draft has no session to read, but the pending action is per user: it
+      // is still fetched, so a draft can point to the conversation it waits in.
       const [act, pend, tri] = await Promise.allSettled([
-        client.activity(sessionId),
+        sessionId ? client.activity(sessionId) : null,
         client.pendingConfirmation(),
-        client.triage(sessionId),
+        sessionId ? client.triage(sessionId) : null,
       ]);
       if (activeIdRef.current !== forConversation) return;
-      if (act.status === "fulfilled") setActivity(act.value.entries ?? []);
+      if (act.status === "fulfilled" && act.value) setActivity(act.value.entries ?? []);
       if (pend.status === "fulfilled") setPending(pend.value.pending ?? null);
-      if (tri.status === "fulfilled") setTriage(tri.value.severity ? tri.value : null);
+      if (tri.status === "fulfilled" && tri.value) {
+        setTriage(tri.value.severity ? tri.value : null);
+      }
     },
     [client],
   );
@@ -138,7 +143,7 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
     setTriage(null);
     /* eslint-enable react-hooks/set-state-in-effect */
     lastSentRef.current = null;
-    if (sessionId) void refreshSidePanes(sessionId, activeId);
+    void refreshSidePanes(sessionId, activeId);
     // Only re-run when the active conversation changes, not on every message.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
