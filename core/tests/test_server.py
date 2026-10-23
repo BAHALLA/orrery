@@ -938,6 +938,28 @@ def test_selftest_survives_a_probe_that_raises(patched_runner):
     assert "no kubeconfig found" in k8s["detail"]
 
 
+def test_selftest_probes_run_as_the_caller(patched_runner):
+    """With impersonation on, a probe with no caller is refused and reads as 'down'."""
+    from orrery_core.security.identity import current_caller
+    from orrery_core.serving.onboarding import IntegrationProbe
+
+    seen = []
+
+    async def who():
+        seen.append(current_caller())
+        return {"status": "success"}
+
+    app = _probe_app(patched_runner, [IntegrationProbe("k8s", "Kubernetes", "-", who)])
+    with patch(
+        "orrery_core.serving.server.check_model_connectivity",
+        new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
+    ):
+        TestClient(app).post("/onboarding/selftest", headers=_bearer())
+
+    assert seen and seen[0] is not None
+    assert seen[0].username == "alice"
+
+
 def test_selftest_requires_auth(patched_runner):
     app = _probe_app(patched_runner, [])
     assert TestClient(app).post("/onboarding/selftest").status_code == 401

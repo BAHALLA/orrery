@@ -31,6 +31,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator, Sequence
@@ -69,7 +70,7 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
-from ..security.identity import identity_from_claims
+from ..security.identity import caller_scope, identity_from_claims
 from .agent_admin import AgentAdmin
 from .attachments import (
     AttachmentError,
@@ -334,6 +335,10 @@ class ActivityEntry(BaseModel):
 class ActivityResponse(BaseModel):
     session_id: str
     entries: list[ActivityEntry]
+
+
+#: How long a multipart request waits for a process-wide upload slot.
+_UPLOAD_SLOT_WAIT_SECONDS = 5.0
 
 
 class PendingConfirmationInfo(BaseModel):
@@ -716,8 +721,14 @@ def create_app(
     # Bounds the bodies held in memory at once, which the decode semaphore
     # doesn't: each holds up to max_total_bytes until its files are prepared.
     upload_slots = asyncio.Semaphore(cfg.attachments.max_concurrent_uploads)
+    # Uploads in flight per verified subject. Checked before a process-wide
+    # slot is taken, so one caller can never hold more than its share.
+    uploads_in_flight: dict[str, int] = {}
 
-    async def chat_body(request: Request) -> ChatInput:
+    async def chat_body(
+        request: Request,
+        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+    ) -> ChatInput:
         """The chat body, JSON or multipart, read under hard caps and a deadline.
 
         A dependency rather than a body model so a multipart upload streams
@@ -732,8 +743,29 @@ def create_app(
         """
         if not request.headers.get("content-type", "").lower().startswith("multipart/"):
             return await read_chat_input(request, cfg.attachments)
+        subject = auth.subject
+        if uploads_in_flight.get(subject, 0) >= cfg.attachments.max_uploads_per_user:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Your previous upload is still being processed. Retry when it finishes.",
+                headers={"Retry-After": "5"},
+            )
+        uploads_in_flight[subject] = uploads_in_flight.get(subject, 0) + 1
         try:
-            async with asyncio.timeout(cfg.attachments.read_timeout_seconds):
+            return await _read_upload(request)
+        finally:
+            if (left := uploads_in_flight[subject] - 1) > 0:
+                uploads_in_flight[subject] = left
+            else:
+                del uploads_in_flight[subject]
+
+    async def _read_upload(request: Request) -> ChatInput:
+        # A short wait for a slot, not the body deadline: a queue that holds
+        # callers for a minute is an outage, a quick 503 is a retry.
+        try:
+            async with asyncio.timeout(
+                min(_UPLOAD_SLOT_WAIT_SECONDS, cfg.attachments.read_timeout_seconds)
+            ):
                 await upload_slots.acquire()
         except TimeoutError as exc:
             raise HTTPException(
@@ -1169,9 +1201,16 @@ def create_app(
         without reading a stack trace. Rate limited separately from chat: the
         checks are cheap but they do reach out to real infrastructure.
         """
-        model_check, probe_results = await asyncio.gather(
-            check_model_connectivity(), run_probes(probes)
-        )
+        # As the caller, like a chat turn: with ORRERY_IMPERSONATION on, a probe
+        # with no caller is refused (fail-closed) and would read as "Kubernetes
+        # unreachable". Never service_scope(): a viewer must not probe with the
+        # service account's reach. The tasks copy the context when created.
+        identity = identity_from_claims(auth.subject, auth.claims) if cfg.auth_enabled else None
+        scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
+        with scope:
+            model_check, probe_results = await asyncio.gather(
+                check_model_connectivity(), run_probes(probes)
+            )
         results = [model_check, *probe_results]
         logger.info(
             "Self-test run by %s: %d/%d checks passed",
