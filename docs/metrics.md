@@ -39,7 +39,7 @@ metrics_plugin.start_server()
 ```
 
 !!! note "`default_plugins()` does not auto-start the metrics server"
-    The `MetricsPlugin` is registered, but the `/metrics` HTTP server is only started by a host, so the ADK CLI and tests never bind a port. The HTTP front door (what the image and the Helm chart run), the persistent runner and the Google Chat bot (HTTP and Pub/Sub) start it at startup when `ENABLE_METRICS_SERVER=true`, on `METRICS_PORT` (default 9100); the chart, compose file, `Makefile` and `.env.example` set it. The Slack bot always starts it. A port that can't be bound is logged and the host keeps running. For a custom host, call `start_metrics_server_if_enabled()` (`orrery_core.observability.metrics`) or `start_server()` yourself.
+    The `MetricsPlugin` is registered, but the `/metrics` HTTP server is only started by a host, so the ADK CLI and tests never bind a port. The HTTP front door (what the image and the Helm chart run), the persistent runner and the Google Chat bot (HTTP and Pub/Sub) start it at startup when `ENABLE_METRICS_SERVER=true`, on `METRICS_PORT` (default 9100); the chart, compose file, `Makefile` and `.env.example` set it. The Slack bot always starts it. A port that can't be bound is logged and the host keeps running. Metrics are per process: with several workers or containers sharing one port, only the first binds and the scrape sees only its counters. For a custom host, call `start_metrics_server_if_enabled()` (`orrery_core.observability.metrics`) or `start_server()` yourself.
 
 ### Available metrics
 

@@ -264,10 +264,13 @@ jobs:
       # ships (mcp, a2a-sdk, pyjwt, ...), not just the base graph.
       - name: Generate Python SBOM (CycloneDX)
         run: |
-          mapfile -t extras < <(grep -m1 'uv sync --no-dev' Dockerfile \
+          # Join `\` continuations first, so a wrapped `uv sync` keeps all its
+          # extras; `server` must be among them or the parse went wrong.
+          mapfile -t extras < <(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' Dockerfile \
+            | grep -m1 'uv sync --no-dev' \
             | grep -oE -- '--extra [a-z0-9-]+' | tr ' ' '\n')
-          if [ "${#extras[@]}" -eq 0 ]; then
-            echo "::error::no --extra flags found in the Dockerfile's uv sync"
+          if [[ " ${extras[*]} " != *" server "* ]]; then
+            echo "::error::could not read the image's extras from the Dockerfile's uv sync"
             exit 1
           fi
           uv export --frozen --no-dev "${extras[@]}" --format requirements-txt \
