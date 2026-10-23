@@ -286,7 +286,14 @@ class TestAuthPlugin:
 def test_auth_context_as_state():
     ctx = AuthContext(subject="alice", role="admin", claims={"sub": "alice", "exp": 1})
     state = ctx.as_state()
-    assert state == {"subject": "alice", "role": "admin", "claims": {"sub": "alice", "exp": 1}}
+    assert state == {
+        "subject": "alice",
+        "role": "admin",
+        "claims": {"sub": "alice", "exp": 1},
+        "principal_kind": "human",
+        "client_id": None,
+        "acting_agent": None,
+    }
     # as_state returns a copy of the claims, not a reference
     state["claims"]["sub"] = "mallory"
     assert ctx.claims["sub"] == "alice"

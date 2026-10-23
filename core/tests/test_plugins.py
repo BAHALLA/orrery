@@ -326,6 +326,7 @@ def test_default_plugins_composition():
         "audit",
         "tool_ledger",
         "progress",
+        "autonomy",
         "guardrails",
         "resilience",
         "call_budget",
@@ -356,6 +357,7 @@ def test_default_plugins_with_memory():
         "audit",
         "tool_ledger",
         "progress",
+        "autonomy",
         "guardrails",
         "resilience",
         "call_budget",
@@ -375,24 +377,21 @@ def test_default_plugins_with_memory():
     assert isinstance(plugins[-1], ErrorHandlerPlugin)
 
 
-def test_default_plugins_autonomy_opt_in():
-    """AutonomyPlugin registers only when configured, and *ahead* of guardrails.
+def test_default_plugins_autonomy_always_ahead_of_guardrails():
+    """AutonomyPlugin is always registered, *ahead* of guardrails.
 
     Order matters because ADK's before-tool chain early-exits on the first
     non-None return: with autonomy last, an L2 deployment raised a confirmation
-    prompt for a mutation that L2 refuses the moment it is approved.
+    prompt for a mutation that L2 refuses the moment it is approved. With no
+    level configured it is inert, except for a level the server pins per
+    request (a service principal is read-only, ADR-006), so it is registered
+    either way.
     """
-    plugins = default_plugins(enable_tracing=False, autonomy_level="L2")
-    plugin_names = [p.name for p in plugins]
-    assert "autonomy" in plugin_names
-    assert plugin_names.index("autonomy") == plugin_names.index("guardrails") - 1
-    # audit still records attempts ahead of both gates
-    assert plugin_names.index("audit") < plugin_names.index("autonomy")
-
-    for off in ("off", "none", ""):
-        assert "autonomy" not in [
-            p.name for p in default_plugins(enable_tracing=False, autonomy_level=off)
-        ]
+    for level in ("L2", "off", "none", ""):
+        plugin_names = [p.name for p in default_plugins(enable_tracing=False, autonomy_level=level)]
+        assert plugin_names.index("autonomy") == plugin_names.index("guardrails") - 1
+        # audit still records attempts ahead of both gates
+        assert plugin_names.index("audit") < plugin_names.index("autonomy")
 
 
 def test_default_plugins_output_cap_disabled():

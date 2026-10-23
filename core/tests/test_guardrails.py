@@ -651,3 +651,94 @@ def test_hash_args_handles_diverse_types(args):
     h = _hash_args(args)
     assert isinstance(h, str)
     assert len(h) == 16
+
+
+# ── Out-of-band decisions (ADR-006) ─────────────────────────────────────
+
+
+def _alice_pending():
+    pending = _pending_confirmations.latest_for_scope("alice@example.com")
+    assert pending is not None
+    return pending
+
+
+def test_out_of_band_approval_lets_the_retry_through_once(fake_tool, fake_ctx):
+    """An agent's channel can't decide; the requester approves elsewhere, then the retry runs."""
+    from orrery_core.security.guardrails import decide_out_of_band
+
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    pending = _alice_pending()
+    decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")
+
+    ctx._invocation_context.invocation_id = "inv-2"  # the resumed turn, no in-turn decision
+    assert callback(tool=tool, args={"id": 1}, tool_context=ctx) is None
+    # One approval, one execution.
+    ctx._invocation_context.invocation_id = "inv-3"
+    assert callback(tool=tool, args={"id": 1}, tool_context=ctx)["status"] == (
+        "confirmation_required"
+    )
+
+
+def test_out_of_band_approval_is_pinned_to_the_arguments(fake_tool, fake_ctx):
+    from orrery_core.security.guardrails import decide_out_of_band
+
+    callback = require_confirmation()
+    ctx = _strict_ctx(fake_ctx)
+    tool = _danger(fake_tool)
+
+    callback(tool=tool, args={"id": 1}, tool_context=ctx)
+    pending = _alice_pending()
+    decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")
+
+    ctx._invocation_context.invocation_id = "inv-2"
+    result = callback(tool=tool, args={"id": 2}, tool_context=ctx)
+    assert result["status"] == "confirmation_required"
+
+
+def test_only_the_requester_approves_out_of_band_and_ids_reveal_nothing(fake_tool, fake_ctx):
+    from orrery_core.security.guardrails import OutOfBandDecisionError, decide_out_of_band
+
+    callback = require_confirmation()
+    callback(tool=_danger(fake_tool), args={}, tool_context=_strict_ctx(fake_ctx))
+    pending = _alice_pending()
+
+    with pytest.raises(OutOfBandDecisionError) as someone_else:
+        decide_out_of_band(pending.action_id, "approve", decider="mallory@example.com")
+    with pytest.raises(OutOfBandDecisionError) as unknown:
+        decide_out_of_band("does-not-exist", "approve", decider="mallory@example.com")
+    # Same answer for "not yours" and "doesn't exist".
+    assert someone_else.value.status == unknown.value.status == 404
+    still = _pending_confirmations.get(pending.action_id)
+    assert still is not None and not still.approved
+
+
+def test_anyone_may_deny_out_of_band(fake_tool, fake_ctx):
+    from orrery_core.security.guardrails import decide_out_of_band
+
+    callback = require_confirmation()
+    callback(tool=_danger(fake_tool), args={}, tool_context=_strict_ctx(fake_ctx))
+    pending = _alice_pending()
+
+    decide_out_of_band(pending.action_id, "deny", decider="oncall@example.com")
+
+    assert _pending_confirmations.get(pending.action_id) is None
+
+
+def test_an_expired_pending_cannot_be_approved_out_of_band(fake_tool, fake_ctx):
+    from orrery_core.security.guardrails import (
+        _CONFIRMATION_TTL,
+        OutOfBandDecisionError,
+        decide_out_of_band,
+    )
+
+    callback = require_confirmation()
+    callback(tool=_danger(fake_tool), args={}, tool_context=_strict_ctx(fake_ctx))
+    pending = _alice_pending()
+    pending.created_at -= _CONFIRMATION_TTL + 1
+
+    with pytest.raises(OutOfBandDecisionError):
+        decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")

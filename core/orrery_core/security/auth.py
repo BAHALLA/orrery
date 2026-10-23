@@ -76,9 +76,27 @@ class AuthContext:
     subject: str
     role: str
     claims: dict[str, Any] = field(default_factory=dict)
+    #: ``human`` | ``delegated`` | ``service`` (ADR-006). Set by the surface
+    #: that verified the token; a bare verification is a person, as before.
+    principal_kind: str = "human"
+    client_id: str | None = None
+    #: For a delegated principal, the agent acting for ``subject``.
+    acting_agent: str | None = None
+
+    @property
+    def can_decide(self) -> bool:
+        """Whether this caller's own message may approve or deny an action."""
+        return self.principal_kind == "human"
 
     def as_state(self) -> dict[str, Any]:
-        return {"subject": self.subject, "role": self.role, "claims": dict(self.claims)}
+        return {
+            "subject": self.subject,
+            "role": self.role,
+            "claims": dict(self.claims),
+            "principal_kind": self.principal_kind,
+            "client_id": self.client_id,
+            "acting_agent": self.acting_agent,
+        }
 
 
 # ── Role mapping ─────────────────────────────────────────────────────
@@ -484,4 +502,12 @@ class AuthPlugin(BasePlugin):
             return None
 
         set_user_role(state, role)
+        # A service principal has no human behind it, so nobody could approve
+        # its guarded actions: pin it read-only rather than queue approvals
+        # that cannot come (ADR-006 §4). Server-set, so AutonomyPlugin trusts it.
+        if auth.get("principal_kind") == "service":
+            # Imported here: plugins import security, not the other way round.
+            from ..plugins.autonomy_plugin import set_autonomy_level
+
+            set_autonomy_level(state, "L2")
         return None

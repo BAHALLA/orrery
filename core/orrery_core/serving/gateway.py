@@ -102,6 +102,10 @@ class InboundMessage:
     #: Files for this turn, already validated (:mod:`.attachments`). Shown to
     #: the model for this turn only; the session stores a placeholder each.
     attachments: Sequence[PreparedAttachment] = ()
+    #: Whether this caller's own words may approve or deny a guarded action.
+    #: ``False`` for anything but a verified person (ADR-006): an agent's
+    #: message is model output, so it is never recorded as a decision.
+    can_decide: bool = True
 
 
 @dataclass
@@ -380,6 +384,7 @@ class AgentGateway:
         streaming: bool = False,
         identity: CallerIdentity | None = None,
         attachments: Sequence[PreparedAttachment] = (),
+        can_decide: bool = True,
     ) -> OutboundReply:
         """Run one turn against an already-resolved session.
 
@@ -398,7 +403,9 @@ class AgentGateway:
         stored = message_text(text, attachments)
         message = types.Content(role="user", parts=[types.Part.from_text(text=stored)])
         # The typed text alone decides approve/deny: a placeholder is not a word.
-        delta = self._turn_state_delta(text=text, user_id=user_id, state_delta=state_delta)
+        delta = self._turn_state_delta(
+            text=text, user_id=user_id, state_delta=state_delta, can_decide=can_decide
+        )
         run_kwargs: dict[str, Any] = {}
         if streaming:
             run_kwargs["run_config"] = RunConfig(streaming_mode=StreamingMode.SSE)
@@ -427,7 +434,12 @@ class AgentGateway:
         return OutboundReply(text=reply, session_id=session_id)
 
     def _turn_state_delta(
-        self, *, text: str, user_id: str, state_delta: dict[str, Any] | None
+        self,
+        *,
+        text: str,
+        user_id: str,
+        state_delta: dict[str, Any] | None,
+        can_decide: bool = True,
     ) -> dict[str, Any]:
         """The per-turn state delta: caller-supplied context + identity stamps.
 
@@ -457,7 +469,9 @@ class AgentGateway:
             # turn's "approve" in state would let it authorize a later action the
             # human never saw (the gate consumes whichever pending matches, and a
             # pending raised *after* the approval would match just as well).
-            decision = classify_decision(text)
+            # Only a person decides. A machine's "approve" is text, not consent,
+            # so its turn clears the key like any other non-decision.
+            decision = classify_decision(text) if can_decide else None
             delta[CONFIRMATION_DECISION_STATE_KEY] = (
                 {"decision": decision, "by": user_id, "timestamp": time.time()}
                 if decision
@@ -511,6 +525,7 @@ class AgentGateway:
             streaming=streaming,
             identity=msg.identity,
             attachments=msg.attachments,
+            can_decide=msg.can_decide,
         )
 
     async def dispatch(self, adapter: ChannelAdapter, raw: Any) -> Any:

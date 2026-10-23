@@ -126,12 +126,15 @@ class AutonomyPlugin(BasePlugin):
     def __init__(
         self,
         *,
-        level: str = "L2",
+        level: str | None = "L2",
         l2_whitelist: list[str] | None = None,
         l3_blacklist: list[str] | None = None,
     ) -> None:
         super().__init__(name="autonomy")
-        self._level = self._normalise(level)
+        # ``None``: no process-wide level. The plugin is then inert except for a
+        # level the server pins per request (a service principal is pinned to
+        # L2 whatever the deployment runs at; ADR-006).
+        self._level = self._normalise(level) if level is not None else None
         # Explicit overrides on top of the decorator-based classification.
         self._l2_whitelist = set(l2_whitelist or [])
         self._l3_blacklist = set(l3_blacklist or [])
@@ -148,7 +151,7 @@ class AutonomyPlugin(BasePlugin):
     def _blocked_at_l3(self, tool: BaseTool) -> bool:
         return tool.name in self._l3_blacklist or is_destructive(tool)
 
-    def _active_level(self, tool_context: ToolContext) -> str:
+    def _active_level(self, tool_context: ToolContext) -> str | None:
         """The level in force for this call: a *server-set* override, else configured.
 
         An override present without :data:`AUTONOMY_LOCKED_STATE_KEY` did not come
@@ -181,6 +184,8 @@ class AutonomyPlugin(BasePlugin):
     ) -> dict[str, Any] | None:
         """Allow, block (deny result), or request confirmation per active level."""
         level = self._active_level(tool_context)
+        if level is None:
+            return None
         name = tool.name
 
         if level == "L2":

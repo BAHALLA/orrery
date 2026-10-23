@@ -169,6 +169,20 @@ class _ActivePendingStore:
     def latest_for_scope(self, scope: str) -> PendingConfirmation | None:
         return self._resolve().latest_for_scope(scope)
 
+    def get(self, action_id: str) -> PendingConfirmation | None:
+        return self._resolve().get(action_id)
+
+    def pop(self, action_id: str) -> PendingConfirmation | None:
+        return self._resolve().pop(action_id)
+
+    def mark_approved(self, action_id: str) -> PendingConfirmation | None:
+        return self._resolve().mark_approved(action_id)
+
+    def consume_approved(
+        self, scope: str, tool_name: str, args_hash: str
+    ) -> PendingConfirmation | None:
+        return self._resolve().consume_approved(scope, tool_name, args_hash)
+
     def reset(self) -> None:
         """Drop all pendings (used by tests for isolation)."""
         if self._backend is not None:
@@ -203,6 +217,78 @@ def latest_pending_for_scope(scope: str) -> PendingConfirmation | None:
     authority on who may approve.
     """
     return _pending_confirmations.latest_for_scope(scope)
+
+
+class OutOfBandDecisionError(Exception):
+    """An out-of-band decision the gate will not take; ``status`` is the HTTP code."""
+
+    def __init__(self, status: int, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.reason = reason
+
+
+def decide_out_of_band(action_id: str, decision: str, *, decider: str) -> PendingConfirmation:
+    """Record a human's decision on a pending action outside the chat turn (ADR-006).
+
+    For actions raised over a channel whose own messages cannot decide (an
+    agent acting for the user over A2A), and for a console's Approve button.
+    Same rules as every other transport: approve only by the requester, deny by
+    anyone. An approval marks the pending approved; the gate consumes it when the
+    tool is retried with the same arguments, within the approval window. A deny
+    removes it.
+
+    The caller must already have established that *decider* is a verified
+    person; this function enforces who that person may decide for.
+    """
+    if decision not in ("approve", "deny"):
+        raise OutOfBandDecisionError(422, "invalid_decision", "decision must be approve or deny")
+    pending = _pending_confirmations.get(action_id)
+    expired = pending is not None and time.time() - pending.created_at >= _CONFIRMATION_TTL
+    if pending is None or expired:
+        # One answer for "never existed", "expired" and "someone else's": an id
+        # must not reveal whether another user has a pending action.
+        raise OutOfBandDecisionError(404, "no_pending", "No such pending action")
+    if decision == "approve" and pending.requester != decider:
+        audit_event(
+            "confirmation_refused",
+            confirmation_id=pending.action_id,
+            tool=pending.tool_name,
+            requester=pending.requester,
+            attempted_by=decider,
+            reason="not_requester",
+            mode="out_of_band",
+        )
+        track_confirmation_refused(tool=pending.tool_name, reason="not_requester")
+        raise OutOfBandDecisionError(404, "no_pending", "No such pending action")
+    if decision == "deny":
+        removed = _pending_confirmations.pop(action_id) or pending
+        audit_event(
+            "confirmation_decided",
+            confirmation_id=removed.action_id,
+            tool=removed.tool_name,
+            decision="deny",
+            decided_by=decider,
+            mode="out_of_band",
+        )
+        track_confirmation_decided(
+            tool=removed.tool_name,
+            decision="deny",
+            latency_s=max(0.0, time.time() - removed.created_at),
+        )
+        return removed
+    marked = _pending_confirmations.mark_approved(action_id)
+    if marked is None:
+        raise OutOfBandDecisionError(404, "no_pending", "No such pending action")
+    # The decision is recorded as "decided" when the gate consumes it, so the
+    # trail shows the approval landing on an execution, not just a click.
+    audit_event(
+        "confirmation_approved_out_of_band",
+        confirmation_id=marked.action_id,
+        tool=marked.tool_name,
+        decided_by=decider,
+    )
+    return marked
 
 
 # ── Tool classification markers ────────────────────────────────────────
@@ -505,6 +591,33 @@ def _handle_strict(
                 f"Do not retry it unless the user asks again."
             ),
         }
+
+    # No decision this turn: the requester may have approved out of band
+    # (POST /confirmations/{id}/decision, ADR-006), which marks the pending
+    # approved in the shared store. Only that endpoint, checked against this
+    # same requester, can set the mark for a strict-mode scope, so this is a
+    # second place for the same human to decide, not a new way to approve.
+    # The exact args hash and the approval window still apply.
+    if not is_decision:
+        approved = _pending_confirmations.consume_approved(requester, tool.name, args_hash)
+        if approved is not None:
+            tool_context.state[CONFIRMATION_DECISION_STATE_KEY] = None
+            approved_at = approved.approved_at or time.time()
+            audit_event(
+                "confirmation_decided",
+                confirmation_id=approved.action_id,
+                tool=tool.name,
+                decision="approve",
+                decided_by=requester,
+                mode="out_of_band",
+                latency_ms=int(max(0.0, approved_at - approved.created_at) * 1000),
+            )
+            track_confirmation_decided(
+                tool=tool.name,
+                decision="approve",
+                latency_s=max(0.0, approved_at - approved.created_at),
+            )
+            return None
 
     # A decision was offered and the gate would not take it. Record why —
     # these are the entries that did not exist before AEP-024. No decision at
