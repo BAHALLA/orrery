@@ -48,6 +48,14 @@ def _tool_entry(tool: Any) -> ToolEntry:
     return ToolEntry(name=name, guard=guard, reason=get_guard_reason(tool) if level else "")
 
 
+def specialist_entries(root: Any) -> list[AgentEntry]:
+    """The entries that are specialists: registered by an entry point, a
+    declarative file or an MCP config. The coordinator's own helpers (the
+    triage sweep agent) are AgentTools too, but not systems a user asks about.
+    """
+    return [entry for entry in agent_inventory(root) if source_of(entry.name)]
+
+
 def agent_inventory(root: Any) -> list[AgentEntry]:
     """One entry per agent the root can delegate to. Empty for a graph root."""
     entries: list[AgentEntry] = []

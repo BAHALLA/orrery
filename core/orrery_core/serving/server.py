@@ -81,7 +81,7 @@ from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
-from .inventory import agent_inventory
+from .inventory import agent_inventory, specialist_entries
 from .onboarding import (
     IntegrationProbe,
     check_model_connectivity,
@@ -397,8 +397,9 @@ class MeResponse(BaseModel):
     #: What a chat turn may attach, or ``null`` when attachments are off.
     attachments: AttachmentsInfo | None = None
     #: The specialists the coordinator reaches right now (after
-    #: ``ORRERY_SPECIALISTS`` and catalog edits), or ``null`` for a root that
-    #: delegates to none (a graph workflow). Display only: it decides nothing.
+    #: ``ORRERY_SPECIALISTS`` and catalog edits); empty for a root that
+    #: delegates to none. ``null`` only from servers older than this field,
+    #: which the console reads as "the stock set". Display only.
     specialists: list[SpecialistInfo] | None = None
 
 
@@ -1037,13 +1038,12 @@ def create_app(
         are unavailable — rather than discovering it when a tool is refused.
         """
         # Read per request: an admin catalog edit swaps the root agent.
-        reachable = agent_inventory(gateway.root_agent)
+        reachable = specialist_entries(gateway.root_agent)
         return MeResponse(
             specialists=[
                 SpecialistInfo(key=key_of(entry.name) or entry.name, name=entry.name)
                 for entry in reachable
-            ]
-            or None,
+            ],
             subject=auth.subject,
             role=auth.role,
             autonomy_level=_resolve_autonomy_level(None),

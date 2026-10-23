@@ -306,7 +306,9 @@ export function useChat(token: string | null, conv: ConversationsController): Ch
         // never fired the refresh above.
         await refreshOnce(res.session_id);
       } catch (err) {
-        deltas.cancel();
+        // Keep what streamed: in a background tab no frame ever flushed it,
+        // and a dropped connection would otherwise lose the whole answer.
+        deltas.flush();
         settleUnfinished();
         // Tools may have run before the failure; show what was recorded.
         if (streamSession) void refreshOnce(streamSession);

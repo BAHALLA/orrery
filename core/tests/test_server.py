@@ -872,8 +872,15 @@ def test_me_lists_the_specialists_the_coordinator_reaches(patched_runner, monkey
 
     kafka = Agent(name="kafka_health_agent", description="Kafka")
     billing = Agent(name="billing_agent", description="Billing")
-    root = Agent(name="root", tools=[AgentTool(agent=kafka), AgentTool(agent=billing)])
+    sweep = Agent(name="incident_triage_agent", description="Full sweep")
+    root = Agent(
+        name="root",
+        tools=[AgentTool(agent=kafka), AgentTool(agent=billing), AgentTool(agent=sweep)],
+    )
     monkeypatch.setitem(registry._KEYS, "kafka_health_agent", "kafka")
+    monkeypatch.setitem(registry._SOURCES, "kafka_health_agent", "builtin")
+    monkeypatch.setitem(registry._SOURCES, "billing_agent", "declarative")
+    # The sweep agent has no recorded source: it is not a specialist.
     app = create_app(
         root_agent=root,
         app_name="test",
@@ -892,7 +899,8 @@ def test_me_lists_the_specialists_the_coordinator_reaches(patched_runner, monkey
 
 
 def test_me_lists_no_specialists_for_a_root_without_any(app_with_auth):
-    assert TestClient(app_with_auth).get("/me", headers=_bearer()).json()["specialists"] is None
+    # Empty, not null: null reads as "an older server" and shows the stock set.
+    assert TestClient(app_with_auth).get("/me", headers=_bearer()).json()["specialists"] == []
 
 
 def test_selftest_reports_each_integration(patched_runner):
