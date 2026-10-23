@@ -180,8 +180,9 @@ def sweepable(specialists: Sequence[Specialist]) -> list[Specialist]:
 
     Each declares its own part (``SpecialistSpec.health_check``), so a sweep
     covers exactly the enabled specialists that have one: switching one off
-    (env or admin catalog) keeps its tools out of every sweep, and a
-    third-party specialist joins sweeps by declaring a check, with no edit here.
+    (env, or the admin catalog on the HTTP server) keeps its tools out of
+    every sweep, and a third-party specialist joins sweeps by declaring a
+    check, with no edit here.
     """
     return [s for s in specialists if s.health_check is not None]
 

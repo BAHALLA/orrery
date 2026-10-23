@@ -499,7 +499,9 @@ def discover_specialists(
 
 
 # Distributions that ship in this repository. Anything else registering a
-# specialist is a third-party plugin, which the admin view calls out.
+# specialist is a third-party plugin, which the admin view calls out. Kept
+# explicit (it is a trust decision); test_registry checks it lists every
+# workspace package with an ``orrery.specialists`` entry point.
 _WORKSPACE_DISTRIBUTIONS = frozenset(
     {
         "docker-agent",

@@ -265,6 +265,7 @@ turn and never stored ([AEP-030](../enhancements/aep-030-chat-attachments.md)).
 | `ORRERY_ATTACHMENT_MAX_TEXT_CHARS` | `200000` | Characters of a text file the model sees; the middle is cut beyond this. |
 | `ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES` | `2` | Image decodes at once, per process (bounds peak memory). |
 | `ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS` | `4` | Multipart bodies held in memory at once, per process. Past it a request waits, then gets `503` with `Retry-After`. |
+| `ORRERY_ATTACHMENT_MAX_UPLOADS_PER_USER` | `1` | Multipart bodies one caller may have in flight. Past it the request gets `429` with `Retry-After`, before it takes a process-wide slot. |
 | `ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS` | `60` | Deadline for receiving a request body (`408` after). |
 
 A proxy in front must not spool bodies to disk: nginx `proxy_request_buffering off`, or on

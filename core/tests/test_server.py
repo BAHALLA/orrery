@@ -639,6 +639,7 @@ def test_pending_returns_own_action_only(app_with_auth, pending_store):
             scope_key="alice",
             level="destructive",
             args={"name": "payment-api", "namespace": "prod"},
+            session_id="conv-1",
         )
     )
     pending_store.add(
@@ -658,6 +659,21 @@ def test_pending_returns_own_action_only(app_with_auth, pending_store):
     assert pending["tool_name"] == "restart_deployment"
     assert pending["level"] == "destructive"
     assert pending["args"] == {"name": "payment-api", "namespace": "prod"}
+    # The conversation that raised it, so the console shows it only there.
+    assert pending["session_id"] == "conv-1"
+
+
+def test_pending_without_session_reports_null(app_with_auth, pending_store):
+    from orrery_core.security.confirmation_store import PendingConfirmation
+
+    pending_store.add(
+        PendingConfirmation(
+            action_id="a1", tool_name="scale_deployment", requester="alice", scope_key="alice"
+        )
+    )
+    client = TestClient(app_with_auth)
+    r = client.get("/confirmations/pending", headers={"Authorization": f"Bearer {_alice_token()}"})
+    assert r.json()["pending"]["session_id"] is None
 
 
 # ── GET /session/{id}/triage (AEP-019 Milestone 2) ──────────────────
@@ -960,6 +976,28 @@ def test_selftest_survives_a_probe_that_raises(patched_runner):
     k8s = next(c for c in r.json()["checks"] if c["name"] == "k8s")
     assert k8s["ok"] is False
     assert "no kubeconfig found" in k8s["detail"]
+
+
+def test_selftest_probes_run_as_the_caller(patched_runner):
+    """With impersonation on, a probe with no caller is refused and reads as 'down'."""
+    from orrery_core.security.identity import current_caller
+    from orrery_core.serving.onboarding import IntegrationProbe
+
+    seen = []
+
+    async def who():
+        seen.append(current_caller())
+        return {"status": "success"}
+
+    app = _probe_app(patched_runner, [IntegrationProbe("k8s", "Kubernetes", "-", who)])
+    with patch(
+        "orrery_core.serving.server.check_model_connectivity",
+        new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
+    ):
+        TestClient(app).post("/onboarding/selftest", headers=_bearer())
+
+    assert seen and seen[0] is not None
+    assert seen[0].username == "alice"
 
 
 def test_selftest_requires_auth(patched_runner):
