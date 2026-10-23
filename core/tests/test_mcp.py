@@ -297,7 +297,13 @@ def _tool(name: str, description: str, schema: dict | None = None, annotations: 
     raw = SimpleNamespace(
         inputSchema=schema or {"type": "object"}, outputSchema=None, annotations=annotations
     )
-    return SimpleNamespace(name=name, description=description, raw_mcp_tool=raw)
+
+    async def run_async(*, args: dict[str, Any], tool_context: Any) -> Any:
+        return {"ok": True}
+
+    return SimpleNamespace(
+        name=name, description=description, raw_mcp_tool=raw, run_async=run_async
+    )
 
 
 @pytest.fixture

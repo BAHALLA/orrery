@@ -68,6 +68,11 @@ servers:
 | `read_only` / `destructive` | Your reviewed classification. Always wins. |
 | `trust_annotations` | Default `false`. See below. |
 | `timeout_seconds` | Connection timeout, default 10. |
+| `call_timeout_seconds` | Deadline for one tool call, default 60 (max 600). See below. |
+| `tool_list_cache_seconds` | How long a tool listing is reused before the server is asked again, default 300; `0` asks every turn. |
+| `allow_private_network` | Default `false`. Lets an HTTP server resolve to a private, link-local or loopback address. See below. |
+| `ca_file` / `client_cert_file` / `client_key_file` | TLS for HTTP transports: a private CA bundle, and a client certificate for mTLS (a key needs its certificate). Read at startup; a missing file fails it. |
+| `pinned` | `tool: sha256` fingerprints you reviewed. A pinned tool whose text differs is withheld from the first call. |
 | `instruction` | Extra guidance appended to the specialist's prompt. |
 
 ## How tools are classified
@@ -115,8 +120,43 @@ also:
   to lower the guard), the tool is withheld until Orrery restarts. A restart
   pins whatever the server then serves, so review the change on the server
   first.
+- **pinned by you**, optionally: first sight logs each tool's fingerprint
+  (`MCP tool github_list_issues first seen, fingerprint …`). Copy the ones you
+  reviewed under `pinned:` and the tool is checked against *that* value, in
+  every process, from its first listing, so a server that changed between
+  your review and a restart is caught too.
 
 Each withheld tool is logged once and audited as `mcp_tool_withheld`.
+
+## Where the client connects
+
+An HTTP server is a URL called with credentials, from inside your network. The
+client is held to what you configured:
+
+- **one origin**: requests go only to the configured scheme, host and port.
+  The SSE transport takes its POST endpoint from the server, and the SDK
+  follows redirects; anything pointing elsewhere is refused, and redirects are
+  not followed at all.
+- **public addresses**: every request checks what the host resolves to, and
+  refuses a private, link-local (`169.254.169.254`, the cloud metadata
+  endpoint), loopback or otherwise non-public address. A server on your own
+  network needs `allow_private_network: true`; a private IP written in the URL
+  fails startup without it. A loopback URL (local development) may reach
+  loopback, and nothing else private.
+
+!!! note "Residual: DNS rebinding"
+    The check resolves the name, then the connection resolves it again, so a
+    DNS server answering differently in between is not caught. Where that
+    matters, configure the server by IP address (with `ca_file` if its
+    certificate names the IP): a literal is checked exactly.
+
+## Calls have a deadline
+
+A tool call that hasn't answered within `call_timeout_seconds` is abandoned and
+the model gets `{"status": "error", "error_type": "timeout"}`, telling it the
+call may still complete on the server, so it checks before retrying a
+mutation. The circuit breaker counts it as a failure, as it does a result the
+server flagged `isError`.
 
 ## What else applies
 
