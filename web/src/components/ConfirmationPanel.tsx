@@ -1,8 +1,12 @@
+import type { Ref } from "react";
 import type { PendingConfirmation } from "../api/types";
 import { AlertIcon, CheckIcon, CloseIcon, ShieldIcon } from "./icons";
 import { toneBorder, tonePill } from "./severity";
 
 interface Props {
+  /** The card itself, so the transcript's "awaiting approval" chips can bring
+   * it into view and focus it. */
+  panelRef?: Ref<HTMLElement>;
   pending: PendingConfirmation;
   disabled: boolean;
   onDecide: (word: "approve" | "deny") => void;
@@ -39,7 +43,7 @@ function ago(createdAt: number): string {
  * The moment this component started deciding *who* may approve, the
  * guarantee would be bypassed — so it never does.
  */
-export function ConfirmationPanel({ pending, disabled, onDecide }: Props) {
+export function ConfirmationPanel({ panelRef, pending, disabled, onDecide }: Props) {
   const argEntries = Object.entries(pending.args);
   const level = LEVELS[pending.level] ?? LEVELS.confirm;
   const Icon = pending.level === "destructive" ? AlertIcon : ShieldIcon;
@@ -47,6 +51,8 @@ export function ConfirmationPanel({ pending, disabled, onDecide }: Props) {
   return (
     <div className="px-3 sm:px-6">
       <section
+        ref={panelRef}
+        tabIndex={-1}
         role="alertdialog"
         aria-label="Pending confirmation"
         aria-describedby="confirmation-explain"

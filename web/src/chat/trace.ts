@@ -7,7 +7,13 @@ export interface TraceCall {
   tool: string;
   delegation: boolean;
   guarded: boolean;
-  state: "running" | "ok" | "error" | "refused";
+  /**
+   * `awaiting`: a gate paused the call for the caller's approval (it may still
+   * run). `refused`: a gate said no — autonomy level, role, a run budget, an
+   * open circuit — and the tool never ran. The server reports both as outcome
+   * `refused`; the step's `status` tells them apart (see {@link stateOf}).
+   */
+  state: "running" | "ok" | "error" | "awaiting" | "refused";
   status: string;
   elapsedMs: number | null;
   /** Calls made *inside* this delegation, in start order. */
@@ -63,6 +69,51 @@ function insertUnder(calls: TraceCall[], parentId: string, child: TraceCall): Tr
   );
 }
 
+/** Gate answers that mean "paused for your approval", not "no". Mirrors
+ * `STATUS_AWAITING_CONFIRMATION` (autonomy plugin) and `confirmation_required`
+ * (guardrails) server-side. */
+const AWAITING_STATUSES = new Set(["AWAITING_CONFIRMATION", "confirmation_required"]);
+
+/** The finished state of a call, from its `end` step. */
+export function stateOf(step: ProgressEvent): TraceCall["state"] {
+  const outcome = step.outcome ?? "ok";
+  if (outcome === "refused" && AWAITING_STATUSES.has(step.status)) return "awaiting";
+  return outcome;
+}
+
+/**
+ * Why a gate refused a call, in words an operator can act on.
+ *
+ * The statuses are the gates' own (`_NEUTRAL_STATUSES` in
+ * core/orrery_core/reliability/resilience.py). An open circuit arrives as a
+ * plain `error` status with outcome `refused`, because the breaker's
+ * `error_type` is not forwarded. A refusal is the platform doing its job — at
+ * autonomy L2 it is the expected answer to any write — so the wording explains
+ * rather than alarms.
+ */
+export function refusalReason(status: string): string {
+  switch (status) {
+    case "BLOCKED":
+      return "not allowed at this autonomy level";
+    case "access_denied":
+    case "denied":
+      return "your role can't run this";
+    case "CALL_BUDGET_EXHAUSTED":
+      return "this run's call budget is spent";
+    case "DELEGATION_BUDGET_EXHAUSTED":
+      return "this specialist was asked too many times";
+    case "REPEATED_FAILURE":
+      return "same failure repeated, not retried";
+    case "error":
+    case "circuit_open":
+    case "CircuitOpen":
+    case "CircuitHalfOpen":
+      return "circuit open, backing off";
+    default:
+      return status ? status.replace(/_/g, " ").toLowerCase() : "refused by a guard";
+  }
+}
+
 /**
  * Fold one progress step into the trace. Pure — returns a new trace.
  *
@@ -79,7 +130,7 @@ export function applyProgress(trace: Trace, step: ProgressEvent): Trace {
   }
   const finish = (c: TraceCall): TraceCall => ({
     ...c,
-    state: step.outcome ?? "ok",
+    state: stateOf(step),
     status: step.status,
     elapsedMs: step.elapsed_ms,
   });
@@ -127,7 +178,10 @@ export function summarize(trace: Trace): string {
     parts.push([...new Set(delegations.map((d) => agentLabel(d.tool)))].join(", "));
   }
   parts.push(`${tools.length} tool call${tools.length === 1 ? "" : "s"}`);
-  const refused = flatten(trace).filter((c) => c.state === "refused").length;
-  if (refused) parts.push(`${refused} awaiting approval or refused`);
+  const all = flatten(trace);
+  const awaiting = all.filter((c) => c.state === "awaiting").length;
+  const refused = all.filter((c) => c.state === "refused").length;
+  if (awaiting) parts.push(`${awaiting} awaiting approval`);
+  if (refused) parts.push(`${refused} refused`);
   return parts.join(" · ");
 }

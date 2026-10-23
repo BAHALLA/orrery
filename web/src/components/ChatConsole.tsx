@@ -4,6 +4,7 @@ import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
 import { AgentsDashboard } from "./AgentsDashboard";
+import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
@@ -116,6 +117,15 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const onDelete = useCallback((id: string) => void deleteConversation(id), [deleteConversation]);
   const onSuggest = useCallback((prompt: string) => void send(prompt), [send]);
   const onSweep = useCallback(() => void runTriage(), [runTriage]);
+
+  // The Approve/Deny card, for the transcript's "awaiting approval" chips.
+  const approvalRef = useRef<HTMLElement>(null);
+  const showApproval = useCallback(() => {
+    const panel = approvalRef.current;
+    if (!panel) return;
+    panel.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    panel.focus({ preventScroll: true });
+  }, []);
 
   // The reply being written, if any — drives the live status in the header.
   // A streaming reply is always the newest message: nothing is appended after it.
@@ -230,15 +240,18 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         {view === "chat" ? (
           <div className="relative flex min-h-0 flex-1">
             <section className="flex min-w-0 flex-1 flex-col">
-              <MessageList
-                messages={chat.messages}
-                isSending={chat.isSending}
-                onSuggest={onSuggest}
-                onSweep={onSweep}
-              />
+              <ShowApprovalContext.Provider value={chat.pending ? showApproval : null}>
+                <MessageList
+                  messages={chat.messages}
+                  isSending={chat.isSending}
+                  onSuggest={onSuggest}
+                  onSweep={onSweep}
+                />
+              </ShowApprovalContext.Provider>
 
               {chat.pending ? (
                 <ConfirmationPanel
+                  panelRef={approvalRef}
                   pending={chat.pending}
                   disabled={chat.isSending}
                   onDecide={(word) => void chat.decide(word)}

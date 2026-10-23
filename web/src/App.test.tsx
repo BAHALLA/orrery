@@ -18,6 +18,32 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+function sseFrame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function progressStep(over: Record<string, unknown>) {
+  return {
+    call_id: "c",
+    phase: "start",
+    agent: "orrery_chat_agent",
+    tool: "t",
+    delegation: false,
+    guarded: false,
+    outcome: null,
+    status: "",
+    elapsed_ms: null,
+    ...over,
+  };
+}
+
+function sseResponse(frames: string[]): Response {
+  return new Response(frames.join(""), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -156,6 +182,58 @@ describe("App auth flow", () => {
     // No polling while the turn ran: the side panes are read once, on `done`.
     const activityCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes("/activity"));
     expect(activityCalls).toHaveLength(1);
+  });
+
+  it("tells a call awaiting approval apart from one a gate refused", async () => {
+    const end = (call_id: string, tool: string, status: string) =>
+      sseFrame(
+        "progress",
+        progressStep({ call_id, phase: "end", tool, guarded: true, outcome: "refused", status }),
+      );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: RequestInfo | URL) => {
+        const u = String(url);
+        if (u.endsWith("/chat/stream")) {
+          return sseResponse([
+            sseFrame("session", { session_id: "s8" }),
+            end("a", "restart_container", "confirmation_required"),
+            end("b", "delete_topic", "BLOCKED"),
+            sseFrame("message", { session_id: "s8", text: "One needs you, one is off-limits." }),
+            sseFrame("done", {}),
+          ]);
+        }
+        if (u.includes("/confirmations/pending")) {
+          return jsonResponse({
+            pending: {
+              tool_name: "restart_container",
+              level: "confirm",
+              args: { name: "orders-worker" },
+              created_at: 1,
+            },
+          });
+        }
+        if (u.includes("/activity")) return jsonResponse({ session_id: "s8", entries: [] });
+        if (u.includes("/triage"))
+          return jsonResponse({ session_id: "s8", severity: null, report: null });
+        return jsonResponse({ sessions: [] });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "bob", roles: ["operator"] }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByRole("textbox", { name: /message/i }), "fix orders");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    const summary = await screen.findByText("2 tool calls · 1 awaiting approval · 1 refused");
+    await user.click(summary);
+    // The refusal says why, as policy rather than failure.
+    expect(screen.getByText(/not allowed at this autonomy level/)).toBeInTheDocument();
+    // The awaiting chip leads to the card that decides it.
+    const panel = await screen.findByRole("alertdialog", { name: /pending confirmation/i });
+    await user.click(screen.getByRole("button", { name: /restart_container.*review it/i }));
+    expect(panel).toHaveFocus();
   });
 
   it("restores history from the server in a browser that has never seen it", async () => {
