@@ -78,6 +78,14 @@ Each surface verifies tokens issued for it: the console keeps `JWT_AUDIENCE`;
 A2A requires `ORRERY_A2A_JWT_AUDIENCE` and refuses to start without it. A token
 for one surface is rejected by the other.
 
+### 5b. Conversations are per principal
+
+Sessions are stored under the user's subject, which a delegated agent shares.
+On every surface a non-human principal sees and continues only the sessions
+minted for it (`a2a-*` on A2A, `m-<principal digest>-*` on the console), and
+its turns neither feed nor read the user's long-term memory. A person sees
+everything stored under their subject.
+
 ### 6. Attribution
 
 Audit entries and metrics gain `principal_kind`, `client_id`, `on_behalf_of`

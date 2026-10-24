@@ -41,6 +41,8 @@ from prometheus_client import (
     start_http_server,
 )
 
+from ..env import env_flag
+
 logger = logging.getLogger("orrery.metrics")
 
 # ── Metric definitions ────────────────────────────────────────────────
@@ -368,7 +370,7 @@ def start_metrics_server_if_enabled() -> bool:
     Returns:
         ``True`` if the server is running after the call.
     """
-    if os.getenv("ENABLE_METRICS_SERVER", "").strip().lower() not in ("1", "true", "yes"):
+    if not env_flag("ENABLE_METRICS_SERVER", default=False):
         return False
     try:
         MetricsCollector.start_server()

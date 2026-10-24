@@ -33,6 +33,10 @@ the `a2a` extra, so in a container you only set the environment variables.
 | `ORRERY_A2A_APPROVAL_BASE_URL` | origin of the public URL | Where a person approves: `{base}/confirmations/{id}/decision`. |
 | `ORRERY_A2A_RATE_LIMIT` | `30/minute` | Per calling subject. Shares `ORRERY_RATE_LIMIT_STORAGE_URI`. |
 | `ORRERY_A2A_MAX_TASKS_IN_FLIGHT` | `2` | Turns one caller may have running at once; more are rejected. |
+| `ORRERY_A2A_MAX_MESSAGE_CHARS` | `8192` | Characters one message may carry (the console's bound); a longer one is rejected. |
+| `ORRERY_A2A_MAX_BODY_BYTES` | `131072` | Bytes one request body may carry, checked on the stream before the SDK parses it; more is a `413`. |
+| `ORRERY_A2A_MAX_TASKS` | `10000` | Tasks kept in memory; past it the least recently touched are dropped. |
+| `ORRERY_A2A_TASK_IDLE_TTL_SECONDS` | `3600` | Integer. A task untouched this long is dropped; its client then gets `TaskNotFound`, as after a restart. |
 
 Startup fails when A2A is on and auth is off, when the audience is missing,
 when a URL is plain http outside loopback, or when `ORRERY_MULTI_REPLICA` is

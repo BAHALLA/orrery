@@ -16,8 +16,8 @@ from sqlalchemy.exc import OperationalError
 
 from orrery_core.security.confirmation_store import (
     _APPROVAL_VALIDITY,
-    _CONFIRMATION_TTL,
     CONFIRMATION_BACKEND_ENV,
+    CONFIRMATION_TTL_SECONDS,
     ConfirmationStore,
     PendingConfirmation,
     PostgresConfirmationStore,
@@ -103,7 +103,7 @@ def test_memory_add_replaces_same_scope_and_tool():
 
 def test_memory_expired_pending_is_pruned():
     store = ConfirmationStore()
-    store.add(_pending(created_at=time.time() - _CONFIRMATION_TTL - 1))
+    store.add(_pending(created_at=time.time() - CONFIRMATION_TTL_SECONDS - 1))
     assert store.latest_for_scope("threads/T1") is None
 
 
@@ -239,7 +239,7 @@ def test_pg_add_replaces_same_scope_and_tool(pg_store):
 
 
 def test_pg_expired_pending_ignored(pg_store):
-    pg_store.add(_pending(created_at=time.time() - _CONFIRMATION_TTL - 1))
+    pg_store.add(_pending(created_at=time.time() - CONFIRMATION_TTL_SECONDS - 1))
     assert pg_store.latest_for_scope("threads/T1") is None
 
 

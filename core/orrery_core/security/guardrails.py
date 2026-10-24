@@ -44,12 +44,11 @@ from ..observability.metrics import (
 from .confirmation_flow import LEVEL_CONFIRM as LEVEL_CONFIRM
 from .confirmation_flow import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
 from .confirmation_flow import current_conversation_session, hash_args, raise_pending
+from .confirmation_store import CONFIRMATION_TTL_SECONDS as CONFIRMATION_TTL_SECONDS
 from .confirmation_store import AnyConfirmationStore as AnyConfirmationStore
 from .confirmation_store import ConfirmationStore as ConfirmationStore
 from .confirmation_store import PendingConfirmation as PendingConfirmation
 from .confirmation_store import create_confirmation_store as create_confirmation_store
-
-_CONFIRMATION_TTL = 300  # 5 minutes
 
 # ── Identity / decision state keys ─────────────────────────────────────
 
@@ -244,7 +243,7 @@ def decide_out_of_band(action_id: str, decision: str, *, decider: str) -> Pendin
     if decision not in ("approve", "deny"):
         raise OutOfBandDecisionError(422, "invalid_decision", "decision must be approve or deny")
     pending = _pending_confirmations.get(action_id)
-    expired = pending is not None and time.time() - pending.created_at >= _CONFIRMATION_TTL
+    expired = pending is not None and time.time() - pending.created_at >= CONFIRMATION_TTL_SECONDS
     if pending is None or expired:
         # One answer for "never existed", "expired" and "someone else's": an id
         # must not reveal whether another user has a pending action.
@@ -433,7 +432,7 @@ def require_confirmation() -> Callable:
     - Unmarked tools execute immediately.
 
     The confirmation state tracks the exact arguments and expires after
-    ``_CONFIRMATION_TTL`` seconds.  A retry with different arguments or
+    ``CONFIRMATION_TTL_SECONDS`` seconds.  A retry with different arguments or
     an expired confirmation will re-prompt.
 
     ``create_agent()`` wires this automatically onto any agent with a guarded
@@ -482,7 +481,7 @@ def require_confirmation() -> Callable:
         pending = tool_context.state.get(pending_key)
         if isinstance(pending, dict):
             same_args = pending.get("args_hash") == args_hash
-            not_expired = (time.time() - pending.get("timestamp", 0)) < _CONFIRMATION_TTL
+            not_expired = (time.time() - pending.get("timestamp", 0)) < CONFIRMATION_TTL_SECONDS
             different_invocation = pending.get("invocation_id") != invocation_id
             if same_args and not_expired and different_invocation:
                 tool_context.state[pending_key] = None  # consume confirmation
@@ -538,7 +537,7 @@ def _handle_strict(
     decision = tool_context.state.get(CONFIRMATION_DECISION_STATE_KEY)
     decision = decision if isinstance(decision, dict) else {}
     decided_at = decision.get("timestamp", 0)
-    decision_fresh = (time.time() - decided_at) < _CONFIRMATION_TTL
+    decision_fresh = (time.time() - decided_at) < CONFIRMATION_TTL_SECONDS
     # Belt-and-braces on top of the requester-scoped lookup below: a decision may
     # only ever act for the person who spoke it.
     decision_is_requester = str(decision.get("by") or "") == requester

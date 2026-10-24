@@ -24,7 +24,7 @@ from orrery_core.observability.metrics import (
     CONFIRMATIONS_REFUSED_TOTAL,
 )
 from orrery_core.security.confirmation_flow import approval_refusal, raise_pending
-from orrery_core.security.confirmation_store import _CONFIRMATION_TTL, ConfirmationStore
+from orrery_core.security.confirmation_store import CONFIRMATION_TTL_SECONDS, ConfirmationStore
 
 
 @pytest.fixture
@@ -164,7 +164,7 @@ class TestExpired:
 
         # Age the pending past the TTL.
         for pending in store._pending.values():
-            pending.created_at = time.time() - _CONFIRMATION_TTL - 1
+            pending.created_at = time.time() - CONFIRMATION_TTL_SECONDS - 1
 
         assert store.purge_expired() == 1
         record = events("confirmation_expired")[0]

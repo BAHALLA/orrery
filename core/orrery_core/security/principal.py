@@ -22,6 +22,8 @@ header, message metadata or session state.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -39,6 +41,11 @@ HUMAN_CLIENTS_ENV = "ORRERY_HUMAN_CLIENTS"
 SERVICE_CLIENTS_ENV = "ORRERY_SERVICE_CLIENTS"
 
 _ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
+
+#: Session-id prefix of a console conversation held by a non-human principal.
+MACHINE_SESSION_PREFIX = "m-"
+#: Session-id prefix of an A2A conversation (``a2a_server.session_id_for``).
+A2A_SESSION_PREFIX = "a2a-"
 
 
 class PrincipalKind(StrEnum):
@@ -171,6 +178,44 @@ def as_principal(
         client_id=principal.client_id,
         acting_agent=principal.acting_agent,
     )
+
+
+def principal_key(auth: AuthContext) -> str:
+    """Who owns a machine caller's conversations: the whole principal, not the subject.
+
+    Two agents delegated by the same user share a subject (the user's). Keyed
+    on the subject alone, each could list, read and continue the other's tasks
+    and spend approvals raised in them. The kind keeps a service token whose
+    ``sub`` equals a user's apart from that user's agents. JSON, so no value can
+    forge a separator.
+    """
+    return json.dumps(
+        [auth.principal_kind, auth.client_id or "", auth.acting_agent or "", auth.subject],
+        separators=(",", ":"),
+    )
+
+
+def machine_session_prefix(auth: AuthContext) -> str:
+    """The session-id prefix a non-human caller owns on a subject-keyed store.
+
+    ADK keys sessions by ``user_id``, and a delegated agent's ``user_id`` is its
+    user's subject (so the user can approve what it raises). Without a second
+    key, every agent acting for alice could list, read and continue alice's
+    conversations and each other's. The prefix is that second key: derived
+    from :func:`principal_key`, so it is unforgeable and needs no storage.
+    """
+    digest = hashlib.sha256(principal_key(auth).encode()).hexdigest()
+    return f"{MACHINE_SESSION_PREFIX}{digest[:32]}-"
+
+
+def is_machine_session(session_id: str | None) -> bool:
+    """Whether *session_id* was minted for a non-human principal.
+
+    Both prefixes are minted server-side only: no transport lets a caller
+    choose a session id, and ADK's own ids are UUIDs, which start with a hex
+    digit and have their first dash at position 8, so they match neither.
+    """
+    return bool(session_id) and session_id.startswith((MACHINE_SESSION_PREFIX, A2A_SESSION_PREFIX))
 
 
 def warn_if_unclassified(policy: PrincipalPolicy) -> None:

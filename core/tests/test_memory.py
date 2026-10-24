@@ -243,3 +243,40 @@ class TestRedactionParityWithToolResults:
         from orrery_core.security.redaction import SECRET_VALUE_PATTERNS
 
         assert [p for p, _ in SECRET_VALUE_PATTERNS] == _DEFAULT_PATTERNS
+
+
+# ── Machine principals (ADR-006) ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_id", ["m-0123456789abcdef-x", "a2a-0123456789abcdef"])
+async def test_a_machine_principals_session_is_not_remembered(session_id):
+    """An agent's turns are model output; stored, they'd return as the user's own."""
+    svc = SecureMemoryService()
+    await svc.add_session_to_memory(_make_session([_make_event("injected")], session_id=session_id))
+    await svc.add_events_to_memory(
+        app_name="test_app",
+        user_id="test_user",
+        events=[_make_event("injected too", "e2")],
+        session_id=session_id,
+    )
+
+    result = await svc.search_memory(app_name="test_app", user_id="test_user", query="injected")
+    assert result.memories == []
+
+
+@pytest.mark.asyncio
+async def test_a_machine_principals_turn_recalls_none_of_its_users_memory():
+    """Memory is keyed by the user, whom an agent acting for them shares."""
+    from orrery_core.security.confirmation_flow import conversation_scope
+
+    svc = SecureMemoryService()
+    await svc.add_session_to_memory(_make_session([_make_event("alice's incident notes")]))
+
+    with conversation_scope("m-0123456789abcdef-x"):
+        hidden = await svc.search_memory(app_name="test_app", user_id="test_user", query="notes")
+    with conversation_scope("0b6e2d3c-5f7a-4c1e-9d2b-8a7f6e5d4c3b"):
+        shown = await svc.search_memory(app_name="test_app", user_id="test_user", query="notes")
+
+    assert hidden.memories == []
+    assert len(shown.memories) == 1

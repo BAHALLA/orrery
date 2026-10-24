@@ -32,9 +32,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
-import json
 import logging
-from collections import Counter
+import threading
+import time
+from collections import Counter, OrderedDict
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -48,7 +49,7 @@ from a2a.server.events.event_queue_v2 import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.routes.common import ServerCallContextBuilder
-from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+from a2a.server.tasks import InMemoryTaskStore, TaskStore, TaskUpdater
 from a2a.types.a2a_pb2 import (
     AgentCapabilities,
     AgentCard,
@@ -58,6 +59,7 @@ from a2a.types.a2a_pb2 import (
     SecurityRequirement,
     SecurityScheme,
     StringList,
+    Task,
     TaskState,
 )
 from a2a.utils.constants import (
@@ -67,7 +69,7 @@ from a2a.utils.constants import (
 )
 from a2a.utils.errors import TaskNotCancelableError
 from fastapi import FastAPI
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
@@ -81,11 +83,17 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
-from ..security.guardrails import _CONFIRMATION_TTL, latest_pending_for_scope
+from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_scope
 from ..security.identity import CallerIdentity
-from ..security.principal import PrincipalPolicy, as_principal
+from ..security.principal import (
+    A2A_SESSION_PREFIX,
+    PrincipalPolicy,
+    as_principal,
+    principal_key,
+)
 from .a2a_config import (
     A2A_PATH,
+    DEFAULT_MAX_MESSAGE_CHARS,
     HOP_HEADER,
     PENDING_ACTION_KIND,
     A2AConfig,
@@ -100,21 +108,6 @@ logger = logging.getLogger("orrery.a2a")
 _AUTH_SCOPE_KEY = "orrery.a2a.auth"
 
 
-def principal_key(auth: AuthContext) -> str:
-    """Who owns A2A conversations and tasks: the whole principal, not the subject.
-
-    Two agents delegated by the same user share a subject (the user's). Keyed
-    on the subject alone, each could list, read and continue the other's tasks
-    and spend approvals raised in them. The kind keeps a service token whose
-    ``sub`` equals a user's apart from that user's agents. JSON, so no value can
-    forge a separator.
-    """
-    return json.dumps(
-        [auth.principal_kind, auth.client_id or "", auth.acting_agent or "", auth.subject],
-        separators=(",", ":"),
-    )
-
-
 def session_id_for(owner: str, context_id: str) -> str:
     """The ADK session behind *context_id*, for *owner* (:func:`principal_key`) only.
 
@@ -124,7 +117,7 @@ def session_id_for(owner: str, context_id: str) -> str:
     one of that user's own conversations by sending its id as a ``contextId``.
     """
     digest = hashlib.sha256(f"{owner}\0{context_id}".encode()).hexdigest()
-    return f"a2a-{digest[:32]}"
+    return f"{A2A_SESSION_PREFIX}{digest[:32]}"
 
 
 class _VerifiedUser(User):
@@ -170,11 +163,73 @@ class _CallContextBuilder(ServerCallContextBuilder):
 
 
 def task_owner(context: ServerCallContext) -> str:
-    """Task-store scope: the verified subject. Fail-closed on anything else."""
+    """Task-store scope: the caller's :func:`principal_key`. Fail-closed otherwise."""
+    if isinstance(context, _EvictionContext):
+        return context.owner
     user = context.user
     if not isinstance(user, _VerifiedUser) or not user.user_name:
         raise PermissionError("A2A task store reached without a verified caller")
     return user.user_name
+
+
+class _EvictionContext(ServerCallContext):
+    """Names an owner for the store's own housekeeping; never built from a request."""
+
+    owner: str = ""
+
+
+class BoundedTaskStore(TaskStore):
+    """The SDK's in-memory task store, with an idle TTL and a size cap.
+
+    ``InMemoryTaskStore`` never forgets a task, so every task, its history and
+    its reply would stay resident for the life of a process that runs for
+    weeks. A task untouched for *idle_ttl_seconds* is dropped (by then an
+    ``input-required`` one is dead too: its pending action expired long
+    before), and past *max_tasks* the least recently touched go first. A
+    dropped task is ``TaskNotFound`` to its client, as after a restart.
+    """
+
+    def __init__(self, *, max_tasks: int = 10_000, idle_ttl_seconds: float = 3600.0) -> None:
+        self._inner = InMemoryTaskStore(owner_resolver=task_owner)
+        self._max_tasks = max_tasks
+        self._idle_ttl = idle_ttl_seconds
+        self._touched: OrderedDict[tuple[str, str], float] = OrderedDict()
+        self._lock = threading.Lock()
+
+    async def save(self, task: Task, context: ServerCallContext) -> None:
+        await self._inner.save(task, context)
+        key = (task_owner(context), task.id)
+        now = time.monotonic()
+        with self._lock:
+            self._touched[key] = now
+            self._touched.move_to_end(key)
+            evicted = []
+            while self._touched:
+                oldest, touched_at = next(iter(self._touched.items()))
+                if len(self._touched) <= self._max_tasks and now - touched_at < self._idle_ttl:
+                    break
+                del self._touched[oldest]
+                evicted.append(oldest)
+        for owner, task_id in evicted:
+            with self._lock:
+                if (owner, task_id) in self._touched:
+                    continue  # saved again since it was picked: keep it
+            await self._inner.delete(task_id, _EvictionContext(owner=owner))
+
+    async def get(self, task_id: str, context: ServerCallContext) -> Task | None:
+        return await self._inner.get(task_id, context)
+
+    async def list(self, params: Any, context: ServerCallContext) -> Any:
+        return await self._inner.list(params, context)
+
+    async def delete(self, task_id: str, context: ServerCallContext) -> None:
+        with self._lock:
+            self._touched.pop((task_owner(context), task_id), None)
+        await self._inner.delete(task_id, context)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._touched)
 
 
 def _caller(context: RequestContext) -> AuthContext:
@@ -209,7 +264,7 @@ def _pending_payload(pending: Any, approval_base: str) -> dict[str, Any]:
         "tool": pending.tool_name,
         "level": pending.level,
         "args": args,
-        "expires_at": pending.created_at + _CONFIRMATION_TTL,
+        "expires_at": pending.created_at + CONFIRMATION_TTL_SECONDS,
         "approve_url": f"{approval_base}/confirmations/{pending.action_id}/decision",
     }
 
@@ -224,11 +279,13 @@ class OrreryAgentExecutor(AgentExecutor):
         caller_identity: Callable[[AuthContext], CallerIdentity | None],
         approval_base: str,
         max_tasks_in_flight: int = 2,
+        max_message_chars: int = DEFAULT_MAX_MESSAGE_CHARS,
     ) -> None:
         self.gateway = gateway
         self.caller_identity = caller_identity
         self.approval_base = approval_base
         self.max_tasks_in_flight = max_tasks_in_flight
+        self.max_message_chars = max_message_chars
         self._in_flight: Counter[str] = Counter()
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -238,27 +295,32 @@ class OrreryAgentExecutor(AgentExecutor):
         if not task_id or not context_id:
             raise RuntimeError("A2A request context has no task or context id")
         updater = TaskUpdater(event_queue, task_id, context_id)
+        text = _text_of(context)
+        refusal = None
+        if text is None:
+            audit_event("a2a_turn_refused", subject=auth.subject, reason="non_text_parts")
+            refusal = "Only text parts are accepted."
+        elif len(text) > self.max_message_chars:
+            # The console's bound: every character is stored, screened and
+            # re-sent to the model on every later turn of the conversation.
+            audit_event("a2a_turn_refused", subject=auth.subject, reason="message_too_long")
+            refusal = f"Messages are limited to {self.max_message_chars} characters."
+        elif self._in_flight[owner] >= self.max_tasks_in_flight:
+            audit_event("a2a_turn_refused", subject=auth.subject, reason="too_many_in_flight")
+            refusal = "Too many tasks in flight for this caller; retry later."
+
         if context.current_task is None:
             # a2a-sdk 1.x: a new task's first event must be the Task itself.
-            history = [context.message] if context.message else []
+            # A refused message is left out of its history, so a rejected task
+            # holds none of what it was rejected for.
+            history = [context.message] if context.message and refusal is None else []
             await event_queue.enqueue_event(
                 new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=history)
             )
-
-        text = _text_of(context)
-        if text is None:
-            await updater.reject(
-                updater.new_agent_message([new_text_part("Only text parts are accepted.")])
-            )
+        if refusal is not None:
+            await updater.reject(updater.new_agent_message([new_text_part(refusal)]))
             return
-        if self._in_flight[owner] >= self.max_tasks_in_flight:
-            audit_event("a2a_turn_refused", subject=auth.subject, reason="too_many_in_flight")
-            await updater.reject(
-                updater.new_agent_message(
-                    [new_text_part("Too many tasks in flight for this caller; retry later.")]
-                )
-            )
-            return
+        assert text is not None  # every text-less message is refused above
 
         self._in_flight[owner] += 1
         try:
@@ -392,6 +454,24 @@ def live_skills(root: Any) -> list[AgentSkill]:
     ]
 
 
+def _too_large() -> Response:
+    return JSONResponse({"error": "payload_too_large"}, status_code=413)
+
+
+def _replay_receive(body: bytes) -> Callable[[], Any]:
+    """An ASGI ``receive`` that hands an already-read body to the next reader."""
+    sent = False
+
+    async def receive() -> dict[str, Any]:
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return receive
+
+
 def mount_a2a(
     api: FastAPI,
     *,
@@ -426,8 +506,11 @@ def mount_a2a(
             caller_identity=caller_identity,
             approval_base=config.approval_base,
             max_tasks_in_flight=config.max_tasks_in_flight,
+            max_message_chars=config.max_message_chars,
         ),
-        task_store=InMemoryTaskStore(owner_resolver=task_owner),
+        task_store=BoundedTaskStore(
+            max_tasks=config.max_tasks, idle_ttl_seconds=config.task_idle_ttl_seconds
+        ),
         agent_card=public_card,
         extended_agent_card=public_card,
         extended_card_modifier=extended_card,
@@ -436,10 +519,13 @@ def mount_a2a(
     dispatch = rpc.endpoint
 
     async def guarded(request: Request) -> Response:
-        """Refuse before the SDK parses anything: hop, token, rate."""
+        """Refuse before the SDK parses anything: hop, size, token, rate."""
         if request.headers.get(HOP_HEADER) is not None:
             audit_event("a2a_turn_refused", reason="hop_header")
             return JSONResponse({"error": "loop_refused"}, status_code=403)
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > config.max_body_bytes:
+            return _too_large()
         header = request.headers.get("authorization", "")
         scheme, _, token = header.partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
@@ -464,8 +550,20 @@ def mount_a2a(
             )
         auth = as_principal(verified, policy, machine_surface=True)
         limiter.hit(rate, f"a2a:{principal_key(auth)}")
-        request.scope[_AUTH_SCOPE_KEY] = auth
-        return await dispatch(request)
+        # The SDK reads the whole body with no bound, and Content-Length is
+        # optional (chunked), so the cap is enforced on the stream itself.
+        body = bytearray()
+        try:
+            async for chunk in request.stream():
+                body += chunk
+                if len(body) > config.max_body_bytes:
+                    return _too_large()
+        except ClientDisconnect:
+            return Response(status_code=400)  # nobody is left to read it
+        replay = _replay_receive(bytes(body))
+        bounded = Request(request.scope, receive=replay)
+        bounded.scope[_AUTH_SCOPE_KEY] = auth
+        return await dispatch(bounded)
 
     api.router.routes.append(Route(A2A_PATH, endpoint=guarded, methods=["POST"]))
     api.router.routes.extend(
@@ -477,6 +575,7 @@ def mount_a2a(
 __all__ = [
     "A2AConfig",
     "A2A_PATH",
+    "BoundedTaskStore",
     "HOP_HEADER",
     "PENDING_ACTION_KIND",
     "OrreryAgentExecutor",

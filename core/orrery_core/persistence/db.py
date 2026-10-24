@@ -20,7 +20,6 @@ into the old fallback for local development.
 from __future__ import annotations
 
 import logging
-import os
 
 import sqlalchemy as sa
 from google.adk.sessions.base_session_service import BaseSessionService
@@ -29,6 +28,7 @@ from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
+from ..env import env_flag
 from ..observability.log import mask_dsn
 
 logger = logging.getLogger("orrery.db")
@@ -36,7 +36,6 @@ logger = logging.getLogger("orrery.db")
 # Env flag that opts a configured-but-unavailable database into an in-memory
 # fallback instead of a hard failure. Off by default so production fails fast.
 _FALLBACK_ENV = "ORRERY_DB_ALLOW_INMEMORY_FALLBACK"
-_TRUTHY = {"1", "true", "yes", "on"}
 
 
 class DatabaseUnavailableError(RuntimeError):
@@ -52,7 +51,7 @@ class DatabaseUnavailableError(RuntimeError):
 
 def _inmemory_fallback_allowed() -> bool:
     """True if the in-memory fallback is explicitly opted into via env."""
-    return os.getenv(_FALLBACK_ENV, "").strip().lower() in _TRUTHY
+    return env_flag(_FALLBACK_ENV, default=False)
 
 
 def is_postgres_url(url: str) -> bool:

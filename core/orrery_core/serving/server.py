@@ -34,6 +34,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import uuid
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
+from google.adk.sessions import Session
 from google.adk.workflow import Workflow
 
 try:
@@ -60,6 +62,7 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
 from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, create_catalog_store
 from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
+from ..env import env_flag
 from ..observability.audit import audit_event
 from ..observability.metrics import start_metrics_server_if_enabled
 from ..persistence.db import create_session_service
@@ -78,6 +81,7 @@ from ..security.principal import (
     PrincipalKind,
     PrincipalPolicy,
     as_principal,
+    machine_session_prefix,
     warn_if_unclassified,
 )
 from .a2a_config import A2A_ENABLED_ENV, A2AConfig
@@ -220,21 +224,19 @@ class ServerConfig:
           :class:`~.a2a_config.A2AConfig`). Off by default.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
-        docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip().lower()
+        docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip()
         return cls(
-            auth_enabled=os.getenv("AUTH_ENABLED", "true").lower() in ("1", "true", "yes"),
+            auth_enabled=env_flag("AUTH_ENABLED", default=True),
             jwt=JWTConfig.from_env(),
             database_url=os.getenv("DATABASE_URL") or None,
             cors_origins=tuple(o.strip() for o in cors.split(",") if o.strip()),
-            web_console_enabled=os.getenv("ORRERY_WEB_CONSOLE_ENABLED", "false").lower()
-            in ("1", "true", "yes"),
+            web_console_enabled=env_flag("ORRERY_WEB_CONSOLE_ENABLED", default=False),
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
             selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
-            docs_enabled=(docs in ("1", "true", "yes")) if docs else None,
+            docs_enabled=env_flag("ORRERY_DOCS_ENABLED", default=False) if docs else None,
             rate_limit_storage_uri=os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
             or "memory://",
-            admin_editing=os.getenv("ORRERY_ADMIN_EDITING", "false").lower()
-            in ("1", "true", "yes"),
+            admin_editing=env_flag("ORRERY_ADMIN_EDITING", default=False),
             catalog_poll_seconds=float(os.getenv("ORRERY_CATALOG_POLL_SECONDS", "15")),
             shutdown_grace_seconds=float(os.getenv("ORRERY_SHUTDOWN_GRACE_SECONDS", "30")),
             csp_extra_origins=tuple(
@@ -474,7 +476,7 @@ def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
     never seen it. A pod that will not start is easier to diagnose than one
     that forgets conversations at random.
     """
-    if os.getenv(MULTI_REPLICA_ENV, "").strip().lower() not in {"1", "true", "yes", "on"}:
+    if not env_flag(MULTI_REPLICA_ENV, default=False):
         return
     from ..security.confirmation_store import CONFIRMATION_BACKEND_ENV
 
@@ -610,7 +612,9 @@ def create_app(
     limiter = RateLimiter(cfg.rate_limit_storage_uri)
     chat_limit = parse_rate(cfg.chat_rate_limit)
     selftest_limit = parse_rate(cfg.selftest_rate_limit)
-    if cfg.rate_limit_storage_uri.startswith("memory://") and os.getenv(MULTI_REPLICA_ENV):
+    if cfg.rate_limit_storage_uri.startswith("memory://") and env_flag(
+        MULTI_REPLICA_ENV, default=False
+    ):
         logger.warning(
             "Rate limits are counted per replica (ORRERY_RATE_LIMIT_STORAGE_URI=memory://): "
             "with N replicas a caller gets N times the configured limit."
@@ -847,7 +851,56 @@ def create_app(
         finally:
             upload_slots.release()
 
-    def inbound(body: ChatInput, auth: AuthContext) -> InboundMessage:
+    def owns_session(auth: AuthContext, session_id: str) -> bool:
+        """Whether *auth* may see or continue *session_id* under its subject.
+
+        A person sees every conversation stored under their subject, including
+        those their delegated agents held. A machine principal shares that
+        subject but sees only the sessions minted for it (its prefix), so one
+        agent acting for alice can neither read alice's threads nor another
+        agent's, nor spend an approval raised in one of them.
+        """
+        if auth.principal_kind == PrincipalKind.HUMAN:
+            return True
+        return session_id.startswith(machine_session_prefix(auth))
+
+    async def caller_session(auth: AuthContext, session_id: str) -> Session:
+        """One of the caller's sessions, else a 404 that reveals nothing."""
+        session = (
+            await gateway.sessions.get_session(
+                app_name=app_name, user_id=auth.subject, session_id=session_id
+            )
+            if owns_session(auth, session_id)
+            else None
+        )
+        if session is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        return session
+
+    async def conversation_key(body: ChatInput, auth: AuthContext) -> str:
+        """The session id a turn runs in: the caller's, or a fresh one.
+
+        A person's id goes to the resolver as before (an unknown id mints a new
+        session). A machine principal's new session is minted here, under its
+        own prefix, and an id outside that prefix is treated as unknown.
+        """
+        requested = body.session_id or ""
+        if auth.principal_kind == PrincipalKind.HUMAN:
+            return requested
+        if requested and owns_session(auth, requested):
+            existing = await gateway.sessions.get_session(
+                app_name=app_name, user_id=auth.subject, session_id=requested
+            )
+            if existing is not None:
+                return requested
+        created = await gateway.sessions.create_session(
+            app_name=app_name,
+            user_id=auth.subject,
+            session_id=f"{machine_session_prefix(auth)}{uuid.uuid4().hex}",
+        )
+        return created.id
+
+    async def inbound(body: ChatInput, auth: AuthContext) -> InboundMessage:
         """The turn both chat endpoints run: identity and title in state_delta."""
         prepared = body.attachments
         # Identity travels in state_delta each turn (applied before the agent
@@ -866,7 +919,7 @@ def create_app(
         return InboundMessage(
             text=body.message,
             user_id=auth.subject,
-            conversation_key=body.session_id or "",
+            conversation_key=await conversation_key(body, auth),
             channel="http",
             state_delta=state_delta,
             # From the verified token only. Anonymous mode has no person behind
@@ -911,7 +964,7 @@ def create_app(
         body: ChatInput = Depends(chat_body),  # noqa: B008 — FastAPI dependency pattern
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> ChatResponse:
-        reply = await gateway.run(inbound(body, auth))
+        reply = await gateway.run(await inbound(body, auth))
         return ChatResponse(session_id=reply.session_id, response=reply.text)
 
     # Same request, same rate limit (one bucket: a streamed turn costs what a
@@ -923,7 +976,7 @@ def create_app(
         body: ChatInput = Depends(chat_body),  # noqa: B008 — FastAPI dependency pattern
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> StreamingResponse:
-        msg = inbound(body, auth)
+        msg = await inbound(body, auth)
         # Resolved before the response starts, so a session-store failure is a
         # real HTTP error instead of an `error` event behind a 200.
         session_id = await gateway.resolve_session(msg)
@@ -958,7 +1011,9 @@ def create_app(
         """
         listed = await gateway.sessions.list_sessions(app_name=app_name, user_id=auth.subject)
         newest_first = sorted(
-            listed.sessions, key=lambda s: s.last_update_time or 0.0, reverse=True
+            (s for s in listed.sessions if owns_session(auth, s.id)),
+            key=lambda s: s.last_update_time or 0.0,
+            reverse=True,
         )
         return SessionsResponse(
             sessions=[
@@ -986,11 +1041,7 @@ def create_app(
         Same owner scoping as the activity endpoint: another user's session id
         is a plain 404, indistinguishable from one that never existed.
         """
-        session = await gateway.sessions.get_session(
-            app_name=app_name, user_id=auth.subject, session_id=session_id
-        )
-        if session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        session = await caller_session(auth, session_id)
         state = session.state or {}
         return SessionResponse(
             session_id=session.id,
@@ -1015,11 +1066,7 @@ def create_app(
         missing id a 404 rather than a silent success; the delete itself is
         user-scoped in ADK, so it could never touch another user's session.
         """
-        session = await gateway.sessions.get_session(
-            app_name=app_name, user_id=auth.subject, session_id=session_id
-        )
-        if session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        await caller_session(auth, session_id)
         await gateway.sessions.delete_session(
             app_name=app_name, user_id=auth.subject, session_id=session_id
         )
@@ -1037,11 +1084,7 @@ def create_app(
         session id resolves to nothing — a plain 404, indistinguishable from
         a session that never existed.
         """
-        session = await gateway.sessions.get_session(
-            app_name=app_name, user_id=auth.subject, session_id=session_id
-        )
-        if session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        session = await caller_session(auth, session_id)
         raw = session.state.get("session_log", []) if session.state else []
         entries = [
             ActivityEntry(
@@ -1068,11 +1111,7 @@ def create_app(
         pins ``user_id`` to the verified subject, so another user's session
         id is a plain 404.
         """
-        session = await gateway.sessions.get_session(
-            app_name=app_name, user_id=auth.subject, session_id=session_id
-        )
-        if session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        session = await caller_session(auth, session_id)
         state = session.state or {}
         severity = state.get("incident_severity")
         report = state.get("triage_report")
@@ -1101,6 +1140,10 @@ def create_app(
         # engine — calling it inline would block the event loop on a database
         # round-trip, per polling client, on a timer.
         pending = await asyncio.to_thread(latest_pending_for_scope, auth.subject)
+        # A machine principal shares its user's scope; it sees only a pending
+        # raised in one of its own sessions, never the user's or another agent's.
+        if pending is not None and not owns_session(auth, pending.session_id or ""):
+            pending = None
         if pending is None:
             return PendingResponse(pending=None)
         return PendingResponse(

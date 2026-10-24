@@ -75,6 +75,7 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types as genai_types
 
+from ..env import env_flag
 from ..security.rbac import USER_ROLE_STATE_KEY
 from .log import request_id_var
 from .metrics import track_llm_tokens
@@ -96,10 +97,6 @@ REQUEST_ID_STATE_KEY = "request_id"
 # mirroring the metrics server's _server_started/_server_lock idiom.
 _configured = False
 _config_lock = threading.Lock()
-
-
-def _env_truthy(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_exporter(endpoint: str | None) -> SpanExporter:
@@ -138,7 +135,7 @@ def configure_tracing(
     """
     global _configured  # noqa: PLW0603
 
-    if not _env_truthy("OTEL_TRACING_ENABLED"):
+    if not env_flag("OTEL_TRACING_ENABLED", default=False):
         logger.debug("Tracing disabled (set OTEL_TRACING_ENABLED=true to enable)")
         return False
 

@@ -16,6 +16,7 @@ from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.base_toolset import BaseToolset
 
+from ..env import env_flag
 from ..observability.log import setup_logging
 from ..security.guardrails import (
     ACTOR_STATE_KEY,
@@ -230,8 +231,7 @@ def resolve_safety_config() -> Any | None:
 
     Returns ``None`` when disabled or when the provider is not Gemini.
     """
-    enabled = os.getenv("GEMINI_SAFETY_FILTERS", "").strip().lower()
-    if enabled in ("0", "false", "no", "off"):
+    if not env_flag("GEMINI_SAFETY_FILTERS", default=True):
         return None
     if os.getenv("MODEL_PROVIDER", "gemini").lower() != "gemini":
         return None
@@ -310,8 +310,9 @@ def resolve_planner() -> BasePlanner | None:
         thinking_kwargs: dict[str, Any] = {}
         if budget := os.getenv("ORRERY_PLANNER_THINKING_BUDGET"):
             thinking_kwargs["thinking_budget"] = int(budget)
-        include = os.getenv("ORRERY_PLANNER_INCLUDE_THOUGHTS", "true").lower()
-        thinking_kwargs["include_thoughts"] = include in ("1", "true", "yes")
+        thinking_kwargs["include_thoughts"] = env_flag(
+            "ORRERY_PLANNER_INCLUDE_THOUGHTS", default=True
+        )
 
         logger.info("Using BuiltInPlanner with thinking_config=%s", thinking_kwargs)
         return BuiltInPlanner(thinking_config=types.ThinkingConfig(**thinking_kwargs))
@@ -349,7 +350,7 @@ def resolve_cost_labels() -> dict[str, str]:
     them, so they are safe to attach whatever the backend. ``ORRERY_COST_LABELS=
     false`` turns them off.
     """
-    if os.getenv("ORRERY_COST_LABELS", "").strip().lower() in ("0", "false", "no", "off"):
+    if not env_flag("ORRERY_COST_LABELS", default=True):
         return {}
     try:
         version = importlib.metadata.version("orrery-core")

@@ -54,6 +54,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
 
+from ..env import env_flag, env_int
 from ..observability.metrics import track_attachment, track_attachment_injection
 from ..plugins.safety_plugin import neutralize_text
 from ..security.redaction import redact_text
@@ -83,24 +84,6 @@ _KNOWN_BINARY: tuple[tuple[bytes, str], ...] = (
 
 _TEXT_CONTROL = re.compile(r"[\x00-\x08\x0b\x0e-\x1f\x7f]")
 _UNSAFE_NAME_CHARS = re.compile(r"[^\w.\- ()]+")
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
-    if value < 0:
-        raise ValueError(f"{name} must be >= 0, got {value}")
-    return value
-
-
-def _env_flag(name: str, *, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    return default if not raw else raw in ("1", "true", "yes", "on")
 
 
 @dataclass(frozen=True)
@@ -142,25 +125,25 @@ class AttachmentLimits:
     def from_env(cls) -> AttachmentLimits:
         d = cls()
         return cls(
-            enabled=_env_flag("ORRERY_ATTACHMENTS", default=d.enabled),
-            images=_env_flag("ORRERY_ATTACHMENT_IMAGES", default=d.images),
-            max_files=_env_int("ORRERY_ATTACHMENT_MAX_FILES", d.max_files),
-            max_file_bytes=_env_int("ORRERY_ATTACHMENT_MAX_BYTES", d.max_file_bytes),
-            max_total_bytes=_env_int("ORRERY_ATTACHMENT_MAX_TOTAL_BYTES", d.max_total_bytes),
-            max_pixels=_env_int("ORRERY_ATTACHMENT_MAX_PIXELS", d.max_pixels),
-            image_max_edge=_env_int("ORRERY_ATTACHMENT_IMAGE_MAX_EDGE", d.image_max_edge),
-            max_text_chars=_env_int("ORRERY_ATTACHMENT_MAX_TEXT_CHARS", d.max_text_chars),
+            enabled=env_flag("ORRERY_ATTACHMENTS", default=d.enabled),
+            images=env_flag("ORRERY_ATTACHMENT_IMAGES", default=d.images),
+            max_files=env_int("ORRERY_ATTACHMENT_MAX_FILES", d.max_files),
+            max_file_bytes=env_int("ORRERY_ATTACHMENT_MAX_BYTES", d.max_file_bytes),
+            max_total_bytes=env_int("ORRERY_ATTACHMENT_MAX_TOTAL_BYTES", d.max_total_bytes),
+            max_pixels=env_int("ORRERY_ATTACHMENT_MAX_PIXELS", d.max_pixels),
+            image_max_edge=env_int("ORRERY_ATTACHMENT_IMAGE_MAX_EDGE", d.image_max_edge),
+            max_text_chars=env_int("ORRERY_ATTACHMENT_MAX_TEXT_CHARS", d.max_text_chars),
             max_concurrent_decodes=max(
-                1, _env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES", d.max_concurrent_decodes)
+                1, env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_DECODES", d.max_concurrent_decodes)
             ),
             max_concurrent_uploads=max(
-                1, _env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS", d.max_concurrent_uploads)
+                1, env_int("ORRERY_ATTACHMENT_MAX_CONCURRENT_UPLOADS", d.max_concurrent_uploads)
             ),
             max_uploads_per_user=max(
-                1, _env_int("ORRERY_ATTACHMENT_MAX_UPLOADS_PER_USER", d.max_uploads_per_user)
+                1, env_int("ORRERY_ATTACHMENT_MAX_UPLOADS_PER_USER", d.max_uploads_per_user)
             ),
             read_timeout_seconds=float(
-                max(1, _env_int("ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS", 60))
+                max(1, env_int("ORRERY_ATTACHMENT_READ_TIMEOUT_SECONDS", 60))
             ),
         )
 

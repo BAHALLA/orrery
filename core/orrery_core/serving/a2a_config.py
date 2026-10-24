@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from ..env import env_flag, env_int
 from .rate_limit import parse_rate
 
 A2A_ENABLED_ENV = "ORRERY_A2A_ENABLED"
@@ -18,6 +19,13 @@ A2A_PUBLIC_URL_ENV = "ORRERY_A2A_PUBLIC_URL"
 A2A_APPROVAL_BASE_URL_ENV = "ORRERY_A2A_APPROVAL_BASE_URL"
 A2A_RATE_LIMIT_ENV = "ORRERY_A2A_RATE_LIMIT"
 A2A_MAX_TASKS_IN_FLIGHT_ENV = "ORRERY_A2A_MAX_TASKS_IN_FLIGHT"
+A2A_MAX_MESSAGE_CHARS_ENV = "ORRERY_A2A_MAX_MESSAGE_CHARS"
+A2A_MAX_BODY_BYTES_ENV = "ORRERY_A2A_MAX_BODY_BYTES"
+A2A_MAX_TASKS_ENV = "ORRERY_A2A_MAX_TASKS"
+A2A_TASK_IDLE_TTL_ENV = "ORRERY_A2A_TASK_IDLE_TTL_SECONDS"
+
+#: The console's message bound (``uploads._MAX_MESSAGE_CHARS``), applied to A2A.
+DEFAULT_MAX_MESSAGE_CHARS = 8192
 
 #: Where the JSON-RPC endpoint and its card live on the HTTP app.
 A2A_PATH = "/a2a"
@@ -29,10 +37,6 @@ HOP_HEADER = "x-orrery-hop"
 PENDING_ACTION_KIND = "orrery.pending_action"
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
-def _truthy(value: str | None) -> bool:
-    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -52,16 +56,32 @@ class A2AConfig:
     rate_limit: str = "30/minute"
     #: Turns one caller may have running at once. Each one buys model tokens.
     max_tasks_in_flight: int = 2
+    #: Characters one message may carry; a longer one is rejected.
+    max_message_chars: int = DEFAULT_MAX_MESSAGE_CHARS
+    #: Bytes one JSON-RPC request body may carry, checked before it is parsed.
+    #: A maximal message fits with its JSON-RPC framing even fully escaped
+    #: (8192 chars, at worst 12 bytes each as a ``\uXXXX`` surrogate pair).
+    max_body_bytes: int = 128 * 1024
+    #: Tasks the in-memory store keeps; past it the least recently touched go.
+    max_tasks: int = 10_000
+    #: Seconds an untouched task is kept.
+    task_idle_ttl_seconds: float = 3600.0
 
     @classmethod
     def from_env(cls) -> A2AConfig:
         return cls(
-            enabled=_truthy(os.getenv(A2A_ENABLED_ENV)),
+            enabled=env_flag(A2A_ENABLED_ENV, default=False),
             audience=os.getenv(A2A_AUDIENCE_ENV, "").strip() or None,
             public_url=os.getenv(A2A_PUBLIC_URL_ENV, "").strip().rstrip("/") or cls.public_url,
             approval_base_url=os.getenv(A2A_APPROVAL_BASE_URL_ENV, "").strip().rstrip("/") or None,
             rate_limit=os.getenv(A2A_RATE_LIMIT_ENV, "").strip() or cls.rate_limit,
-            max_tasks_in_flight=int(os.getenv(A2A_MAX_TASKS_IN_FLIGHT_ENV, "2")),
+            max_tasks_in_flight=env_int(A2A_MAX_TASKS_IN_FLIGHT_ENV, 2),
+            max_message_chars=env_int(A2A_MAX_MESSAGE_CHARS_ENV, DEFAULT_MAX_MESSAGE_CHARS),
+            max_body_bytes=env_int(A2A_MAX_BODY_BYTES_ENV, cls.max_body_bytes),
+            max_tasks=env_int(A2A_MAX_TASKS_ENV, cls.max_tasks),
+            task_idle_ttl_seconds=float(
+                env_int(A2A_TASK_IDLE_TTL_ENV, int(cls.task_idle_ttl_seconds))
+            ),
         )
 
     @property
@@ -83,8 +103,15 @@ class A2AConfig:
                 f"{A2A_ENABLED_ENV} needs {A2A_AUDIENCE_ENV}: the audience agent "
                 "tokens are issued for, distinct from the console's."
             )
-        if self.max_tasks_in_flight < 1:
-            raise ValueError(f"{A2A_MAX_TASKS_IN_FLIGHT_ENV} must be at least 1")
+        for env, value in (
+            (A2A_MAX_TASKS_IN_FLIGHT_ENV, self.max_tasks_in_flight),
+            (A2A_MAX_MESSAGE_CHARS_ENV, self.max_message_chars),
+            (A2A_MAX_BODY_BYTES_ENV, self.max_body_bytes),
+            (A2A_MAX_TASKS_ENV, self.max_tasks),
+            (A2A_TASK_IDLE_TTL_ENV, self.task_idle_ttl_seconds),
+        ):
+            if value < 1:
+                raise ValueError(f"{env} must be at least 1")
         parse_rate(self.rate_limit)  # a malformed limit fails here, not per request
         for name, url in (
             (A2A_PUBLIC_URL_ENV, self.public_url),

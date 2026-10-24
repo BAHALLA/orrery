@@ -67,9 +67,11 @@ def _warn_if_adk_web_with_auth() -> None:
     import sys
     from pathlib import Path
 
+    from orrery_core.env import env_flag
+
     argv = sys.argv
     under_adk_web = Path(argv[0]).name == "adk" and argv[1:2] == ["web"]
-    if under_adk_web and os.getenv("AUTH_ENABLED", "").lower() in ("1", "true", "yes"):
+    if under_adk_web and env_flag("AUTH_ENABLED", default=False):
         logging.getLogger("orrery.assistant").error(
             "Running under `adk web`, which ignores AUTH_ENABLED and JWT_*: there is "
             "NO authentication, and anyone who can reach this port can read every "

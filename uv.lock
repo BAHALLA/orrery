@@ -2490,6 +2490,7 @@ server = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "google-adk", extra = ["eval"] },
     { name = "hypothesis" },
     { name = "mkdocs" },
     { name = "mkdocs-gen-files" },
@@ -2530,6 +2531,7 @@ provides-extras = ["postgres", "auth", "server", "a2a", "otel", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "google-adk", extras = ["eval"], specifier = ">=2.12.0" },
     { name = "hypothesis", specifier = ">=6.169.2" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-gen-files", specifier = ">=0.6.1" },
@@ -2575,7 +2577,7 @@ name = "orrery-core"
 version = "0.7.0"
 source = { editable = "core" }
 dependencies = [
-    { name = "google-adk", extra = ["db", "eval"] },
+    { name = "google-adk", extra = ["db"] },
     { name = "litellm" },
     { name = "prometheus-client" },
     { name = "pydantic" },
@@ -2625,7 +2627,7 @@ requires-dist = [
     { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a'", specifier = ">=1.2.3,<2" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.30.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.141.1" },
-    { name = "google-adk", extras = ["eval", "db"], specifier = ">=2.12.0" },
+    { name = "google-adk", extras = ["db"], specifier = ">=2.12.0" },
     { name = "google-adk", extras = ["mcp"], marker = "extra == 'mcp'", specifier = ">=2.12.0" },
     { name = "kubernetes", marker = "extra == 'kubernetes'", specifier = ">=37.0.0" },
     { name = "limits", marker = "extra == 'server'", specifier = ">=5.8.0" },

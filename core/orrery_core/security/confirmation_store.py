@@ -60,7 +60,10 @@ logger = logging.getLogger("orrery.confirmation")
 #: Env var selecting the backend: ``memory`` (default) or ``postgres``.
 CONFIRMATION_BACKEND_ENV = "ORRERY_CONFIRMATION_BACKEND"
 
-_CONFIRMATION_TTL = 300  # seconds — pending entry retention
+#: Seconds a pending action stays answerable. The single source: the gates
+#: check freshness against it, the stores expire against it, and the A2A
+#: payload derives ``expires_at`` from it — two copies could silently disagree.
+CONFIRMATION_TTL_SECONDS = 300
 _APPROVAL_VALIDITY = 120  # seconds — window after approval in which the retry must land
 
 
@@ -99,7 +102,7 @@ def _record_expiry(count: int) -> None:
     """
     if count <= 0:
         return
-    audit_event("confirmation_expired", count=count, age_ms=int(_CONFIRMATION_TTL * 1000))
+    audit_event("confirmation_expired", count=count, age_ms=int(CONFIRMATION_TTL_SECONDS * 1000))
     track_confirmations_expired(count)
 
 
@@ -271,7 +274,7 @@ class ConfirmationStore:
         return None
 
     def _prune_expired_locked(self) -> None:
-        cutoff = time.time() - _CONFIRMATION_TTL
+        cutoff = time.time() - CONFIRMATION_TTL_SECONDS
         for action_id in [k for k, v in self._pending.items() if v.created_at < cutoff]:
             self._pending.pop(action_id, None)
 
@@ -497,7 +500,7 @@ class PostgresConfirmationStore:
                     _confirmations.c.scope_key == scope_key,
                     _confirmations.c.tool_name == tool_name,
                     _confirmations.c.args_hash == args_hash,
-                    _confirmations.c.created_at > time.time() - _CONFIRMATION_TTL,
+                    _confirmations.c.created_at > time.time() - CONFIRMATION_TTL_SECONDS,
                 )
                 .returning(*_confirmations.c)
             ).first()
@@ -527,7 +530,7 @@ class PostgresConfirmationStore:
         )
 
     def _latest_select(self, scope: str) -> Any:
-        cutoff = time.time() - _CONFIRMATION_TTL
+        cutoff = time.time() - CONFIRMATION_TTL_SECONDS
         return (
             sa.select(_confirmations)
             .where(self._scope_clause(scope), _confirmations.c.created_at > cutoff)
@@ -539,7 +542,7 @@ class PostgresConfirmationStore:
     def _prune_expired(conn: Any) -> int:
         result = conn.execute(
             sa.delete(_confirmations).where(
-                _confirmations.c.created_at <= time.time() - _CONFIRMATION_TTL
+                _confirmations.c.created_at <= time.time() - CONFIRMATION_TTL_SECONDS
             )
         )
         return int(result.rowcount or 0)

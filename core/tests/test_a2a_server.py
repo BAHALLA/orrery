@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -211,6 +212,76 @@ def test_non_text_parts_are_refused(turns):
     task = _result(r)
     assert task["status"]["state"] == "TASK_STATE_REJECTED"
     assert turns == []
+
+
+def test_an_overlong_message_is_rejected_before_the_turn(turns):
+    r = TestClient(_app(max_message_chars=10)).post(
+        "/a2a", json=_send("x" * 11), headers=_headers()
+    )
+    task = _result(r)
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
+    assert turns == []
+    # The task keeps none of what it was rejected for.
+    assert "x" * 11 not in json.dumps(task)
+
+
+def test_a_declared_oversized_body_is_refused_before_auth(turns):
+    r = TestClient(_app(max_body_bytes=64)).post(
+        "/a2a", json=_send("x" * 100), headers={"A2A-Version": "1.0"}
+    )
+    assert r.status_code == 413
+    assert turns == []
+
+
+def test_a_chunked_oversized_body_is_refused(turns):
+    payload = json.dumps(_send("x" * 1000)).encode()
+
+    def chunks():
+        for i in range(0, len(payload), 100):
+            yield payload[i : i + 100]
+
+    headers = {**_headers(), "Content-Type": "application/json"}
+    r = TestClient(_app(max_body_bytes=512)).post("/a2a", content=chunks(), headers=headers)
+    assert r.status_code == 413
+    assert turns == []
+
+
+def test_a_body_under_the_cap_still_reaches_the_sdk(turns):
+    r = TestClient(_app(max_body_bytes=4096)).post("/a2a", json=_send(), headers=_headers())
+    assert _result(r)["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_the_task_store_forgets_idle_tasks_and_caps_its_size():
+    from a2a.server.context import ServerCallContext
+    from a2a.types.a2a_pb2 import Task
+
+    from orrery_core.security.auth import AuthContext
+    from orrery_core.serving.a2a_server import BoundedTaskStore, _VerifiedUser
+
+    def ctx(sub: str) -> ServerCallContext:
+        return ServerCallContext(user=_VerifiedUser(AuthContext(sub, "viewer", {})))
+
+    store = BoundedTaskStore(max_tasks=2, idle_ttl_seconds=60)
+    with patch("orrery_core.serving.a2a_server.time.monotonic", return_value=0.0):
+        await store.save(Task(id="a1", context_id="c"), ctx("alice"))
+        await store.save(Task(id="b1", context_id="c"), ctx("bob"))
+        await store.save(Task(id="a2", context_id="c"), ctx("alice"))
+    # Over the cap: the least recently touched (a1) went, across owners.
+    assert len(store) == 2
+    assert await store.get("a1", ctx("alice")) is None
+    assert await store.get("b1", ctx("bob")) is not None
+
+    with patch("orrery_core.serving.a2a_server.time.monotonic", return_value=30.0):
+        await store.save(Task(id="b1", context_id="c"), ctx("bob"))  # touched again
+    with patch("orrery_core.serving.a2a_server.time.monotonic", return_value=70.0):
+        await store.save(Task(id="a3", context_id="c"), ctx("alice"))
+    # a2 sat idle past the TTL; b1 was touched at 30, so it stays.
+    assert await store.get("a2", ctx("alice")) is None
+    assert await store.get("b1", ctx("bob")) is not None
+    assert await store.get("a3", ctx("alice")) is not None
+    # Owner scoping is the SDK's, unchanged.
+    assert await store.get("a3", ctx("bob")) is None
 
 
 def test_a_context_maps_to_a_session_of_that_caller_only(turns):
