@@ -56,6 +56,7 @@ import json
 import logging
 import os
 import re
+import ssl
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -378,15 +379,25 @@ class GuardedMcpToolset(McpToolset):
         *,
         broker: TokenBroker | None = None,
         private_allow: PrivateAllowlist | None = None,
+        pin_store: dict[str, str] | None = None,
+        verify: ssl.SSLContext | bool | None = None,
     ) -> None:
         """*private_allow* narrows ``allow_private_network`` to listed hosts and
         networks (the Studio's ``ORRERY_A2A_PRIVATE_ALLOW``); ``None`` keeps the
-        MCP config's meaning, any private address."""
+        MCP config's meaning, any private address.
+
+        *pin_store* (tool -> first-seen fingerprint) outlives this toolset when
+        given: the Studio builds a toolset per run, and a per-instance store
+        would re-pin every run, never noticing a changed description.
+        *verify* replaces the TLS settings built from the config's files (the
+        Studio's ``ORRERY_A2A_CA_FILE``)."""
         self.server_config = config
         # Built now, so missing exchange settings fail startup, not a call.
         self._broker = (broker or default_broker()) if config.auth else None
         super().__init__(
-            connection_params=_connection_params(config, private_allow=private_allow),
+            connection_params=_connection_params(
+                config, private_allow=private_allow, verify=verify
+            ),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
             tool_list_cache_ttl_seconds=config.tool_list_cache_seconds or None,
@@ -396,7 +407,7 @@ class GuardedMcpToolset(McpToolset):
         )
         self._reported_missing = False
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
-        self._pinned: dict[str, str] = {}
+        self._pinned: dict[str, str] = pin_store if pin_store is not None else {}
         #: Tools already reported as withheld, so a refusal is logged once.
         self._withheld: set[str] = set()
 
@@ -499,7 +510,10 @@ def _secret_env(var: str, *, what: str) -> str:
 
 
 def _connection_params(
-    config: McpServerConfig, *, private_allow: PrivateAllowlist | None = None
+    config: McpServerConfig,
+    *,
+    private_allow: PrivateAllowlist | None = None,
+    verify: ssl.SSLContext | bool | None = None,
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {
@@ -521,7 +535,9 @@ def _connection_params(
     factory = client_factory(
         url=config.url or "",
         allow_private_network=config.allow_private_network,
-        verify=ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
+        verify=verify
+        if verify is not None
+        else ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
         private_allow=private_allow,
     )
     if config.transport == "sse":

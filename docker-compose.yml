@@ -423,6 +423,8 @@ services:
       - /demo/make_certs.py
       - --out
       - /certs
+      - --ca-out
+      - /ca
       - --host
       - demo-writer.studio.internal
       - --owner
@@ -430,6 +432,7 @@ services:
     volumes:
       - ./deploy/studio-demo:/demo:ro
       - studio-demo-certs:/certs
+      - studio-demo-ca:/ca
 
   demo-writer:
     image: ${ORRERY_IMAGE:-ghcr.io/bahalla/orrery:latest}
@@ -490,7 +493,7 @@ services:
       ORRERY_A2A_PRIVATE_ALLOW: demo-writer.studio.internal
       # Trust the demo CA for outbound A2A (deployment-level; registry entries
       # never name files).
-      ORRERY_A2A_CA_FILE: /certs/ca.pem
+      ORRERY_A2A_CA_FILE: /ca/ca.pem
       MODEL_PROVIDER: ${MODEL_PROVIDER:-gemini}
       MODEL_NAME: ${MODEL_NAME:-}
       GOOGLE_GENAI_USE_ENTERPRISE: "FALSE"
@@ -498,9 +501,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-3.6-flash}
+    # Only the CA: the writer's key stays in the writer's volume.
     volumes:
       - ./deploy/studio-demo:/demo:ro
-      - studio-demo-certs:/certs:ro
+      - studio-demo-ca:/ca:ro
     command: ["uvicorn", "orrery_assistant.app:api", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]
 
 volumes:
@@ -515,3 +519,4 @@ volumes:
   assistant-data:
   slack-data:
   studio-demo-certs:
+  studio-demo-ca:

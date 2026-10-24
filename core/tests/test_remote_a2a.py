@@ -256,6 +256,25 @@ def test_an_rpc_origin_must_be_in_the_set_even_over_https():
     remote.check_rpc_targets(listed, card)  # a service origin the entry names is fine
 
 
+def test_other_bindings_are_not_checked_but_are_pinned():
+    entry = RemoteAgentEntry(id="wr", card_url="https://w.example.com/c", skills=["draft"])
+
+    def card(grpc_url: str):
+        return remote.parse_agent_card(
+            {
+                "name": "w",
+                "supportedInterfaces": [
+                    {"url": "https://w.example.com/", "protocolBinding": "JSONRPC"},
+                    {"url": grpc_url, "protocolBinding": "GRPC"},
+                ],
+                "skills": [{"id": "draft", "name": "d", "description": "d"}],
+            }
+        )
+
+    remote.check_rpc_targets(entry, card("w.example.com:443"))  # never dialled: accepted
+    assert card_digest(card("w.example.com:443")) != card_digest(card("evil.example.net:443"))
+
+
 def test_redirects_are_never_followed(serve_asgi, writer_module):
     holder: dict[str, Any] = {"redirect": "https://example.com/card.json"}
     url = _card_server(serve_asgi, writer_module, holder)
@@ -271,6 +290,21 @@ def test_an_oversized_card_is_refused(serve_asgi, writer_module):
     entry = _entry(url, max_card_bytes=2048)
     result = _call(GuardedRemoteA2aTool(entry, "draft", cards=RemoteCards()))
     assert result["error_type"] == "card_refused" and "bytes" in result["message"]
+
+
+def test_a_compressed_card_is_refused(serve_asgi):
+    import gzip
+
+    from starlette.responses import Response
+
+    async def card(_request):
+        return Response(
+            gzip.compress(b"{" + b" " * 10_000_000 + b"}"), headers={"content-encoding": "gzip"}
+        )
+
+    url = serve_asgi(Starlette(routes=[Route(CARD_PATH, card)]))
+    result = _call(GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards()))
+    assert result["error_type"] == "card_refused" and "gzip-encoded" in result["message"]
 
 
 def test_an_oversized_reply_is_refused(serve_asgi, writer_module):
@@ -406,6 +440,26 @@ def test_jcs_matches_rfc_8785_examples():
     assert jcs({"b": 1, "a": [True, None, "x"]}) == '{"a":[true,null,"x"],"b":1}'
     assert jcs({"€": 1, "\r": 2, "1": 3}) == '{"\\r":2,"1":3,"€":1}'
     assert jcs(1.0) == "1" and jcs(0.5) == "0.5"
+
+
+@pytest.mark.parametrize(
+    ("number", "text"),
+    [  # ECMAScript Number::toString, as RFC 8785 §3.2.2.3 requires
+        (1e-7, "1e-7"),
+        (0.000001, "0.000001"),
+        (1e21, "1e+21"),
+        (1e20, "100000000000000000000"),
+        (4.35e-7, "4.35e-7"),
+        (123.456, "123.456"),
+        (-0.0, "0"),
+        (5e-324, "5e-324"),
+        (1.7976931348623157e308, "1.7976931348623157e+308"),
+        (333333333.3333333, "333333333.3333333"),
+        (2**60, "1152921504606847000"),  # past 2^53: the double it becomes
+    ],
+)
+def test_jcs_numbers_are_formatted_as_ecmascript_does(number, text):
+    assert jcs(number) == text
     assert jcs("é\n") == '"é\\n"'
 
 
@@ -455,6 +509,23 @@ def _make_certs_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_demo_certs_are_kept_while_valid_and_renewed_otherwise(tmp_path):
+    import datetime as dt
+
+    certs = _make_certs_module()
+    writer, ca = tmp_path / "writer", tmp_path / "ca"
+    assert certs.renewal_reason(writer, ca) == "missing ca.pem, writer.pem, writer-key.pem"
+    certs.make(writer, "localhost", ca_out=ca)
+    assert sorted(p.name for p in writer.iterdir()) == ["writer-key.pem", "writer.pem"]
+    assert [p.name for p in ca.iterdir()] == ["ca.pem"]  # the CA volume holds no key
+    assert certs.renewal_reason(writer, ca) is None
+    soon = dt.datetime.now(dt.UTC) + dt.timedelta(days=25)
+    assert "expires" in certs.renewal_reason(writer, ca, now=soon)
+    certs.make(tmp_path / "other", "localhost")  # a different CA
+    (ca / "ca.pem").write_bytes((tmp_path / "other" / "ca.pem").read_bytes())
+    assert certs.renewal_reason(writer, ca) == "the writer's certificate was not issued by this CA"
 
 
 @pytest.fixture

@@ -159,7 +159,9 @@ decision above, and why:
   entry needs a non-empty `ORRERY_A2A_PRIVATE_ALLOW`, and a literal-address
   host must be in it. Hostnames are checked on every connect against what they
   resolve to then, since a host may be allowed through a listed network. A
-  loopback host may reach loopback without any list, as the MCP guard allows.
+  loopback host may reach loopback without any list, as the MCP guard allows;
+  a listed host that resolves to loopback is refused (the list is for the
+  private network, not the replica itself).
 - **Missing secrets fail startup**, not the first call.
 - **Email addresses in replies are redacted.** `PIIRedactionPlugin` redacts
   credentials, not contact details. A remote reply is someone else's text, so
@@ -175,7 +177,18 @@ decision above, and why:
 - **No `tasks/cancel`** is sent when the calling run is cancelled; the
   exchange's HTTP call is cancelled and the remote task may finish.
 - **Only JSON-RPC** interfaces are used. A gRPC channel would open its own
-  connection outside the guarded httpx client.
+  connection outside the guarded httpx client. Only the JSON-RPC interfaces
+  must pass the origin and https checks; a card that also lists gRPC or
+  HTTP+JSON is accepted, and those interfaces stay in the digest.
+- **No compression.** Every request sends `Accept-Encoding: identity`, and a
+  compressed response is refused before decoding: httpx decodes after the
+  transport, so a byte cap on the wire would not bound what is read.
+- **JCS numbers** follow RFC 8785 (ECMAScript `Number::toString`): integers
+  up to 2^53 as written, everything else as the shortest round-trip double.
+- **One SSL context per network**, built once and shared by every client
+  (card fetches, RPCs and Studio MCP entries).
+- **`?resolve=true`** fetches the cards concurrently, at most 5 s each; a slow
+  card is reported in its status rather than holding the response.
 
 ## Consequences
 

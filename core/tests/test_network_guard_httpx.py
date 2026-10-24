@@ -7,11 +7,12 @@ these cover the origin *set*, the private allowlist and the streaming byte cap.
 from __future__ import annotations
 
 import asyncio
+import gzip
 
 import httpx
 import pytest
 from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse, StreamingResponse
+from starlette.responses import PlainTextResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from orrery_core.tools import mcp_network
@@ -19,10 +20,13 @@ from orrery_core.tools.mcp_network import (
     BlockedRemoteDestination,
     GuardedHttpxTransport,
     PrivateAllowlist,
+    RefusedEncoding,
     ResponseTooLarge,
     address_refusal,
     origin_of,
 )
+
+BOMB = gzip.compress(b"\0" * 50_000_000)
 
 
 def _app() -> Starlette:
@@ -39,8 +43,27 @@ def _app() -> Starlette:
 
         return StreamingResponse(body())  # no Content-Length: the cap must hold while streaming
 
+    async def bomb(request):
+        # Compressed whatever the client asked for: ~50 KB on the wire, 50 MB decoded.
+        return Response(
+            BOMB,
+            headers={
+                "content-encoding": "gzip",
+                "x-asked": request.headers.get("accept-encoding", ""),
+            },
+        )
+
+    async def echo(request):
+        return PlainTextResponse(request.headers.get("accept-encoding", ""))
+
     return Starlette(
-        routes=[Route("/small", small), Route("/big", big), Route("/chunked", chunked)]
+        routes=[
+            Route("/small", small),
+            Route("/big", big),
+            Route("/chunked", chunked),
+            Route("/bomb", bomb),
+            Route("/echo", echo),
+        ]
     )
 
 
@@ -85,6 +108,19 @@ def test_a_streamed_oversized_body_is_cut_off(server):
     transport = GuardedHttpxTransport(allowed_origins={origin_of(server)}, max_response_bytes=4096)
     with pytest.raises(ResponseTooLarge, match="exceeds 4096 bytes"):
         _get(transport, server + "/chunked")
+
+
+def test_a_compressed_body_is_refused_before_it_is_decoded(server):
+    assert len(BOMB) < 64 * 1024  # under the cap on the wire
+    transport = GuardedHttpxTransport(allowed_origins={origin_of(server)}, max_response_bytes=65536)
+    with pytest.raises(RefusedEncoding, match="gzip-encoded"):
+        _get(transport, server + "/bomb")
+
+
+def test_every_request_asks_for_identity(server):
+    transport = GuardedHttpxTransport(allowed_origins={origin_of(server)})
+    # httpx's default is "gzip, deflate"; the transport overrides whatever the client sets.
+    assert _get(transport, server + "/echo").text == "identity"
 
 
 def test_proxy_variables_are_ignored(server, monkeypatch):
@@ -135,7 +171,7 @@ def test_private_network_without_a_listing_is_still_refused(resolves_to):
         _get(transport, "https://w.internal/")
 
 
-def test_a_rebinding_host_is_checked_on_every_request(resolves_to):
+def test_each_request_checks_what_the_host_resolves_to_now(resolves_to):
     transport = GuardedHttpxTransport(allowed_origins={origin_of("https://w.example.com")})
     resolves_to[:] = ["10.0.0.9"]
     with pytest.raises(BlockedRemoteDestination):
@@ -171,6 +207,30 @@ def test_address_refusal_rules():
     )
     # The MCP meaning (no list): any private address once allowed.
     assert address_refusal("db.internal", ["10.9.9.9"], allow_private=True, label="A2A") is None
+
+
+@pytest.mark.parametrize("allow", ["w.internal", "127.0.0.0/8", "w.internal,::1/128"])
+def test_a_listed_host_never_reaches_loopback(allow):
+    for address in ("127.0.0.1", "::1"):
+        why = address_refusal(
+            "w.internal",
+            [address],
+            allow_private=True,
+            private_allow=PrivateAllowlist.parse(allow),
+            label="A2A",
+        )
+        assert why is not None and "loopback" in why
+    # A loopback URL still reaches loopback.
+    assert (
+        address_refusal(
+            "localhost",
+            ["127.0.0.1"],
+            allow_private=True,
+            private_allow=PrivateAllowlist(),
+            label="A2A",
+        )
+        is None
+    )
 
 
 def test_private_allowlist_parsing():

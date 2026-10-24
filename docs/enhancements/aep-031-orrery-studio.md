@@ -370,7 +370,11 @@ Where the code differs from, or pins down, the design above:
 
 - **Tool references** add `catalog:<name>` for the deployment's own catalogue
   tools (`studio_catalogue` in `create_app`, read-only ones only). Model-facing
-  names are `mcp_<entry>_<tool>` and `a2a_<entry>_<skill>`.
+  names are `mcp_<entry>_<tool>` and `a2a_<entry>_<skill>`. Validation computes
+  each node's model-facing names and refuses two that collide
+  (`tool_name_collision`: `-` and `_` map to one name; a catalogue alias may
+  match another tool) and MCP names over 64 characters (`tool_name_too_long`),
+  so a spec that passes cannot fail when ADK registers its tools.
 - **Every node kind is in the format** (`remote_a2a`, `router`, `parallel`,
   `join`, `supervisor`, `human_approval`, plus edge `when`, `max_iterations`
   and `screen`, and node `model` and `output`), so specs written for later
@@ -378,9 +382,29 @@ Where the code differs from, or pins down, the design above:
   Unknown keys are refused everywhere.
 - **Plugins** are `default_plugins(enable_auth=True, autonomy_level="L2",
   enable_memory=False)` per run, plus a `StudioRunPlugin` (trace events and
-  the ledger) placed before `ErrorHandlerPlugin`. `default_plugins()` gained a
-  `token_ledger` argument; by default every call shares one per-process ledger
-  per storage URI (`shared_usage_ledger()`).
+  the ledger) placed before `ToolOutputCapPlugin`, which answers an oversized
+  result with a replacement and so ends the after-tool chain: a capped MCP
+  result still emits its `mcp.call`. A `StudioSpentGate` sits before
+  `TokenBudgetPlugin`, so a call made once the run's budget is spent is
+  answered without reserving tokens it would never release. `default_plugins()`
+  gained a `token_ledger` argument; by default every call shares one
+  per-process ledger per storage URI (`shared_usage_ledger()`).
+- **MCP tool pins live per process**, in a store per registry entry
+  (`McpPins`), not per run, so a tool description changed between runs is
+  caught as it is for `ORRERY_MCP_CONFIG` servers. Studio MCP entries trust the
+  same `ORRERY_A2A_CA_FILE` as A2A entries, through one SSL context per
+  network built once.
+- **Attribution by node.** `mcp.call` events key MCP tools by node and name,
+  so two nodes using the same tool are told apart.
+- **A run cancelled before its task first runs** still ends: a done-callback
+  emits `run.end` (`cancelled`) and the audit record. A cancelled run's task
+  calls `uncancel()` once it has cleaned up, so its final events go out.
+- **Memory bounds.** Besides `ORRERY_STUDIO_MAX_RUNS` and retention, a person
+  keeps at most `ORRERY_STUDIO_MAX_RUNS_PER_USER` finished runs, and a run's
+  captured content is capped at `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN`.
+- **Captured content** honours `ORRERY_REDACT_IPS`. A remote reply's content
+  is taken after the safety screen: its inbound `a2a.message` is held until the
+  tool call returns, then sent with the screened reply, before the node exits.
 - **A tool call past a budget** is refused before it runs with the existing
   `CALL_BUDGET_EXHAUSTED` status, which the circuit breaker already treats as
   neutral, and the run then ends.

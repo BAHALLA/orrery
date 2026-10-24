@@ -43,12 +43,14 @@ from ..a2a.remote import RemoteCards, RemoteExchange
 from ..observability.audit import audit_event
 from ..plugins import CALL_BUDGET_STATUS, ErrorHandlerPlugin, default_plugins
 from ..plugins.delegation_guard_plugin import is_delegation
+from ..plugins.output_cap_plugin import ToolOutputCapPlugin
+from ..plugins.token_budget_plugin import TokenBudgetPlugin
 from ..reliability.resilience import ToolOutcome, classify_tool_outcome
 from ..security.auth import AUTH_STATE_KEY, AuthContext
 from ..security.identity import CallerIdentity
 from ..security.principal import STUDIO_SESSION_PREFIX
 from ..serving.gateway import AgentGateway, TurnTimedOut
-from .compiler import CompiledComposition, compile_spec
+from .compiler import CompiledComposition, McpPins, compile_spec
 from .config import StudioConfig
 from .events import (
     ALWAYS_KEPT,
@@ -117,14 +119,30 @@ class StudioRun:
     events: list[dict[str, Any]] = field(default_factory=list)
     dropped: int = 0
     task: asyncio.Task[None] | None = None
+    #: Content capture (``ORRERY_STUDIO_CAPTURE_CONTENT``), its redaction and
+    #: its per-run byte budget.
+    capture_content: bool = False
+    redact_ips: bool = False
+    max_content_bytes: int = 256 * 1024
+    content_bytes: int = 0
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
     def finished(self) -> bool:
         return self.status != "running"
 
+    def capture(self, text: str | None) -> str | None:
+        """*text* as event content: ``None`` unless capture is on; redacted and cut."""
+        if not self.capture_content:
+            return None
+        return capture(text, redact_ips=self.redact_ips)
+
     def emit(self, event: _Event) -> None:
-        """Append *event* (numbered and stamped here), unless past the per-run cap."""
+        """Append *event* (numbered and stamped here), unless past the per-run cap.
+
+        Captured content counts against :attr:`max_content_bytes`; past it the
+        event is kept without its ``content``.
+        """
         kind = getattr(event, "type", "")
         if (
             len(self.events) >= MAX_EVENTS_PER_RUN - RESERVED_EVENTS and kind not in ALWAYS_KEPT
@@ -136,6 +154,13 @@ class StudioRun:
         event.ts = time.time()
         if isinstance(event, RunEnd):
             event.dropped_events = self.dropped
+        content = getattr(event, "content", None)
+        if content:
+            size = len(content.encode("utf-8"))
+            if self.content_bytes + size > self.max_content_bytes:
+                setattr(event, "content", None)  # noqa: B010 - not every event has the field
+            else:
+                self.content_bytes += size
         self.events.append(event.model_dump(mode="json", exclude_none=True))
         self._notify()
 
@@ -173,14 +198,11 @@ class StudioRunPlugin(BasePlugin):
         run: StudioRun,
         ledger: CompositionLedger,
         compiled: CompiledComposition,
-        *,
-        capture_content: bool,
     ) -> None:
         super().__init__(name="studio_run")
         self._run = run
         self._ledger = ledger
         self._compiled = compiled
-        self._capture = capture_content
         self._entered: dict[str, float] = {}
         self._tokens: dict[str, TokenCount] = {}
         self._last_text: dict[str, str] = {}
@@ -189,6 +211,20 @@ class StudioRunPlugin(BasePlugin):
         #: error handler answers it with an apology, which would otherwise pass
         #: for the node's output and let the run "succeed".
         self.failure: tuple[str, str] | None = None
+        #: node id -> inbound ``a2a.message`` events held until ``after_tool``,
+        #: so their content is the reply *after* the safety screen and PII
+        #: redaction (capture on only).
+        self.pending_inbound: dict[str, list[A2aMessage]] = {}
+
+    def hold_inbound(self, event: A2aMessage) -> None:
+        self.pending_inbound.setdefault(event.node_id, []).append(event)
+
+    def _flush_inbound(self, node_id: str, reply: str | None = None) -> None:
+        """Emit the node's held inbound events: the first with *reply* as content."""
+        for event in self.pending_inbound.pop(node_id, []):
+            event.content = self._run.capture(reply)
+            reply = None
+            self._run.emit(event)
 
     # ── nodes ──
     async def before_agent_callback(self, *, agent: Any, callback_context: Any) -> None:
@@ -215,6 +251,7 @@ class StudioRunPlugin(BasePlugin):
         started = self._entered.pop(agent_name, None)
         if info is None or started is None:
             return
+        self._flush_inbound(info.node_id)  # an exchange whose tool never finished
         self._run.emit(
             NodeExit(
                 node_id=info.node_id,
@@ -223,7 +260,7 @@ class StudioRunPlugin(BasePlugin):
                 tokens=self._tokens.get(agent_name, TokenCount()),
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 outcome=outcome,
-                content=capture(self._last_text.get(agent_name)) if self._capture else None,
+                content=self._run.capture(self._last_text.get(agent_name)),
             )
         )
 
@@ -238,16 +275,6 @@ class StudioRunPlugin(BasePlugin):
         return None
 
     # ── models ──
-    async def before_model_callback(self, *, callback_context: Any, llm_request: Any) -> Any:
-        if self._ledger.exhausted is None:
-            return None
-        # Spent: answer without buying more tokens; the run ends on the next event.
-        return LlmResponse(
-            content=types.Content(
-                role="model", parts=[types.Part.from_text(text="The run's budget is spent.")]
-            )
-        )
-
     async def after_model_callback(self, *, callback_context: Any, llm_response: Any) -> None:
         if getattr(llm_response, "partial", None) is True:
             return None  # a streamed chunk repeats in the final response
@@ -296,14 +323,20 @@ class StudioRunPlugin(BasePlugin):
                 "status": CALL_BUDGET_STATUS,
                 "error": "This Studio run's budget is spent; the run is ending.",
             }
-        if tool.name in self._compiled.mcp_tools:
+        if self._mcp_info(tool, tool_context) is not None:
             self._tool_started[_call_key(tool, tool_context)] = time.monotonic()
         return None
 
     async def after_tool_callback(
         self, *, tool: Any, tool_args: dict[str, Any], tool_context: Any, result: Any
     ) -> None:
-        info = self._compiled.mcp_tools.get(tool.name)
+        if getattr(tool, "delegates_remotely", False) is True:
+            node = self._compiled.nodes.get(str(getattr(tool_context, "agent_name", "") or ""))
+            if node is not None:
+                reply = result.get("reply") if isinstance(result, dict) else None
+                self._flush_inbound(node.node_id, reply if isinstance(reply, str) else None)
+            return None
+        info = self._mcp_info(tool, tool_context)
         if info is None:
             return None
         started = self._tool_started.pop(_call_key(tool, tool_context), None)
@@ -326,8 +359,35 @@ class StudioRunPlugin(BasePlugin):
         )
         return None
 
+    def _mcp_info(self, tool: Any, tool_context: Any) -> Any:
+        agent = str(getattr(tool_context, "agent_name", "") or "")
+        return self._compiled.mcp_tools.get((agent, tool.name))
+
     def emit_budget(self, hit: Exhausted) -> None:
         self._run.emit(BudgetHit(budget=hit.budget, limit=hit.limit, used=hit.used))
+
+
+class StudioSpentGate(BasePlugin):
+    """Answers model calls once the run's ledger is spent, without calling the model.
+
+    Its own plugin, placed before ``TokenBudgetPlugin``: that plugin reserves
+    tokens in ``before_model``, and a short-circuit after it would leave the
+    reservation unsettled (no ``after_model`` runs for a canned answer).
+    """
+
+    def __init__(self, ledger: CompositionLedger) -> None:
+        super().__init__(name="studio_spent_gate")
+        self._ledger = ledger
+
+    async def before_model_callback(self, *, callback_context: Any, llm_request: Any) -> Any:
+        if self._ledger.exhausted is None:
+            return None
+        # Spent: answer without buying more tokens; the run ends on the next event.
+        return LlmResponse(
+            content=types.Content(
+                role="model", parts=[types.Part.from_text(text="The run's budget is spent.")]
+            )
+        )
 
 
 def _call_key(tool: Any, tool_context: Any) -> str:
@@ -335,13 +395,27 @@ def _call_key(tool: Any, tool_context: Any) -> str:
     return str(call_id) if call_id else f"{tool.name}:{id(tool_context)}"
 
 
-def _insert_before_error_handler(plugins: list[BasePlugin], plugin: BasePlugin) -> None:
-    # ErrorHandlerPlugin must stay last (it answers tool errors).
-    for i, existing in enumerate(plugins):
-        if isinstance(existing, ErrorHandlerPlugin):
-            plugins.insert(i, plugin)
-            return
+def _insert_before(plugins: list[BasePlugin], plugin: BasePlugin, *kinds: type) -> None:
+    """Insert *plugin* before the first of *kinds* present, else at the end."""
+    for kind in kinds:
+        for i, existing in enumerate(plugins):
+            if isinstance(existing, kind):
+                plugins.insert(i, plugin)
+                return
     plugins.append(plugin)
+
+
+def _place_run_plugins(plugins: list[BasePlugin], run_plugin: BasePlugin, gate: BasePlugin) -> None:
+    """Where the Studio's two plugins go in a run's stack.
+
+    - the run plugin before ``ToolOutputCapPlugin``: ADK's after-tool chain
+      stops at the first replacement, and the cap returns one, so after it the
+      ``mcp.call`` event of a capped result would never be emitted (and
+      ``ErrorHandlerPlugin`` must stay last anyway);
+    - the spent gate before ``TokenBudgetPlugin`` (see :class:`StudioSpentGate`).
+    """
+    _insert_before(plugins, run_plugin, ToolOutputCapPlugin, ErrorHandlerPlugin)
+    _insert_before(plugins, gate, TokenBudgetPlugin, ErrorHandlerPlugin)
 
 
 def studio_plugins() -> list[BasePlugin]:
@@ -371,6 +445,8 @@ class StudioService:
         self._plugin_factory = plugin_factory
         self._caller_identity = caller_identity
         self._runs: OrderedDict[str, StudioRun] = OrderedDict()
+        #: MCP tool fingerprints first seen, for the process (not per run).
+        self.mcp_pins = McpPins()
 
     def catalogue(self) -> Mapping[str, Any]:
         return self._catalogue()
@@ -388,11 +464,22 @@ class StudioService:
         return spec
 
     # ── runs ──
-    def _prune(self) -> None:
+    def _prune(self, owner: str | None = None) -> None:
+        """Forget expired runs, then the oldest finished ones past the caps.
+
+        *owner* is about to start one: their oldest finished runs go first once
+        they hold ``max_runs_per_user``, so one person cannot crowd out the rest.
+        """
         now = time.time()
         for run_id, run in list(self._runs.items()):
             if run.finished and now - (run.ended_at or now) > self.config.retention_seconds:
                 del self._runs[run_id]
+        if owner is not None:
+            mine = [r for r in self._runs.values() if r.owner == owner]
+            for run in [r for r in mine if r.finished][
+                : max(0, len(mine) + 1 - self.config.max_runs_per_user)
+            ]:
+                del self._runs[run.run_id]
         while len(self._runs) > self.config.max_runs:
             oldest = next((r for r in self._runs.values() if r.finished), None)
             if oldest is None:
@@ -407,7 +494,7 @@ class StudioService:
     def start(self, spec: CompositionSpec, text: str, auth: AuthContext) -> StudioRun:
         if not text.strip():
             raise SpecInvalid([SpecError(("input",), "input must not be empty")])
-        self._prune()
+        self._prune(auth.subject)
         if self.running(auth.subject) >= self.config.max_running_per_user:
             raise TooManyRuns(
                 f"you already have {self.config.max_running_per_user} Studio runs in flight"
@@ -420,6 +507,9 @@ class StudioService:
             spec=spec,
             spec_digest=spec.digest(),
             input=text,
+            capture_content=self.config.capture_content,
+            redact_ips=self.config.redact_ips,
+            max_content_bytes=self.config.max_content_bytes_per_run,
         )
         self._runs[run.run_id] = run
         audit_event(
@@ -430,7 +520,26 @@ class StudioService:
             spec_digest=run.spec_digest,
         )
         run.task = asyncio.create_task(self._execute(run, auth), name=f"studio-{run.run_id}")
+        run.task.add_done_callback(lambda task: self._finalise(run, task, auth))
         return run
+
+    def _finalise(self, run: StudioRun, task: asyncio.Task[None], auth: AuthContext) -> None:
+        """End a run whose task stopped without ending it.
+
+        A task cancelled before its first step never enters :meth:`_execute`,
+        so its ``finally`` never runs: the run would stay ``running`` forever,
+        holding one of its owner's slots. (Also covers a crash past the
+        ``finally``, which should not happen.)
+        """
+        if run.finished:
+            return
+        outcome: RunOutcome = "cancelled" if task.cancelled() else "failed"
+        run.status = outcome
+        run.error = None if outcome == "cancelled" else "the run stopped unexpectedly"
+        run.totals = Totals()
+        run.ended_at = time.time()
+        run.emit(RunEnd(outcome=outcome, error=run.error, totals=run.totals))
+        audit_event("studio_run_ended", subject=auth.subject, run_id=run.run_id, outcome=outcome)
 
     def get(self, run_id: str, owner: str) -> StudioRun | None:
         """The run, if *owner* started it. Anyone else's is as unknown as a missing one."""
@@ -448,25 +557,36 @@ class StudioService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _on_exchange(self, run: StudioRun, node_id: str, exchange: RemoteExchange) -> None:
-        run.emit(
-            A2aMessage(
-                node_id=node_id,
-                remote=exchange.remote,
-                skill=exchange.skill,
-                direction=exchange.direction,
-                method=exchange.method,
-                task_id=exchange.task_id,
-                context_id=exchange.context_id,
-                task_state=exchange.task_state,
-                states=list(exchange.states),
-                parts=[PartSummary(kind=p.kind, size=p.size) for p in exchange.parts],
-                elapsed_ms=exchange.elapsed_ms,
-                status=exchange.status,
-                card_digest=exchange.card_digest,
-                content=capture(exchange.text) if self.config.capture_content else None,
-            )
+    def _on_exchange(
+        self,
+        run: StudioRun,
+        node_id: str,
+        exchange: RemoteExchange,
+        plugin: StudioRunPlugin | None = None,
+    ) -> None:
+        inbound = exchange.direction == "inbound"
+        event = A2aMessage(
+            node_id=node_id,
+            remote=exchange.remote,
+            skill=exchange.skill,
+            direction=exchange.direction,
+            method=exchange.method,
+            task_id=exchange.task_id,
+            context_id=exchange.context_id,
+            task_state=exchange.task_state,
+            states=list(exchange.states),
+            parts=[PartSummary(kind=p.kind, size=p.size) for p in exchange.parts],
+            elapsed_ms=exchange.elapsed_ms,
+            status=exchange.status,
+            card_digest=exchange.card_digest,
+            # The request is what the node's model wrote; the reply is
+            # captured after the plugins have screened it (below).
+            content=None if inbound else run.capture(exchange.text),
         )
+        if inbound and run.capture_content and plugin is not None:
+            plugin.hold_inbound(event)
+        else:
+            run.emit(event)
 
     async def _execute(self, run: StudioRun, auth: AuthContext) -> None:
         spec = run.spec
@@ -480,7 +600,7 @@ class StudioService:
                 pattern=spec.pattern,
                 nodes=pipeline_order(spec),
                 budgets=budgets.model_dump(),
-                content=capture(run.input) if self.config.capture_content else None,
+                content=run.capture(run.input),
             )
         )
         compiled: CompiledComposition | None = None
@@ -489,19 +609,21 @@ class StudioService:
         node_outcome: NodeOutcome = "failed"
         error: str | None = None
         try:
+            holder: dict[str, StudioRunPlugin] = {}
             compiled = compile_spec(
                 spec,
                 registry=self.registry,
                 cards=self.cards,
                 catalogue=self.catalogue(),
                 model=self._model_factory() if self._model_factory else None,
-                on_exchange=lambda node_id, ex: self._on_exchange(run, node_id, ex),
+                on_exchange=lambda node_id, ex: self._on_exchange(
+                    run, node_id, ex, holder.get("plugin")
+                ),
+                mcp_pins=self.mcp_pins,
             )
-            plugin = StudioRunPlugin(
-                run, ledger, compiled, capture_content=self.config.capture_content
-            )
+            plugin = holder["plugin"] = StudioRunPlugin(run, ledger, compiled)
             plugins = list(self._plugin_factory())
-            _insert_before_error_handler(plugins, plugin)
+            _place_run_plugins(plugins, plugin, StudioSpentGate(ledger))
             gateway = AgentGateway(
                 app_name=APP_NAME,
                 root_agent=compiled.workflow,
@@ -554,6 +676,10 @@ class StudioService:
             run.emit(BudgetHit(budget=hit.budget, limit=hit.limit, used=hit.used))
             outcome, node_outcome = "budget_exhausted", "budget_exhausted"
         except asyncio.CancelledError:
+            # Swallowed on purpose (the run ends as an outcome); say so, so an
+            # enclosing timeout or TaskGroup does not read it as still pending.
+            if (task := asyncio.current_task()) is not None:
+                task.uncancel()
             outcome, node_outcome = "cancelled", "cancelled"
         except Exception as exc:  # noqa: BLE001 - a failed run is an outcome, not a crash
             logger.exception("Studio run %s failed", run.run_id)
@@ -579,9 +705,7 @@ class StudioService:
                     outcome=outcome,
                     error=error,
                     totals=totals,
-                    content=capture(output)
-                    if self.config.capture_content and outcome == "succeeded"
-                    else None,
+                    content=run.capture(output) if outcome == "succeeded" else None,
                 )
             )
             audit_event(

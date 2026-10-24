@@ -44,6 +44,8 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_REMOTE_CALLS` | `20` | Ceiling and default for `budgets.max_remote_calls`. |
 | `ORRERY_STUDIO_MAX_TIMEOUT_SECONDS` | `300` | Ceiling and default for `budgets.timeout_s`. |
 | `ORRERY_STUDIO_MAX_RUNS` | `100` | Runs kept in memory; past it the oldest finished ones go. |
+| `ORRERY_STUDIO_MAX_RUNS_PER_USER` | `20` | Finished runs kept per person; past it that person's oldest go. |
+| `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN` | `262144` | Captured `content` one run may hold; past it events carry none. |
 | `ORRERY_STUDIO_RUN_RETENTION_SECONDS` | `3600` | A finished run is forgotten after this long. |
 | `ORRERY_STUDIO_MAX_RUNNING_PER_USER` | `2` | Runs one person may have in flight; more is a 429. |
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
@@ -51,6 +53,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_A2A_PRIVATE_ALLOW` | — | Hosts and CIDRs a `private_network` entry may reach (comma-separated). |
 | `ORRERY_A2A_CA_FILE` | — | One extra CA bundle trusted for outbound A2A (an internal CA). |
 | `ORRERY_STUDIO_SECRET_*` | — | Bearer tokens registry entries refer to by name. |
+| `ORRERY_REDACT_IPS` | `false` | Also redact IP addresses in captured `content`, as it does in logs. |
 
 `ORRERY_DAILY_TOKEN_BUDGET_PER_USER` applies to Studio runs too: every run
 charges the same per-process ledger as chat.
@@ -98,7 +101,7 @@ listed in `read_only` can be used in a P0a composition.
 | `effect` | `read_only` | `acting` is refused with "not supported yet (P0c)". |
 | `private_network` | `false` | Allow a private address, for a host or address listed in `ORRERY_A2A_PRIVATE_ALLOW`. |
 | `service_origins` | `[]` | Extra origins the card's RPC interface may point to (default: the card's own origin). |
-| `auth.bearer_env` | — | An env var whose name starts with `ORRERY_STUDIO_SECRET_`. Sent only to the entry's origins. Unset at startup: startup fails. |
+| `auth.bearer_env` | — | An env var whose name starts with `ORRERY_STUDIO_SECRET_`. Sent only to the entry's origins (the card's own, plus `service_origins`); a redirect or another origin never gets it. Unset at startup: startup fails. |
 | `connect_timeout_s` / `read_timeout_s` / `total_timeout_s` | 5 / 60 / 120 | Per call. |
 | `max_card_bytes` | 65536 | Card size, checked while it streams. |
 | `max_reply_bytes` | 524288 | Response size, checked while it streams. |
@@ -117,9 +120,24 @@ each card and shows its digest: review it, then set `card_sha256`.
 connect: public addresses only, unless the entry sets `private_network` and its
 host (or the address it resolves to) is in `ORRERY_A2A_PRIVATE_ALLOW`.
 Link-local and metadata addresses are always refused. Loopback hosts may reach
-loopback. Redirects are never followed and proxy variables are ignored. A
+loopback; a host on the allowlist never may, whatever it resolves to. Redirects are never followed and proxy variables are ignored. A
 `private_network` entry whose host is a literal address not in the allowlist,
 or any `private_network` entry while the allowlist is empty, fails startup.
+
+**Compressed responses are refused.** Every request asks for
+`Accept-Encoding: identity`, and a reply that comes back compressed anyway is
+refused before a byte is decoded, so the size caps hold for what is read. The
+same applies to Studio MCP entries.
+
+**Other bindings.** A card may also list gRPC or HTTP+JSON interfaces. Orrery
+calls only the JSON-RPC ones, so only those must pass the origin and https
+checks; the others are not checked but stay in the pin, so a change to them
+still disables the entry.
+
+**Trust and pins for MCP entries.** Registry MCP servers use the same
+`ORRERY_A2A_CA_FILE` as A2A entries. Their tool pins (each tool's description
+and schema, first seen) are kept per process, across runs, so a server that
+changes a tool between runs is caught.
 
 ## Compositions
 
@@ -183,7 +201,11 @@ It refuses: duplicate ids; edges to unknown nodes; branches, joins, cycles,
 self-loops and unreachable nodes; more than one first node; tool references
 that are malformed, unknown, not `read_only` or not registered for the skill;
 budgets over the ceilings; unknown keys anywhere; and a `spec_version` newer
-than the server reads.
+than the server reads. It also refuses, per node, two tools that reach the
+model under the same name (`tool_name_collision`: `mcp:my-x.t` and `mcp:my_x.t`
+are both `mcp_my_x_t`, and a catalogue alias may match another tool's name),
+and an MCP tool whose model-facing name is over 64 characters
+(`tool_name_too_long`). Two nodes may each use the same tool.
 
 ## Remote agents as tools
 
@@ -253,7 +275,7 @@ All routes need a human admin's bearer token.
 | `GET /studio/runs/{id}/events` | `Last-Event-ID` header to resume | `text/event-stream`: every event so far, then each new one, until `run.end` |
 | `POST /studio/runs/{id}/cancel` | | The summary; `status` becomes `cancelled` once the task stops |
 | `GET /studio/schema` | | `{"spec_version": 1, "spec": <JSON Schema>, "events": <JSON Schema>}` |
-| `GET /studio/registry` | `?resolve=true` fetches each card first | MCP servers and their tools, A2A entries with card status, usable catalogue tools. Never secrets or env var names |
+| `GET /studio/registry` | `?resolve=true` fetches every card first, concurrently, at most 5 s each (a slow one shows its error) | MCP servers and their tools, A2A entries with card status, usable catalogue tools. Never secrets or env var names |
 
 The run summary:
 
@@ -302,6 +324,11 @@ timings, never arguments, results or message text. With
 `ORRERY_STUDIO_CAPTURE_CONTENT=true`, `content` (marked ? above) carries text
 after PII redaction (credentials and email addresses), cut to 2 KB: the run's
 input, each node's answer, each A2A request and reply, and the run's output.
+A remote reply is captured as the model saw it, after the safety screen (an
+injection attempt shows as the screen's marker), so its `a2a.message` is sent
+when the tool call returns. With `ORRERY_REDACT_IPS=true`, IP addresses are
+redacted too. A run holds at most `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN` of
+content; later events carry none.
 
 **At most 2000 events per run.** Past that, events are dropped (the last few
 slots are kept for `budget.hit` and `run.end`), and `run.end` says how many.
@@ -315,8 +342,11 @@ agent built in another framework:
   (`deploy/studio-demo/writer/writer_agent.py`), served over **https** on the
   compose network only, as `demo-writer.studio.internal`;
 - `studio-demo-certs`: a one-shot job generating a throwaway internal CA and
-  the writer's certificate (`deploy/studio-demo/make_certs.py`). Orrery trusts
-  it through `ORRERY_A2A_CA_FILE`; the registry never names files;
+  the writer's certificate (`deploy/studio-demo/make_certs.py`). It keeps them
+  across restarts, and makes new ones when one is missing, expires within 7
+  days or no longer matches the CA. The CA goes to its own volume: Orrery
+  mounts only that one (`ORRERY_A2A_CA_FILE=/ca/ca.pem`) and never sees the
+  writer's key. The registry never names files;
 - `orrery-studio`: Orrery with the Studio on, the demo registry
   (`deploy/studio-demo/registry.yaml`: Tirraflow's public MCP server and the
   writer), and the writer's host in `ORRERY_A2A_PRIVATE_ALLOW`.

@@ -36,9 +36,15 @@ class StudioConfig:
     registry_path: str | None = None
     #: Put redacted, trimmed message text on trace events (off: names and sizes only).
     capture_content: bool = False
+    #: Also redact IPv4 addresses in captured content (``ORRERY_REDACT_IPS``).
+    redact_ips: bool = False
     ceilings: BudgetCeilings = BudgetCeilings()
     #: Runs kept in memory (finished ones are dropped oldest first past this).
     max_runs: int = 100
+    #: Finished runs kept per person, so one admin cannot crowd out the rest.
+    max_runs_per_user: int = 20
+    #: Bytes of captured ``content`` stored per run; past it, events carry none.
+    max_content_bytes_per_run: int = 256 * 1024
     #: Seconds a finished run is kept.
     retention_seconds: int = 3600
     #: Runs in flight at once, per person and for the whole process.
@@ -54,6 +60,7 @@ class StudioConfig:
             enabled=env_flag(STUDIO_ENABLED_ENV, default=False),
             registry_path=os.getenv(STUDIO_REGISTRY_ENV, "").strip() or None,
             capture_content=env_flag(STUDIO_CAPTURE_CONTENT_ENV, default=False),
+            redact_ips=env_flag("ORRERY_REDACT_IPS", default=False),
             ceilings=BudgetCeilings(
                 max_tokens=env_int("ORRERY_STUDIO_MAX_TOKENS", defaults.max_tokens),
                 max_tool_calls=env_int("ORRERY_STUDIO_MAX_TOOL_CALLS", defaults.max_tool_calls),
@@ -64,6 +71,10 @@ class StudioConfig:
                 timeout_s=env_int("ORRERY_STUDIO_MAX_TIMEOUT_SECONDS", defaults.timeout_s),
             ),
             max_runs=env_int("ORRERY_STUDIO_MAX_RUNS", cls.max_runs),
+            max_runs_per_user=env_int("ORRERY_STUDIO_MAX_RUNS_PER_USER", cls.max_runs_per_user),
+            max_content_bytes_per_run=env_int(
+                "ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN", cls.max_content_bytes_per_run
+            ),
             retention_seconds=env_int("ORRERY_STUDIO_RUN_RETENTION_SECONDS", cls.retention_seconds),
             max_running_per_user=env_int(
                 "ORRERY_STUDIO_MAX_RUNNING_PER_USER", cls.max_running_per_user
@@ -89,6 +100,12 @@ class StudioConfig:
         for name, value in vars(self.ceilings).items():
             if value < 1:
                 raise ValueError(f"Studio ceiling {name} must be at least 1")
-        for name in ("max_runs", "retention_seconds", "max_running_per_user", "max_running"):
+        for name in (
+            "max_runs",
+            "max_runs_per_user",
+            "retention_seconds",
+            "max_running_per_user",
+            "max_running",
+        ):
             if getattr(self, name) < 1:
                 raise ValueError(f"Studio setting {name} must be at least 1")

@@ -23,7 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   /studio/schema`, `GET /studio/registry`. Endpoints come only from the
   `ORRERY_STUDIO_REGISTRY` YAML; secrets only from `ORRERY_STUDIO_SECRET_*`.
   Startup fails with the Studio on and `ORRERY_HUMAN_CLIENTS` unset; a service
-  token with the admin role gets 403. See [Studio](docs/integrations/studio.md).
+  token with the admin role gets 403. Memory is bounded per person
+  (`ORRERY_STUDIO_MAX_RUNS_PER_USER`) and per run
+  (`ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN`); captured content honours
+  `ORRERY_REDACT_IPS`. Validation refuses tools that would reach a node's
+  model under one name (`tool_name_collision`) or over 64 characters
+  (`tool_name_too_long`). See [Studio](docs/integrations/studio.md).
 - **Calling remote A2A agents ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).**
   `GuardedRemoteA2aTool` sends one text request to a registered remote and
   returns its reply as a tool result, so the safety screen, PII redaction,
@@ -33,10 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A network guard for `httpx` shared with the MCP one: a set of allowed
   origins, public addresses only unless `private_network` and
   `ORRERY_A2A_PRIVATE_ALLOW`, link-local and metadata always refused, no
-  redirects or proxies, bytes capped while streaming. `ORRERY_A2A_CA_FILE`
-  adds one CA bundle for an internal CA.
+  redirects or proxies, bytes capped while streaming, compressed responses
+  refused (`Accept-Encoding: identity`), and an allowlisted host never
+  reaches loopback. `ORRERY_A2A_CA_FILE` adds one CA bundle for an internal
+  CA, for A2A and Studio MCP entries alike.
 - `studio-demo` compose profile: a plain `a2a-sdk` writer agent over https
-  with a generated internal CA, an example registry and the
+  with a generated internal CA (renewed near expiry; Orrery mounts only the
+  CA, not the writer's key), an example registry and the
   research → writer → critic spec (`deploy/studio-demo/`).
 - `make dev-token CLIENT=<azp>` (and `scripts/dev_token.py --client`) mints a
   token for a named client, so it can count as a person under

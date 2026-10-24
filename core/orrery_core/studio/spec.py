@@ -26,7 +26,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..a2a.remote import jcs
+from ..a2a.remote import jcs, safe_tool_name
 from ..security.guardrails import get_guard_level
 from .config import BudgetCeilings
 from .registry import StudioRegistry
@@ -375,6 +375,61 @@ def _tool_error(ref: str, ctx: ValidationContext) -> str | None:
     return None
 
 
+#: Longest function name the model providers accept.
+MAX_TOOL_NAME = 64
+
+
+def model_tool_name(ref: str, ctx: ValidationContext) -> str | None:
+    """The function name the model will see for a valid *ref* (as the compiler names it)."""
+    parsed = parse_tool_ref(ref)
+    if parsed is None:
+        return None
+    if parsed.kind == "catalog":
+        tool = ctx.catalogue.get(parsed.name)
+        return str(getattr(tool, "name", parsed.name))
+    if parsed.kind == "a2a":
+        return safe_tool_name("a2a", parsed.entry, parsed.name)
+    # ADK prefixes MCP tools itself, uncapped: <prefix>_<tool>.
+    return f"{safe_tool_name('mcp', parsed.entry)}_{parsed.name}"
+
+
+def _name_errors(i: int, tools: list[str], ctx: ValidationContext) -> list[SpecError]:
+    """Two refs of one node must not reach the model under one name.
+
+    Sanitising and the 64-character cap can map different refs to one name
+    (``a2a:demo-writer.x`` and ``a2a:demo_writer.x``; two catalogue refs for one
+    tool), and the model could then call neither reliably.
+    """
+    errors: list[SpecError] = []
+    seen: dict[str, str] = {}
+    for j, ref in enumerate(tools):
+        if _tool_error(ref, ctx) is not None:
+            continue  # already reported
+        name = model_tool_name(ref, ctx)
+        if name is None:
+            continue
+        if len(name) > MAX_TOOL_NAME:
+            errors.append(
+                SpecError(
+                    ("nodes", i, "tools", j),
+                    f"{ref!r} becomes the tool name {name!r}, over the {MAX_TOOL_NAME} "
+                    "characters model providers accept",
+                    "tool_name_too_long",
+                )
+            )
+        elif name in seen:
+            errors.append(
+                SpecError(
+                    ("nodes", i, "tools", j),
+                    f"{ref!r} and {seen[name]!r} both reach the model as {name!r}",
+                    "tool_name_collision",
+                )
+            )
+        else:
+            seen[name] = ref
+    return errors
+
+
 def validate_spec(spec: CompositionSpec, ctx: ValidationContext) -> list[SpecError]:
     """Every reason *spec* cannot run in this release (P0a), field by field."""
     errors: list[SpecError] = []
@@ -425,6 +480,8 @@ def validate_spec(spec: CompositionSpec, ctx: ValidationContext) -> list[SpecErr
         for j, ref in enumerate(node.tools):
             if (why := _tool_error(ref, ctx)) is not None:
                 errors.append(SpecError(("nodes", i, "tools", j), why, "unknown_tool"))
+        if len(set(node.tools)) == len(node.tools):
+            errors.extend(_name_errors(i, node.tools, ctx))
 
     errors.extend(_check_pipeline(spec, ids))
     errors.extend(_check_budgets(spec, ctx.ceilings))

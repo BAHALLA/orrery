@@ -71,8 +71,9 @@ class CompiledComposition:
     workflow: Workflow
     #: Agent name (``n_<id>``) -> node.
     nodes: dict[str, NodeInfo]
-    #: Model-facing tool name (``mcp_<entry>_<tool>``) -> what it is.
-    mcp_tools: dict[str, McpToolInfo]
+    #: ``(agent name, model-facing tool name)`` -> what it is. Keyed by the
+    #: agent too: two nodes may use the same ``mcp_<entry>_<tool>``.
+    mcp_tools: dict[tuple[str, str], McpToolInfo]
     order: list[str]
     toolsets: list[BaseToolset] = field(default_factory=list)
 
@@ -87,6 +88,22 @@ class CompiledComposition:
 ExchangeSink = Callable[[str, RemoteExchange], None]
 
 
+class McpPins:
+    """First-seen MCP tool fingerprints for the whole process, per registry entry.
+
+    A Studio run builds its own toolsets, and a toolset's pin store would
+    otherwise die with it: every run would pin whatever the server serves now,
+    and a changed description would never be noticed. Like :class:`RemoteCards`,
+    one of these lives as long as the process.
+    """
+
+    def __init__(self) -> None:
+        self._by_entry: dict[str, dict[str, str]] = {}
+
+    def for_entry(self, entry_id: str) -> dict[str, str]:
+        return self._by_entry.setdefault(entry_id, {})
+
+
 def _safe(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower())
 
@@ -99,6 +116,7 @@ def compile_spec(
     catalogue: Mapping[str, Any],
     model: Any = None,
     on_exchange: ExchangeSink | None = None,
+    mcp_pins: McpPins | None = None,
 ) -> CompiledComposition:
     """Build the run's ``Workflow``. *model* is the deployment's (``None``: ``resolve_model()``)."""
     from ..agent.base import create_agent, resolve_model
@@ -109,7 +127,7 @@ def compile_spec(
     order = pipeline_order(spec)
     agents = []
     nodes: dict[str, NodeInfo] = {}
-    mcp_tools: dict[str, McpToolInfo] = {}
+    mcp_tools: dict[tuple[str, str], McpToolInfo] = {}
     toolsets: list[BaseToolset] = []
     for node_id in order:
         node = by_id[node_id]
@@ -143,11 +161,17 @@ def compile_spec(
                     "pinned": {t: d for t, d in server.pinned.items() if t in names},
                 }
             )
-            toolset = GuardedMcpToolset(config, private_allow=cards.network.private_allow)
+            toolset = GuardedMcpToolset(
+                config,
+                private_allow=cards.network.private_allow,
+                pin_store=(mcp_pins or McpPins()).for_entry(entry_id),
+                # Registry entries never name files: the deployment's CA bundle.
+                verify=cards.network.ssl_context,
+            )
             toolsets.append(toolset)
             tools.append(toolset)
             for name in names:
-                mcp_tools[f"{prefix}_{name}"] = McpToolInfo(
+                mcp_tools[(NODE_PREFIX + node_id, f"{prefix}_{name}")] = McpToolInfo(
                     node_id=node_id,
                     entry=entry_id,
                     tool=name,

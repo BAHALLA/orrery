@@ -191,6 +191,82 @@ def test_bad_tool_refs_are_refused_at_their_index(ref, why):
     assert error["loc"] == ["nodes", 2, "tools", 1] and why in error["msg"]
 
 
+def _named_ctx() -> ValidationContext:
+    long_a = "a" * 30 + "-x"
+    long_b = "a" * 30 + "_x"
+    reg = {
+        "mcp": [
+            *REGISTRY["mcp"],
+            {
+                "id": "other",
+                "url": "https://o.example.com/mcp",
+                "transport": "streamable_http",
+                "tools": ["search", "x" * 40],
+                "read_only": ["search", "x" * 40],
+            },
+        ],
+        "a2a": [
+            *REGISTRY["a2a"],
+            {"id": "demo_writer", "card_url": "https://w2.example.com/c", "skills": ["draft"]},
+            {"id": long_a, "card_url": "https://l1.example.com/c", "skills": ["s" * 30 + "one"]},
+            {"id": long_b, "card_url": "https://l2.example.com/c", "skills": ["s" * 30 + "two"]},
+        ],
+    }
+    time_tool = _Tool("get_time")
+    return ValidationContext(
+        registry=StudioRegistry.model_validate(reg),
+        catalogue={"get_time": time_tool, "clock": time_tool},
+    )
+
+
+@pytest.mark.parametrize(
+    ("refs", "code"),
+    [
+        (["catalog:get_time", "catalog:clock"], "tool_name_collision"),  # one tool, two refs
+        (["a2a:demo-writer.draft", "a2a:demo_writer.draft"], "tool_name_collision"),
+        (  # both cut to the same 64 characters
+            [
+                "a2a:" + "a" * 30 + "-x." + "s" * 30 + "one",
+                "a2a:" + "a" * 30 + "_x." + "s" * 30 + "two",
+            ],
+            "tool_name_collision",
+        ),
+        (["mcp:other." + "x" * 60], None),  # unknown tool: reported as unknown_tool only
+        (["mcp:other." + "x" * 40, "catalog:get_time"], None),
+    ],
+)
+def test_tool_names_must_be_unique_per_node(refs, code):
+    errors = _errors(_spec(nodes=[_node("only", tools=refs)], edges=[]), _named_ctx())
+    if code is None:
+        assert all(e["code"] != "tool_name_collision" for e in errors)
+    else:
+        assert [(e["loc"], e["code"]) for e in errors] == [(["nodes", 0, "tools", 1], code)]
+
+
+def test_two_nodes_may_share_a_tool_name():
+    spec = _spec(
+        nodes=[_node("a", tools=["mcp:docs.search"]), _node("b", tools=["mcp:docs.search"])],
+        edges=[{"from": "a", "to": "b"}],
+    )
+    assert _errors(spec) == []
+
+
+def test_mcp_names_past_64_characters_are_refused():
+    ctx = _named_ctx()
+    from orrery_core.studio.spec import _name_errors
+
+    long = "y" * 70
+    errors = _name_errors(0, ["mcp:other." + long], ctx)
+    assert errors == []  # unknown tool: _tool_error's job, not this one
+    reg = ctx.registry.model_copy(
+        update={
+            "mcp": [ctx.registry.mcp[1].model_copy(update={"tools": [long], "read_only": [long]})]
+        }
+    )
+    errors = _name_errors(0, ["mcp:other." + long], ValidationContext(registry=reg))
+    assert [e.code for e in errors] == ["tool_name_too_long"]
+
+
 def test_duplicate_ids_and_tool_refs_are_refused():
     raw = _spec(nodes=[_node("a"), _node("a")], edges=[{"from": "a", "to": "a"}])
     assert ["nodes", 1, "id"] in _locs(raw)
@@ -305,6 +381,12 @@ def test_mcp_entries_refuse_stdio_and_off_loopback_http():
         {"mcp": [{**REGISTRY["mcp"][0], "url": "http://127.0.0.1:9000/mcp"}]}
     )
     assert ok.mcp_entry("docs") is not None
+
+
+def test_a_tool_both_read_only_and_destructive_is_refused():
+    raw = {"mcp": [{**REGISTRY["mcp"][0], "read_only": ["search", "delete_page"]}]}
+    with pytest.raises(ValidationError, match="both read_only and destructive"):
+        StudioRegistry.model_validate(raw)
 
 
 def test_mcp_entries_are_the_mcp_config_schema():

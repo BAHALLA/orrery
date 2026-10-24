@@ -21,7 +21,7 @@ that started it (404 elsewhere).
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -49,6 +49,9 @@ from .spec import (
 
 #: Seconds between SSE keepalive comments.
 KEEPALIVE_SECONDS = 15.0
+
+#: Seconds one card fetch may take on ``GET /studio/registry?resolve=true``.
+RESOLVE_TIMEOUT = 5.0
 
 
 def _errors_response(exc: SpecInvalid) -> JSONResponse:
@@ -169,10 +172,19 @@ def mount_studio(
         reg = service.registry
         catalogue = service.catalogue()
         if resolve:
-            for entry in reg.a2a:
-                # A refusal is reported in the entry's card status.
-                with contextlib.suppress(CardRefused, ValueError):
-                    await service.cards.get(entry)
+
+            async def fetch(entry: Any) -> None:
+                # A refusal or a timeout is reported in the entry's card status.
+                try:
+                    await asyncio.wait_for(service.cards.get(entry), RESOLVE_TIMEOUT)
+                except TimeoutError:
+                    service.cards.note_error(
+                        entry, f"{entry.id}: the card was not fetched within {RESOLVE_TIMEOUT:g}s"
+                    )
+                except CardRefused, ValueError:
+                    pass
+
+            await asyncio.gather(*(fetch(entry) for entry in reg.a2a))
 
         return {
             "mcp": [

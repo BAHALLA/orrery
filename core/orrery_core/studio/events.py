@@ -35,11 +35,12 @@ BudgetName = Literal[
 ]
 
 
-def capture(text: str | None) -> str | None:
-    """*text* redacted (credentials, emails) and cut to :data:`MAX_CONTENT_BYTES` of UTF-8."""
+def capture(text: str | None, *, redact_ips: bool = False) -> str | None:
+    """*text* redacted (credentials, emails; IPv4 with *redact_ips*) and cut to
+    :data:`MAX_CONTENT_BYTES` of UTF-8."""
     if not text:
         return None
-    redacted, _ = redact_text(text, redact_emails=True)
+    redacted, _ = redact_text(text, redact_emails=True, redact_ips=redact_ips)
     data = redacted.encode("utf-8")
     if len(data) <= MAX_CONTENT_BYTES:
         return redacted

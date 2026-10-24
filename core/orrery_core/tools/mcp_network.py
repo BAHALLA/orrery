@@ -242,8 +242,9 @@ def address_refusal(
     - public addresses: always allowed;
     - a loopback host (``localhost``, ``127.0.0.1``, ``::1``) may reach loopback;
     - anything else private only with *allow_private*, and then, when a
-      *private_allow* list is given, only for a host or address it lists. With
-      no list (the MCP config's ``allow_private_network``) any private address.
+      *private_allow* list is given, only for a host or address it lists, and
+      never a loopback address. With no list (the MCP config's
+      ``allow_private_network``) any private address, as before.
     """
     loopback_host = host in LOOPBACK_HOSTS
     for address in addresses:
@@ -256,6 +257,14 @@ def address_refusal(
             continue
         if loopback_host and _is_loopback(address):
             continue
+        if _is_loopback(address) and private_allow is not None:
+            # A listed name (or network) is for an internal service, never for
+            # this host: an allowlisted hostname re-pointed at 127.0.0.1 would
+            # reach Orrery's own ports. Only a loopback URL reaches loopback.
+            return (
+                f"{label} request to {host} refused: it resolves to {address}, a "
+                "loopback address (only a loopback URL may reach loopback)"
+            )
         if allow_private and (private_allow is None or private_allow.allows(host, address)):
             continue
         hint = (
@@ -397,6 +406,10 @@ class ResponseTooLarge(httpx_std.ReadError):
     """A response body past the transport's byte cap, refused while streaming."""
 
 
+class RefusedEncoding(httpx_std.DecodingError):
+    """A compressed response: refused, since the byte cap counts wire bytes."""
+
+
 class _CappedStream(httpx_std.AsyncByteStream):
     """Passes a body through, raising once it exceeds *cap* bytes."""
 
@@ -429,6 +442,12 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
     addresses are always refused. Response bodies are capped at
     *max_response_bytes* while they stream, before any caller parses them.
     Being an explicit transport, it also makes httpx ignore proxy variables.
+
+    Compression is off: every request asks for ``identity`` and a response
+    with any other ``Content-Encoding`` is refused before httpx would decode
+    it. The cap counts the bytes that arrive, so a 50 KB gzip body that
+    inflates to 50 MB would otherwise pass it; with no decoding, the bytes
+    counted are the bytes a caller reads.
     """
 
     def __init__(
@@ -468,7 +487,16 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
         if why is not None:
             logger.warning("%s", why)
             raise BlockedRemoteDestination(why, request=request)
+        request.headers["Accept-Encoding"] = "identity"
         response = await super().handle_async_request(request)
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "identity"):
+            await response.aclose()
+            raise RefusedEncoding(
+                f"response from {request.url.host} is {encoding}-encoded; compressed "
+                "responses are refused (the byte cap counts what arrives)",
+                request=request,
+            )
         declared = response.headers.get("content-length", "")
         if declared.isdigit() and int(declared) > self._max_bytes:
             await response.aclose()

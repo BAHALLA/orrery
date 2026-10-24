@@ -39,9 +39,12 @@ import logging
 import math
 import os
 import re
+import ssl
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
+from functools import cached_property
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -224,11 +227,36 @@ def check_private_allow(entry_id: str, url: str, allow: PrivateAllowlist) -> Non
 # ── Card pinning ─────────────────────────────────────────────────────
 
 
+def _es_number(value: float) -> str:
+    """ECMAScript ``Number::toString`` (RFC 8785 §3.2.2.3): ``1e-7``, ``1e+21``, ``0.000001``.
+
+    Both use the shortest digits that round-trip, which Python's ``repr``
+    gives; only the layout differs, and that is ECMA-262's, step by step.
+    """
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    decimal = Decimal(repr(abs(value)))
+    digits = "".join(map(str, decimal.as_tuple().digits)).rstrip("0") or "0"
+    exponent = decimal.adjusted() + 1  # n: value = 0.digits × 10^n
+    k = len(digits)
+    if k <= exponent <= 21:
+        return sign + digits + "0" * (exponent - k)
+    if 0 < exponent <= 21:
+        return sign + digits[:exponent] + "." + digits[exponent:]
+    if -6 < exponent <= 0:
+        return sign + "0." + "0" * -exponent + digits
+    e = exponent - 1
+    mantissa = digits if k == 1 else digits[0] + "." + digits[1:]
+    return f"{sign}{mantissa}e{'+' if e > 0 else '-'}{abs(e)}"
+
+
 def jcs(value: Any) -> str:
     """RFC 8785 canonical JSON for JSON-shaped *value*.
 
     Keys sorted by UTF-16 code units, no whitespace, minimal string escaping
-    and ECMAScript number formatting (integral floats print as integers).
+    and ECMAScript number formatting (:func:`_es_number`). Integers beyond
+    2^53 are formatted as the IEEE double they become, as RFC 8785 requires.
     """
     if value is None:
         return "null"
@@ -237,13 +265,11 @@ def jcs(value: Any) -> str:
     if value is False:
         return "false"
     if isinstance(value, int):
-        return str(value)
+        return str(value) if abs(value) <= 2**53 else _es_number(float(value))
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("JCS has no representation for NaN or infinity")
-        if value.is_integer() and abs(value) < 1e21:
-            return str(int(value))
-        return repr(value).replace("e+", "e")
+        return _es_number(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list | tuple):
@@ -292,19 +318,23 @@ class PinnedCard:
 
 
 def check_rpc_targets(entry: RemoteAgentEntry, card: AgentCard) -> None:
-    """Every interface the card offers must be on the entry's origins, over https.
+    """Every JSON-RPC interface the card offers must be on the entry's origins, over https.
 
     ADK runs this check only for a card it fetched itself; a pinned card is
     passed as an object, so Orrery runs it. Plain http only loopback to
-    loopback, as ADK allows.
+    loopback, as ADK allows. Only JSON-RPC interfaces are checked, because the
+    client is built for JSON-RPC alone and never dials another binding (a gRPC
+    target is ``host:port``, with no scheme to check). The others are still in
+    the pinned digest, so a change to them needs a re-pin.
     """
     interfaces = list(card.supported_interfaces)
     if not interfaces:
         raise CardRefused(f"{entry.id}: the card offers no RPC interface")
-    if not any(i.protocol_binding == TransportProtocol.JSONRPC for i in interfaces):
+    usable = [i for i in interfaces if i.protocol_binding == TransportProtocol.JSONRPC]
+    if not usable:
         raise CardRefused(f"{entry.id}: the card offers no JSONRPC interface")
     card_scheme, card_host, _ = entry.card_origin
-    for interface in interfaces:
+    for interface in usable:
         target = origin_of(interface.url)
         if target[0] != "https" and not (
             target[0] == "http"
@@ -353,6 +383,11 @@ class RemoteNetwork:
             raise ValueError(f"{CA_FILE_ENV}: {ca} is not a readable file")
         return cls(private_allow=PrivateAllowlist.from_env(), ca_file=ca)
 
+    @cached_property
+    def ssl_context(self) -> ssl.SSLContext | bool:
+        """Built once per network (reading the CA file), shared by every client."""
+        return ca_ssl_context(self.ca_file)
+
 
 def build_client(
     entry: RemoteAgentEntry,
@@ -367,14 +402,16 @@ def build_client(
         allow_private=entry.private_network,
         private_allow=network.private_allow,
         max_response_bytes=max_bytes,
-        verify=ca_ssl_context(network.ca_file),
+        verify=network.ssl_context,
     )
     auth = _OriginBoundBearer(entry.auth.token(), entry.card_origin) if entry.auth else None
     return httpx_std.AsyncClient(
         transport=transport,
         follow_redirects=False,
         trust_env=False,
-        headers={HOP_HEADER: "1"},
+        # No compression: the byte caps count what arrives (the transport also
+        # refuses any encoded response).
+        headers={HOP_HEADER: "1", "Accept-Encoding": "identity"},
         auth=auth,
         timeout=httpx_std.Timeout(
             connect=entry.connect_timeout_s,
@@ -416,6 +453,10 @@ class RemoteCards:
                 for s in (pinned.card.skills if pinned else [])
             ],
         }
+
+    def note_error(self, entry: RemoteAgentEntry, reason: str) -> None:
+        """Record a problem seen outside :meth:`get` (a caller's own timeout)."""
+        self._errors[entry.id] = (time.time(), reason)
 
     async def get(self, entry: RemoteAgentEntry) -> PinnedCard:
         pinned = self._pinned.get(entry.id)

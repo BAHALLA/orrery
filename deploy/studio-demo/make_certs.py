@@ -1,13 +1,20 @@
 """Generate the Studio demo's internal CA and the writer's server certificate.
 
-Run once by the ``studio-demo-certs`` compose service into a shared volume::
+Run by the ``studio-demo-certs`` compose service on every ``up``::
 
-    python make_certs.py --out /certs --host demo-writer.studio.internal --owner 1000
+    python make_certs.py --out /certs --ca-out /ca \\
+        --host demo-writer.studio.internal --owner 1000
 
-Writes ``ca.pem`` (what Orrery trusts, via ``ORRERY_A2A_CA_FILE``),
-``writer.pem`` and ``writer-key.pem``. The CA's private key is discarded once
-it has signed: nothing else can be issued from it. Existing files are kept, so
-restarting the profile does not change the writer's certificate.
+Writes ``writer.pem`` and ``writer-key.pem`` to ``--out`` (only the writer
+mounts it) and ``ca.pem`` to ``--ca-out`` (what Orrery trusts, via
+``ORRERY_A2A_CA_FILE``; Orrery mounts only this one, so it never sees the
+writer's key). The CA's private key is discarded once it has signed: nothing
+else can be issued from it.
+
+Existing files are kept while they are usable, so restarting the profile
+does not change the writer's certificate. They are regenerated when one is
+missing, when either certificate expires within ``RENEW_BEFORE``, or when the
+writer's certificate was not issued by the CA beside it.
 
 A throwaway CA for a local demo. Do not reuse it for anything else.
 """
@@ -20,16 +27,26 @@ import os
 from pathlib import Path
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+#: Certificates closer than this to expiry are replaced.
+RENEW_BEFORE = dt.timedelta(days=7)
+
+CA_FILE = "ca.pem"
+CERT_FILE = "writer.pem"
+KEY_FILE = "writer-key.pem"
 
 
 def _name(common_name: str) -> x509.Name:
     return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
 
 
-def make(out: Path, host: str, days: int = 30) -> None:
+def make(out: Path, host: str, days: int = 30, *, ca_out: Path | None = None) -> None:
+    """Write the writer's pair to ``out`` and the CA to ``ca_out`` (default: ``out``)."""
+    ca_out = ca_out or out
     now = dt.datetime.now(dt.UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = _name("Orrery Studio demo CA")
@@ -82,9 +99,10 @@ def make(out: Path, host: str, days: int = 30) -> None:
     )
 
     out.mkdir(parents=True, exist_ok=True)
-    (out / "ca.pem").write_bytes(ca.public_bytes(serialization.Encoding.PEM))
-    (out / "writer.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    key_path = out / "writer-key.pem"
+    ca_out.mkdir(parents=True, exist_ok=True)
+    (ca_out / CA_FILE).write_bytes(ca.public_bytes(serialization.Encoding.PEM))
+    (out / CERT_FILE).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path = out / KEY_FILE
     key_path.write_bytes(
         key.private_bytes(
             serialization.Encoding.PEM,
@@ -95,21 +113,47 @@ def make(out: Path, host: str, days: int = 30) -> None:
     key_path.chmod(0o600)
 
 
+def renewal_reason(out: Path, ca_out: Path, now: dt.datetime | None = None) -> str | None:
+    """Why the files in ``out``/``ca_out`` must be regenerated, or ``None`` to keep them."""
+    now = now or dt.datetime.now(dt.UTC)
+    paths = (ca_out / CA_FILE, out / CERT_FILE, out / KEY_FILE)
+    missing = [path.name for path in paths if not path.exists()]
+    if missing:
+        return f"missing {', '.join(missing)}"
+    try:
+        ca = x509.load_pem_x509_certificate((ca_out / CA_FILE).read_bytes())
+        cert = x509.load_pem_x509_certificate((out / CERT_FILE).read_bytes())
+    except ValueError as exc:
+        return f"unreadable certificate ({exc})"
+    for label, certificate in (("the CA", ca), ("the writer's certificate", cert)):
+        if certificate.not_valid_after_utc - now < RENEW_BEFORE:
+            return f"{label} expires {certificate.not_valid_after_utc:%Y-%m-%d}"
+    try:
+        cert.verify_directly_issued_by(ca)
+    except ValueError, TypeError, InvalidSignature:
+        return "the writer's certificate was not issued by this CA"
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True, help="Directory for the writer's pair.")
+    parser.add_argument("--ca-out", type=Path, help="Directory for ca.pem (default: --out).")
     parser.add_argument("--host", required=True, help="The writer's DNS name.")
-    parser.add_argument("--owner", type=int, help="uid to own the files (the writer's user).")
+    parser.add_argument("--owner", type=int, help="uid to own the writer's files.")
     parser.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
-    if all((args.out / f).exists() for f in ("ca.pem", "writer.pem", "writer-key.pem")):
-        print(f"certificates already in {args.out}; keeping them")
+    ca_out = args.ca_out or args.out
+    reason = renewal_reason(args.out, ca_out)
+    if reason is None:
+        print(f"certificates in {args.out} and {ca_out} are valid; keeping them")
         return
-    make(args.out, args.host, args.days)
+    print(f"regenerating: {reason}")
+    make(args.out, args.host, args.days, ca_out=ca_out)
     if args.owner is not None:
-        for path in args.out.iterdir():
-            os.chown(path, args.owner, args.owner)
-    print(f"wrote ca.pem, writer.pem, writer-key.pem to {args.out} for {args.host}")
+        for name in (CERT_FILE, KEY_FILE):
+            os.chown(args.out / name, args.owner, args.owner)
+    print(f"wrote {CERT_FILE}, {KEY_FILE} to {args.out} and {CA_FILE} to {ca_out} for {args.host}")
 
 
 if __name__ == "__main__":
