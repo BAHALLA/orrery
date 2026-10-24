@@ -31,15 +31,18 @@ release are visible only to the person whose subject they are stored under.
   its user ever had, and its own turns (model output, possibly steered by what
   it read) were saved as the user's history. A machine principal's sessions
   (console `m-*`, A2A `a2a-*`) are no longer saved, and recall from them
-  returns nothing.
+  returns nothing, including when the person continues one of their agent's
+  threads. Rows saved before this release stay; to drop the A2A ones, delete
+  `orrery_memory_events` rows whose `session_id` starts with `a2a-`.
 - `AUTH_ENABLED=on` (or `"true "` with a stray space) no longer turns
   authentication **off**; the same fail-open applied to every default-on flag,
   e.g. a typo in `ORRERY_SAFETY_SCREEN` disabled the injection screen. Every
   boolean variable is now read by one parser (`orrery_core.env`).
 - A2A requests are bounded: a body over `ORRERY_A2A_MAX_BODY_BYTES` (128 KiB)
   is refused with `413` before the SDK parses it, and a message over
-  `ORRERY_A2A_MAX_MESSAGE_CHARS` (8192, the console's bound) is rejected
-  without being kept in the task's history.
+  `ORRERY_A2A_MAX_MESSAGE_CHARS` (8192, the console's bound) is rejected; a
+  new task keeps none of it in its history (a message resuming a waiting task
+  is still recorded by the SDK, within the body cap).
 - The A2A task store forgets tasks idle for `ORRERY_A2A_TASK_IDLE_TTL_SECONDS`
   (1 h) and keeps at most `ORRERY_A2A_MAX_TASKS` (10 000). It used to keep
   every task, history and reply for the life of the process.

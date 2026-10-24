@@ -298,6 +298,7 @@ class OrreryAgentExecutor(AgentExecutor):
         text = _text_of(context)
         refusal = None
         if text is None:
+            audit_event("a2a_turn_refused", subject=auth.subject, reason="non_text_parts")
             refusal = "Only text parts are accepted."
         elif len(text) > self.max_message_chars:
             # The console's bound: every character is stored, screened and
@@ -316,9 +317,10 @@ class OrreryAgentExecutor(AgentExecutor):
             await event_queue.enqueue_event(
                 new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=history)
             )
-        if refusal is not None or text is None:
-            await updater.reject(updater.new_agent_message([new_text_part(refusal or "")]))
+        if refusal is not None:
+            await updater.reject(updater.new_agent_message([new_text_part(refusal)]))
             return
+        assert text is not None  # every text-less message is refused above
 
         self._in_flight[owner] += 1
         try:
