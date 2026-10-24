@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Sequence
@@ -46,6 +47,7 @@ from google.adk.sessions.base_session_service import BaseSessionService
 from google.adk.workflow import Workflow
 from google.genai import types
 
+from ..env import env_int
 from ..persistence.db import create_session_service
 from ..security.confirmation_flow import conversation_scope
 from ..security.guardrails import (
@@ -225,6 +227,45 @@ class ChannelAdapter(Protocol):
 # ── Gateway ──────────────────────────────────────────────────────────
 
 
+logger = logging.getLogger("orrery.serving.gateway")
+
+#: Wall-clock ceiling for one turn, in seconds (0 disables). Every tool and
+#: model call has its own timeout, so this only fires on something wedged; it
+#: is set above the Google Chat bot's own 600 s budget so that bot's notice,
+#: which lists what the turn already changed, still comes first.
+TURN_TIMEOUT_ENV = "ORRERY_TURN_TIMEOUT_SECONDS"
+DEFAULT_TURN_TIMEOUT_SECONDS = 900
+
+
+#: Shown when the turn deadline stopped a turn. Not "try again": it may have
+#: been stopped mid-tool, after a change already went through.
+TURN_TIMED_OUT_MESSAGE = (
+    "This took too long and was stopped. Some actions may already have run, "
+    "so check the current state before asking again."
+)
+
+
+class TurnTimedOut(TimeoutError):
+    """A turn ran past the gateway's deadline and was stopped.
+
+    Stopped wherever it was, possibly mid-tool: a transport should tell the
+    user that actions may already have run, not invite a blind retry.
+    """
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"turn stopped after {seconds:.0f}s")
+        self.seconds = seconds
+
+
+def turn_timeout_from_env() -> float | None:
+    """The configured turn deadline in seconds, or ``None`` when disabled."""
+    return (
+        float(seconds)
+        if (seconds := env_int(TURN_TIMEOUT_ENV, DEFAULT_TURN_TIMEOUT_SECONDS))
+        else None
+    )
+
+
 def _turn_lock_map() -> weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock]:
     # Weak values: a lock lives while a turn holds or awaits it, then goes, so
     # the map holds only sessions with a turn in flight.
@@ -248,6 +289,10 @@ class AgentGateway:
             leaving the transcript to grow unbounded.
         session_resolver: Strategy mapping conversation keys to sessions.
             Defaults to :class:`MappedSessionResolver`.
+        turn_timeout: Seconds one turn may run before it is stopped with
+            :class:`TurnTimedOut`; ``None`` reads ``ORRERY_TURN_TIMEOUT_SECONDS``
+            (default 900, ``0`` disables). Time spent waiting for the session's
+            previous turn does not count.
         verified_confirmation: Arm requester-verified confirmation for guarded
             tools: the gateway stamps the verified sender as the turn's actor,
             classifies deliberate approve/deny replies, and the confirmation
@@ -281,6 +326,7 @@ class AgentGateway:
         events_compaction_config: EventsCompactionConfig | None = None,
         session_resolver: SessionResolver | None = None,
         verified_confirmation: bool = False,
+        turn_timeout: float | None = None,
     ) -> None:
         # Fail at boot, not on the first Kubernetes call, on a mistyped
         # ORRERY_IMPERSONATION (every transport builds a gateway).
@@ -303,6 +349,11 @@ class AgentGateway:
         self.root_agent = root_agent
         self.runner = self._build_runner(root_agent)
         self._turn_locks = _turn_lock_map()
+        if turn_timeout is None:
+            turn_timeout = turn_timeout_from_env()
+        # 0 disables, as it does in the env var: asyncio.timeout(0) would stop
+        # every turn at its first await.
+        self.turn_timeout = turn_timeout or None
 
     def _build_runner(self, root_agent: Agent | Workflow) -> Runner:
         # Every gateway can carry attachments, so every gateway delivers them:
@@ -361,6 +412,7 @@ class AgentGateway:
         self.resolver = session_resolver or MappedSessionResolver()
         self.verified_confirmation = verified_confirmation
         self._turn_locks = _turn_lock_map()
+        self.turn_timeout = turn_timeout_from_env()
         if verified_confirmation:
             ensure_pending_confirmation_store()
         return self
@@ -434,17 +486,28 @@ class AgentGateway:
         async with self._turn_lock(user_id, session_id):
             if on_turn_start is not None:
                 on_turn_start()
-            reply = await self._run_turn(
-                runner,
-                scope=scope,
-                user_id=user_id,
-                session_id=session_id,
-                message=message,
-                delta=delta,
-                attachments=attachments,
-                on_event=on_event,
-                run_kwargs=run_kwargs,
-            )
+            # Inside the lock: a wedged turn must not hold its session forever,
+            # and waiting for the previous turn is not this turn's time.
+            try:
+                async with asyncio.timeout(self.turn_timeout) as budget:
+                    reply = await self._run_turn(
+                        runner,
+                        scope=scope,
+                        user_id=user_id,
+                        session_id=session_id,
+                        message=message,
+                        delta=delta,
+                        attachments=attachments,
+                        on_event=on_event,
+                        run_kwargs=run_kwargs,
+                    )
+            except TimeoutError as exc:
+                if not budget.expired():
+                    raise  # a tool's or the model's own timeout, not ours
+                logger.warning(
+                    "Turn stopped after %ss (session_id=%s)", self.turn_timeout, session_id
+                )
+                raise TurnTimedOut(self.turn_timeout or 0) from exc
         return OutboundReply(text=reply, session_id=session_id)
 
     def _turn_lock(self, user_id: str, session_id: str) -> asyncio.Lock:

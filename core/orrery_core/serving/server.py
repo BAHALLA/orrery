@@ -97,7 +97,7 @@ from .attachments import (
 from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
-from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
+from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage, TurnTimedOut
 from .inventory import agent_inventory, model_label, package_version, specialist_entries
 from .onboarding import (
     IntegrationProbe,
@@ -108,7 +108,7 @@ from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
-from .sse import drain_turns, stream_turn
+from .sse import TURN_TIMED_OUT_MESSAGE, drain_turns, stream_turn
 from .uploads import ChatInput, ChatRequest, read_chat_input
 
 logger = logging.getLogger("orrery.server")
@@ -688,6 +688,7 @@ def create_app(
     if not cfg.serve_docs:
         logger.info("Interactive /docs disabled (set ORRERY_DOCS_ENABLED=true to serve it)")
     install_rate_limit_handler(api)
+    api.add_exception_handler(TurnTimedOut, _turn_timed_out)
 
     # Registered before CORS so its headers are on every response, including
     # CORS preflights and errors.
@@ -1459,6 +1460,11 @@ def _static_dir() -> Path:
     """Directory holding the built console bundle (`web/dist`, copied here at
     image build time). Kept as a function so tests can monkeypatch it."""
     return Path(__file__).parent / "static"
+
+
+def _turn_timed_out(_request: Request, _exc: Exception) -> JSONResponse:
+    """A turn stopped by the gateway's deadline: 504, and say it may have acted."""
+    return JSONResponse(status_code=504, content={"detail": TURN_TIMED_OUT_MESSAGE})
 
 
 def _add_console_config_route(api: FastAPI, console: ConsoleConfig) -> None:

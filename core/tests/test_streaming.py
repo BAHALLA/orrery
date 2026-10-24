@@ -20,11 +20,12 @@ from google.genai import types
 from orrery_core import confirm
 from orrery_core.plugins.progress_plugin import ProgressPlugin, ProgressStep, progress_scope
 from orrery_core.security.auth import JWTConfig
-from orrery_core.serving.gateway import AgentGateway, InboundMessage, OutboundReply
+from orrery_core.serving.gateway import AgentGateway, InboundMessage, OutboundReply, TurnTimedOut
 from orrery_core.serving.server import ServerConfig, create_app
 from orrery_core.serving.sse import (
     KEEPALIVE,
     TURN_FAILED_MESSAGE,
+    TURN_TIMED_OUT_MESSAGE,
     drain_turns,
     encode_event,
     stream_turn,
@@ -315,6 +316,11 @@ class _FakeGateway:
         return OutboundReply(text="Hello", session_id=session_id)
 
 
+class _TimedOutGateway(_FakeGateway):
+    async def run(self, msg, *, on_event=None, session_id=None, streaming=False) -> OutboundReply:
+        raise TurnTimedOut(900)
+
+
 def _msg() -> InboundMessage:
     return InboundMessage(text="hi", user_id="u", conversation_key="", channel="http")
 
@@ -495,6 +501,38 @@ def test_chat_stream_requires_auth_when_enabled(streaming_app):
         app = create_app(root_agent=MagicMock(name="root"), app_name="t", plugins=[], config=config)
 
     assert TestClient(app).post("/chat/stream", json={"message": "hi"}).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_turn_says_it_may_have_acted_and_not_to_retry_blindly():
+    frames = await _collect(stream_turn(_TimedOutGateway(), _msg(), session_id="s1"))
+
+    events = _frames(b"".join(frames).decode())
+    assert events[-2] == ("error", {"message": TURN_TIMED_OUT_MESSAGE, "retryable": False})
+
+
+def test_plain_chat_answers_a_stopped_turn_with_504():
+    async def stopped(**_kwargs):
+        raise TurnTimedOut(900)
+        yield
+
+    runner = MagicMock()
+    runner.run_async = stopped
+    sessions = MagicMock()
+    sessions.create_session = AsyncMock(return_value=MagicMock(id="sess-1"))
+    sessions.get_session = AsyncMock(return_value=None)
+    with (
+        patch("orrery_core.serving.gateway.Runner", return_value=runner),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.server.create_session_service", return_value=sessions),
+    ):
+        config = ServerConfig(auth_enabled=False, jwt=JWTConfig(algorithm="HS256", secret="x"))
+        app = create_app(root_agent=MagicMock(name="root"), app_name="t", plugins=[], config=config)
+
+    response = TestClient(app).post("/chat", json={"message": "hi"})
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": TURN_TIMED_OUT_MESSAGE}
 
 
 def test_plain_chat_reply_is_unchanged_by_partial_events(streaming_app):

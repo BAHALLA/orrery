@@ -98,7 +98,7 @@ from .a2a_config import (
     PENDING_ACTION_KIND,
     A2AConfig,
 )
-from .gateway import AgentGateway
+from .gateway import TURN_TIMED_OUT_MESSAGE, AgentGateway, TurnTimedOut
 from .inventory import agent_inventory
 from .rate_limit import RateLimiter, parse_rate
 
@@ -325,6 +325,8 @@ class OrreryAgentExecutor(AgentExecutor):
         self._in_flight[owner] += 1
         try:
             await self._run(auth, text, context_id, updater)
+        except TurnTimedOut:
+            await updater.failed(updater.new_agent_message([new_text_part(TURN_TIMED_OUT_MESSAGE)]))
         except Exception:
             logger.exception("A2A turn failed (task=%s)", task_id)
             await updater.failed(updater.new_agent_message([new_text_part("The turn failed.")]))

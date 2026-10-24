@@ -108,6 +108,9 @@ subjects:
     namespace: orrery
 ```
 
+With the Helm chart, `rbac.impersonate.users` / `rbac.impersonate.groups`
+render exactly this pair of resources.
+
 The service account's own permissions can then shrink to whatever the platform
 itself needs (the unattended sweep runs with them). Each user needs their own
 RoleBindings, the ones they'd have with `kubectl`.

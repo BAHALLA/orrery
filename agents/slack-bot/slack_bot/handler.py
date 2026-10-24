@@ -6,7 +6,7 @@ import contextlib
 import logging
 from typing import Any
 
-from orrery_core import AgentGateway, progress_scope, set_user_role
+from orrery_core import AgentGateway, TurnTimedOut, progress_scope, set_user_role
 from orrery_core.security.identity import CallerIdentity, enabled_systems
 from orrery_core.serving.session_cache import BoundedSessionCache
 
@@ -130,6 +130,15 @@ class SlackAgentHandler:
                     state_delta=turn_state,
                     identity=await self._identity(user_id, say),
                 )
+        except TurnTimedOut:
+            await say(
+                text=(
+                    "This took too long and was stopped. Some actions may already "
+                    "have run, so check the current state before asking again."
+                ),
+                thread_ts=thread_ts,
+            )
+            return
         except Exception:
             logger.exception("Agent runner error")
             await say(

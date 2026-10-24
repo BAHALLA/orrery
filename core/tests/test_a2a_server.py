@@ -597,3 +597,18 @@ async def test_the_a2a_sdk_client_completes_a_turn(turns):
     final = events[-1]
     assert final.WhichOneof("payload") in {"task", "status_update"}
     assert any("echo:Is orders lagging?" in str(e) for e in events)
+
+
+def test_a_stopped_turn_fails_the_task_saying_actions_may_have_run(turns):
+    from orrery_core.serving.gateway import TURN_TIMED_OUT_MESSAGE, TurnTimedOut
+
+    async def stopped(self, **kwargs):
+        raise TurnTimedOut(900)
+
+    with patch.object(AgentGateway, "run_in_session", stopped):
+        task = _result(
+            TestClient(_app()).post("/a2a", json=_send("restart it"), headers=_headers())
+        )
+
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert task["status"]["message"]["parts"][0]["text"] == TURN_TIMED_OUT_MESSAGE

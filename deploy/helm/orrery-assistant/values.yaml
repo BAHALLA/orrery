@@ -24,6 +24,42 @@ serviceAccount:
   annotations: {}
   name: ""
 
+## ── Kubernetes access for the agent (ServiceAccount RBAC) ──────────
+## What the Kubernetes, Strimzi and ECK tools may call as the pod's
+## ServiceAccount, rule for rule from the API calls they make. Secrets are
+## never granted. The in-app gates (role, autonomy level, approvals) still
+## apply; this is the ceiling the cluster enforces if one of them failed.
+rbac:
+  create: true
+  ## read:    get/list on what the read tools use (pods, logs, events,
+  ##          services, configmaps, workloads, metrics, operator resources).
+  ## operate: read, plus the writes the mutating tools make: patch and scale
+  ##          deployments, patch statefulsets, and the Strimzi rebalance and
+  ##          connector annotations. Pair it with ORRERY_AUTONOMY_LEVEL L3/L4.
+  profile: read
+  ## cluster:    one ClusterRole + ClusterRoleBinding.
+  ## namespaces: a Role + RoleBinding in each of `namespaces`. Anything
+  ##             cluster-wide then answers 403: nodes, namespaces, CRDs, node
+  ##             metrics, and every "all namespaces" list, which is the default
+  ##             of the Strimzi and ECK list tools (ask for a namespace by
+  ##             name). The triage sweep's Kubernetes check lists nodes, so it
+  ##             reports an error each run; prefer `cluster` with `profile:
+  ##             read` if you run triage.
+  scope: cluster
+  namespaces: []
+  operators:
+    strimzi: true
+    eck: true
+  ## With ORRERY_IMPERSONATION=kubernetes (docs/impersonation.md): the users
+  ## and groups the agent may act as. Kubernetes matches these exactly, with
+  ## no wildcards. Empty lists create no impersonation rule.
+  impersonate:
+    users: []
+    groups: []
+  ## Appended to the agent's role as-is, e.g. read access to another
+  ## operator's custom resources.
+  extraRules: []
+
 podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/port: "9100"

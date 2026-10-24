@@ -167,6 +167,37 @@ auth:
 The chart's own defaults (one replica, in-memory state, no ingress) are for
 evaluation: they install with no database and no identity provider.
 
+### Kubernetes access for the agent
+
+The chart grants the pod's ServiceAccount what the Kubernetes, Strimzi and ECK
+tools call, rule for rule, and never secrets (`rbac` in `values.yaml`):
+
+```yaml
+rbac:
+  create: true
+  profile: read        # read | operate (adds the patches the mutating tools make)
+  scope: cluster       # cluster | namespaces
+  namespaces: []       # with scope: namespaces, a Role + RoleBinding in each
+  operators: {strimzi: true, eck: true}
+  impersonate: {users: [], groups: []}   # see docs/impersonation.md
+  extraRules: []
+```
+
+`read` is the default: the agent can diagnose but the cluster refuses its
+writes, whatever the in-app gates decide. Choose `operate` together with
+`ORRERY_AUTONOMY_LEVEL` L3 or L4. With `scope: namespaces`, anything
+cluster-wide answers 403: nodes, namespaces, CRDs, node metrics, and every
+"all namespaces" list (the default of the Strimzi and ECK list tools, so ask
+for a namespace by name). The triage sweep's Kubernetes check lists nodes, so
+under `namespaces` it reports an error every run.
+
+Cluster-scoped objects are named `<namespace>-<fullname>`, so one release name
+can be installed in several namespaces. Installing a ClusterRole needs
+cluster-admin; set `rbac.create: false` to manage RBAC yourself. The chart
+refuses to bind the namespace's `default` ServiceAccount (it would grant every
+pod that sets none): with `serviceAccount.create: false`, name an account in
+`serviceAccount.name`.
+
 ---
 
 ## Step 4 — Enable authentication

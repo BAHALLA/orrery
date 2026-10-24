@@ -1159,6 +1159,24 @@ class TestTurnLifecycle:
         assert any("Nothing was changed" in t for t in _final_texts(client))
 
     @pytest.mark.asyncio
+    async def test_the_gateway_deadline_also_says_what_already_changed(self, store):
+        """With the bot's own budget off, the gateway's deadline stops the turn."""
+        gateway = AgentGateway.from_runner(_hanging_runner(mutate="scale_deployment"))
+        gateway.turn_timeout = 0.05
+        handler = GoogleChatHandler(
+            gateway=gateway,
+            config=GoogleChatBotConfig(google_chat_turn_timeout_seconds=0),
+            store=store,
+            chat_client=(client := _chat_client()),
+        )
+        await handler.handle_event(_message_event())
+        for task in list(handler._background_tasks):
+            await task
+
+        notice = next(t for t in _final_texts(client) if "ran out of time" in t)
+        assert "`scale_deployment`" in notice
+
+    @pytest.mark.asyncio
     async def test_drain_stops_a_running_turn_and_posts_a_notice(self, store):
         config = GoogleChatBotConfig(google_chat_turn_timeout_seconds=0)
         client = _chat_client()

@@ -227,6 +227,21 @@ class TestSlackAgentHandler:
         )
 
     @pytest.mark.asyncio
+    async def test_a_stopped_turn_warns_that_actions_may_have_run(self, handler, mock_runner, say):
+        from orrery_core import TurnTimedOut
+
+        async def stopped_run(**kwargs):
+            raise TurnTimedOut(900)
+            yield
+
+        mock_runner.run_async = stopped_run
+        await handler.handle_message(
+            text="restart it", channel="C", thread_ts="1.1", user_id="U", say=say
+        )
+
+        assert "may already have run" in say.call_args.kwargs["text"]
+
+    @pytest.mark.asyncio
     async def test_concurrent_turns_each_ask_in_their_own_conversation(
         self, handler, mock_runner, say
     ):

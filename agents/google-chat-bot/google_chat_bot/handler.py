@@ -12,6 +12,7 @@ from orrery_core import (
     AnyConfirmationStore,
     ConfirmationStore,
     ToolLedger,
+    TurnTimedOut,
     approval_refusal,
     classify_decision,
     set_user_role,
@@ -462,7 +463,9 @@ class GoogleChatHandler:
             response_text = tracker.collected_text if tracker is not None else reply.text
             logger.info("Agent run complete. Collected %d characters of text.", len(response_text))
         except TimeoutError as exc:
-            if not budget.expired():
+            # The gateway's own deadline is a stop too, and needs the same
+            # "what already changed" notice as this budget's.
+            if not budget.expired() and not isinstance(exc, TurnTimedOut):
                 logger.exception("Agent runner failed during turn")
                 raise
             logger.warning(
