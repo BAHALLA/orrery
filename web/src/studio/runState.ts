@@ -128,18 +128,21 @@ function patchNode(view: RunView, id: string, patch: (n: NodeRun) => Partial<Nod
 
 /** Pair an inbound message with the latest outbound one of the same call still open. */
 function addA2a(list: A2aExchange[], event: A2aMessageEvent): A2aExchange[] {
+  // A reply pairs with the oldest unanswered request from the same node to
+  // the same remote skill. With content capture on, the reply only arrives
+  // when the tool call returns, so other events (MCP calls, even another
+  // request) can sit between the two; the only order the server promises is
+  // request before reply before the node's exit.
   if (event.direction === "inbound") {
-    for (let i = list.length - 1; i >= 0; i--) {
-      const x = list[i];
-      if (
+    const i = list.findIndex(
+      (x) =>
         x.inbound === null &&
+        x.outbound !== null &&
         x.nodeId === event.node_id &&
         x.remote === event.remote &&
-        x.skill === event.skill
-      ) {
-        return list.map((y, j) => (j === i ? { ...y, inbound: event } : y));
-      }
-    }
+        x.skill === event.skill,
+    );
+    if (i >= 0) return list.map((y, j) => (j === i ? { ...y, inbound: event } : y));
   }
   const exchange: A2aExchange = {
     key: String(event.seq),

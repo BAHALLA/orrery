@@ -47,8 +47,12 @@ function toolGroups(registry: StudioRegistry): Group[] {
         return {
           ref: `a2a:${entry.id}.${skill}`,
           label: card?.name ? `${skill} — ${card.name}` : skill,
-          detail: card?.description || entry.description || "remote skill",
-          blocked: entry.card.error ? `The card was refused: ${entry.card.error}` : null,
+          // A card error can be a refusal or a fetch that timed out, and a run
+          // fetches the card again; the server is the judge, so warn, don't block.
+          detail: entry.card.error
+            ? `Card not resolved (${entry.card.error}); the run retries it.`
+            : card?.description || entry.description || "remote skill",
+          blocked: null,
         };
       }),
     })),

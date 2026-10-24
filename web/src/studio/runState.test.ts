@@ -46,6 +46,48 @@ describe("reduceRun", () => {
     });
   });
 
+  it("pairs a reply that arrives late, after other events, with the oldest open request", () => {
+    const run = releaseNotesRun();
+    const out = run.find((e) => e.type === "a2a.message" && e.direction === "outbound")!;
+    const reply = run.find((e) => e.type === "a2a.message" && e.direction === "inbound")!;
+    const rest = run.filter((e) => e !== out && e !== reply);
+    const exitAt = rest.findIndex((e) => e.type === "node.exit" && e.node_id === "writer");
+    const second = { ...out, seq: 101 };
+    const mcp = {
+      ...run.find((e) => e.type === "mcp.call")!,
+      seq: 102,
+      node_id: "writer",
+    } as StudioEvent;
+    // request, second request, an MCP call, then the reply, then the exit.
+    const events = [
+      ...rest.slice(0, exitAt),
+      out,
+      second,
+      mcp,
+      { ...reply, seq: 103 },
+      ...rest.slice(exitAt).map((e, i) => ({ ...e, seq: 200 + i }) as StudioEvent),
+    ];
+    const view = fold(events);
+    expect(view.a2a).toHaveLength(2);
+    expect(view.a2a[0]!.outbound?.seq).toBe(out.seq);
+    expect(view.a2a[0]!.inbound?.seq).toBe(103);
+    expect(view.a2a[1]!.inbound).toBeNull();
+    expect(view.nodes.writer).toMatchObject({ status: "ok", a2aCalls: 2 });
+  });
+
+  it("copes with events that carry no content (past the capture cap)", () => {
+    const view = fold(
+      releaseNotesRun().map((e) => {
+        const copy = { ...e } as Record<string, unknown>;
+        delete copy.content;
+        return copy as unknown as StudioEvent;
+      }),
+    );
+    expect(view.status).toBe("succeeded");
+    expect(view.output).toBeNull();
+    expect(view.nodes.critic?.content).toBeNull();
+  });
+
   it("is idempotent per seq, so a resumed stream that replays an event changes nothing", () => {
     const events = releaseNotesRun();
     const once = fold(events.slice(0, 6));

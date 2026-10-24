@@ -208,7 +208,10 @@ function RemoteCard({ entry }: { entry: RegistryA2aEntry }) {
           className={`mt-2 flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-xs ${toneChip.crit}`}
         >
           <AlertIcon size={13} className="mt-px shrink-0" />
-          <span>Card refused: {card.error}</span>
+          <span>
+            Card not resolved: {card.error}. A run fetches it again, and refuses the call if it
+            still fails.
+          </span>
         </p>
       ) : null}
 

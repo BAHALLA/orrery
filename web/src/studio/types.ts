@@ -151,7 +151,7 @@ export interface CardStatus {
   pinned_by: string | null;
   resolved: boolean;
   fetched_at: number | null;
-  /** Why the card was refused, last time it was fetched. */
+  /** Why the card could not be used last time: a refusal, or a fetch that timed out (5 s). */
   error: string | null;
   skills: CardSkill[];
 }
