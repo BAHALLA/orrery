@@ -295,7 +295,7 @@ function str(value: unknown, fallback: string): string {
 }
 
 /** Parse `Retry-After` (delta-seconds or an HTTP date) into whole seconds. */
-function retryAfterSeconds(res: Response): number | null {
+export function retryAfterSeconds(res: Response): number | null {
   const header = res.headers.get("Retry-After");
   if (!header) return null;
   const seconds = Number(header);
@@ -304,7 +304,6 @@ function retryAfterSeconds(res: Response): number | null {
   return Number.isNaN(when) ? null : Math.max(0, Math.round((when - Date.now()) / 1000));
 }
 
-/** Pull a human-readable message out of a non-2xx response, tolerating any shape. */
 /** JSON for a plain turn; multipart when it carries files (AEP-030). */
 function chatBody({ files, ...json }: ChatRequest): FormData | Omit<ChatRequest, "files"> {
   if (!files?.length) return json;
@@ -315,7 +314,8 @@ function chatBody({ files, ...json }: ChatRequest): FormData | Omit<ChatRequest,
   return form;
 }
 
-async function extractError(res: Response): Promise<string> {
+/** Pull a human-readable message out of a non-2xx response, tolerating any shape. */
+export async function extractError(res: Response): Promise<string> {
   try {
     const data: unknown = await res.json();
     if (data && typeof data === "object" && "detail" in data) {

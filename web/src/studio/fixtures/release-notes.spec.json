@@ -1,0 +1,33 @@
+{
+  "spec_version": 1,
+  "name": "release-notes",
+  "description": "Research a topic on Tirraflow, have the remote writer draft notes, then critique them.",
+  "pattern": "pipeline",
+  "budgets": { "max_tokens": 60000, "max_tool_calls": 12, "max_remote_calls": 2, "timeout_s": 180 },
+  "nodes": [
+    {
+      "id": "research",
+      "kind": "llm_agent",
+      "description": "Finds what Tirraflow says about the topic.",
+      "instruction": "Search Tirraflow for the topic in your input, read the best one or two articles, and answer with five to eight short factual notes, one per line, each citing the article URL. Start with a line '# <topic>'.",
+      "tools": ["mcp:tirraflow.search_articles", "mcp:tirraflow.get_article"]
+    },
+    {
+      "id": "writer",
+      "kind": "llm_agent",
+      "description": "Hands the notes to the remote writer agent.",
+      "instruction": "Send your input, unchanged, to the demo writer's draft tool, then answer with exactly the draft it returns.",
+      "tools": ["a2a:demo-writer.draft"]
+    },
+    {
+      "id": "critic",
+      "kind": "llm_agent",
+      "description": "Reviews the draft.",
+      "instruction": "Review the draft in your input: say what is missing, unclear or unsupported by a cited URL, then give an improved version."
+    }
+  ],
+  "edges": [
+    { "from": "research", "to": "writer" },
+    { "from": "writer", "to": "critic" }
+  ]
+}

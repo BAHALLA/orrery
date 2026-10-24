@@ -1,0 +1,147 @@
+import type { NodeKind, Pattern, SpecNode } from "./types";
+
+/**
+ * What this server can run, as the console reads it.
+ *
+ * The format describes every phase's node kinds and patterns, but a release
+ * runs only some of them. The palette, the templates and the client checks all
+ * ask {@link Capabilities} rather than hard-coding "P0a", so when the server
+ * runs routers (P0b) the same UI lights up by changing this one value. The
+ * server does not publish it yet (see the console section of
+ * docs/integrations/studio.md); until it does, it is {@link P0A}.
+ */
+export interface Capabilities {
+  kinds: ReadonlySet<NodeKind>;
+  patterns: ReadonlySet<Pattern>;
+  /** Edge `when` / `max_iterations` / `screen`, node `model` / `output`. */
+  routing: boolean;
+  perNodeModels: boolean;
+}
+
+export const P0A: Capabilities = {
+  kinds: new Set<NodeKind>(["llm_agent"]),
+  patterns: new Set<Pattern>(["pipeline"]),
+  routing: false,
+  perNodeModels: false,
+};
+
+export interface KindInfo {
+  label: string;
+  /** One line for the palette. */
+  blurb: string;
+  /** The phase that brings it, while the server cannot run it. */
+  phase: string;
+}
+
+export const KINDS: Record<NodeKind, KindInfo> = {
+  llm_agent: {
+    label: "LLM agent",
+    blurb: "An Orrery agent: an instruction and the tools it may call.",
+    phase: "P0a",
+  },
+  remote_a2a: {
+    label: "Remote agent",
+    blurb: "An agent that forwards its input to one remote A2A skill.",
+    phase: "P0a",
+  },
+  router: {
+    label: "Router",
+    blurb: "Picks the next node from the previous node's output label.",
+    phase: "P0b",
+  },
+  parallel: { label: "Parallel", blurb: "Fans out to several branches at once.", phase: "P0b" },
+  join: { label: "Join", blurb: "Waits for every incoming branch.", phase: "P0b" },
+  supervisor: {
+    label: "Supervisor",
+    blurb: "An agent that calls other agents as its tools.",
+    phase: "P0b",
+  },
+  human_approval: {
+    label: "Human approval",
+    blurb: "Pauses the run until an admin approves.",
+    phase: "P0c",
+  },
+};
+
+/** Palette order. */
+export const PALETTE_KINDS: readonly NodeKind[] = [
+  "llm_agent",
+  "remote_a2a",
+  "router",
+  "parallel",
+  "join",
+  "supervisor",
+  "human_approval",
+];
+
+/**
+ * Whether the palette can add a kind. `remote_a2a` is the console's shorthand
+ * for an `llm_agent` holding one `a2a:` tool (AEP-031 §1): the server refuses
+ * the bare kind, so the console expands it before it reaches the spec.
+ */
+export function canAdd(kind: NodeKind, caps: Capabilities): boolean {
+  return kind === "remote_a2a" ? caps.kinds.has("llm_agent") : caps.kinds.has(kind);
+}
+
+/** "coming in P0b" for a kind this server cannot run yet, else null. */
+export function comingIn(kind: NodeKind, caps: Capabilities): string | null {
+  return canAdd(kind, caps) ? null : `coming in ${KINDS[kind].phase}`;
+}
+
+/** The id a new node of `kind` starts from: `agent`, `remote`, `router`… */
+export function idStem(kind: NodeKind): string {
+  return kind === "remote_a2a" ? "remote" : kind === "llm_agent" ? "agent" : kind;
+}
+
+/** A fresh node of `kind` with id `id`. `remote_a2a` expands to an `llm_agent`. */
+export function newNode(kind: NodeKind, id: string, remote?: string): SpecNode {
+  switch (kind) {
+    case "llm_agent":
+      return { id, kind, instruction: "", tools: [] };
+    case "remote_a2a":
+      return {
+        id,
+        kind: "llm_agent",
+        description: "Forwards its input to a remote agent.",
+        instruction:
+          "Send your input, unchanged, to the remote agent's tool, then answer with exactly what it returns.",
+        tools: remote ? [`a2a:${remote}`] : [],
+      };
+    case "supervisor":
+      return { id, kind, instruction: "", children: [], tools: [] };
+    case "human_approval":
+      return { id, kind, prompt: "Approve this step?" };
+    default:
+      return { id, kind };
+  }
+}
+
+/** A tool reference, parsed: `mcp:<entry>.<tool>`, `a2a:<entry>.<skill>`, `catalog:<ref>`. */
+export interface ToolRef {
+  kind: "mcp" | "a2a" | "catalog";
+  entry: string;
+  name: string;
+}
+
+/** Same rules as the server's `parse_tool_ref`; null when malformed. */
+export function parseToolRef(ref: string): ToolRef | null {
+  const colon = ref.indexOf(":");
+  if (colon <= 0 || colon === ref.length - 1) return null;
+  const kind = ref.slice(0, colon);
+  const rest = ref.slice(colon + 1);
+  if (kind === "catalog") return { kind, entry: "", name: rest };
+  if (kind === "mcp" || kind === "a2a") {
+    const dot = rest.indexOf(".");
+    if (dot > 0 && dot < rest.length - 1) {
+      return { kind, entry: rest.slice(0, dot), name: rest.slice(dot + 1) };
+    }
+  }
+  return null;
+}
+
+/** Short label for a chip: `tirraflow.search_articles`, `get_consumer_lag`. */
+export function toolLabel(ref: string): string {
+  const parsed = parseToolRef(ref);
+  if (!parsed) return ref;
+  return parsed.kind === "catalog" ? parsed.name : `${parsed.entry}.${parsed.name}`;
+}

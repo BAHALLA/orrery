@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">in-progress</span> (P0a built: API only, see [Studio](../integrations/studio.md)) |
+| **Status** | <span class="badge badge--amber">in-progress</span> (P0a built: API; P1 console in review, see [Studio](../integrations/studio.md)) |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High |
 | **Impact** | High |
@@ -425,6 +425,27 @@ Where the code differs from, or pins down, the design above:
   local time/units MCP server is in the CI test only, not the compose profile.
   The profile authenticates with HS256 dev tokens (`make dev-token
   CLIENT=orrery-console`), since the dev Keycloak client has no password grant.
+
+### P1 as built (console)
+
+- **Admin only, lazy.** The sidebar entry shows for the admin role; the view
+  and `@xyflow/react` (12.12.0, pinned) load on first open, with their own
+  CSS. The chat console's first load grows by 1.3 kB gzip of JS, and its CSS
+  by 2.2 kB gzip (the Studio's Tailwind utilities live in the console's one
+  utilities bundle: a second one would re-emit shared classes after the
+  console's `dark:` variants and break them).
+- **Capabilities.** What the server runs (kinds, patterns, routing, per-node
+  models) is a client-side constant for P0a; the gallery and palette light up
+  from it. The schema does not say so yet (see open items below).
+- **Validation** is the client's own copy of the schema (a JSON Schema subset)
+  and of the pipeline rules, against `/studio/schema` and the registry. The
+  server's 422 is mapped by `loc`.
+- **Not built:** ADK Python export, the MCP try-it call, replay from stored
+  runs (P0b), editing on a phone. History is per tab, in memory.
+- **Open items for the API:** a validate-only call; capabilities and budget
+  ceilings in `/studio/schema`; MCP tool schemas and a read-only try-it call;
+  a flag in `/me` that the Studio is on, so the entry is hidden instead of
+  showing "not enabled"; stored runs.
 
 ## Security
 

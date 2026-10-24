@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Identity } from "../auth/token";
 import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
@@ -17,6 +17,12 @@ import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
 import { resolveSpecialists } from "../specialists";
 import { useSystem } from "../system/useSystem";
+
+// The Studio (AEP-031) is admin-only and brings React Flow with it: loaded on
+// first visit, so none of it is in the chat console's first load.
+const StudioView = lazy(() => import("../studio/StudioView"));
+
+export type ConsoleView = "chat" | "agents" | "studio";
 
 interface Props {
   token: string;
@@ -40,11 +46,14 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("tools");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
-  const [view, setView] = useState<"chat" | "agents">("chat");
+  const [view, setView] = useState<ConsoleView>("chat");
   // The Agents page mounts on first visit and then stays mounted (hidden), so
   // an unsaved catalog draft survives a trip back to the chat.
   const [agentsOpened, setAgentsOpened] = useState(false);
   const [agentsDirty, setAgentsDirty] = useState(false);
+  // Like the Agents page, the Studio stays mounted once opened: its canvas and
+  // this session's runs survive a trip to the chat.
+  const [studioOpened, setStudioOpened] = useState(false);
   // Read by the triage effect, which must not re-run when only this changes.
   const agentsDirtyRef = useRef(false);
   const onAgentsDirty = useCallback((dirty: boolean) => {
@@ -117,6 +126,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const onOpenAgents = useCallback(() => {
     setAgentsOpened(true);
     setView("agents");
+  }, []);
+  const onOpenStudio = useCallback(() => {
+    setStudioOpened(true);
+    setView("studio");
   }, []);
   // Deleting is held for a few seconds behind an Undo (the store delete is
   // permanent). The row hides at once; if it was the open conversation, a new
@@ -194,6 +207,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         view={view}
         agentsDirty={agentsDirty}
         onOpenAgents={onOpenAgents}
+        onOpenStudio={onOpenStudio}
         onShowChat={showChat}
         onSignOut={onSignOut}
       />
@@ -213,7 +227,11 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
             <MenuIcon size={18} />
           </button>
           <h2 className="min-w-0 flex-1 truncate font-medium text-slate-800 dark:text-slate-100">
-            {view === "agents" ? "Agents" : conversations.active.title}
+            {view === "agents"
+              ? "Agents"
+              : view === "studio"
+                ? "Studio"
+                : conversations.active.title}
           </h2>
           {live ? (
             <span
@@ -280,6 +298,19 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
               active={view === "agents"}
               onDirtyChange={onAgentsDirty}
             />
+          </div>
+        ) : null}
+        {studioOpened && token ? (
+          <div className={view === "studio" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+            <Suspense
+              fallback={
+                <p className="p-6 text-sm text-slate-500 dark:text-slate-400">
+                  Loading the Studio…
+                </p>
+              }
+            >
+              <StudioView token={token} active={view === "studio"} />
+            </Suspense>
           </div>
         ) : null}
         {view === "chat" ? (

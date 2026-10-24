@@ -25,4 +25,6 @@ export const API_PREFIXES = [
   "/me",
   "/onboarding",
   "/admin",
+  // Orrery Studio (AEP-031); mounted only when ORRERY_STUDIO_ENABLED.
+  "/studio",
 ] as const;

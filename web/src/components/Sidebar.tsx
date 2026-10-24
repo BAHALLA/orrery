@@ -2,7 +2,16 @@ import { memo, useRef } from "react";
 import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
 import type { ConversationSummary } from "../conversations/useConversations";
-import { AgentsIcon, CloseIcon, PlusIcon, RadarIcon, ShieldIcon, TrashIcon } from "./icons";
+import type { ConsoleView } from "./ChatConsole";
+import {
+  AgentsIcon,
+  CloseIcon,
+  PlusIcon,
+  RadarIcon,
+  ShieldIcon,
+  StudioIcon,
+  TrashIcon,
+} from "./icons";
 import { joinLabels, resolveSpecialists, systemLabels } from "../specialists";
 import { BREAKPOINT_LG, useFocusTrap, useMediaQuery } from "./a11y";
 import { IdentityBadge } from "./IdentityBadge";
@@ -28,11 +37,12 @@ interface Props {
   onNewChat: () => void;
   onRunTriage: () => void;
   onOpenSystem: () => void;
-  /** Which page the main column shows; "agents" is the admin dashboard. */
-  view: "chat" | "agents";
+  /** Which page the main column shows; "agents" and "studio" are admin pages. */
+  view: ConsoleView;
   /** The Agents page holds unsaved edits: marked here so they aren't forgotten. */
   agentsDirty: boolean;
   onOpenAgents: () => void;
+  onOpenStudio: () => void;
   /** Called when a history row is opened, so the main column shows the chat. */
   onShowChat: () => void;
   onSignOut: () => void;
@@ -81,6 +91,7 @@ export const Sidebar = memo(function Sidebar({
   view,
   agentsDirty,
   onOpenAgents,
+  onOpenStudio,
   onShowChat,
   onSignOut,
 }: Props) {
@@ -183,6 +194,24 @@ export const Sidebar = memo(function Sidebar({
                   unsaved
                 </span>
               ) : null}
+            </button>
+          ) : null}
+          {me?.role === "admin" ? (
+            <button
+              type="button"
+              aria-current={view === "studio" ? "page" : undefined}
+              className={`${secondaryButton} ${
+                view === "studio"
+                  ? "bg-brand-50 text-brand-900 hover:bg-brand-50 dark:bg-brand-950/60 dark:text-brand-100 dark:hover:bg-brand-950/60"
+                  : ""
+              }`}
+              onClick={then(onOpenStudio)}
+              title="Compose agents, remote A2A agents and MCP tools, and run them apart from the live system"
+            >
+              <StudioIcon /> Studio
+              <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold tracking-wide text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
+                preview
+              </span>
             </button>
           ) : null}
         </div>
