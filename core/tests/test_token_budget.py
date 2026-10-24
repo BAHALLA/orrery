@@ -451,3 +451,14 @@ def test_a_redis_store_gets_socket_timeouts(monkeypatch):
     monkeypatch.setattr(limits.storage, "storage_from_string", spy)
     StorageUsageLedger("redis://localhost:6379")
     assert calls[-1]["socket_timeout"] > 0 and calls[-1]["socket_connect_timeout"] > 0
+    # Below the plugin's own wait, so a write it gave up on rarely lands later.
+    assert calls[-1]["socket_timeout"] < mod_timeout()
+
+    StorageUsageLedger("redis+sentinel://localhost:26379/primary")
+    assert calls[-1]["sentinel_kwargs"]["socket_timeout"] > 0
+
+
+def mod_timeout() -> float:
+    from orrery_core.plugins import token_budget_plugin
+
+    return token_budget_plugin._STORE_TIMEOUT_SECONDS

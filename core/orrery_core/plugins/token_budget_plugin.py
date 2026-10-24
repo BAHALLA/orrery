@@ -60,6 +60,7 @@ GLOBAL_KEY = "global"
 
 #: Seconds a shared store may take before the call goes ahead without it.
 _STORE_TIMEOUT_SECONDS = 2.0
+_SOCKET_TIMEOUT_SECONDS = 1.5
 
 #: Threads for a blocking store. Its own pool, never the default executor every
 #: tool runs on: a hung store would otherwise strand the tools' threads too.
@@ -162,15 +163,17 @@ class StorageUsageLedger:
                 "A shared token-budget store needs `limits`. Install with: uv sync --extra server"
             ) from exc
         # Without a socket timeout a hung server blocks the calling thread
-        # forever; the plugin's own timeout only stops waiting for it.
-        options = (
-            {
-                "socket_timeout": _STORE_TIMEOUT_SECONDS,
-                "socket_connect_timeout": _STORE_TIMEOUT_SECONDS,
-            }
-            if storage_uri.startswith(("redis", "rediss"))
-            else {}
-        )
+        # forever; the plugin's own timeout only stops waiting for it. Shorter
+        # than that wait, so a write the plugin gave up on rarely lands later.
+        socket = {
+            "socket_timeout": _SOCKET_TIMEOUT_SECONDS,
+            "socket_connect_timeout": _SOCKET_TIMEOUT_SECONDS,
+        }
+        options: dict = {}
+        if storage_uri.startswith("redis+sentinel"):
+            options = {**socket, "sentinel_kwargs": socket}
+        elif storage_uri.startswith("redis"):
+            options = socket
         storage = storage_from_string(storage_uri, **options)
         if not isinstance(storage, Storage):
             # The plugin's callbacks count synchronously, like the rate limits.
