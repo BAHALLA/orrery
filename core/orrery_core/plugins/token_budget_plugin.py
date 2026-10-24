@@ -24,7 +24,8 @@ calls already in flight and the estimate's error.
 
 Not charged: model calls made outside the plugin chain (the compaction
 summarizer, knowledge embeddings, the onboarding self-test probe) and calls
-that fail or are cancelled before their final response.
+that fail or are cancelled before their final response. The estimate leaves
+out inline data and attachments, so a call carrying them reserves too little.
 
 Counters live in memory per process by default. Pass a ``limits`` storage URI
 (``redis://...``, the same one the HTTP rate limits use) to share them across
@@ -39,6 +40,7 @@ import hashlib
 import logging
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -49,6 +51,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
 
 from ..observability.metrics import track_token_budget_refusal, track_token_budget_store_error
+from ..payload import text_volume
 
 logger = logging.getLogger("orrery.plugins.token_budget")
 
@@ -57,6 +60,10 @@ GLOBAL_KEY = "global"
 
 #: Seconds a shared store may take before the call goes ahead without it.
 _STORE_TIMEOUT_SECONDS = 2.0
+
+#: Threads for a blocking store. Its own pool, never the default executor every
+#: tool runs on: a hung store would otherwise strand the tools' threads too.
+_STORE_WORKERS = 2
 
 #: Reservations of calls in flight; one per agent run, so this is a leak bound.
 _MAX_RESERVATIONS = 4096
@@ -81,17 +88,26 @@ def user_key(user_id: str) -> str:
 
 
 def estimate_prompt_tokens(llm_request: LlmRequest) -> int:
-    """A rough token count of what *llm_request* sends (about 4 characters each)."""
+    """A rough token count of what *llm_request* sends (about 4 characters each).
+
+    Counts text, tool calls and results, the system instruction and the tool
+    declarations. Not inline data, nor attachment content a later plugin adds.
+    """
     chars = 0
     for content in llm_request.contents or []:
         for part in content.parts or []:
-            if part.text:
-                chars += len(part.text)
-            if part.function_call or part.function_response:
-                chars += len(str(part.function_call or part.function_response))
-    instruction = llm_request.config.system_instruction if llm_request.config else None
-    if isinstance(instruction, str):
-        chars += len(instruction)
+            chars += len(part.text or "")
+            if part.function_call:
+                chars += text_volume(part.function_call.args)
+            if part.function_response:
+                chars += text_volume(part.function_response.response)
+    config = llm_request.config
+    if config is not None:
+        if isinstance(config.system_instruction, str):
+            chars += len(config.system_instruction)
+        for tool in config.tools or []:
+            for declaration in getattr(tool, "function_declarations", None) or []:
+                chars += text_volume(declaration.model_dump(exclude_none=True))
     return chars // 4
 
 
@@ -122,7 +138,9 @@ class InMemoryUsageLedger:
 
     def charge(self, key: str, day: str, tokens: int) -> None:
         with self._lock:
-            if day != self._day:
+            if day < self._day:
+                return  # a call that settled after midnight: its day is gone
+            if day > self._day:
                 # A new day: yesterday's keys go, so the map holds one day's callers.
                 self._day, self._spent = day, {}
             self._spent[key] = self._spent.get(key, 0) + tokens
@@ -143,7 +161,17 @@ class StorageUsageLedger:
             raise ImportError(
                 "A shared token-budget store needs `limits`. Install with: uv sync --extra server"
             ) from exc
-        storage = storage_from_string(storage_uri)
+        # Without a socket timeout a hung server blocks the calling thread
+        # forever; the plugin's own timeout only stops waiting for it.
+        options = (
+            {
+                "socket_timeout": _STORE_TIMEOUT_SECONDS,
+                "socket_connect_timeout": _STORE_TIMEOUT_SECONDS,
+            }
+            if storage_uri.startswith(("redis", "rediss"))
+            else {}
+        )
+        storage = storage_from_string(storage_uri, **options)
         if not isinstance(storage, Storage):
             # The plugin's callbacks count synchronously, like the rate limits.
             raise ValueError(f"{storage_uri!r} is an async storage; use a synchronous one")
@@ -192,35 +220,51 @@ class TokenBudgetPlugin(BasePlugin):
         self.total = total
         self._ledger = ledger or InMemoryUsageLedger()
         self._today = today
-        # (invocation, agent) -> (keys, day, tokens reserved). An agent run makes
-        # its model calls one at a time, so the pair names the call in flight.
-        self._reserved: dict[tuple[str, str], tuple[list[str], str, int]] = {}
+        # (invocation, agent) -> (day, tokens reserved per key). An agent run
+        # makes its model calls one at a time, so the pair names the call in
+        # flight; one LlmAgent placed in two parallel branches of one Workflow
+        # would share it, and nothing here does that.
+        self._reserved: dict[tuple[str, str], tuple[str, dict[str, int]]] = {}
+        self._executor = (
+            ThreadPoolExecutor(max_workers=_STORE_WORKERS, thread_name_prefix="orrery-token-budget")
+            if self._ledger.blocking
+            else None
+        )
 
     def _keys(self, user_id: str) -> list[str]:
         keys = [user_key(user_id)] if self.per_user else []
         return [*keys, GLOBAL_KEY] if self.total else keys
 
-    async def _store(self, op: Callable[..., int | None], *args: object) -> int | None:
-        """Run a ledger call; on failure, log and count it and return ``None``."""
+    async def _store(self, op: Callable[..., int | None], *args: object) -> tuple[bool, int]:
+        """Run a ledger call: ``(succeeded, its value or 0)``; a failure is logged and counted."""
         try:
             if not self._ledger.blocking:
-                return op(*args)
-            return await asyncio.wait_for(asyncio.to_thread(op, *args), _STORE_TIMEOUT_SECONDS)
+                return True, op(*args) or 0
+            loop = asyncio.get_running_loop()
+            value = await asyncio.wait_for(
+                loop.run_in_executor(self._executor, op, *args), _STORE_TIMEOUT_SECONDS
+            )
+            return True, value or 0
         except Exception:
             track_token_budget_store_error()
             logger.exception(
                 "Token budget store failed; letting the model call through",
                 extra={"event": "token_budget_store_error"},
             )
-            return None
+            return False, 0
 
-    async def _charge(self, keys: list[str], day: str, tokens: int) -> None:
-        if tokens:
-            for key in keys:
-                await self._store(self._ledger.charge, key, day, tokens)
+    async def _charge(self, keys: list[str], day: str, tokens: int) -> dict[str, int]:
+        """Charge *tokens* to each key; returns what each key was actually charged."""
+        charged: dict[str, int] = {}
+        for key in keys:
+            ok, _ = (
+                await self._store(self._ledger.charge, key, day, tokens) if tokens else (True, 0)
+            )
+            charged[key] = tokens if ok else 0
+        return charged
 
     async def _spent(self, key: str, day: str) -> int:
-        return await self._store(self._ledger.spent, key, day) or 0
+        return (await self._store(self._ledger.spent, key, day))[1]
 
     async def _exhausted(self, user_id: str, day: str) -> str | None:
         """Which budget is spent (``"global"``/``"user"``), if any."""
@@ -237,14 +281,16 @@ class TokenBudgetPlugin(BasePlugin):
         day = self._today()
         scope = await self._exhausted(user_id, day)
         if scope is None:
-            keys = self._keys(user_id)
-            estimate = estimate_prompt_tokens(llm_request)
-            await self._charge(keys, day, estimate)
+            reserved = await self._charge(
+                self._keys(user_id), day, estimate_prompt_tokens(llm_request)
+            )
             if len(self._reserved) >= _MAX_RESERVATIONS:
-                # A call that never reported back (cancelled mid-stream) keeps
-                # its estimate charged; only the bookkeeping is dropped.
+                # A call that never reported back keeps its estimate charged;
+                # only the bookkeeping is dropped. That is a call cancelled
+                # mid-stream, or one a later before-model callback answered
+                # (none does today), since neither reaches after_model.
                 self._reserved.pop(next(iter(self._reserved)))
-            self._reserved[self._call(callback_context)] = (keys, day, estimate)
+            self._reserved[self._call(callback_context)] = (day, reserved)
             return None
         track_token_budget_refusal(scope)
         logger.warning(
@@ -268,8 +314,9 @@ class TokenBudgetPlugin(BasePlugin):
         # one non-partial response carrying usage; the chunks before it repeat it.
         if llm_response.partial is True:
             return None
-        keys, day, reserved = self._reserved.pop(
-            self._call(callback_context), (self._keys(callback_context.user_id), self._today(), 0)
+        day, reserved = self._reserved.pop(
+            self._call(callback_context),
+            (self._today(), dict.fromkeys(self._keys(callback_context.user_id), 0)),
         )
         usage = llm_response.usage_metadata
         if usage is None:
@@ -281,15 +328,19 @@ class TokenBudgetPlugin(BasePlugin):
             + (usage.thoughts_token_count or 0)
         )
         if tokens > 0:
-            await self._charge(keys, day, tokens - reserved)
+            for key, already in reserved.items():
+                await self._charge([key], day, tokens - already)
         return None
 
     async def on_model_error_callback(
         self, *, callback_context: CallbackContext, llm_request: LlmRequest, error: Exception
     ) -> LlmResponse | None:
-        # A failed call is not charged: refund its estimate.
+        # A failed call is not charged: refund its estimate. One that failed
+        # after streaming some output was probably billed for its prompt, so
+        # this leans toward undercounting.
         reservation = self._reserved.pop(self._call(callback_context), None)
         if reservation is not None:
-            keys, day, reserved = reservation
-            await self._charge(keys, day, -reserved)
+            day, reserved = reservation
+            for key, already in reserved.items():
+                await self._charge([key], day, -already)
         return None

@@ -85,6 +85,18 @@ groups:
           description: "A major incident legitimately costs more. Compare token growth against tool-call growth before treating this as a fault."
           runbook_url: "https://bahalla.github.io/orrery/runbooks/high-llm-spend/"
 
+      # The token budget store fails open: while it is down, model calls go
+      # out unbudgeted. Silent by design for the user, so it needs an alert.
+      - alert: OrreryTokenBudgetStoreFailing
+        expr: sum(increase(orrery_token_budget_store_errors_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily token budgets are not being enforced"
+          description: "The token budget store (ORRERY_RATE_LIMIT_STORAGE_URI) is failing or timing out, so model calls go ahead without a budget check."
+          runbook_url: "https://bahalla.github.io/orrery/runbooks/token-budget-store-failing/"
+
       # ── Content safety ────────────────────────────────────────────
       # Split by direction, because the two halves have different owners and
       # different responses — summing them would be meaningless.

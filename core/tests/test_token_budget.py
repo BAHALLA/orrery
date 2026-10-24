@@ -372,3 +372,82 @@ def test_per_replica_budgets_are_warned_about(monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="orrery.plugins"):
         _budget_plugins(daily_token_budget=5)
     assert "per replica" in caplog.text
+
+
+def test_a_settle_after_midnight_leaves_today_alone():
+    ledger = InMemoryUsageLedger()
+    ledger.charge("u", "2026-10-24", 500)
+    ledger.charge("u", "2026-10-25", 900)
+    ledger.charge("u", "2026-10-24", -400)  # yesterday's call settling late
+    assert ledger.spent("u", "2026-10-25") == 900
+    ledger.charge("v", "2026-10-25", 1)
+    assert ledger.spent("u", "2026-10-25") == 900
+
+
+class _ChargeFailsOnce(InMemoryUsageLedger):
+    """The reservation's write fails; everything after works."""
+
+    failed = False
+
+    def charge(self, key: str, day: str, tokens: int) -> None:
+        if not self.failed:
+            self.failed = True
+            raise ConnectionError("blip")
+        super().charge(key, day, tokens)
+
+
+@pytest.mark.asyncio
+async def test_a_reservation_that_failed_is_not_deducted_at_settle():
+    ledger = _ChargeFailsOnce()
+    runner = InMemoryRunner(
+        agent=LlmAgent(name="root", model=_MeteredLlm(), instruction="Answer."),
+        app_name="t",
+        plugins=[TokenBudgetPlugin(per_user=10_000, ledger=ledger, today=lambda: "d1")],
+    )
+    assert await _turn(runner, "alice", "x" * 4000) == "ok"
+    assert ledger.spent(user_key("alice"), "d1") == 100
+
+
+def test_the_estimate_counts_tool_declarations():
+    from google.adk.models.llm_request import LlmRequest
+
+    from orrery_core.plugins.token_budget_plugin import estimate_prompt_tokens
+
+    declaration = types.FunctionDeclaration(name="get_pods", description="d" * 4000)
+    request = LlmRequest(
+        config=types.GenerateContentConfig(tools=[types.Tool(function_declarations=[declaration])])
+    )
+    assert estimate_prompt_tokens(request) >= 1000
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_store_runs_on_its_own_threads():
+    import threading
+
+    seen: list[str] = []
+
+    class _Recording(InMemoryUsageLedger):
+        blocking = True
+
+        def spent(self, key: str, day: str) -> int:
+            seen.append(threading.current_thread().name)
+            return 0
+
+    runner, _ = _runner(TokenBudgetPlugin(per_user=10, ledger=_Recording()))
+    assert await _turn(runner, "alice") == "ok"
+    assert seen and all(name.startswith("orrery-token-budget") for name in seen)
+
+
+def test_a_redis_store_gets_socket_timeouts(monkeypatch):
+    import limits.storage
+
+    calls: list[dict] = []
+    real = limits.storage.storage_from_string
+
+    def spy(uri, **options):
+        calls.append(options)
+        return real("memory://")
+
+    monkeypatch.setattr(limits.storage, "storage_from_string", spy)
+    StorageUsageLedger("redis://localhost:6379")
+    assert calls[-1]["socket_timeout"] > 0 and calls[-1]["socket_connect_timeout"] > 0

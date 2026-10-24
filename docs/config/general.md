@@ -284,8 +284,8 @@ Refusals are counted in `orrery_token_budget_refusals_total{scope="user"|"global
 
 The store is a cost control, not a security gate: if it fails or takes longer
 than 2 s, the call goes ahead unbudgeted, the error is logged, and
-`orrery_token_budget_store_errors_total` counts it. Alert on that counter if
-the budget matters to you.
+`orrery_token_budget_store_errors_total` counts it. `OrreryTokenBudgetStoreFailing`
+(`infra/alert_rules.yml`) fires on it.
 
 Who is charged:
 
