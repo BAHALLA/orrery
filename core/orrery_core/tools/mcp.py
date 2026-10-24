@@ -382,6 +382,7 @@ class GuardedMcpToolset(McpToolset):
         pin_store: dict[str, str] | None = None,
         verify: ssl.SSLContext | bool | None = None,
         seen_store: dict[str, dict[str, Any]] | None = None,
+        egress_proxy: str | None = None,
     ) -> None:
         """*private_allow* narrows ``allow_private_network`` to listed hosts and
         networks (the Studio's ``ORRERY_A2A_PRIVATE_ALLOW``); ``None`` keeps the
@@ -392,13 +393,14 @@ class GuardedMcpToolset(McpToolset):
         would re-pin every run, never noticing a changed description.
         *verify* replaces the TLS settings built from the config's files (the
         Studio's ``ORRERY_A2A_CA_FILE``). *seen_store* records the description and
-        input schema of each tool as pinned."""
+        input schema of each tool as pinned. *egress_proxy* (the Studio's
+        ``ORRERY_STUDIO_EGRESS_PROXY``) carries public destinations."""
         self.server_config = config
         # Built now, so missing exchange settings fail startup, not a call.
         self._broker = (broker or default_broker()) if config.auth else None
         super().__init__(
             connection_params=_connection_params(
-                config, private_allow=private_allow, verify=verify
+                config, private_allow=private_allow, verify=verify, egress_proxy=egress_proxy
             ),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
@@ -527,6 +529,7 @@ def _connection_params(
     *,
     private_allow: PrivateAllowlist | None = None,
     verify: ssl.SSLContext | bool | None = None,
+    egress_proxy: str | None = None,
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {
@@ -552,6 +555,7 @@ def _connection_params(
         if verify is not None
         else ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
         private_allow=private_allow,
+        egress_proxy=egress_proxy,
     )
     if config.transport == "sse":
         # The SSE stream idles between calls, so its read timeout cannot be the

@@ -41,6 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `budget.hit`. A2A and MCP inspectors, in-tab run history with a side-by-side
   compare, and JSON export and import. See
   [Studio](docs/integrations/studio.md#the-console).
+- **Studio egress proxy (`ORRERY_STUDIO_EGRESS_PROXY`).** Where the only way
+  out is a forward proxy, the guarded MCP and A2A transports send public
+  registry destinations through it with `CONNECT`, TLS end to end and
+  verified by Orrery, origins still checked on the hostname. Loopback,
+  private literal addresses and `ORRERY_A2A_PRIVATE_ALLOW` hosts always go
+  direct; caps, identity encoding and timeouts still apply. Never read from
+  `HTTPS_PROXY`; the proxy must enforce its own destination allowlist
+  ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md#amendment-an-explicit-egress-proxy)).
+- **The Studio demo's writer and certificate job ship in the image**:
+  `python -m orrery_core.studio.demo.writer` and
+  `python -m orrery_core.studio.demo.certs` (moved from
+  `deploy/studio-demo/`); the compose profile mounts only the registry.
 - **Orrery Studio, P0b: patterns and storage ([AEP-031](docs/enhancements/aep-031-orrery-studio.md)).**
   Compositions now route (`output.labels` and `when` edges, or a `router`
   node; `route.decision` events), loop (a back edge with `max_iterations` of

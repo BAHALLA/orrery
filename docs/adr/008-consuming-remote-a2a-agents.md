@@ -190,6 +190,32 @@ decision above, and why:
 - **`?resolve=true`** fetches the cards concurrently, at most 5 s each; a slow
   card is reported in its status rather than holding the response.
 
+## Amendment: an explicit egress proxy
+
+A deployment whose only way out is a forward proxy (an internal-only network
+behind squid, say) could not reach a public remote at all, since the guarded
+transports ignore proxy variables. They still do: `HTTPS_PROXY` is never read.
+Instead the operator names the proxy, `ORRERY_STUDIO_EGRESS_PROXY`
+(`http://host:port`), and both transports (A2A's and the Studio's MCP
+entries') then:
+
+- send **public** destinations through it with `CONNECT`. TLS runs inside the
+  tunnel, end to end, verified against the same roots (and
+  `ORRERY_A2A_CA_FILE`) as a direct connection; the proxy sees only the host
+  and port;
+- check the **origin** on the hostname, as before;
+- cannot check the **resolved address**: the proxy resolves the name.
+  **The proxy must enforce its own destination allowlist** (squid's
+  `http_access` on `CONNECT` targets, for instance); Orrery's origin check
+  limits what it asks for, the proxy what it reaches;
+- send **loopback, private literal addresses and hosts in
+  `ORRERY_A2A_PRIVATE_ALLOW`** direct, never through the proxy, with the full
+  address check;
+- keep the byte caps, identity encoding and timeouts, which are applied around
+  whichever connection is used.
+
+A bad value fails startup. Unset (the default), nothing changes.
+
 ## Consequences
 
 - One reviewed path for every outbound A2A call, with the same controls as

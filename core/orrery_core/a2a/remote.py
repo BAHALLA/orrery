@@ -61,6 +61,7 @@ from ..tools.mcp_network import (
     Origin,
     PrivateAllowlist,
     ca_ssl_context,
+    egress_proxy_from_env,
     httpx_std,
     is_public,
     literal_ip,
@@ -375,13 +376,20 @@ class RemoteNetwork:
 
     private_allow: PrivateAllowlist = field(default_factory=PrivateAllowlist)
     ca_file: str | None = None
+    #: ``ORRERY_STUDIO_EGRESS_PROXY``: public destinations go through it
+    #: (CONNECT); private allowlisted hosts and loopback never do.
+    egress_proxy: str | None = None
 
     @classmethod
     def from_env(cls) -> RemoteNetwork:
         ca = os.getenv(CA_FILE_ENV, "").strip() or None
         if ca and not os.path.isfile(ca):
             raise ValueError(f"{CA_FILE_ENV}: {ca} is not a readable file")
-        return cls(private_allow=PrivateAllowlist.from_env(), ca_file=ca)
+        return cls(
+            private_allow=PrivateAllowlist.from_env(),
+            ca_file=ca,
+            egress_proxy=egress_proxy_from_env(),
+        )
 
     @cached_property
     def ssl_context(self) -> ssl.SSLContext | bool:
@@ -402,6 +410,7 @@ def build_client(
         allow_private=entry.private_network,
         private_allow=network.private_allow,
         max_response_bytes=max_bytes,
+        egress_proxy=network.egress_proxy,
         verify=network.ssl_context,
     )
     auth = _OriginBoundBearer(entry.auth.token(), entry.card_origin) if entry.auth else None

@@ -23,7 +23,13 @@ into a request the operator never configured:
 
 Proxies: a client built with an explicit transport ignores ``HTTPS_PROXY``.
 That is deliberate: a proxy resolves the name itself, out of reach of the
-address check.
+address check. A deployment whose only way out is a proxy names it explicitly
+(``ORRERY_STUDIO_EGRESS_PROXY``, never read from ``HTTPS_PROXY``): public
+destinations then go through it with ``CONNECT``, TLS still end to end and
+verified here, and the origin checks still run on the hostname. The address
+check cannot (the proxy resolves the name), so **the proxy must enforce its
+own destination allowlist**. Loopback, private literal addresses and hosts in
+``ORRERY_A2A_PRIVATE_ALLOW`` always go direct, checked as before.
 
 Residual: the check resolves the name, then the connection pool resolves it
 again, so a DNS server answering differently within that window (rebinding) is
@@ -74,6 +80,51 @@ logger = logging.getLogger("orrery.tools.mcp")
 
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+
+#: The explicit egress proxy for the guarded transports (Studio registry
+#: entries). Never taken from ``HTTPS_PROXY``.
+EGRESS_PROXY_ENV = "ORRERY_STUDIO_EGRESS_PROXY"
+
+
+def parse_egress_proxy(raw: str | None) -> str | None:
+    """*raw* as a proxy URL (``http://host:port``), or ``None`` when empty."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    parts = urlsplit(raw)
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError(f"{EGRESS_PROXY_ENV}: {raw!r} is not a proxy URL like http://host:3128")
+    return raw
+
+
+def egress_proxy_from_env() -> str | None:
+    return parse_egress_proxy(os.getenv(EGRESS_PROXY_ENV))
+
+
+def goes_direct(host: str, private_allow: PrivateAllowlist | None) -> bool:
+    """Whether a request to *host* bypasses the egress proxy.
+
+    Loopback, a private literal address, and a host or address in the
+    deployment's private allowlist: what the address check can still check.
+    Anything else goes through the proxy.
+    """
+    host = host.lower()
+    if host in LOOPBACK_HOSTS:
+        return True
+    if (ip := literal_ip(host)) is not None and not is_public(ip):
+        return True
+    return private_allow is not None and private_allow.allows(host)
+
+
+def _target(url: Any) -> Origin:
+    host = (url.host or "").lower()
+    return (url.scheme, host, url.port or _DEFAULT_PORTS.get(url.scheme, 0))
 
 
 class BlockedDestination(httpx.ConnectError):  # ty: ignore[unsupported-base]
@@ -377,8 +428,8 @@ async def check_destination(
     *url* is an ``httpx`` or ``httpx2`` URL (both have ``scheme``/``host``/
     ``port``). Raises ``OSError`` when the host does not resolve.
     """
-    host = (url.host or "").lower()
-    target = (url.scheme, host, url.port or _DEFAULT_PORTS.get(url.scheme, 0))
+    target = _target(url)
+    host = target[1]
     if (why := origin_refusal(target, allowed, label=label)) is not None:
         return why
     addresses = await _resolve(host, target[2])
@@ -404,6 +455,7 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         allow_private_network: bool = False,
         private_allow: PrivateAllowlist | None = None,
         max_response_bytes: int | None = None,
+        egress_proxy: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -413,23 +465,38 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         self._max_bytes = (
             max_response_bytes if max_response_bytes is not None else mcp_max_response_bytes()
         )
+        # Public destinations through the explicit proxy (CONNECT; TLS end to
+        # end with the same verify settings). Never from the environment.
+        self._via_proxy = (
+            httpx.AsyncHTTPTransport(proxy=egress_proxy, **kwargs) if egress_proxy else None
+        )
 
     async def handle_async_request(self, request: Any) -> Any:
+        proxied = self._via_proxy is not None and not goes_direct(
+            request.url.host or "", self._private_allow
+        )
         try:
-            why = await check_destination(
-                request.url,
-                allowed={self._origin},
-                label="MCP",
-                allow_private=self._allow_private,
-                private_allow=self._private_allow,
-            )
+            if proxied:  # the proxy resolves the name: only the origin is checked here
+                why = origin_refusal(_target(request.url), {self._origin}, label="MCP")
+            else:
+                why = await check_destination(
+                    request.url,
+                    allowed={self._origin},
+                    label="MCP",
+                    allow_private=self._allow_private,
+                    private_allow=self._private_allow,
+                )
         except OSError as exc:  # gaierror: surface it as the connect failure it is
             host = request.url.host
             raise httpx.ConnectError(f"MCP server {host} did not resolve: {exc}") from exc
         if why is not None:
             raise BlockedDestination(why, request=request)
         request.headers["Accept-Encoding"] = "identity"
-        response = await super().handle_async_request(request)
+        if proxied:
+            assert self._via_proxy is not None  # nosec B101 - narrowed above
+            response = await self._via_proxy.handle_async_request(request)
+        else:
+            response = await super().handle_async_request(request)
         host = request.url.host
         encoding = response.headers.get("content-encoding", "").strip().lower()
         if encoding not in ("", "identity"):
@@ -452,6 +519,11 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
             response.stream, _ByteCap(self._max_bytes, per_event=sse), request
         )
         return response
+
+    async def aclose(self) -> None:
+        await super().aclose()
+        if self._via_proxy is not None:
+            await self._via_proxy.aclose()
 
 
 def ssl_context(
@@ -476,6 +548,7 @@ def client_factory(
     verify: ssl.SSLContext | bool = True,
     private_allow: PrivateAllowlist | None = None,
     max_response_bytes: int | None = None,
+    egress_proxy: str | None = None,
 ) -> Callable[..., Any]:
     """An ``httpx_client_factory`` for ADK's MCP connection params.
 
@@ -499,6 +572,7 @@ def client_factory(
                 allow_private_network=allow_private_network,
                 private_allow=private_allow,
                 max_response_bytes=cap,
+                egress_proxy=egress_proxy,
                 verify=verify,
             ),
             "follow_redirects": False,
@@ -581,9 +655,13 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
         private_allow: PrivateAllowlist | None = None,
         max_response_bytes: int = 1024 * 1024,
         label: str = "A2A",
+        egress_proxy: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        self._via_proxy = (
+            httpx_std.AsyncHTTPTransport(proxy=egress_proxy, **kwargs) if egress_proxy else None
+        )
         if not allowed_origins:
             raise ValueError("GuardedHttpxTransport needs at least one allowed origin")
         self.allowed_origins = frozenset(allowed_origins)
@@ -595,14 +673,20 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
         self._label = label
 
     async def handle_async_request(self, request: httpx_std.Request) -> httpx_std.Response:
+        proxied = self._via_proxy is not None and not goes_direct(
+            request.url.host or "", self._private_allow
+        )
         try:
-            why = await check_destination(
-                request.url,
-                allowed=self.allowed_origins,
-                label=self._label,
-                allow_private=self._allow_private,
-                private_allow=self._private_allow,
-            )
+            if proxied:  # the proxy resolves the name: only the origin is checked here
+                why = origin_refusal(_target(request.url), self.allowed_origins, label=self._label)
+            else:
+                why = await check_destination(
+                    request.url,
+                    allowed=self.allowed_origins,
+                    label=self._label,
+                    allow_private=self._allow_private,
+                    private_allow=self._private_allow,
+                )
         except OSError as exc:
             raise httpx_std.ConnectError(
                 f"{self._label} host {request.url.host} did not resolve: {exc}", request=request
@@ -611,7 +695,11 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
             logger.warning("%s", why)
             raise BlockedRemoteDestination(why, request=request)
         request.headers["Accept-Encoding"] = "identity"
-        response = await super().handle_async_request(request)
+        if proxied:
+            assert self._via_proxy is not None  # nosec B101 - narrowed above
+            response = await self._via_proxy.handle_async_request(request)
+        else:
+            response = await super().handle_async_request(request)
         encoding = response.headers.get("content-encoding", "").strip().lower()
         if encoding not in ("", "identity"):
             await response.aclose()
@@ -630,6 +718,11 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
             )
         response.stream = _CappedStream(response.stream, self._max_bytes, request)
         return response
+
+    async def aclose(self) -> None:
+        await super().aclose()
+        if self._via_proxy is not None:
+            await self._via_proxy.aclose()
 
 
 def ca_ssl_context(ca_file: str | None) -> ssl.SSLContext | bool:
