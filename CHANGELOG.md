@@ -41,6 +41,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `budget.hit`. A2A and MCP inspectors, in-tab run history with a side-by-side
   compare, and JSON export and import. See
   [Studio](docs/integrations/studio.md#the-console).
+- **Orrery Studio, P0b: patterns and storage ([AEP-031](docs/enhancements/aep-031-orrery-studio.md)).**
+  Compositions now route (`output.labels` and `when` edges, or a `router`
+  node; `route.decision` events), loop (a back edge with `max_iterations` of
+  at most 5; `loop.iteration` events; a cycle without a cap is refused), fan
+  out and in (`parallel` and `join`, 2–6 concurrent branches) and delegate
+  (`supervisor` nodes whose children are agent tools, at most 3 deep, counted
+  as delegations). A node may name its `model` from `ORRERY_STUDIO_MODELS`,
+  with no fallback chain. With PostgreSQL, compositions are stored and
+  versioned (`/studio/compositions`, 409 on a stale version), and runs and
+  their events are kept for `ORRERY_STUDIO_RUN_RETENTION_DAYS` (14), readable
+  and replayable from any replica (`GET /studio/runs`); cancel stays on the
+  running replica (409 elsewhere). New for the console: `POST /studio/validate`,
+  `capabilities` and `budget_ceilings` in `/studio/schema`, MCP tool schemas
+  in `/studio/registry`, and `studio_available` in `/me`. Tested templates for
+  eight patterns are in `deploy/studio-demo/specs/`; the demo spec moved there
+  as `critic-loop.json`. `spec_version` stays 1. A loop may not contain a
+  parallel section (`loop_around_parallel`), and a branch may not fan out
+  again; nested loops count per entry, and a loop that stops at its cap ends
+  with the last draft; loops nest at most 2 deep (caps multiply). Allowlisted models are built at startup (a bad name or
+  missing key fails it), and Gemini safety filters follow each agent's model
+  rather than `MODEL_PROVIDER`. Run persistence writes events and the run row
+  in one transaction and retries with backoff; Studio statements on
+  PostgreSQL time out after 10 s, and a finished run whose writer is stuck
+  for 5 minutes is dropped from memory with a warning; `?resolve=true` on the registry
+  and composition writes are rate-limited, and following runs on other
+  replicas is capped and backs off.
 - **Calling remote A2A agents ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).**
   `GuardedRemoteA2aTool` sends one text request to a registered remote and
   returns its reply as a tool result, so the safety screen, PII redaction,

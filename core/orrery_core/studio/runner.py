@@ -16,8 +16,11 @@ It never calls ``replace_root_agent()``, never writes the catalog and never
 touches the chat gateway. :class:`StudioRunPlugin` (added to that run's
 plugins only) emits the trace events and enforces the composition ledger.
 
-Runs live in memory on the replica that started them, bounded by count and
-age. Cancelling a run cancels its task: model and HTTP calls in flight are
+A run lives in memory on the replica running it (bounded by count and age),
+and is written to the :mod:`.store` as it goes: its summary and events, every
+fraction of a second. Any replica then serves a run's summary and events from
+the store, live or replayed; only the replica running it can cancel it.
+Cancelling a run cancels its task: model and HTTP calls in flight are
 cancelled and toolsets closed. A synchronous tool already running in a worker
 thread cannot be interrupted; it finishes in the background, harmlessly at L2.
 """
@@ -37,6 +40,7 @@ from typing import Any, Literal
 from google.adk.models.llm_response import LlmResponse
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.sessions import InMemorySessionService
+from google.adk.tools.set_model_response_tool import SetModelResponseTool
 from google.genai import types
 
 from ..a2a.remote import RemoteCards, RemoteExchange
@@ -50,7 +54,14 @@ from ..security.auth import AUTH_STATE_KEY, AuthContext
 from ..security.identity import CallerIdentity
 from ..security.principal import STUDIO_SESSION_PREFIX
 from ..serving.gateway import AgentGateway, TurnTimedOut
-from .compiler import CompiledComposition, McpPins, compile_spec
+from .compiler import (
+    LABELLED_PREFIX,
+    CompiledComposition,
+    McpPins,
+    NodeInfo,
+    RouteFailed,
+    compile_spec,
+)
 from .config import StudioConfig
 from .events import (
     ALWAYS_KEPT,
@@ -78,9 +89,15 @@ from .spec import (
     SpecError,
     SpecInvalid,
     ValidationContext,
+    graph_order,
     parse_spec,
-    pipeline_order,
     validate_spec,
+)
+from .store import (
+    CompositionRecord,
+    InMemoryStudioStore,
+    RunRecord,
+    StudioStore,
 )
 
 logger = logging.getLogger("orrery.studio")
@@ -111,6 +128,8 @@ class StudioRun:
     spec: CompositionSpec
     spec_digest: str
     input: str
+    composition_id: str | None = None
+    composition_version: int | None = None
     created_at: float = field(default_factory=time.time)
     status: RunStatus = "running"
     ended_at: float | None = None
@@ -181,13 +200,44 @@ class StudioRun:
             "status": self.status,
             "spec_name": self.spec.name,
             "spec_digest": self.spec_digest,
+            "pattern": self.spec.pattern,
+            "composition_id": self.composition_id,
+            "composition_version": self.composition_version,
             "created_at": self.created_at,
             "ended_at": self.ended_at,
             "error": self.error,
             "totals": self.totals.model_dump(mode="json") if self.totals else None,
             "event_count": len(self.events),
             "dropped_events": self.dropped,
+            # This replica runs it: it can be cancelled here.
+            "cancellable": not self.finished,
         }
+
+    def record(self, replica: str, timeout_s: int) -> RunRecord:
+        """The run as stored, for the other replicas."""
+        return RunRecord(
+            run_id=self.run_id,
+            owner=self.owner,
+            replica=replica,
+            spec_name=self.spec.name,
+            spec_digest=self.spec_digest,
+            pattern=self.spec.pattern,
+            status=self.status,
+            created_at=self.created_at,
+            deadline=self.created_at + timeout_s,
+            composition_id=self.composition_id,
+            composition_version=self.composition_version,
+            ended_at=self.ended_at,
+            error=self.error,
+            totals=self.totals.model_dump(mode="json") if self.totals else None,
+            event_count=len(self.events),
+            dropped_events=self.dropped,
+        )
+
+
+def _entry_key(agent_name: str, context: Any) -> tuple[str, str]:
+    """One entry of a node: its agent and the invocation running it."""
+    return agent_name, str(getattr(context, "invocation_id", "") or "")
 
 
 class StudioRunPlugin(BasePlugin):
@@ -197,15 +247,28 @@ class StudioRunPlugin(BasePlugin):
         self,
         run: StudioRun,
         ledger: CompositionLedger,
-        compiled: CompiledComposition,
+        compiled: CompiledComposition | None = None,
     ) -> None:
         super().__init__(name="studio_run")
         self._run = run
         self._ledger = ledger
-        self._compiled = compiled
-        self._entered: dict[str, float] = {}
-        self._tokens: dict[str, TokenCount] = {}
-        self._last_text: dict[str, str] = {}
+        self._compiled = compiled or CompiledComposition(
+            workflow=None,  # ty: ignore[invalid-argument-type]
+            nodes={},
+            mcp_tools={},
+            order=[],
+        )
+        #: The answer of the graph node that finished last: the run's output.
+        self._output: str | None = None
+        # Keyed by (agent name, invocation id): each call of a supervisor's
+        # child is its own invocation, so two at once are told apart, and a
+        # node entered again (a loop) counts from zero.
+        self._entered: dict[tuple[str, str], float] = {}
+        self._tokens: dict[tuple[str, str], TokenCount] = {}
+        self._last_text: dict[tuple[str, str], str] = {}
+        #: Graph node id -> its latest answer (a loop that stops at its cap
+        #: ends with the answer its source was judging).
+        self._answers: dict[str, str] = {}
         self._tool_started: dict[str, float] = {}
         #: ``(agent name, error type)`` of the first failed model call. The
         #: error handler answers it with an apology, which would otherwise pass
@@ -216,6 +279,21 @@ class StudioRunPlugin(BasePlugin):
         #: the safety screen and PII redaction (capture on only). Keyed by the
         #: call, not the node: a node's parallel calls finish in any order.
         self.pending_inbound: dict[tuple[str, str | None], A2aMessage] = {}
+
+    def attach(self, compiled: CompiledComposition) -> None:
+        """The compiled composition (built after the plugin, which it reports to)."""
+        self._compiled = compiled
+
+    # ── the graph's function nodes (compiler.Trace) ──
+    def emit_event(self, event: Any) -> None:
+        self._run.emit(event)
+
+    def record_output(self, node_id: str, text: str) -> None:
+        self._output = text
+        self._answers[node_id] = text
+
+    def answer_of(self, node_id: str) -> str | None:
+        return self._answers.get(node_id)
 
     def hold_inbound(self, event: A2aMessage, call_id: str | None) -> None:
         key = (event.node_id, call_id)
@@ -241,8 +319,13 @@ class StudioRunPlugin(BasePlugin):
         info = self._compiled.nodes.get(agent.name)
         if info is None:
             return None
-        self._entered[agent.name] = time.monotonic()
-        self._run.emit(NodeEnter(node_id=info.node_id, kind=info.kind, model=info.model))
+        key = _entry_key(agent.name, callback_context)
+        self._entered[key] = time.monotonic()
+        self._tokens[key] = TokenCount()
+        self._last_text.pop(key, None)
+        self._run.emit(
+            NodeEnter(node_id=info.node_id, kind=info.kind, model=info.model, parent=info.parent)
+        )
         return None
 
     async def after_agent_callback(self, *, agent: Any, callback_context: Any) -> None:
@@ -253,12 +336,23 @@ class StudioRunPlugin(BasePlugin):
             # real outcome instead of "ok".
             return None
         failed = self.failure is not None and self.failure[0] == agent.name
-        self._exit(agent.name, "failed" if failed else "ok")
+        info = self._compiled.nodes.get(agent.name)
+        key = _entry_key(agent.name, callback_context)
+        # A labelled node's answer is set again by its route node, without the label.
+        if (
+            not failed
+            and info is not None
+            and info.parent is None
+            and (text := self._last_text.get(key)) is not None
+        ):
+            self._output = text
+            self._answers[info.node_id] = text
+        self._exit(key, "failed" if failed else "ok")
         return None
 
-    def _exit(self, agent_name: str, outcome: NodeOutcome) -> None:
-        info = self._compiled.nodes.get(agent_name)
-        started = self._entered.pop(agent_name, None)
+    def _exit(self, key: tuple[str, str], outcome: NodeOutcome) -> None:
+        info = self._compiled.nodes.get(key[0])
+        started = self._entered.pop(key, None)
         if info is None or started is None:
             return
         self._flush_node(info.node_id)  # an exchange whose tool never finished
@@ -267,22 +361,23 @@ class StudioRunPlugin(BasePlugin):
                 node_id=info.node_id,
                 kind=info.kind,
                 model=info.model,
-                tokens=self._tokens.get(agent_name, TokenCount()),
+                tokens=self._tokens.pop(key, TokenCount()),
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 outcome=outcome,
-                content=self._run.capture(self._last_text.get(agent_name)),
+                parent=info.parent,
+                content=self._run.capture(self._last_text.pop(key, None)),
             )
         )
 
+    def labelled_nodes(self) -> list[NodeInfo]:
+        return [info for info in self._compiled.nodes.values() if info.labels]
+
     def close_open_nodes(self, outcome: NodeOutcome) -> None:
-        for name in list(self._entered):
-            self._exit(name, outcome)
+        for key in list(self._entered):
+            self._exit(key, outcome)
 
     def last_output(self) -> str | None:
-        for agent_name in reversed(list(self._compiled.nodes)):
-            if text := self._last_text.get(agent_name):
-                return text
-        return None
+        return self._output
 
     # ── models ──
     async def after_model_callback(self, *, callback_context: Any, llm_response: Any) -> None:
@@ -295,7 +390,7 @@ class StudioRunPlugin(BasePlugin):
             prompt = int(getattr(usage, "prompt_token_count", 0) or 0)
             output = int(getattr(usage, "candidates_token_count", 0) or 0)
             total = int(getattr(usage, "total_token_count", 0) or 0) or prompt + output
-            node = self._tokens.setdefault(name, TokenCount())
+            node = self._tokens.setdefault(_entry_key(name, callback_context), TokenCount())
             node.input += prompt
             node.output += output
             node.total += total
@@ -306,7 +401,7 @@ class StudioRunPlugin(BasePlugin):
         if content is not None and content.parts:
             text = "".join(p.text for p in content.parts if p.text and p.thought is not True)
             if text:
-                self._last_text[name] = text
+                self._last_text[_entry_key(name, callback_context)] = text
         return None
 
     async def on_model_error_callback(
@@ -321,6 +416,8 @@ class StudioRunPlugin(BasePlugin):
     async def before_tool_callback(
         self, *, tool: Any, tool_args: dict[str, Any], tool_context: Any
     ) -> dict[str, Any] | None:
+        if isinstance(tool, SetModelResponseTool):
+            return None  # ADK's structured-output plumbing, not a call the model chose
         if self._ledger.exhausted is None:
             hit = self._ledger.charge_tool(
                 delegation=is_delegation(tool),
@@ -442,8 +539,35 @@ def studio_plugins() -> list[BasePlugin]:
     return default_plugins(enable_auth=True, autonomy_level="L2", enable_memory=False)
 
 
+class RunElsewhere(Exception):
+    """A run that is still going on another replica: only that one can cancel it."""
+
+
+#: Seconds between store writes of a run in flight (events are batched).
+PERSIST_INTERVAL = 0.25
+#: Seconds a run waits for its MCP sessions to close.
+CLOSE_TIMEOUT = 10.0
+#: Longest wait between attempts after a failed write.
+PERSIST_MAX_BACKOFF = 5.0
+#: Attempts at a finished run's last write before giving up.
+PERSIST_FINAL_ATTEMPTS = 8
+#: Seconds a finished run is kept for a writer that has not let go. Past it
+#: the writer is taken as stuck (a write hanging in its thread) and the run is
+#: forgotten anyway. Well above an honest final write: 8 attempts, each bounded
+#: by the store's connect and statement timeouts, with backoff.
+PERSIST_STUCK_AFTER = 300.0
+#: Seconds between store reads when following a run on another replica;
+#: while nothing new comes, the wait grows to :data:`FOLLOW_MAX_INTERVAL`.
+FOLLOW_INTERVAL = 1.0
+FOLLOW_MAX_INTERVAL = 5.0
+#: Runs on other replicas one person may follow at once (each polls the store).
+MAX_FOLLOWS_PER_USER = 4
+#: Seconds between retention purges.
+PURGE_INTERVAL = 3600.0
+
+
 class StudioService:
-    """Validates specs, starts runs and keeps them (per process, bounded)."""
+    """Validates specs, keeps compositions, starts runs and serves them."""
 
     def __init__(
         self,
@@ -453,26 +577,41 @@ class StudioService:
         cards: RemoteCards,
         catalogue: Callable[[], Mapping[str, Any]] | None = None,
         model_factory: Callable[[], Any] | None = None,
+        model_for: Callable[[str], Any] | None = None,
         plugin_factory: Callable[[], list[BasePlugin]] = studio_plugins,
         caller_identity: Callable[[AuthContext], CallerIdentity | None] | None = None,
+        store: StudioStore | None = None,
     ) -> None:
         self.config = config
         self.registry = registry
         self.cards = cards
         self._catalogue = catalogue or dict
         self._model_factory = model_factory
+        self._model_for = model_for
         self._plugin_factory = plugin_factory
         self._caller_identity = caller_identity
         self._runs: OrderedDict[str, StudioRun] = OrderedDict()
         #: MCP tool fingerprints first seen, for the process (not per run).
         self.mcp_pins = McpPins()
+        self.store: StudioStore = store or InMemoryStudioStore(max_runs=config.max_runs)
+        #: This process, in the store (a run is cancellable only where it runs).
+        self.replica = uuid.uuid4().hex
+        self._persisters: dict[str, asyncio.Task[None]] = {}
+        #: Registry MCP entry -> why its tools could not be listed (``?resolve=true``).
+        self.mcp_errors: dict[str, str] = {}
+        self._purger: asyncio.Task[None] | None = None
+        #: Subject -> streams following a run on another replica.
+        self._follows: dict[str, int] = {}
 
     def catalogue(self) -> Mapping[str, Any]:
         return self._catalogue()
 
     def validation_context(self) -> ValidationContext:
         return ValidationContext(
-            registry=self.registry, catalogue=self.catalogue(), ceilings=self.config.ceilings
+            registry=self.registry,
+            catalogue=self.catalogue(),
+            ceilings=self.config.ceilings,
+            models=self.config.models,
         )
 
     def check(self, raw: Mapping[str, Any]) -> CompositionSpec:
@@ -482,35 +621,97 @@ class StudioService:
             raise SpecInvalid(errors)
         return spec
 
+    # ── background work ──
+    async def start_background(self) -> None:
+        """Purge old runs now and every hour (the app's lifespan calls this)."""
+        if self._purger is None:
+            self._purger = asyncio.create_task(self._purge_loop(), name="studio-purge")
+
+    async def _purge_loop(self) -> None:
+        while True:
+            try:
+                await asyncio.to_thread(self.purge)
+            except Exception:  # noqa: BLE001 - a failed purge is retried on the next round
+                logger.warning("Studio retention purge failed", exc_info=True)
+            await asyncio.sleep(PURGE_INTERVAL)
+
+    def purge(self, now: float | None = None) -> int:
+        """Delete stored runs older than ``ORRERY_STUDIO_RUN_RETENTION_DAYS``."""
+        now = time.time() if now is None else now
+        purged = self.store.purge(older_than=now - self.config.run_retention_days * 86400)
+        if purged:
+            logger.info("Purged %d Studio runs past retention", purged)
+        return purged
+
+    # ── compositions ──
+    def compositions(self) -> list[CompositionRecord]:
+        return self.store.list_compositions()
+
+    def composition(self, cid: str, version: int | None = None) -> CompositionRecord | None:
+        return self.store.get_composition(cid, version)
+
     # ── runs ──
     def _prune(self, owner: str | None = None) -> None:
         """Forget expired runs, then the oldest finished ones past the caps.
 
         *owner* is about to start one: their oldest finished runs go first once
         they hold ``max_runs_per_user``, so one person cannot crowd out the rest.
+        Only a run whose final write is done is forgotten (finished, and its
+        writer gone): before that the store may still show it running, or not
+        at all. Until then the caps are exceeded briefly rather than a run lost.
+        A writer still there :data:`PERSIST_STUCK_AFTER` seconds after its run
+        ended is taken as stuck, and the run is forgotten anyway (logged).
+        A forgotten run is read from the store (if its writer gave up after
+        :data:`PERSIST_FINAL_ATTEMPTS`, it is gone).
         """
         now = time.time()
-        for run_id, run in list(self._runs.items()):
-            if run.finished and now - (run.ended_at or now) > self.config.retention_seconds:
-                del self._runs[run_id]
+
+        def prunable(run: StudioRun) -> bool:
+            if not run.finished:
+                return False
+            if run.run_id not in self._persisters:
+                return True
+            return now - (run.ended_at or now) > PERSIST_STUCK_AFTER
+
+        def forget(run: StudioRun) -> None:
+            if run.run_id in self._persisters:
+                logger.warning(
+                    "Studio run %s ended %.0fs ago and its store write has not "
+                    "finished; forgetting it here (other replicas may report it "
+                    "running)",
+                    run.run_id,
+                    now - (run.ended_at or now),
+                )
+            del self._runs[run.run_id]
+
+        for run in list(self._runs.values()):
+            if prunable(run) and now - (run.ended_at or now) > self.config.retention_seconds:
+                forget(run)
         if owner is not None:
             mine = [r for r in self._runs.values() if r.owner == owner]
-            for run in [r for r in mine if r.finished][
+            for run in [r for r in mine if prunable(r)][
                 : max(0, len(mine) + 1 - self.config.max_runs_per_user)
             ]:
-                del self._runs[run.run_id]
+                forget(run)
         while len(self._runs) > self.config.max_runs:
-            oldest = next((r for r in self._runs.values() if r.finished), None)
+            oldest = next((r for r in self._runs.values() if prunable(r)), None)
             if oldest is None:
                 break
-            del self._runs[oldest.run_id]
+            forget(oldest)
 
     def running(self, owner: str | None = None) -> int:
         return sum(
             1 for r in self._runs.values() if not r.finished and (owner is None or r.owner == owner)
         )
 
-    def start(self, spec: CompositionSpec, text: str, auth: AuthContext) -> StudioRun:
+    def start(
+        self,
+        spec: CompositionSpec,
+        text: str,
+        auth: AuthContext,
+        *,
+        composition: CompositionRecord | None = None,
+    ) -> StudioRun:
         if not text.strip():
             raise SpecInvalid([SpecError(("input",), "input must not be empty")])
         self._prune(auth.subject)
@@ -526,6 +727,8 @@ class StudioService:
             spec=spec,
             spec_digest=spec.digest(),
             input=text,
+            composition_id=composition.id if composition else None,
+            composition_version=composition.version if composition else None,
             capture_content=self.config.capture_content,
             redact_ips=self.config.redact_ips,
             max_content_bytes=self.config.max_content_bytes_per_run,
@@ -537,9 +740,14 @@ class StudioService:
             run_id=run.run_id,
             spec_name=spec.name,
             spec_digest=run.spec_digest,
+            composition_id=run.composition_id,
+            composition_version=run.composition_version,
         )
         run.task = asyncio.create_task(self._execute(run, auth), name=f"studio-{run.run_id}")
         run.task.add_done_callback(lambda task: self._finalise(run, task, auth))
+        writer = asyncio.create_task(self._persist(run), name=f"studio-persist-{run.run_id}")
+        self._persisters[run.run_id] = writer
+        writer.add_done_callback(lambda _t: self._persisters.pop(run.run_id, None))
         return run
 
     def _finalise(self, run: StudioRun, task: asyncio.Task[None], auth: AuthContext) -> None:
@@ -560,12 +768,98 @@ class StudioService:
         run.emit(RunEnd(outcome=outcome, error=run.error, totals=run.totals))
         audit_event("studio_run_ended", subject=auth.subject, run_id=run.run_id, outcome=outcome)
 
+    async def _persist(self, run: StudioRun) -> None:
+        """Write the run and its new events to the store until it ends (batched).
+
+        Each write is one transaction (events and row), and a failed one is
+        sent again, whole, with backoff: the append skips what is stored, so a
+        commit in doubt is harmless. The last write is tried
+        :data:`PERSIST_FINAL_ATTEMPTS` times before giving up.
+        """
+        timeout_s = run.spec.budgets.resolved(self.config.ceilings).timeout_s
+        sent = 0
+        first = True
+        failures = 0
+        final = False
+        while True:
+            finished = run.finished
+            if finished and not final:
+                # The final write gets all its attempts, whatever failed before.
+                final, failures = True, 0
+            batch = run.events[sent:]
+            if batch or first or finished:
+                record = run.record(self.replica, timeout_s)
+                try:
+                    await asyncio.to_thread(self.store.write_run, record, batch)
+                except Exception:  # noqa: BLE001 - the run goes on; this replica still serves it
+                    failures += 1
+                    if failures == 1:
+                        logger.warning("Writing Studio run %s failed", run.run_id, exc_info=True)
+                    if finished and failures >= PERSIST_FINAL_ATTEMPTS:
+                        logger.error(
+                            "Gave up writing Studio run %s after %d attempts; other replicas "
+                            "will report it lost",
+                            run.run_id,
+                            failures,
+                        )
+                        return
+                    await asyncio.sleep(min(PERSIST_INTERVAL * 2**failures, PERSIST_MAX_BACKOFF))
+                    continue
+                if failures:
+                    logger.info("Writing Studio run %s recovered", run.run_id)
+                failures = 0
+                sent += len(batch)
+                first = False
+            if finished and sent >= len(run.events):
+                return
+            # Events that came in during the write are not waited for: no
+            # await between this check and wait() taking the current signal.
+            if sent >= len(run.events) and not run.finished:
+                await run.wait(15.0)
+            await asyncio.sleep(PERSIST_INTERVAL)
+
     def get(self, run_id: str, owner: str) -> StudioRun | None:
-        """The run, if *owner* started it. Anyone else's is as unknown as a missing one."""
+        """The run, if it is on this replica and *owner* started it."""
         run = self._runs.get(run_id)
         return run if run is not None and run.owner == owner else None
 
-    def cancel(self, run: StudioRun) -> None:
+    async def lookup(self, run_id: str, owner: str) -> StudioRun | RunRecord | None:
+        """The run here, else as stored (any replica's); anyone else's is unknown."""
+        if (run := self.get(run_id, owner)) is not None:
+            return run
+        stored = await asyncio.to_thread(self.store.get_run, run_id)
+        if stored is None or stored.owner != owner:
+            return None
+        return stored.view()
+
+    async def history(
+        self, owner: str, *, composition_id: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """*owner*'s runs, newest first: this replica's and the stored ones.
+
+        Only the store query leaves the event loop: the in-memory runs change
+        on the loop, so they are read there.
+        """
+        records = await asyncio.to_thread(
+            self.store.list_runs, owner, composition_id=composition_id, limit=limit
+        )
+        stored = {r.run_id: r.view().summary() | {"cancellable": False} for r in records}
+        for run in self._runs.values():
+            if run.owner == owner and (
+                composition_id is None or run.composition_id == composition_id
+            ):
+                stored[run.run_id] = run.summary()
+        return sorted(stored.values(), key=lambda r: -r["created_at"])[:limit]
+
+    def cancel(self, run: StudioRun | RunRecord) -> None:
+        """Cancel a run here; a stored run still going elsewhere raises :class:`RunElsewhere`."""
+        if isinstance(run, RunRecord):
+            if not run.finished:
+                raise RunElsewhere(
+                    "this run is on another replica; only that replica can cancel it "
+                    "(route the console's requests to one replica, sticky sessions)"
+                )
+            return
         if run.task is not None and not run.task.done():
             run.task.cancel()
 
@@ -575,6 +869,19 @@ class StudioService:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        # Let each run's last events reach the store.
+        writers = [t for t in self._persisters.values() if not t.done()]
+        if writers:
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(5.0):
+                    await asyncio.gather(*writers, return_exceptions=True)
+        for task in writers:
+            task.cancel()
+        if self._purger is not None:
+            self._purger.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._purger
+            self._purger = None
 
     def _on_exchange(
         self,
@@ -617,30 +924,31 @@ class StudioService:
                 spec_name=spec.name,
                 spec_digest=run.spec_digest,
                 pattern=spec.pattern,
-                nodes=pipeline_order(spec),
+                nodes=graph_order(spec),
                 budgets=budgets.model_dump(),
+                composition_id=run.composition_id,
+                composition_version=run.composition_version,
                 content=run.capture(run.input),
             )
         )
         compiled: CompiledComposition | None = None
-        plugin: StudioRunPlugin | None = None
+        plugin = StudioRunPlugin(run, ledger)
         outcome: RunOutcome = "failed"
         node_outcome: NodeOutcome = "failed"
         error: str | None = None
         try:
-            holder: dict[str, StudioRunPlugin] = {}
             compiled = compile_spec(
                 spec,
                 registry=self.registry,
                 cards=self.cards,
                 catalogue=self.catalogue(),
                 model=self._model_factory() if self._model_factory else None,
-                on_exchange=lambda node_id, ex: self._on_exchange(
-                    run, node_id, ex, holder.get("plugin")
-                ),
+                model_for=self._model_for,
+                on_exchange=lambda node_id, ex: self._on_exchange(run, node_id, ex, plugin),
                 mcp_pins=self.mcp_pins,
+                trace=plugin,
             )
-            plugin = holder["plugin"] = StudioRunPlugin(run, ledger, compiled)
+            plugin.attach(compiled)
             plugins = list(self._plugin_factory())
             _place_run_plugins(plugins, plugin, StudioSpentGate(ledger))
             gateway = AgentGateway(
@@ -658,12 +966,10 @@ class StudioService:
                 app_name=APP_NAME, user_id=auth.subject, session_id=session_id
             )
 
-            run_plugin = plugin
-
             async def stop_when_spent(_event: Any) -> None:
                 if ledger.exhausted is not None:
                     raise _BudgetStop
-                if run_plugin.failure is not None:
+                if plugin.failure is not None:
                     raise _NodeFailed
 
             await gateway.run_in_session(
@@ -681,12 +987,15 @@ class StudioService:
             else:
                 outcome, node_outcome = "succeeded", "ok"
         except _NodeFailed:
-            assert plugin is not None and plugin.failure is not None
+            assert plugin.failure is not None
             agent_name, error_type = plugin.failure
             info = compiled.nodes.get(agent_name) if compiled is not None else None
             error = (
                 f"model call failed in node {info.node_id if info else agent_name}: {error_type}"
             )
+            outcome, node_outcome = "failed", "failed"
+        except RouteFailed as exc:
+            error = str(exc)
             outcome, node_outcome = "failed", "failed"
         except _BudgetStop:
             outcome, node_outcome = "budget_exhausted", "budget_exhausted"
@@ -701,17 +1010,29 @@ class StudioService:
                 task.uncancel()
             outcome, node_outcome = "cancelled", "cancelled"
         except Exception as exc:  # noqa: BLE001 - a failed run is an outcome, not a crash
-            logger.exception("Studio run %s failed", run.run_id)
-            error = type(exc).__name__
+            route_failed = _route_failure(exc)
+            unlabelled = _unlabelled_node(exc, plugin)
+            if route_failed is not None:
+                error = str(route_failed)
+            elif unlabelled is not None:
+                node_id, labels = unlabelled
+                error = (
+                    f"node {node_id!r} answered without one of its labels {labels}: its "
+                    "answer was not the structured {label, answer} it must give"
+                )
+            else:
+                logger.exception("Studio run %s failed", run.run_id)
+                error = type(exc).__name__
             outcome, node_outcome = "failed", "failed"
         finally:
             if compiled is not None:
                 # Shielded: a cancelled run still closes its MCP sessions.
+                # Bounded: a server that never answers its close does not
+                # keep the run (and its person's slot) open.
                 with contextlib.suppress(Exception, asyncio.CancelledError):
-                    await asyncio.shield(compiled.close())
-            output = plugin.last_output() if plugin is not None else None
-            if plugin is not None:
-                plugin.close_open_nodes(node_outcome)
+                    await asyncio.wait_for(asyncio.shield(compiled.close()), CLOSE_TIMEOUT)
+            output = plugin.last_output()
+            plugin.close_open_nodes(node_outcome)
             if outcome == "budget_exhausted" and ledger.exhausted is not None:
                 error = f"budget {ledger.exhausted.budget} reached"
             totals = ledger.totals(int((time.monotonic() - started) * 1000))
@@ -736,8 +1057,14 @@ class StudioService:
                 tool_calls=totals.tool_calls,
             )
 
-    async def stream(self, run: StudioRun, after: int = 0) -> AsyncIterator[dict[str, Any] | None]:
+    async def stream(
+        self, run: StudioRun | RunRecord, after: int = 0
+    ) -> AsyncIterator[dict[str, Any] | None]:
         """Events with ``seq > after``, then each new one; ``None`` is a keepalive tick."""
+        if isinstance(run, RunRecord):
+            async for item in self._follow(run, after):
+                yield item
+            return
         sent = after
         while True:
             while sent < len(run.events):
@@ -749,3 +1076,83 @@ class StudioService:
             await run.wait(15.0)
             if sent >= len(run.events) and not run.finished:
                 yield None
+
+    def following(self, subject: str) -> int:
+        return self._follows.get(subject, 0)
+
+    def start_follow(self, subject: str) -> bool:
+        """Reserve one of *subject*'s follow slots; ``False`` when all are taken.
+
+        Check and increment with no await between them, so concurrent requests
+        cannot both take the last slot.
+        """
+        held = self._follows.get(subject, 0)
+        if held >= MAX_FOLLOWS_PER_USER:
+            return False
+        self._follows[subject] = held + 1
+        return True
+
+    def end_follow(self, subject: str) -> None:
+        left = self._follows.get(subject, 0) - 1
+        if left > 0:
+            self._follows[subject] = left
+        else:
+            self._follows.pop(subject, None)
+
+    async def _follow(self, run: RunRecord, after: int) -> AsyncIterator[dict[str, Any] | None]:
+        """A stored run's events: a replay, or a run going on another replica, followed."""
+        sent = after
+        idle = 0.0
+        interval = FOLLOW_INTERVAL
+        while True:
+            # The row first: once it reads finished, every event is stored.
+            current = await asyncio.to_thread(self.store.get_run, run.run_id)
+            events = await asyncio.to_thread(self.store.events, run.run_id, after=sent)
+            for event in events:
+                sent = int(event.get("seq", sent))
+                yield event
+            if current is None or current.view().finished:
+                return
+            # Back off while nothing happens; back to fast once events come.
+            interval = FOLLOW_INTERVAL if events else min(interval * 1.5, FOLLOW_MAX_INTERVAL)
+            await asyncio.sleep(interval)
+            idle = 0.0 if events else idle + interval
+            if idle >= 15.0:
+                idle = 0.0
+                yield None
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    out: list[BaseException] = []
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if any(current is seen for seen in out):
+            continue
+        out.append(current)
+        stack.extend(x for x in (current.__cause__, current.__context__) if x is not None)
+        if isinstance(current, BaseExceptionGroup):
+            stack.extend(current.exceptions)
+    return out
+
+
+def _unlabelled_node(exc: BaseException, plugin: StudioRunPlugin) -> tuple[str, list[str]] | None:
+    """``(node id, labels)`` when *exc* is a labelled node's answer failing its schema.
+
+    Only the ``Labelled_<id>`` model counts: any other validation error (a bad
+    tool argument, say) is not a missing label.
+    """
+    from pydantic import ValidationError
+
+    for error in _chain(exc):
+        if isinstance(error, ValidationError) and error.title.startswith(LABELLED_PREFIX):
+            node_id = error.title[len(LABELLED_PREFIX) :]
+            for info in plugin.labelled_nodes():
+                if info.node_id == node_id:
+                    return node_id, list(info.labels)
+    return None
+
+
+def _route_failure(exc: BaseException) -> RouteFailed | None:
+    """The :class:`RouteFailed` behind *exc*, if ADK wrapped one."""
+    return next((e for e in _chain(exc) if isinstance(e, RouteFailed)), None)

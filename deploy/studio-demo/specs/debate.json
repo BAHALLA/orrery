@@ -1,0 +1,81 @@
+{
+  "spec_version": 1,
+  "name": "debate",
+  "description": "Two speakers argue opposite sides of a question at the same time, then a judge weighs them.",
+  "pattern": "debate",
+  "budgets": {
+    "max_tokens": 60000,
+    "max_tool_calls": 12,
+    "timeout_s": 180
+  },
+  "nodes": [
+    {
+      "id": "motion",
+      "kind": "llm_agent",
+      "description": "States the question.",
+      "instruction": "Restate the question in your input as a motion that can be argued for and against, in one sentence."
+    },
+    {
+      "id": "floor",
+      "kind": "parallel",
+      "description": "Both sides speak at once."
+    },
+    {
+      "id": "pro",
+      "kind": "llm_agent",
+      "description": "Argues for.",
+      "instruction": "Argue for the motion in your input in at most five points, using Tirraflow articles as evidence (cite the URL).",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "con",
+      "kind": "llm_agent",
+      "description": "Argues against.",
+      "instruction": "Argue against the motion in your input in at most five points, using Tirraflow articles as evidence (cite the URL).",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "close",
+      "kind": "join",
+      "description": "Both sides have spoken."
+    },
+    {
+      "id": "judge",
+      "kind": "llm_agent",
+      "description": "Weighs the arguments.",
+      "instruction": "Your input is the case for and the case against. Say which is stronger and why, point by point, and give a verdict in one line."
+    }
+  ],
+  "edges": [
+    {
+      "from": "motion",
+      "to": "floor"
+    },
+    {
+      "from": "floor",
+      "to": "pro"
+    },
+    {
+      "from": "floor",
+      "to": "con"
+    },
+    {
+      "from": "pro",
+      "to": "close"
+    },
+    {
+      "from": "con",
+      "to": "close"
+    },
+    {
+      "from": "close",
+      "to": "judge"
+    }
+  ]
+}

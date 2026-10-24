@@ -1,4 +1,4 @@
-"""AEP-031 P0a: the registry, the composition spec and its refusals."""
+"""AEP-031 P0a and P0b: the registry, the composition spec and its refusals."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from orrery_core.studio.spec import (
     CompositionSpec,
     SpecInvalid,
     ValidationContext,
+    graph_order,
     parse_spec,
-    pipeline_order,
     spec_json_schema,
     validate_spec,
 )
@@ -97,12 +97,12 @@ def test_a_three_node_pipeline_is_accepted_in_edge_order():
     raw["nodes"].reverse()  # node order does not matter; edges do
     spec = parse_spec(raw)
     assert validate_spec(spec, _ctx()) == []
-    assert pipeline_order(spec) == ["research", "writer", "critic"]
+    assert graph_order(spec) == ["research", "writer", "critic"]
 
 
 def test_a_single_node_needs_no_edges():
     spec = parse_spec(_spec(nodes=[_node("only")], edges=[]))
-    assert validate_spec(spec, _ctx()) == [] and pipeline_order(spec) == ["only"]
+    assert validate_spec(spec, _ctx()) == [] and graph_order(spec) == ["only"]
 
 
 def test_the_digest_is_stable_and_content_addressed():
@@ -125,10 +125,6 @@ def test_the_published_schema_names_every_node_kind():
 @pytest.mark.parametrize(
     ("kind", "extra", "phase"),
     [
-        ("router", {}, "P0b"),
-        ("parallel", {}, "P0b"),
-        ("join", {}, "P0b"),
-        ("supervisor", {"instruction": "x", "children": ["a"]}, "P0b"),
         ("human_approval", {"prompt": "ok?"}, "P0c"),
         ("remote_a2a", {"remote": "demo-writer.draft"}, "P1"),
     ],
@@ -140,35 +136,43 @@ def test_other_node_kinds_are_not_supported_yet(kind, extra, phase):
     assert error["code"] == "not_supported_yet" and phase in error["msg"]
 
 
-def test_other_patterns_are_not_supported_yet():
-    [error] = _errors(_spec(pattern="supervisor"))
+def test_the_handoff_pattern_is_not_supported_yet():
+    [error] = _errors(_spec(pattern="handoff"))
     assert error["loc"] == ["pattern"] and error["code"] == "not_supported_yet"
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [("model", "gpt-x"), ("output", {"labels": ["ok", "retry"]})],
-)
-def test_node_model_and_output_labels_are_p0b(field, value):
+def test_a_pattern_must_match_the_graph():
+    [error] = _errors(_spec(pattern="supervisor"))
+    assert error["loc"] == ["pattern"] and error["code"] == "pattern_mismatch"
+
+
+def test_a_node_model_must_be_allowed():
     raw = _spec()
-    raw["nodes"][2][field] = value
+    raw["nodes"][2]["model"] = "gpt-x"
     [error] = _errors(raw)
-    assert error["loc"] == ["nodes", 2, field] and error["code"] == "not_supported_yet"
+    assert error["loc"] == ["nodes", 2, "model"] and error["code"] == "model_not_allowed"
+    assert _errors(raw, _ctx(models=frozenset({"gpt-x"}))) == []
+
+
+def test_a_last_node_may_be_labelled_and_an_edge_screened():
+    raw = _spec()
+    raw["nodes"][2]["output"] = {"labels": ["ok", "retry"]}
+    raw["edges"][0]["screen"] = True
+    assert _errors(raw) == []
 
 
 @pytest.mark.parametrize(
-    ("edge_extra", "field"),
+    ("edge_extra", "field", "fragment"),
     [
-        ({"when": "ok"}, "when"),
-        ({"max_iterations": 2}, "max_iterations"),
-        ({"screen": True}, "screen"),
+        ({"when": "ok"}, "when", "no output.labels"),
+        ({"max_iterations": 2}, "max_iterations", "give it when"),
     ],
 )
-def test_edge_features_are_p0b(edge_extra, field):
+def test_labels_and_loops_need_their_source(edge_extra, field, fragment):
     raw = _spec()
     raw["edges"][0].update(edge_extra)
-    [error] = _errors(raw)
-    assert error["loc"] == ["edges", 0, field] and error["code"] == "not_supported_yet"
+    errors = _errors(raw)
+    assert any(e["loc"] == ["edges", 0, field] and fragment in e["msg"] for e in errors), errors
 
 
 @pytest.mark.parametrize(
@@ -282,12 +286,12 @@ def test_duplicate_ids_and_tool_refs_are_refused():
         (
             [{"from": "research", "to": "writer"}, {"from": "research", "to": "critic"}],
             ["edges", 1, "from"],
-            "does not branch",
+            "only a parallel node fans out",
         ),
         (
             [{"from": "research", "to": "critic"}, {"from": "writer", "to": "critic"}],
-            ["edges", 1, "to"],
-            "does not join",
+            ["edges"],
+            "exactly one first node",
         ),
         ([{"from": "writer", "to": "writer"}], ["edges", 0], "loop on one node"),
         (
@@ -456,18 +460,55 @@ def test_no_registry_configured_is_empty_and_a_missing_file_fails(monkeypatch, t
         load_registry()
 
 
-def test_the_example_registry_and_spec_are_valid(monkeypatch):
-    import json
+TEMPLATES = Path(__file__).resolve().parents[2] / "deploy" / "studio-demo" / "specs"
+#: Template file -> the pattern it shows.
+TEMPLATE_PATTERNS = {
+    "pipeline": "pipeline",
+    "router": "router",
+    "critic-loop": "critic_loop",
+    "fan-out-fan-in": "fan_out_fan_in",
+    "supervisor": "supervisor",
+    "debate": "debate",
+    "map-reduce": "map_reduce",
+    "plan-and-execute": "plan_and_execute",
+}
 
+
+def _demo_registry(monkeypatch) -> StudioRegistry:
     import yaml
 
-    root = Path(__file__).resolve().parents[2] / "deploy" / "studio-demo"
     monkeypatch.setenv("ORRERY_A2A_PRIVATE_ALLOW", "demo-writer.studio.internal")
+    root = TEMPLATES.parent
     registry = StudioRegistry.model_validate(yaml.safe_load((root / "registry.yaml").read_text()))
     registry.check_network(PrivateAllowlist.from_env())
-    spec = parse_spec(json.loads((root / "release-notes.spec.json").read_text()))
-    ctx = ValidationContext(registry=registry, catalogue={"get_time": _Tool("get_time")})
-    assert validate_spec(spec, ctx) == []
+    return registry
+
+
+def test_there_is_a_template_for_each_pattern_the_server_runs():
+    assert sorted(p.stem for p in TEMPLATES.glob("*.json")) == sorted(TEMPLATE_PATTERNS)
+
+
+@pytest.mark.parametrize("name", sorted(TEMPLATE_PATTERNS))
+def test_each_template_is_valid_against_the_demo_registry_and_compiles(name, monkeypatch):
+    import json
+
+    from orrery_core.a2a.remote import RemoteCards
+    from orrery_core.studio.compiler import compile_spec
+
+    registry = _demo_registry(monkeypatch)
+    spec = parse_spec(json.loads((TEMPLATES / f"{name}.json").read_text()))
+    assert spec.pattern == TEMPLATE_PATTERNS[name]
+    assert validate_spec(spec, ValidationContext(registry=registry)) == []
+    compiled = compile_spec(
+        spec, registry=registry, cards=RemoteCards(), catalogue={}, model="gemini-3.6-flash"
+    )
+    try:
+        agents = {info.node_id for info in compiled.nodes.values()}
+        assert agents == {n.id for n in spec.nodes if n.kind in ("llm_agent", "supervisor")}
+    finally:
+        import asyncio
+
+        asyncio.run(compiled.close())
 
 
 # ── Config ───────────────────────────────────────────────────────────
@@ -487,3 +528,255 @@ def test_ceilings_come_from_the_environment(monkeypatch):
     monkeypatch.setenv("ORRERY_STUDIO_MAX_TOKENS", "1234")
     config = StudioConfig.from_env()
     assert config.enabled and config.ceilings.max_tokens == 1234
+
+
+# ── P0b: the graph ───────────────────────────────────────────────────
+
+
+def _graph(nodes: list[dict], edges: list[dict], pattern: str = "pipeline", **extra: Any):
+    return _spec(nodes=nodes, edges=edges, pattern=pattern, **extra)
+
+
+def _labelled(node_id: str, *labels: str) -> dict[str, Any]:
+    return _node(node_id, output={"labels": list(labels or ("yes", "no"))})
+
+
+def _fan(n: int) -> dict[str, Any]:
+    branches = [f"b{i}" for i in range(n)]
+    return _graph(
+        [
+            _node("start"),
+            {"id": "fan", "kind": "parallel"},
+            *(_node(b) for b in branches),
+            {"id": "meet", "kind": "join"},
+            _node("end"),
+        ],
+        [
+            {"from": "start", "to": "fan"},
+            *({"from": "fan", "to": b} for b in branches),
+            *({"from": b, "to": "meet"} for b in branches),
+            {"from": "meet", "to": "end"},
+        ],
+        "fan_out_fan_in",
+    )
+
+
+def _critic_loop(**edge: Any) -> dict[str, Any]:
+    return _graph(
+        [_node("writer"), _labelled("critic", "approved", "rejected")],
+        [
+            {"from": "writer", "to": "critic"},
+            {"from": "critic", "to": "writer", "when": "rejected", **edge},
+        ],
+        "critic_loop",
+    )
+
+
+def _codes(raw: dict[str, Any], ctx: ValidationContext | None = None) -> list[str]:
+    return [e["code"] for e in _errors(raw, ctx)]
+
+
+def test_a_fan_out_of_six_runs_and_seven_is_refused():
+    assert _errors(_fan(6)) == []
+    assert "too_many_branches" in _codes(_fan(7))
+
+
+def test_a_loop_needs_a_cap_of_at_most_five():
+    assert _errors(_critic_loop(max_iterations=5)) == []
+    assert _codes(_critic_loop()) == ["unbounded_cycle"]
+    assert _locs(_critic_loop(max_iterations=6)) == [["edges", 1, "max_iterations"]]
+
+
+def test_max_iterations_is_only_for_an_edge_back():
+    raw = _graph(
+        [_labelled("a"), _node("b")],
+        [{"from": "a", "to": "b", "when": "yes", "max_iterations": 2}],
+        "router",
+    )
+    assert any("edge back to an earlier node" in e["msg"] for e in _errors(raw))
+
+
+def test_edges_on_labels_must_use_the_source_labels_once_each():
+    raw = _graph(
+        [_labelled("a", "yes", "no"), _node("b"), _node("c")],
+        [{"from": "a", "to": "b", "when": "maybe"}, {"from": "a", "to": "c", "when": "yes"}],
+        "router",
+    )
+    assert any("not one of 'a'" in e["msg"] for e in _errors(raw))
+    raw["edges"][0]["when"] = "yes"
+    assert any("one per label" in e["msg"] for e in _errors(raw))
+    raw["edges"][0].pop("when")
+    assert any("each of its edges needs when" in e["msg"] for e in _errors(raw))
+
+
+def test_a_router_follows_one_labelled_node():
+    raw = _graph(
+        [_node("a"), {"id": "r", "kind": "router"}, _node("b")],
+        [{"from": "a", "to": "r"}, {"from": "r", "to": "b", "when": "yes"}],
+        "router",
+    )
+    assert any(
+        "router follows exactly one node with output.labels" in e["msg"] for e in _errors(raw)
+    )
+
+
+def test_a_join_closes_every_branch_of_one_parallel_node():
+    raw = _fan(3)
+    raw["edges"] = [e for e in raw["edges"] if e != {"from": "b2", "to": "meet"}]
+    raw["edges"].append({"from": "b2", "to": "end"})
+    assert any("must meet at one join" in e["msg"] or "ends at" in e["msg"] for e in _errors(raw))
+    no_after = _fan(2)
+    no_after["edges"] = [e for e in no_after["edges"] if e["from"] != "meet"]
+    no_after["nodes"] = [n for n in no_after["nodes"] if n["id"] != "end"]
+    assert any("needs one node after it" in e["msg"] for e in _errors(no_after))
+
+
+def test_a_branch_does_not_route():
+    raw = _fan(2)
+    raw["nodes"][2]["output"] = {"labels": ["yes", "no"]}
+    raw["edges"] = [
+        {**e, "when": "yes"} if e == {"from": "b0", "to": "meet"} else e for e in raw["edges"]
+    ]
+    assert any("neither routes nor loops" in e["msg"] for e in _errors(raw))
+
+
+@pytest.mark.parametrize("target", ["b0", "fan", "start"])
+def test_a_loop_cannot_contain_a_parallel_section(target):
+    # A join does not start over: entered again, it would fire on the earlier
+    # round's answers (seen as nodes after it running twice per round).
+    raw = _fan(2)
+    raw["nodes"][-1] = _labelled("end", "done", "again")
+    raw["edges"].append({"from": "end", "to": target, "when": "again", "max_iterations": 2})
+    [error] = _errors(raw)
+    assert error["code"] == "loop_around_parallel" and error["loc"] == ["edges", 6]
+
+
+def test_a_loop_after_the_join_is_fine():
+    raw = _fan(2)
+    raw["nodes"][-1] = _labelled("end", "done", "again")
+    raw["nodes"].insert(-1, _node("draft"))
+    raw["edges"][-1] = {"from": "meet", "to": "draft"}
+    raw["edges"].append({"from": "draft", "to": "end"})
+    raw["edges"].append({"from": "end", "to": "draft", "when": "again", "max_iterations": 2})
+    assert _errors(raw) == []
+
+
+def test_a_branch_does_not_fan_out_again():
+    raw = _graph(
+        [
+            {"id": "outer", "kind": "parallel"},
+            {"id": "inner", "kind": "parallel"},
+            _node("x"),
+            _node("y"),
+            {"id": "inner_join", "kind": "join"},
+            _node("z"),
+            {"id": "outer_join", "kind": "join"},
+            _node("end"),
+        ],
+        [
+            {"from": "outer", "to": "inner"},
+            {"from": "inner", "to": "x"},
+            {"from": "inner", "to": "y"},
+            {"from": "x", "to": "inner_join"},
+            {"from": "y", "to": "inner_join"},
+            {"from": "inner_join", "to": "outer_join"},
+            {"from": "outer", "to": "z"},
+            {"from": "z", "to": "outer_join"},
+            {"from": "outer_join", "to": "end"},
+        ],
+        "fan_out_fan_in",
+    )
+    assert any("does not fan out again" in e["msg"] for e in _errors(raw))
+
+
+def _supervisor(node_id: str, *children: str) -> dict[str, Any]:
+    return {"id": node_id, "kind": "supervisor", "instruction": "Lead.", "children": list(children)}
+
+
+def test_supervisors_nest_three_deep_and_no_more():
+    three = _graph(
+        [
+            _supervisor("s1", "s2"),
+            _supervisor("s2", "s3"),
+            _supervisor("s3", "leaf"),
+            _node("leaf"),
+        ],
+        [],
+        "supervisor",
+    )
+    assert _errors(three) == []
+    four = _graph(
+        [
+            _supervisor("s0", "s1"),
+            _supervisor("s1", "s2"),
+            _supervisor("s2", "s3"),
+            _supervisor("s3", "leaf"),
+            _node("leaf"),
+        ],
+        [],
+        "supervisor",
+    )
+    assert "too_deep" in _codes(four)
+
+
+def test_a_child_is_a_tool_not_a_step():
+    raw = _graph(
+        [_supervisor("lead", "helper"), _node("helper"), _node("after")],
+        [{"from": "lead", "to": "after"}, {"from": "helper", "to": "after"}],
+        "supervisor",
+    )
+    assert any("children are its tools" in e["msg"] for e in _errors(raw))
+    labelled = _graph([_supervisor("lead", "helper"), _labelled("helper")], [], "supervisor")
+    assert any("cannot have output labels" in e["msg"] for e in _errors(labelled))
+    twice = _graph(
+        [_supervisor("a", "helper"), _supervisor("b", "helper"), _node("helper")],
+        [{"from": "a", "to": "b"}],
+        "supervisor",
+    )
+    assert any("already a child of 'a'" in e["msg"] for e in _errors(twice))
+
+
+def test_a_child_may_not_shadow_a_tool_of_its_supervisor():
+    ctx = ValidationContext(
+        registry=StudioRegistry.model_validate(REGISTRY), catalogue={"n_helper": _Tool("n_helper")}
+    )
+    raw = _graph(
+        [{**_supervisor("lead", "helper"), "tools": ["catalog:n_helper"]}, _node("helper")],
+        [],
+        "supervisor",
+    )
+    assert "tool_name_collision" in _codes(raw, ctx)
+
+
+def test_graph_order_is_breadth_first_then_children():
+    spec = parse_spec(
+        _graph(
+            [_node("helper"), _supervisor("lead", "helper"), _node("first")],
+            [{"from": "first", "to": "lead"}],
+            "supervisor",
+        )
+    )
+    assert graph_order(spec) == ["first", "lead", "helper"]
+
+
+def test_spec_version_stays_one_and_p0a_specs_still_parse():
+    assert SPEC_VERSION == 1
+    assert _errors(_spec()) == []
+
+
+def _nested_loops(levels: int) -> dict[str, Any]:
+    # w -> c1 -> c2 -> ... ; ci loops back to w, so each loop holds the ones before it.
+    labelled = [_labelled(f"c{i}", "again", "on") for i in range(1, levels + 1)]
+    edges = [{"from": "w", "to": "c1"}]
+    for i in range(1, levels + 1):
+        edges.append({"from": f"c{i}", "to": "w", "when": "again", "max_iterations": 2})
+        if i < levels:
+            edges.append({"from": f"c{i}", "to": f"c{i + 1}", "when": "on"})
+    return _graph([_node("w"), *labelled], edges, "critic_loop")
+
+
+def test_loops_nest_two_deep_and_no_more():
+    assert _errors(_nested_loops(2)) == []
+    errors = _errors(_nested_loops(3))
+    assert [e["code"] for e in errors] == ["loop_too_deep"]
+    assert "nested 3 deep" in errors[0]["msg"]

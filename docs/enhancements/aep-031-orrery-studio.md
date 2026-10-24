@@ -447,6 +447,87 @@ Where the code differs from, or pins down, the design above:
   a flag in `/me` that the Studio is on, so the entry is hidden instead of
   showing "not enabled"; stored runs.
 
+### P0b as built
+
+- **Graph compilation.** A spec compiles to one ADK 2.x `Workflow`: each agent
+  node is a single-turn `LlmAgent`; routing, loop counters, edge screens,
+  `parallel` and the join's combine step are `FunctionNode`s (`route_<id>`,
+  `loop_<j>`, `screen_<j>`), and a `join` is ADK's `JoinNode` followed by a
+  step that writes each branch's answer as a `## <branch>` block, in edge
+  order. `plan_graph()` in `spec.py` checks the graph rules once and gives the
+  compiler its plan, so a spec that validates compiles.
+- **Labels are structured output**: a labelled node answers `{label, answer}`
+  through ADK's `output_schema` (with tools, ADK's `set_model_response` tool,
+  which the ledger does not count). An answer without a valid label fails the
+  run with a field-level message, rather than taking an arbitrary branch.
+  A label with no edge ends that branch; `POST /studio/validate` warns
+  (`label_ends_run`).
+- **Loop cap semantics**: `max_iterations: N` means the back edge is taken at
+  most N times per entry of the loop. On the (N+1)th arrival `loop.iteration`
+  says `stopped: true` and the branch ends with the answer the source was
+  judging (its predecessor's: the last draft, not the critic's rejection), so
+  the run still succeeds. A loop strictly inside another (its nodes a subset)
+  starts from zero whenever the outer back edge is taken, so caps multiply:
+  with two levels an inner body may run (5+1)² = 36 times. Loops therefore
+  nest at most 2 deep (`loop_too_deep`); the run's budgets bound the rest.
+- **No loop around a parallel section** (`loop_around_parallel`): ADK's
+  `JoinNode` does not reset when its section is entered again, so a second
+  round fired the join on the first round's answers (seen in review: nodes
+  after the join ran 5 times for 3 rounds). Refused rather than compiled as a
+  nested workflow; loop before the `parallel` or after the join.
+- **Parallel** branches are chains of agents between one `parallel` and one
+  `join` (2–6 branches); branches do not route, loop or fan out again (a
+  nested `parallel` is refused). A
+  `map_reduce` template uses a fixed fan-out: the map width is the branch
+  count, not the data.
+- **Supervisor** children are `llm_agent` or `supervisor` nodes compiled to
+  `AgentTool`s (`n_<id>`), with plugins included so the run plugin traces them
+  and counts each call as a delegation; at most 3 levels, one parent each.
+- **Per-node models** come from `ORRERY_STUDIO_MODELS` and are resolved with
+  `resolve_model(name)`: one model, never the deployment's `FallbackLlm` chain.
+  `resolve_model()` with no name is unchanged. Every allowlisted model is
+  built at startup (`studio/models.py`), and a bad name, missing `litellm` or
+  missing provider key fails startup. Gemini safety filters are decided by
+  the agent's model (`resolve_safety_config(gemini=...)`), not by
+  `MODEL_PROVIDER`, so a Gemini node on another provider's deployment keeps
+  them.
+- **Trace entries** are keyed by agent name and invocation id: each
+  `AgentTool` call of a child is its own invocation, so concurrent calls give
+  two enter/exit pairs, and a node's tokens count per entry, not cumulatively.
+- **Storage** is SQLAlchemy Core over four new tables, created with
+  `create_all` (no migration of existing tables); the same SQL runs on SQLite
+  in CI. Compositions are shared by admins and versioned; `PUT` and `DELETE`
+  name the version they edit and get 409 with `current_version` otherwise.
+  Runs are owner-scoped. Each run is written as it goes by a per-run writer
+  (batched every 0.25 s, off the event loop), each batch with the run row in
+  one transaction, so a reader that sees a run finished has all its events.
+  The append skips sequence numbers already stored, so a batch whose commit
+  was in doubt is retried whole; failures back off (to 5 s) and the final
+  write is tried 8 times (its own attempts, after any failures mid-run). A
+  finished run leaves the replica's memory only once its writer is done:
+  pruning it earlier made the store show it `running` (a CI race). Every
+  Studio statement on PostgreSQL has a 10 s `statement_timeout`, so a hung
+  query cannot pin an executor thread (shared with chat) or the writer; a
+  writer still there 5 minutes after its run ended is taken as stuck, and
+  the run is forgotten anyway, with a warning. `create_all` runs under a PostgreSQL advisory lock,
+  so replicas booting together do not race. At most 50 versions are kept per
+  composition; saves are rate-limited (30/minute per person). Runs older than
+  `ORRERY_STUDIO_RUN_RETENTION_DAYS` (14) are purged hourly. Without
+  PostgreSQL, a bounded in-memory store keeps the same API.
+- **Replicas.** Reads (`GET` run, history, `/events`) work on any replica: a
+  stored run is replayed, or followed by polling (1 s, backing off to 5 s
+  while idle; at most 4 followed runs per person) until it ends. Cancel
+  stays on the running replica; elsewhere it is a 409. A run whose replica
+  died reads as `failed` two minutes past its deadline.
+- **`spec_version` stays 1**: P0b only gave meaning to fields P0a parsed and
+  refused. `handoff`, `remote_a2a` and `human_approval` stay refused.
+- **For the console** (P1): `POST /studio/validate`, `capabilities` and
+  `budget_ceilings` in `/studio/schema`, each MCP tool's description and input
+  schema (as pinned) in `/studio/registry`, and `studio_available` in `/me`.
+  An MCP "try it" call is not built.
+- **Templates** are tested specs in `deploy/studio-demo/specs/`, one per
+  pattern; the demo spec moved there as `critic-loop.json` and now loops.
+
 ## Security
 
 | Risk | Control |

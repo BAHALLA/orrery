@@ -477,6 +477,10 @@ class MeResponse(BaseModel):
     #: delegates to none. ``null`` only from servers older than this field,
     #: which the console reads as "the stock set". Display only.
     specialists: list[SpecialistInfo] | None = None
+    #: Whether this caller may use the Studio: it is mounted
+    #: (``ORRERY_STUDIO_ENABLED``) and the caller is a human admin. The
+    #: console shows its entry only then; ``/studio/*`` checks it again.
+    studio_available: bool = False
 
 
 class CheckResultModel(BaseModel):
@@ -553,6 +557,8 @@ def create_app(
     catalog_store: CatalogStore | None = None,
     studio_catalogue: Callable[[], Mapping[str, Any]] | None = None,
     studio_model: Callable[[], Any] | None = None,
+    studio_model_for: Callable[[str], Any] | None = None,
+    studio_store: Any = None,
 ) -> FastAPI:
     """Build a FastAPI app that serves *root_agent* over authenticated HTTP.
 
@@ -598,6 +604,10 @@ def create_app(
             Supplied by the application, like *agent_admin*.
         studio_model: Builds the model Studio nodes run on; ``None`` uses
             ``resolve_model()`` (the deployment's model and fallbacks).
+        studio_model_for: Builds a node's own model from its name (one of
+            ``ORRERY_STUDIO_MODELS``); ``None`` uses ``resolve_model(name)``.
+        studio_store: The Studio's compositions and runs; ``None`` uses
+            ``DATABASE_URL`` (PostgreSQL), else memory.
     """
     probes = list(integration_probes or [])
     cfg = config or ServerConfig.from_env()
@@ -685,6 +695,8 @@ def create_app(
         start_metrics_server_if_enabled()
         if catalog is not None:
             await catalog.start()
+        if studio_service is not None:
+            await studio_service.start_background()
         try:
             yield
         finally:
@@ -1284,6 +1296,9 @@ def create_app(
             )
             if cfg.attachments.active
             else None,
+            studio_available=cfg.studio.enabled
+            and auth.role == "admin"
+            and auth.principal_kind == PrincipalKind.HUMAN,
         )
 
     @api.get("/admin/agents", response_model=AgentsResponse)
@@ -1470,8 +1485,10 @@ def create_app(
         # Imported only here: the Studio needs the `[a2a]` and `[mcp]` extras.
         from ..a2a.remote import RemoteCards, RemoteNetwork
         from ..studio.api import mount_studio
+        from ..studio.models import model_lookup
         from ..studio.registry import load_registry
         from ..studio.runner import StudioService
+        from ..studio.store import create_studio_store
 
         network = RemoteNetwork.from_env()
         studio_service = StudioService(
@@ -1481,9 +1498,15 @@ def create_app(
             cards=RemoteCards(network),
             catalogue=studio_catalogue,
             model_factory=studio_model,
+            # Every allowlisted model is built now: a bad name or a missing
+            # key fails startup, not a run.
+            model_for=studio_model_for or model_lookup(cfg.studio.models),
             caller_identity=caller_identity,
+            store=studio_store
+            or create_studio_store(cfg.database_url, max_runs=cfg.studio.max_runs),
         )
         mount_studio(api, service=studio_service, auth_dependency=auth_dependency, limiter=limiter)
+        api.state.studio = studio_service
         logger.info("Orrery Studio enabled at /studio")
 
     # Mount the web console last so the explicit API routes above always win

@@ -15,6 +15,7 @@ from google.adk.models.base_llm import BaseLlm
 from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.base_toolset import BaseToolset
+from pydantic import BaseModel
 
 from ..env import env_flag
 from ..observability.log import setup_logging
@@ -125,8 +126,13 @@ def load_agent_env(agent_file: str | None = None) -> None:
     setup_logging()
 
 
-def resolve_model() -> str | BaseLlm:
-    """Resolve the LLM model from environment variables.
+def resolve_model(model: str | None = None) -> str | BaseLlm:
+    """Resolve the LLM model from environment variables, or *model* exactly.
+
+    *model* (a Studio node's model from ``ORRERY_STUDIO_MODELS``) names one
+    model, run **without** ``MODEL_FALLBACK_CHAIN``, so that comparing two
+    models compares them: a bare name (``gemini-3.6-flash``) is a Gemini model
+    on ADK's native client, a ``provider/name`` one a LiteLLM model.
 
     Reads MODEL_PROVIDER and MODEL_NAME to determine which backend to use.
     For Gemini (the default), returns a plain model string.
@@ -143,7 +149,21 @@ def resolve_model() -> str | BaseLlm:
         A model string for Gemini or a LiteLlm instance for other providers —
         or a ``FallbackLlm`` over either when ``MODEL_FALLBACK_CHAIN`` is set.
     """
+    if model is not None:
+        return _single_model(model)
     return resolve_model_chain(_resolve_primary_model())
+
+
+def _single_model(name: str) -> str | BaseLlm:
+    """*name* as one model, never a fallback chain."""
+    name = name.strip()
+    if not name:
+        raise ValueError("a model name must not be empty")
+    if "/" not in name:
+        return name
+    from google.adk.models.lite_llm import LiteLlm
+
+    return LiteLlm(model=name)
 
 
 def _resolve_primary_model() -> str | BaseLlm:
@@ -219,7 +239,7 @@ _SAFETY_THRESHOLDS = frozenset(
 )
 
 
-def resolve_safety_config() -> Any | None:
+def resolve_safety_config(*, gemini: bool | None = None) -> Any | None:
     """Build a ``GenerateContentConfig`` with Gemini content-safety filters.
 
     Applied by ``create_agent()`` to Gemini models only (LiteLLM-routed
@@ -229,11 +249,18 @@ def resolve_safety_config() -> Any | None:
     about killing pods and destroying volumes all day, so the aggressive
     thresholds trip on legitimate operations chatter).
 
-    Returns ``None`` when disabled or when the provider is not Gemini.
+    *gemini* says whether the model at hand is a Gemini one; unset, it is
+    read from ``MODEL_PROVIDER`` (the deployment's model). A Studio node may
+    name a Gemini model on a deployment that runs another provider, and still
+    gets the filters.
+
+    Returns ``None`` when disabled or when the model is not Gemini.
     """
     if not env_flag("GEMINI_SAFETY_FILTERS", default=True):
         return None
-    if os.getenv("MODEL_PROVIDER", "gemini").lower() != "gemini":
+    if gemini is None:
+        gemini = os.getenv("MODEL_PROVIDER", "gemini").lower() == "gemini"
+    if not gemini:
         return None
 
     from google.genai import types
@@ -376,7 +403,9 @@ def _generate_content_config(model: Any) -> Any | None:
     * Billing labels (AEP-015) for a Gemini model — see :func:`resolve_cost_labels`.
     """
     gemini = is_gemini_model(model)
-    safety = resolve_safety_config() if gemini else None
+    # Decided by the model itself, not MODEL_PROVIDER: a per-node model may
+    # be Gemini on a deployment that runs another provider.
+    safety = resolve_safety_config(gemini=True) if gemini else None
     retry = resolve_retry_options()
     labels = resolve_cost_labels() if gemini else {}
     if safety is None and retry is None and not labels:
@@ -437,6 +466,7 @@ def create_agent(
     on_model_error_callback: Callable | list[Callable] | None = None,
     output_key: str | None = None,
     mode: Literal["chat", "task", "single_turn"] | None = None,
+    output_schema: type[BaseModel] | None = None,
 ) -> Agent:
     """Create an ADK Agent with sensible defaults.
 
@@ -472,6 +502,8 @@ def create_agent(
         output_key: Session state key to store this agent's output.
             Useful for passing results between nodes in a graph Workflow
             (downstream nodes read it from session state).
+        output_schema: A Pydantic model the answer must parse as (structured
+            output). With tools, ADK adds its ``set_model_response`` tool.
         mode: ADK 2.0 delegation mode — 'chat' (conversational, keeps history),
             'task', or 'single_turn'. When None, ADK infers it: 'chat' as a
             sub-agent, 'single_turn' as a graph node. Set 'chat' explicitly on
@@ -513,5 +545,7 @@ def create_agent(
         kwargs["on_model_error_callback"] = on_model_error_callback
     if output_key:
         kwargs["output_key"] = output_key
+    if output_schema is not None:
+        kwargs["output_schema"] = output_schema
 
     return Agent(**kwargs)

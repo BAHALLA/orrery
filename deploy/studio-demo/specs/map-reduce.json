@@ -1,0 +1,87 @@
+{
+  "spec_version": 1,
+  "name": "map-reduce-review",
+  "description": "Split a list into three parts, review each part at once, then reduce the reviews to one summary. The fan-out is fixed: each mapper takes its own share of the same input.",
+  "pattern": "map_reduce",
+  "budgets": {
+    "max_tokens": 80000,
+    "max_tool_calls": 10,
+    "timeout_s": 180
+  },
+  "nodes": [
+    {
+      "id": "split",
+      "kind": "llm_agent",
+      "description": "Numbers the items.",
+      "instruction": "Your input is a list of items (lines). Number them and answer with the numbered list only."
+    },
+    {
+      "id": "map",
+      "kind": "parallel",
+      "description": "Three mappers at once."
+    },
+    {
+      "id": "part_one",
+      "kind": "llm_agent",
+      "description": "Reviews the first third.",
+      "instruction": "Take the first third of the numbered items in your input (rounding up). For each, give a one-line assessment."
+    },
+    {
+      "id": "part_two",
+      "kind": "llm_agent",
+      "description": "Reviews the second third.",
+      "instruction": "Take the second third of the numbered items in your input. For each, give a one-line assessment."
+    },
+    {
+      "id": "part_three",
+      "kind": "llm_agent",
+      "description": "Reviews the last third.",
+      "instruction": "Take the last third of the numbered items in your input. For each, give a one-line assessment."
+    },
+    {
+      "id": "gather",
+      "kind": "join",
+      "description": "All three parts are in."
+    },
+    {
+      "id": "reduce",
+      "kind": "llm_agent",
+      "description": "Summarises the reviews.",
+      "instruction": "Your input is three sets of assessments. Merge them into one list in item order, then give the three most important findings."
+    }
+  ],
+  "edges": [
+    {
+      "from": "split",
+      "to": "map"
+    },
+    {
+      "from": "map",
+      "to": "part_one"
+    },
+    {
+      "from": "map",
+      "to": "part_two"
+    },
+    {
+      "from": "map",
+      "to": "part_three"
+    },
+    {
+      "from": "part_one",
+      "to": "gather"
+    },
+    {
+      "from": "part_two",
+      "to": "gather"
+    },
+    {
+      "from": "part_three",
+      "to": "gather"
+    },
+    {
+      "from": "gather",
+      "to": "reduce"
+    }
+  ]
+}

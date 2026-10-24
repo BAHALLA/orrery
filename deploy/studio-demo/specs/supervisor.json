@@ -1,0 +1,45 @@
+{
+  "spec_version": 1,
+  "name": "editor-and-helpers",
+  "description": "An editor that delegates research and drafting to two helpers and decides when the result is good enough.",
+  "pattern": "supervisor",
+  "budgets": {
+    "max_tokens": 90000,
+    "max_tool_calls": 16,
+    "max_delegations": 6,
+    "max_remote_calls": 2,
+    "timeout_s": 240
+  },
+  "nodes": [
+    {
+      "id": "editor",
+      "kind": "supervisor",
+      "description": "Plans the piece and delegates.",
+      "instruction": "Produce release notes for the topic in your input. Ask the researcher for facts, then ask the drafter for a draft from them; check the draft cites its sources, and answer with it.",
+      "children": [
+        "researcher",
+        "drafter"
+      ]
+    },
+    {
+      "id": "researcher",
+      "kind": "llm_agent",
+      "description": "Finds facts on Tirraflow, with URLs.",
+      "instruction": "Search Tirraflow for what the request asks and answer with short factual notes, each citing the article URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "drafter",
+      "kind": "llm_agent",
+      "description": "Drafts release notes through the remote writer.",
+      "instruction": "Send the request, unchanged, to the demo writer's draft tool and answer with exactly the draft it returns.",
+      "tools": [
+        "a2a:demo-writer.draft"
+      ]
+    }
+  ],
+  "edges": []
+}

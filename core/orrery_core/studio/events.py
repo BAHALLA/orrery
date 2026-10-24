@@ -80,9 +80,12 @@ class RunStart(_Event):
     spec_name: str
     spec_digest: str
     pattern: str
-    #: Node ids in run order.
+    #: Node ids: graph nodes breadth-first from the start, then supervisor children.
     nodes: list[str]
     budgets: dict[str, int]
+    #: The stored composition the run came from, if any.
+    composition_id: str | None = None
+    composition_version: int | None = None
     content: str | None = None
 
 
@@ -101,7 +104,10 @@ class NodeEnter(_Event):
     type: Literal["node.enter"] = "node.enter"
     node_id: str
     kind: str
+    #: The model label; empty for router, parallel and join nodes.
     model: str
+    #: The supervisor that called this node as a tool (children only).
+    parent: str | None = None
 
 
 class NodeExit(_Event):
@@ -112,7 +118,36 @@ class NodeExit(_Event):
     tokens: TokenCount
     elapsed_ms: int
     outcome: NodeOutcome
+    parent: str | None = None
     content: str | None = None
+
+
+class RouteDecision(_Event):
+    """A labelled node's answer chose an edge (or ended its branch)."""
+
+    type: Literal["route.decision"] = "route.decision"
+    #: The labelled node, or the router after it.
+    node_id: str
+    #: The node whose answer carried the label (``node_id`` unless a router).
+    source: str
+    label: str
+    alternatives: list[str]
+    #: Where the label leads; ``None``: no edge, the branch ends here.
+    to: str | None = None
+
+
+class LoopIteration(_Event):
+    """A loop edge was taken (``stopped=False``) or refused at its cap (``stopped=True``)."""
+
+    type: Literal["loop.iteration"] = "loop.iteration"
+    #: ``"<from>-><to>"``.
+    edge: str
+    from_node: str
+    to_node: str
+    #: Times the loop has gone round, this one included (at the cap: the cap).
+    iteration: int
+    cap: int
+    stopped: bool = False
 
 
 class PartSummary(BaseModel):
@@ -163,7 +198,15 @@ class BudgetHit(_Event):
 
 
 StudioEvent = Annotated[
-    RunStart | RunEnd | NodeEnter | NodeExit | A2aMessage | McpCall | BudgetHit,
+    RunStart
+    | RunEnd
+    | NodeEnter
+    | NodeExit
+    | RouteDecision
+    | LoopIteration
+    | A2aMessage
+    | McpCall
+    | BudgetHit,
     Field(discriminator="type"),
 ]
 

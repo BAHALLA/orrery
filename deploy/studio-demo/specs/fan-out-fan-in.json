@@ -1,0 +1,99 @@
+{
+  "spec_version": 1,
+  "name": "three-angle-research",
+  "description": "Research a topic from three angles at once, then combine the findings.",
+  "pattern": "fan_out_fan_in",
+  "budgets": {
+    "max_tokens": 90000,
+    "max_tool_calls": 20,
+    "timeout_s": 180
+  },
+  "nodes": [
+    {
+      "id": "scope",
+      "kind": "llm_agent",
+      "description": "Turns the input into a topic.",
+      "instruction": "Restate the topic in your input as one line, then list the three angles to research: how it works, how it fails, how to operate it."
+    },
+    {
+      "id": "fan",
+      "kind": "parallel",
+      "description": "Researches the three angles at once."
+    },
+    {
+      "id": "mechanics",
+      "kind": "llm_agent",
+      "description": "How it works.",
+      "instruction": "Research how the topic in your input works, on Tirraflow. Answer with three notes, each citing a URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "failures",
+      "kind": "llm_agent",
+      "description": "How it fails.",
+      "instruction": "Research how the topic in your input fails in production, on Tirraflow. Answer with three notes, each citing a URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "operations",
+      "kind": "llm_agent",
+      "description": "How to run it.",
+      "instruction": "Research how to monitor and operate the topic in your input, on Tirraflow. Answer with three notes, each citing a URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "meet",
+      "kind": "join",
+      "description": "Waits for the three angles."
+    },
+    {
+      "id": "synthesis",
+      "kind": "llm_agent",
+      "description": "Combines the findings.",
+      "instruction": "Your input is three sets of notes, one per angle. Combine them into one brief with a heading per angle, keeping every URL."
+    }
+  ],
+  "edges": [
+    {
+      "from": "scope",
+      "to": "fan"
+    },
+    {
+      "from": "fan",
+      "to": "mechanics"
+    },
+    {
+      "from": "fan",
+      "to": "failures"
+    },
+    {
+      "from": "fan",
+      "to": "operations"
+    },
+    {
+      "from": "mechanics",
+      "to": "meet"
+    },
+    {
+      "from": "failures",
+      "to": "meet"
+    },
+    {
+      "from": "operations",
+      "to": "meet"
+    },
+    {
+      "from": "meet",
+      "to": "synthesis"
+    }
+  ]
+}
