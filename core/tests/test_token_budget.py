@@ -18,6 +18,7 @@ from orrery_core.plugins.token_budget_plugin import (
     InMemoryUsageLedger,
     StorageUsageLedger,
     create_usage_ledger,
+    user_key,
 )
 
 
@@ -51,13 +52,13 @@ class _MeteredLlm(BaseLlm):
         )
 
 
-async def _turn(runner: InMemoryRunner, user_id: str) -> str:
+async def _turn(runner: InMemoryRunner, user_id: str, message: str = "hi") -> str:
     session = await runner.session_service.create_session(app_name=runner.app_name, user_id=user_id)
     text = ""
     async for event in runner.run_async(
         user_id=user_id,
         session_id=session.id,
-        new_message=types.Content(role="user", parts=[types.Part.from_text(text="hi")]),
+        new_message=types.Content(role="user", parts=[types.Part.from_text(text=message)]),
     ):
         if event.content and event.content.parts:
             text += "".join(p.text or "" for p in event.content.parts)
@@ -80,7 +81,7 @@ async def test_a_caller_is_refused_once_their_day_is_spent_and_others_are_not():
     refused = await _turn(runner, "alice")
     assert "usage limit" in refused
     assert llm.calls == 2  # the refusal bought no tokens
-    assert ledger.spent("alice", "d1") == 200
+    assert ledger.spent(user_key("alice"), "d1") == 200
 
     assert await _turn(runner, "bob") == "ok"
 
@@ -177,3 +178,197 @@ def test_it_runs_ahead_of_the_other_model_callbacks(monkeypatch):
     names = [type(p).__name__ for p in default_plugins(enable_auth=True)]
     budget = names.index("TokenBudgetPlugin")
     assert names.index("AuthPlugin") < budget < names.index("CallBudgetPlugin")
+
+
+class _GatedLlm(_MeteredLlm):
+    """Holds every call until *release* is set, like a slow provider."""
+
+    model: str = "gated"
+    release: Any = None
+
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse]:
+        await self.release.wait()
+        async for response in super().generate_content_async(llm_request, stream):
+            yield response
+
+
+@pytest.mark.asyncio
+async def test_calls_started_together_see_each_others_prompts():
+    import asyncio
+
+    llm = _GatedLlm(release=asyncio.Event())
+    plugin = TokenBudgetPlugin(per_user=1000, today=lambda: "d1")
+    runner = InMemoryRunner(
+        agent=LlmAgent(name="root", model=llm, instruction="Answer."),
+        app_name="t",
+        plugins=[plugin],
+    )
+    big = "x" * 4000  # about 1000 tokens, reserved before the call goes out
+    first = asyncio.create_task(_turn(runner, "alice", big))
+    while not plugin._reserved:
+        await asyncio.sleep(0)
+    # Without the reservation nothing is spent yet, and this would go out too.
+    assert "usage limit" in await _turn(runner, "alice", big)
+    llm.release.set()
+    assert await first == "ok"
+    assert llm.calls == 1
+
+
+class _BrokenLedger(InMemoryUsageLedger):
+    def spent(self, key: str, day: str) -> int:
+        raise ConnectionError("redis down")
+
+    def charge(self, key: str, day: str, tokens: int) -> None:
+        raise ConnectionError("redis down")
+
+
+@pytest.mark.asyncio
+async def test_a_failing_store_lets_the_call_through_and_keeps_the_answer():
+    from orrery_core.observability.metrics import TOKEN_BUDGET_STORE_ERRORS_TOTAL
+
+    before = TOKEN_BUDGET_STORE_ERRORS_TOTAL._value.get()
+    runner, llm = _runner(TokenBudgetPlugin(per_user=10, ledger=_BrokenLedger()))
+    assert await _turn(runner, "alice") == "ok"
+    assert llm.calls == 1
+    assert TOKEN_BUDGET_STORE_ERRORS_TOTAL._value.get() > before
+
+
+@pytest.mark.asyncio
+async def test_a_slow_store_does_not_hold_the_call(monkeypatch):
+    import threading
+
+    import orrery_core.plugins.token_budget_plugin as mod
+
+    monkeypatch.setattr(mod, "_STORE_TIMEOUT_SECONDS", 0.05)
+    stuck = threading.Event()
+
+    class _HungLedger(InMemoryUsageLedger):
+        blocking = True
+
+        def spent(self, key: str, day: str) -> int:
+            stuck.wait(5)
+            return 0
+
+    runner, _ = _runner(TokenBudgetPlugin(per_user=10, ledger=_HungLedger()))
+    try:
+        assert await _turn(runner, "alice") == "ok"
+    finally:
+        stuck.set()
+
+
+class _SilentLlm(_MeteredLlm):
+    """Reports no usage at all."""
+
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse]:
+        yield LlmResponse(
+            content=types.Content(role="model", parts=[types.Part.from_text(text="ok")])
+        )
+
+
+@pytest.mark.asyncio
+async def test_without_usage_the_estimate_is_charged():
+    ledger = InMemoryUsageLedger()
+    plugin = TokenBudgetPlugin(per_user=10_000, ledger=ledger, today=lambda: "d1")
+    runner = InMemoryRunner(
+        agent=LlmAgent(name="root", model=_SilentLlm(), instruction="Answer."),
+        app_name="t",
+        plugins=[plugin],
+    )
+    assert await _turn(runner, "alice", "x" * 4000) == "ok"
+    assert ledger.spent(user_key("alice"), "d1") >= 1000
+
+
+class _FailingLlm(_MeteredLlm):
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse]:
+        raise RuntimeError("provider down")
+        yield  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_a_failed_call_refunds_its_estimate():
+    ledger = InMemoryUsageLedger()
+    plugin = TokenBudgetPlugin(per_user=10_000, ledger=ledger, today=lambda: "d1")
+    runner = InMemoryRunner(
+        agent=LlmAgent(name="root", model=_FailingLlm(), instruction="Answer."),
+        app_name="t",
+        plugins=[plugin],
+    )
+    with pytest.raises(RuntimeError, match="provider down"):
+        await _turn(runner, "alice", "x" * 4000)
+    assert ledger.spent(user_key("alice"), "d1") == 0
+    assert plugin._reserved == {}
+
+
+class _DelegatingLlm(BaseLlm):
+    """Asks the specialist once, then answers with whatever came back."""
+
+    model: str = "delegating"
+
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse]:
+        answered = [
+            part.function_response
+            for content in llm_request.contents
+            for part in content.parts or []
+            if part.function_response
+        ]
+        part = (
+            types.Part.from_text(text=f"done: {answered[-1].response}")
+            if answered
+            else types.Part.from_function_call(name="specialist", args={"request": "check"})
+        )
+        yield LlmResponse(
+            content=types.Content(role="model", parts=[part]),
+            usage_metadata=types.GenerateContentResponseUsageMetadata(total_token_count=10),
+        )
+
+
+def _delegating_runner(plugin: TokenBudgetPlugin) -> tuple[InMemoryRunner, _MeteredLlm]:
+    from google.adk.tools.agent_tool import AgentTool
+
+    specialist_llm = _MeteredLlm()
+    specialist = LlmAgent(name="specialist", model=specialist_llm, instruction="Check.")
+    root = LlmAgent(
+        name="root", model=_DelegatingLlm(), instruction="Route.", tools=[AgentTool(specialist)]
+    )
+    return InMemoryRunner(agent=root, app_name="t", plugins=[plugin]), specialist_llm
+
+
+@pytest.mark.asyncio
+async def test_a_specialists_calls_are_charged_to_the_caller():
+    ledger = InMemoryUsageLedger()
+    runner, specialist_llm = _delegating_runner(
+        TokenBudgetPlugin(per_user=10_000, ledger=ledger, today=lambda: "d1")
+    )
+    assert (await _turn(runner, "alice")).startswith("done")
+    assert specialist_llm.calls == 1
+    assert ledger.spent(user_key("alice"), "d1") == 10 + 100 + 10
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_inside_a_specialist_ends_the_turn_cleanly():
+    # The root's first call (10 tokens) crosses the line; everything after is refused.
+    runner, specialist_llm = _delegating_runner(TokenBudgetPlugin(per_user=5, today=lambda: "d1"))
+    assert "usage limit" in await _turn(runner, "alice")
+    assert specialist_llm.calls == 0
+
+
+def test_ledger_keys_are_printable_and_do_not_carry_the_subject():
+    key = user_key("alice@example.com")
+    assert key.isprintable() and "alice" not in key and len(key) < 64
+    assert GLOBAL_KEY.isprintable()
+
+
+def test_per_replica_budgets_are_warned_about(monkeypatch, caplog):
+    monkeypatch.setenv("ORRERY_MULTI_REPLICA", "true")
+    monkeypatch.delenv("ORRERY_RATE_LIMIT_STORAGE_URI", raising=False)
+    with caplog.at_level("WARNING", logger="orrery.plugins"):
+        _budget_plugins(daily_token_budget=5)
+    assert "per replica" in caplog.text

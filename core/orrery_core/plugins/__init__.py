@@ -329,7 +329,7 @@ def default_plugins(
     if enable_auth:
         plugins.append(AuthPlugin(require_auth=require_auth))
 
-    # Ahead of every other model callback: a refused call should cost nothing,
+    # Ahead of every model callback that can answer: a refused call should cost nothing,
     # and ADK's before-model chain stops at the first plugin that answers.
     per_user = (
         daily_token_budget_per_user
@@ -352,6 +352,13 @@ def default_plugins(
                 per_user=per_user, total=total, ledger=create_usage_ledger(storage_uri)
             )
         )
+        if (not storage_uri or storage_uri.startswith("memory://")) and env_flag(
+            "ORRERY_MULTI_REPLICA", default=False
+        ):
+            logger.warning(
+                "Daily token budgets are counted per replica (ORRERY_RATE_LIMIT_STORAGE_URI "
+                "is memory://): with N replicas the budgets allow N times the configured tokens."
+            )
 
     # PII redaction before Audit: it mutates tool results in place (and
     # returns None, so the after-tool chain keeps running), and registering

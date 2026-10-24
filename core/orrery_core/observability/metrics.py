@@ -87,6 +87,11 @@ TOKEN_BUDGET_REFUSALS_TOTAL = Counter(
     ["scope"],
 )
 
+TOKEN_BUDGET_STORE_ERRORS_TOTAL = Counter(
+    "orrery_token_budget_store_errors_total",
+    "Token budget store calls that failed or timed out (the model call went ahead)",
+)
+
 LLM_FAILOVER_TOTAL = Counter(
     "orrery_llm_failover_total",
     "Model calls moved to the next model in the fallback chain",
@@ -404,6 +409,11 @@ def track_llm_tokens(agent_name: str, input_tokens: int, output_tokens: int) -> 
 def track_token_budget_refusal(scope: str) -> None:
     """Record a model call refused by a daily token budget (``user``/``global``)."""
     TOKEN_BUDGET_REFUSALS_TOTAL.labels(scope=scope).inc()
+
+
+def track_token_budget_store_error() -> None:
+    """Record a token budget store call that failed; the budget was not enforced."""
+    TOKEN_BUDGET_STORE_ERRORS_TOTAL.inc()
 
 
 def track_llm_failover(*, from_model: str, to_model: str) -> None:

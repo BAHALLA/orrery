@@ -273,11 +273,34 @@ on every transport, since they are a plugin in `default_plugins()`.
 
 Once a budget is spent, model calls are answered with a short "usage limit
 reached, resets at 00:00 UTC" reply instead of being sent, so the refusal costs
-nothing. The call that crosses the line still finishes, so a budget can be
-exceeded by about one model call per run in flight. Counters use
-`ORRERY_RATE_LIMIT_STORAGE_URI`: per process with `memory://` (they reset on
-restart), shared with `redis://`. Refusals are counted in
-`orrery_token_budget_refusals_total{scope="user"|"global"}`.
+nothing. Each call reserves an estimate of its prompt before it goes out
+(characters / 4), so calls started at the same moment see each other, and the
+response's reported usage replaces the estimate afterwards. A budget can still
+be exceeded by the output of the calls already in flight and by the estimate's
+error. Counters use `ORRERY_RATE_LIMIT_STORAGE_URI`: per process with
+`memory://` (they reset on restart, and with `ORRERY_MULTI_REPLICA` each
+replica counts its own, which startup warns about), shared with `redis://`.
+Refusals are counted in `orrery_token_budget_refusals_total{scope="user"|"global"}`.
+
+The store is a cost control, not a security gate: if it fails or takes longer
+than 2 s, the call goes ahead unbudgeted, the error is logged, and
+`orrery_token_budget_store_errors_total` counts it. Alert on that counter if
+the budget matters to you.
+
+Who is charged:
+
+- Console and A2A: the verified subject. Slack: the Slack user id. Google Chat:
+  the verified email. An agent acting for a user, and every specialist a turn
+  calls, spends that user's budget.
+- With authentication off, the console keys on `anonymous:<client IP>`, which
+  a caller can rotate and which everyone behind one proxy shares; only the
+  deployment budget means much there.
+- The scheduled triage sweep runs as `batch`, so it draws on the deployment
+  budget like everyone else: once that is spent, a sweep's nodes are refused.
+
+Not charged: the compaction summarizer, knowledge embeddings, the onboarding
+self-test probe (all called outside the plugin chain), and calls that fail or
+are cancelled before their final response.
 
 A2A exposition (`ORRERY_A2A_*`) has its own table in [A2A](../integrations/a2a.md#enabling-it).
 
