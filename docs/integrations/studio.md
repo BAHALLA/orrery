@@ -148,7 +148,10 @@ enforce its own destination allowlist**: allow `CONNECT` only to the hosts the
 registry names. Loopback, private literal addresses, hosts in
 `ORRERY_A2A_PRIVATE_ALLOW` and every `private_network` entry always go direct,
 with the full check (so a `private_network` entry cannot reach a public host
-behind the proxy). Only https goes through the proxy, and not to an IPv6
+behind the proxy). With a proxy set, that direct path refuses public
+addresses: a `private_network` entry whose name resolves to a public address
+is refused, so public traffic always goes through the proxy and its
+allowlist. Only https goes through the proxy, and not to an IPv6
 literal (name the host). A refused tunnel reads "egress proxy refused CONNECT
 to host:port (403)" (or 407). Byte caps,
 identity encoding and timeouts apply either way. `HTTPS_PROXY` and friends are

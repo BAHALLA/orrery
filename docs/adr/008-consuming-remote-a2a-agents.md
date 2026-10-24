@@ -216,6 +216,10 @@ entries') then:
   can tell; the proxy would refuse it. The other side of that rule: a
   `private_network` entry never uses the proxy, so it cannot reach a public
   host behind one. Mark only internal services `private_network`;
+- with a proxy configured, the **direct path reaches non-public addresses
+  only**: a private entry whose hostname resolves to a public address is
+  refused, not connected to. Private entries reach private addresses, and
+  public traffic always meets the proxy's allowlist;
 - send only **https** through the proxy, inside the tunnel. A plain request
   would travel to the proxy in absolute form, headers and bearer token
   included, so the transport refuses it. An **IPv6 literal** is refused on

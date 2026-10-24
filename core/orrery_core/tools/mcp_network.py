@@ -421,13 +421,16 @@ def address_refusal(
     label: str,
     allow_private: bool,
     private_allow: PrivateAllowlist | None = None,
+    refuse_public: bool = False,
 ) -> str | None:
     """Why *host*, resolving to *addresses*, may not be reached; ``None`` when it may.
 
     Library-neutral: both HTTP stacks' transports call it on every request.
 
     - link-local and metadata addresses: always refused;
-    - public addresses: always allowed;
+    - public addresses: allowed, unless *refuse_public* (the direct path when
+      an egress proxy is configured: public traffic goes through the proxy,
+      and its allowlist, only);
     - a loopback host (``localhost``, ``127.0.0.1``, ``::1``) may reach loopback;
     - anything else private only with *allow_private*, and then, when a
       *private_allow* list is given, only for a host or address it lists, and
@@ -442,6 +445,12 @@ def address_refusal(
                 "link-local or metadata address"
             )
         if is_public(address):
+            if refuse_public:
+                return (
+                    f"{label} request to {host} refused: it resolves to {address}, a public "
+                    f"address, and with an egress proxy ({EGRESS_PROXY_ENV}) public "
+                    "destinations go only through the proxy (this entry is private_network)"
+                )
             continue
         if loopback_host and _is_loopback(address):
             continue
@@ -476,6 +485,7 @@ async def check_destination(
     label: str,
     allow_private: bool,
     private_allow: PrivateAllowlist | None = None,
+    refuse_public: bool = False,
 ) -> str | None:
     """Origin check, then address check on what the host resolves to now.
 
@@ -488,7 +498,12 @@ async def check_destination(
         return why
     addresses = await _resolve(host, target[2])
     return address_refusal(
-        host, addresses, label=label, allow_private=allow_private, private_allow=private_allow
+        host,
+        addresses,
+        label=label,
+        allow_private=allow_private,
+        private_allow=private_allow,
+        refuse_public=refuse_public,
     )
 
 
@@ -539,6 +554,9 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                     label="MCP",
                     allow_private=self._allow_private,
                     private_allow=self._private_allow,
+                    # With a proxy, the direct path is for private addresses
+                    # only: public traffic always meets the proxy's allowlist.
+                    refuse_public=self._via_proxy is not None,
                 )
         except OSError as exc:  # gaierror: surface it as the connect failure it is
             host = request.url.host
@@ -747,6 +765,9 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
                     label=self._label,
                     allow_private=self._allow_private,
                     private_allow=self._private_allow,
+                    # With a proxy, the direct path is for private addresses
+                    # only: public traffic always meets the proxy's allowlist.
+                    refuse_public=self._via_proxy is not None,
                 )
         except OSError as exc:
             raise httpx_std.ConnectError(

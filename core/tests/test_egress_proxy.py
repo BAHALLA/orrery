@@ -233,21 +233,94 @@ def test_loopback_goes_direct_never_through_the_proxy(plain_site, proxy):
     assert proxy.targets == [] and proxy.refused == []
 
 
-def test_a_private_network_entry_goes_direct_by_hostname(plain_site, proxy):
-    """``w.corp`` may resolve into a listed CIDR: only a local lookup can tell,
-    so an entry that opts into the private network never uses the proxy."""
-    assert goes_direct("w.corp", PrivateAllowlist.parse("10.20.0.0/16"), allow_private=True)
-    assert not goes_direct("w.corp", PrivateAllowlist.parse("10.20.0.0/16"))
-    # End to end: a private-network entry, reached by name, with the full check.
-    origin = ("http", "localhost", plain_site)
+@pytest.fixture
+def corp_dns(monkeypatch):
+    """``w.corp`` resolves into 10.20.0.0/16, ``pub.corp`` to a public address,
+    and every direct connection is answered here: (transport, url) recorded."""
+    from orrery_core.tools import mcp_network
+
+    names = {"w.corp": ["10.20.0.5"], "pub.corp": ["93.184.216.34"]}
+
+    async def resolve(host: str, port: int) -> list[str]:
+        return names[host]
+
+    monkeypatch.setattr(mcp_network, "_resolve", resolve)
+    sent: list[tuple[Any, str]] = []
+
+    def answer(lib: Any) -> Any:
+        async def handle(self: Any, request: Any) -> Any:
+            sent.append((self, str(request.url)))
+            return lib.Response(200, content=b"ok", request=request)
+
+        return handle
+
+    for lib in (httpx_std, httpx):
+        monkeypatch.setattr(lib.AsyncHTTPTransport, "handle_async_request", answer(lib))
+    return sent
+
+
+@pytest.mark.parametrize("kind", ["a2a", "mcp"])
+def test_a_private_entry_reached_by_hostname_goes_direct(proxy, corp_dns, kind):
+    """``w.corp`` resolves into a listed CIDR, which only a local lookup can
+    tell: the entry's request goes direct (checked), not to the proxy."""
+    allow = PrivateAllowlist.parse("10.20.0.0/16")
+    assert not goes_direct("w.corp", allow)  # by name alone it would be proxied
+    assert goes_direct("w.corp", allow, allow_private=True)
+    if kind == "a2a":
+        transport: Any = GuardedHttpxTransport(
+            allowed_origins={("https", "w.corp", 443)},
+            allow_private=True,
+            private_allow=allow,
+            egress_proxy=proxy.url,
+        )
+        status = _get(transport, "https://w.corp/ok")[0]
+    else:
+        transport = GuardedTransport(
+            url="https://w.corp/mcp",
+            allow_private_network=True,
+            private_allow=allow,
+            egress_proxy=proxy.url,
+        )
+        status = _get(transport, "https://w.corp/ok", lib=httpx)[0]
+    assert status == 200
+    [(used, url)] = corp_dns
+    assert used is transport and used is not transport._via_proxy  # direct, not proxied
+    assert url == "https://w.corp/ok" and proxy.targets == []
+
+
+@pytest.mark.parametrize("kind", ["a2a", "mcp"])
+def test_with_a_proxy_a_private_entry_never_reaches_a_public_address(proxy, corp_dns, kind):
+    """Public traffic always meets the proxy's allowlist: a private entry's
+    hostname that resolves to a public address is refused, not sent direct."""
+    allow = PrivateAllowlist.parse("pub.corp")
+    if kind == "a2a":
+        transport: Any = GuardedHttpxTransport(
+            allowed_origins={("https", "pub.corp", 443)},
+            allow_private=True,
+            private_allow=allow,
+            egress_proxy=proxy.url,
+        )
+        with pytest.raises(BlockedRemoteDestination, match="public destinations go only through"):
+            _get(transport, "https://pub.corp/ok")
+    else:
+        transport = GuardedTransport(
+            url="https://pub.corp/mcp",
+            allow_private_network=True,
+            private_allow=allow,
+            egress_proxy=proxy.url,
+        )
+        with pytest.raises(BlockedDestination, match="public destinations go only through"):
+            _get(transport, "https://pub.corp/ok", lib=httpx)
+    assert corp_dns == [] and proxy.targets == []
+
+
+def test_without_a_proxy_a_private_entry_may_still_reach_public_addresses(corp_dns):
     transport = GuardedHttpxTransport(
-        allowed_origins={origin},
+        allowed_origins={("https", "pub.corp", 443)},
         allow_private=True,
-        private_allow=PrivateAllowlist.parse("10.20.0.0/16"),
-        egress_proxy=proxy.url,
+        private_allow=PrivateAllowlist.parse("pub.corp"),
     )
-    assert _get(transport, f"http://localhost:{plain_site}/ok")[0] == 200
-    assert proxy.targets == []
+    assert _get(transport, "https://pub.corp/ok")[0] == 200  # unchanged without a proxy
 
 
 def test_private_allowlisted_hosts_and_private_addresses_go_direct():
