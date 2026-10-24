@@ -47,6 +47,7 @@ from .plugins import ProgressPlugin as ProgressPlugin
 from .plugins import ProgressStep as ProgressStep
 from .plugins import ResiliencePlugin as ResiliencePlugin
 from .plugins import SafetyScreenPlugin as SafetyScreenPlugin
+from .plugins import TokenBudgetPlugin as TokenBudgetPlugin
 from .plugins import ToolLedger as ToolLedger
 from .plugins import ToolLedgerPlugin as ToolLedgerPlugin
 from .plugins import ToolOutputCapPlugin as ToolOutputCapPlugin

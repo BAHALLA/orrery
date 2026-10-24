@@ -117,6 +117,7 @@ from .repeat_guard_plugin import (
 )
 from .resilience_plugin import ResiliencePlugin
 from .safety_plugin import SafetyScreenPlugin
+from .token_budget_plugin import TokenBudgetPlugin, create_usage_ledger
 from .tool_ledger_plugin import (
     LedgerEntry,
     ToolLedger,
@@ -158,6 +159,7 @@ __all__ = [
     "SafetyScreenPlugin",
     "ToolLedger",
     "ToolLedgerPlugin",
+    "TokenBudgetPlugin",
     "ToolOutputCapPlugin",
     "current_tool_ledger",
     "default_plugins",
@@ -207,6 +209,9 @@ def default_plugins(
     max_delegations_per_run: int | None = None,
     max_identical_failures: int | None = None,
     max_run_tool_bytes: int | None = None,
+    daily_token_budget_per_user: int | None = None,
+    daily_token_budget: int | None = None,
+    token_budget_storage_uri: str | None = None,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
@@ -274,6 +279,17 @@ def default_plugins(
         max_run_tool_bytes: Budget for all tool output in one run. ``None``
             resolves from ``ORRERY_MAX_RUN_TOOL_BYTES`` (default 8 MiB); ``0``
             disables. Enforced by ``ToolOutputCapPlugin``.
+        daily_token_budget_per_user: Model tokens one caller (ADK ``user_id``)
+            may spend per UTC day. ``None`` resolves from
+            ``ORRERY_DAILY_TOKEN_BUDGET_PER_USER`` (default 0, off).
+        daily_token_budget: Model tokens the whole deployment may spend per
+            UTC day. ``None`` resolves from ``ORRERY_DAILY_TOKEN_BUDGET``
+            (default 0, off). Enforced with the per-user budget by
+            ``TokenBudgetPlugin``.
+        token_budget_storage_uri: A ``limits`` storage URI to share the budget
+            counters across replicas. ``None`` resolves from
+            ``ORRERY_RATE_LIMIT_STORAGE_URI``; unset or ``memory://`` counts
+            per process.
     """
     if enable_tracing is None:
         enable_tracing = env_flag("OTEL_TRACING_ENABLED", default=False)
@@ -312,6 +328,37 @@ def default_plugins(
 
     if enable_auth:
         plugins.append(AuthPlugin(require_auth=require_auth))
+
+    # Ahead of every model callback that can answer: a refused call should cost nothing,
+    # and ADK's before-model chain stops at the first plugin that answers.
+    per_user = (
+        daily_token_budget_per_user
+        if daily_token_budget_per_user is not None
+        else env_int("ORRERY_DAILY_TOKEN_BUDGET_PER_USER", 0)
+    )
+    total = (
+        daily_token_budget
+        if daily_token_budget is not None
+        else env_int("ORRERY_DAILY_TOKEN_BUDGET", 0)
+    )
+    if per_user or total:
+        storage_uri = (
+            token_budget_storage_uri
+            if token_budget_storage_uri is not None
+            else os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
+        )
+        plugins.append(
+            TokenBudgetPlugin(
+                per_user=per_user, total=total, ledger=create_usage_ledger(storage_uri)
+            )
+        )
+        if (not storage_uri or storage_uri.startswith("memory://")) and env_flag(
+            "ORRERY_MULTI_REPLICA", default=False
+        ):
+            logger.warning(
+                "Daily token budgets are counted per replica (ORRERY_RATE_LIMIT_STORAGE_URI "
+                "is memory://): with N replicas the budgets allow N times the configured tokens."
+            )
 
     # PII redaction before Audit: it mutates tool results in place (and
     # returns None, so the after-tool chain keeps running), and registering

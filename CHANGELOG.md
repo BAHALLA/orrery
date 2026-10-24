@@ -30,6 +30,17 @@ default (on); it used to turn authentication off.
 the console's API starts fresh conversations: the ones it held before this
 release are visible only to the person whose subject they are stored under.
 
+### Added
+
+- Daily token budgets. `ORRERY_DAILY_TOKEN_BUDGET_PER_USER` caps the model
+  tokens one caller may spend per UTC day, and `ORRERY_DAILY_TOKEN_BUDGET`
+  caps the whole deployment. Both are off by default. Once one is spent, model
+  calls are answered with a short "usage limit reached" reply instead of being
+  sent. A request rate limit alone let one invited user, or a leaked token,
+  spend all day. Counters share `ORRERY_RATE_LIMIT_STORAGE_URI` (Redis for
+  several replicas); refusals are in `orrery_token_budget_refusals_total`, and
+  a failing store (the call goes ahead) in `orrery_token_budget_store_errors_total`.
+
 ### Security
 
 - The audit log no longer copies tool results. A `get_active_alerts` entry

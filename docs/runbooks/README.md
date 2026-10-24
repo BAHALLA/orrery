@@ -27,6 +27,7 @@ you should expect, not abstract prose.
 | [Kafka consumer lag](kafka-consumer-lag.md) | `KafkaConsumerGroupLagHigh` | warning |
 | [High tool error rate](high-tool-error-rate.md) | `OrreryHighToolErrorRate` | warning |
 | [High LLM spend](high-llm-spend.md) | `OrreryHighTokenBurn` | warning |
+| [Token budget store failing](token-budget-store-failing.md) | `OrreryTokenBudgetStoreFailing` | warning |
 | [Prompt injection detected](prompt-injection-detected.md) | `OrreryIndirectInjectionDetected`, `OrreryDirectInjectionAttempts` | warning |
 | [Unauthorized approval attempt](unauthorized-approval-attempt.md) | `OrreryUnauthorizedApprovalAttempt` | critical |
 | [Unauthorized approval attempt](unauthorized-approval-attempt.md) | `OrreryUnattributableApprovals` | warning |
