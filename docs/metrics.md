@@ -52,6 +52,7 @@ All metrics use the `orrery_` namespace prefix following [Prometheus naming conv
 | `orrery_tool_errors_total` | Counter | `agent`, `tool`, `error_type` | Errors broken down by exception type; only tools that *raise* (a returned `status: "error"` counts in `orrery_tool_calls_total` only) |
 | `orrery_circuit_breaker_state` | Gauge | `tool` | Circuit breaker state: 0=closed, 1=open, 2=half_open |
 | `orrery_llm_tokens_total` | Counter | `agent`, `direction` | LLM token consumption (input/output) |
+| `orrery_token_budget_refusals_total` | Counter | `scope` | Model calls refused because a daily token budget (`user` or `global`) was spent |
 | `orrery_llm_failover_total` | Counter | `from_model`, `to_model` | Model calls moved to the next model in `MODEL_FALLBACK_CHAIN` |
 | `orrery_context_cache_events_total` | Counter | `event` | Context cache hits and misses |
 | `orrery_context_compaction_total` | Counter | — | Conversation histories compacted into a summary |

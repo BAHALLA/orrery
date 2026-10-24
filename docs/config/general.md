@@ -258,6 +258,27 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 
 A refused request is a `429` with `Retry-After`, which the console shows as "retry in Ns".
 
+### Daily token budgets
+
+A rate limit bounds how often a turn starts, not what it costs: one message can
+fan out to every specialist, and each model call re-sends the run so far. Two
+daily ceilings bound the bill. Both are off by default, are counted per UTC day
+from each model response's token usage (prompt, output and thinking), and apply
+on every transport, since they are a plugin in `default_plugins()`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORRERY_DAILY_TOKEN_BUDGET_PER_USER` | `0` (off) | Tokens one caller may spend per day. The caller is the verified subject; an agent acting for a user spends that user's budget. |
+| `ORRERY_DAILY_TOKEN_BUDGET` | `0` (off) | Tokens the whole deployment may spend per day, whoever spends them. |
+
+Once a budget is spent, model calls are answered with a short "usage limit
+reached, resets at 00:00 UTC" reply instead of being sent, so the refusal costs
+nothing. The call that crosses the line still finishes, so a budget can be
+exceeded by about one model call per run in flight. Counters use
+`ORRERY_RATE_LIMIT_STORAGE_URI`: per process with `memory://` (they reset on
+restart), shared with `redis://`. Refusals are counted in
+`orrery_token_budget_refusals_total{scope="user"|"global"}`.
+
 A2A exposition (`ORRERY_A2A_*`) has its own table in [A2A](../integrations/a2a.md#enabling-it).
 
 ### Chat attachments
