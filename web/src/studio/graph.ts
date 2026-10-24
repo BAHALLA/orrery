@@ -31,15 +31,28 @@ export type StudioEdge = Edge<StudioEdgeData>;
 /** Everything in a spec but its nodes and edges. */
 export type SpecMeta = Omit<CompositionSpec, "nodes" | "edges">;
 
+/**
+ * Which way the graph flows: left to right (`LR`), or top to bottom (`TB`)
+ * on a canvas taller than it is wide, so a pipeline fits without shrinking.
+ */
+export type Direction = "LR" | "TB";
+
 export interface StudioGraph {
   meta: SpecMeta;
   nodes: StudioNode[];
   edges: StudioEdge[];
+  /** The auto-layout's direction (a canvas concern, never in the spec). Left to right if unset. */
+  direction?: Direction;
 }
 
-/** Grid of the auto-layout: column (rank) width and row height, in flow units. */
+/**
+ * Grid of the auto-layout, in flow units. Left to right, ranks are COLUMN
+ * apart and siblings ROW apart; top to bottom, ranks are LEVEL apart and
+ * siblings COLUMN apart. A node card is 240 wide and up to ~150 tall.
+ */
 export const COLUMN = 280;
 export const ROW = 170;
+export const LEVEL = 200;
 
 const ID_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;
 
@@ -47,8 +60,23 @@ export function edgeId(from: string, to: string, child = false): string {
   return `${child ? "child" : "edge"}:${from}->${to}`;
 }
 
-function toEdge(spec: SpecEdge): StudioEdge {
-  return { id: edgeId(spec.from, spec.to), source: spec.from, target: spec.to, data: { spec } };
+function toEdge(spec: SpecEdge, id = edgeId(spec.from, spec.to)): StudioEdge {
+  return { id, source: spec.from, target: spec.to, data: { spec } };
+}
+
+/**
+ * The spec's edges as canvas edges. React Flow keys edges by id, so a
+ * from → to pair the spec lists twice (an import can carry one; the server
+ * refuses it) gets its own id, and deleting one never takes the other.
+ */
+function toEdges(edges: SpecEdge[]): StudioEdge[] {
+  const seen = new Map<string, number>();
+  return edges.map((spec) => {
+    const base = edgeId(spec.from, spec.to);
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return toEdge(spec, n === 1 ? base : `${base}#${n}`);
+  });
 }
 
 function childEdges(nodes: SpecNode[]): StudioEdge[] {
@@ -63,15 +91,17 @@ function childEdges(nodes: SpecNode[]): StudioEdge[] {
   );
 }
 
-export function specToGraph(spec: CompositionSpec): StudioGraph {
+export function specToGraph(spec: CompositionSpec, direction: Direction = "LR"): StudioGraph {
   const { nodes, edges, ...meta } = spec;
-  const allEdges = [...edges.map(toEdge), ...childEdges(nodes)];
+  const allEdges = [...toEdges(edges), ...childEdges(nodes)];
   const positions = layout(
     nodes.map((n) => n.id),
     allEdges.map((e) => ({ from: e.source, to: e.target })),
+    direction,
   );
   return {
     meta,
+    direction,
     nodes: nodes.map((n) => ({
       id: n.id,
       type: "studio",
@@ -102,7 +132,7 @@ export function graphToSpec({ meta, nodes, edges }: StudioGraph): CompositionSpe
 }
 
 /**
- * A deterministic layered layout, left to right.
+ * A deterministic layered layout, left to right or top to bottom.
  *
  * Each node's column is the longest path to it from a source (back edges, the
  * ones closing a loop, are ignored), and nodes in a column are ordered by
@@ -113,6 +143,7 @@ export function graphToSpec({ meta, nodes, edges }: StudioGraph): CompositionSpe
 export function layout(
   ids: string[],
   edges: { from: string; to: string }[],
+  direction: Direction = "LR",
 ): Record<string, XYPosition> {
   const index = new Map(ids.map((id, i) => [id, i]));
   const out = new Map<string, string[]>(ids.map((id) => [id, []]));
@@ -167,20 +198,26 @@ export function layout(
     );
     ordered.forEach((id, i) => {
       row.set(id, i);
-      positions[id] = { x: x * COLUMN, y: (i - (ordered.length - 1) / 2) * ROW };
+      const across = i - (ordered.length - 1) / 2;
+      positions[id] =
+        direction === "TB"
+          ? { x: across * COLUMN, y: x * LEVEL }
+          : { x: x * COLUMN, y: across * ROW };
     });
   });
   return positions;
 }
 
-/** Re-run the auto-layout over a graph, keeping everything but positions. */
-export function relayout(graph: StudioGraph): StudioGraph {
+/** Re-run the auto-layout over a graph (in a new direction, if given), keeping everything but positions. */
+export function relayout(graph: StudioGraph, direction = graph.direction ?? "LR"): StudioGraph {
   const positions = layout(
     graph.nodes.map((n) => n.id),
     graph.edges.map((e) => ({ from: e.source, to: e.target })),
+    direction,
   );
   return {
     ...graph,
+    direction,
     nodes: graph.nodes.map((n) => ({ ...n, position: positions[n.id] ?? n.position })),
   };
 }
@@ -226,7 +263,11 @@ export function addNode(graph: StudioGraph, spec: SpecNode, position?: XYPositio
   if (position) return { ...graph, nodes: [...graph.nodes, node] };
   const ends = sinks(graph);
   const tail = ends.length === 1 ? ends[0] : graph.nodes.at(-1);
-  node.position = tail ? { x: tail.position.x + COLUMN, y: tail.position.y } : { x: 0, y: 0 };
+  node.position = !tail
+    ? { x: 0, y: 0 }
+    : graph.direction === "TB"
+      ? { x: tail.position.x, y: tail.position.y + LEVEL }
+      : { x: tail.position.x + COLUMN, y: tail.position.y };
   const next = { ...graph, nodes: [...graph.nodes, node] };
   return ends.length === 1 && tail ? connect(next, tail.id, spec.id) : next;
 }
@@ -267,10 +308,33 @@ export function removeEdges(graph: StudioGraph, ids: Iterable<string>): StudioGr
   return { ...graph, edges: graph.edges.filter((e) => e.data?.child || !gone.has(e.id)) };
 }
 
-/** Replace one node's spec. A changed id is carried into every edge and child list. */
+/**
+ * Replace one node's spec. A changed id is carried into every edge and child
+ * list; changed `children` redraw that node's child links.
+ */
 export function updateNode(graph: StudioGraph, id: string, spec: SpecNode): StudioGraph {
   const renamed = spec.id !== id;
   const swap = (x: string) => (renamed && x === id ? spec.id : x);
+  const before = graph.nodes.find((n) => n.id === id)?.data.spec.children ?? [];
+  const after = spec.children ?? [];
+  const next = renameNode(graph, id, spec, renamed, swap);
+  if (before.length === after.length && before.every((c, i) => c === after[i])) return next;
+  return {
+    ...next,
+    edges: [
+      ...next.edges.filter((e) => !(e.data?.child && e.source === spec.id)),
+      ...childEdges([spec]),
+    ],
+  };
+}
+
+function renameNode(
+  graph: StudioGraph,
+  id: string,
+  spec: SpecNode,
+  renamed: boolean,
+  swap: (x: string) => string,
+): StudioGraph {
   return {
     ...graph,
     nodes: graph.nodes.map((n) => {
@@ -290,7 +354,8 @@ export function updateNode(graph: StudioGraph, id: string, spec: SpecNode): Stud
           const target = swap(e.target);
           return {
             ...e,
-            id: edgeId(source, target, e.data?.child),
+            // Keep a duplicate's `#n`, so it stays apart from its twin.
+            id: edgeId(source, target, e.data?.child) + (/#\d+$/.exec(e.id)?.[0] ?? ""),
             source,
             target,
             data: {

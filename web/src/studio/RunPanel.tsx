@@ -38,11 +38,15 @@ interface Props {
   /** Problems the client found in the composition. */
   problems: number;
   busy: boolean;
+  /** A cancel is on its way. */
+  cancelling: boolean;
   connection: Connection;
   error: string | null;
   onClearError: () => void;
   onRun: () => void;
   onCancel: () => void;
+  /** Follow a lost stream again. */
+  onReconnect: () => void;
   now: number;
 }
 
@@ -55,11 +59,13 @@ export function RunPanel({
   inputIssues,
   problems,
   busy,
+  cancelling,
   connection,
   error,
   onClearError,
   onRun,
   onCancel,
+  onReconnect,
   now,
 }: Props) {
   const inputId = useId();
@@ -102,13 +108,25 @@ export function RunPanel({
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {busy ? (
-            <button
-              type="button"
-              className={`${toolbarButton} border border-crit-border text-crit-fg hover:bg-crit-bg`}
-              onClick={onCancel}
-            >
-              <StopIcon size={14} /> Cancel run
-            </button>
+            <>
+              <button
+                type="button"
+                className={`${toolbarButton} border border-crit-border text-crit-fg hover:bg-crit-bg`}
+                onClick={onCancel}
+                disabled={cancelling}
+              >
+                <StopIcon size={14} /> {cancelling ? "Cancelling…" : "Cancel run"}
+              </button>
+              {connection === "lost" ? (
+                <button
+                  type="button"
+                  className={`${toolbarButton} border border-slate-300 dark:border-slate-700`}
+                  onClick={onReconnect}
+                >
+                  Reconnect
+                </button>
+              ) : null}
+            </>
           ) : (
             <button
               type="button"

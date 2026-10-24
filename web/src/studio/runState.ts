@@ -4,6 +4,7 @@ import type {
   McpCallEvent,
   NodeOutcome,
   RunOutcome,
+  RunSummary,
   StudioEvent,
   TokenCount,
   Totals,
@@ -19,7 +20,8 @@ import type {
  * events never break an older console.
  */
 
-export type NodeRunStatus = "pending" | "active" | NodeOutcome;
+/** `unknown`: the node was running when the console lost the run. */
+export type NodeRunStatus = "pending" | "active" | NodeOutcome | "unknown";
 
 export interface NodeRun {
   id: string;
@@ -46,7 +48,12 @@ export interface A2aExchange {
   inbound: A2aMessageEvent | null;
 }
 
-export type RunStatus = "starting" | "running" | RunOutcome;
+/**
+ * `lost`: the console can no longer read the run (its stream and its summary
+ * are gone: it ended long ago, or lives on another replica), so how it ended
+ * is not known. Final, like an outcome.
+ */
+export type RunStatus = "starting" | "running" | RunOutcome | "lost";
 
 export interface RunView {
   runId: string;
@@ -157,6 +164,9 @@ function addA2a(list: A2aExchange[], event: A2aMessageEvent): A2aExchange[] {
 
 export function reduceRun(view: RunView, event: StudioEvent): RunView {
   if (typeof event.seq === "number" && event.seq <= view.lastSeq) return view;
+  // A finished run takes nothing but its run.end: the totals, when the
+  // outcome came first from the run's summary (see applySummary).
+  if (isFinished(view) && (event.type !== "run.end" || view.totals !== null)) return view;
   let next: RunView = {
     ...view,
     events: [...view.events, event],
@@ -241,6 +251,37 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
 
 function outcomeOfNode(outcome: RunOutcome): NodeOutcome {
   return outcome === "succeeded" ? "ok" : outcome;
+}
+
+function settleActive(view: RunView, status: NodeRunStatus): Record<string, NodeRun> {
+  return Object.fromEntries(
+    Object.entries(view.nodes).map(([id, n]) => [id, n.status === "active" ? { ...n, status } : n]),
+  );
+}
+
+/**
+ * Fold `GET /studio/runs/{id}` into a run whose stream was lost: when the
+ * summary says it ended, the run takes that outcome (and the totals, which
+ * the summary carries); while it is still running, nothing changes.
+ */
+export function applySummary(view: RunView, summary: RunSummary): RunView {
+  if (summary.status === "running" || isFinished(view)) return view;
+  return {
+    ...view,
+    status: summary.status,
+    nodes: settleActive(view, outcomeOfNode(summary.status)),
+    active: null,
+    totals: summary.totals ?? view.totals,
+    error: summary.error ?? view.error,
+    droppedEvents: summary.dropped_events,
+    endedAt: summary.ended_at ?? view.endedAt,
+  };
+}
+
+/** The run can't be read any more: its outcome is unknown, and it is over for the console. */
+export function markLost(view: RunView): RunView {
+  if (isFinished(view)) return view;
+  return { ...view, status: "lost", nodes: settleActive(view, "unknown"), active: null };
 }
 
 export function isFinished(view: RunView): boolean {

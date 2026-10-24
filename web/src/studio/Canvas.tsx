@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, type DragEvent, type ReactNode } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -8,6 +8,7 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
+  useStore,
   type Connection,
   type EdgeChange,
   type NodeChange,
@@ -20,6 +21,7 @@ import {
   removeEdges,
   removeNodes,
   uniqueId,
+  type Direction,
   type StudioEdge,
   type StudioGraph,
   type StudioNode,
@@ -49,7 +51,16 @@ interface Props {
   now: number;
   /** Shown over an empty canvas. */
   empty: ReactNode;
+  /** Bumped whenever the graph is replaced or laid out again: the view refits. */
+  fitSignal: number;
+  /** The direction this canvas suits: top to bottom when it is taller than wide. */
+  onDirection: (direction: Direction) => void;
+  /** Nodes were deleted from the canvas (their focus is gone with them). */
+  onRemoved: () => void;
 }
+
+/** Fit a graph so its text stays readable: never below 0.75 (pan for the rest), never above 1. */
+const FIT = { padding: 0.15, minZoom: 0.75, maxZoom: 1 };
 
 const ariaLabels = {
   "node.a11yDescription.default":
@@ -86,8 +97,25 @@ export function Canvas({
   onSelect,
   now,
   empty,
+  fitSignal,
+  onDirection,
+  onRemoved,
 }: Props) {
   const flow = useReactFlow();
+  const vertical = graph.direction === "TB";
+
+  // React Flow measures its pane; a canvas taller than wide lays out top to bottom.
+  const tall = useStore((s) => (s.width && s.height ? s.height > s.width : null));
+  useEffect(() => {
+    if (tall !== null) onDirection(tall ? "TB" : "LR");
+  }, [tall, onDirection]);
+
+  // `fitView` on <ReactFlow> runs once, on the first nodes; a replaced graph
+  // (a template, an import, a past run, a tidy) is fitted here. React Flow
+  // queues the fit until the new nodes are measured.
+  useEffect(() => {
+    if (fitSignal) void flow.fitView({ ...FIT, duration: 200 });
+  }, [fitSignal, flow]);
 
   const nodes = useMemo<StudioNode[]>(
     () =>
@@ -101,9 +129,10 @@ export function Canvas({
           run: run?.nodes[n.id] ?? null,
           needs: comingIn(n.data.spec.kind, caps),
           now,
+          vertical,
         },
       })),
-    [graph.nodes, selectedId, issues, run, caps, now],
+    [graph.nodes, selectedId, issues, run, caps, now, vertical],
   );
 
   const edges = useMemo<StudioEdge[]>(() => {
@@ -156,8 +185,9 @@ export function Canvas({
         return removed.length ? removeNodes(moved, removed) : moved;
       });
       if (selectedId && removed.includes(selectedId)) onSelect(null);
+      if (removed.length) onRemoved();
     },
-    [onGraph, onSelect, selectedId],
+    [onGraph, onSelect, selectedId, onRemoved],
   );
 
   const onEdgesChange = useCallback(
@@ -186,7 +216,8 @@ export function Canvas({
   const onDrop = useCallback(
     (e: DragEvent) => {
       const kind = e.dataTransfer.getData(KIND_MIME) as NodeKind;
-      if (!kind || !(kind in KINDS)) return;
+      // Own keys only: `in` would take "constructor" or "__proto__" for a kind.
+      if (!kind || !Object.hasOwn(KINDS, kind)) return;
       e.preventDefault();
       const position = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
       const id = uniqueId(
@@ -220,7 +251,7 @@ export function Canvas({
         deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         ariaLabelConfig={ariaLabels}
         fitView
-        fitViewOptions={{ padding: 0.08, maxZoom: 1.1 }}
+        fitViewOptions={FIT}
         minZoom={0.3}
         maxZoom={1.75}
         defaultEdgeOptions={{ type: "smoothstep" }}
@@ -228,13 +259,16 @@ export function Canvas({
       >
         <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
         <Controls showInteractive={false} position="bottom-left" />
-        <MiniMap
-          pannable
-          zoomable
-          position="bottom-right"
-          className="hidden! sm:block!"
-          nodeBorderRadius={8}
-        />
+        {/* A tall, narrow canvas has no room for it: it would sit on the graph. */}
+        {vertical ? null : (
+          <MiniMap
+            pannable
+            zoomable
+            position="bottom-right"
+            className="hidden! sm:block!"
+            nodeBorderRadius={8}
+          />
+        )}
       </ReactFlow>
       {graph.nodes.length === 0 ? (
         <div className="pointer-events-none absolute inset-0 grid place-items-center p-4">

@@ -40,6 +40,7 @@ export const runTone: Record<RunStatus, StatusTone> = {
   failed: "crit",
   cancelled: "refused",
   budget_exhausted: "warn",
+  lost: "neutral",
 };
 
 export const runLabel: Record<RunStatus, string> = {
@@ -49,6 +50,7 @@ export const runLabel: Record<RunStatus, string> = {
   failed: "failed",
   cancelled: "cancelled",
   budget_exhausted: "budget exhausted",
+  lost: "outcome unknown",
 };
 
 export const nodeTone: Record<NodeRunStatus, StatusTone> = {
@@ -58,6 +60,7 @@ export const nodeTone: Record<NodeRunStatus, StatusTone> = {
   failed: "crit",
   cancelled: "refused",
   budget_exhausted: "warn",
+  unknown: "neutral",
 };
 
 export const nodeLabel: Record<NodeRunStatus, string> = {
@@ -67,6 +70,7 @@ export const nodeLabel: Record<NodeRunStatus, string> = {
   failed: "failed",
   cancelled: "cancelled",
   budget_exhausted: "budget hit",
+  unknown: "unknown",
 };
 
 export const budgetLabel: Record<string, string> = {

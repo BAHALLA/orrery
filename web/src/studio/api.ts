@@ -57,9 +57,18 @@ interface EventsOptions {
 }
 
 export class StudioClient {
-  private readonly token: string | null;
+  private token: string | null;
 
   constructor(token: string | null) {
+    this.token = token;
+  }
+
+  /**
+   * Swap the bearer token in place (a silent renewal). The client lives as
+   * long as the view, so a stream being followed picks up the new token on
+   * its next reconnect, and nothing is fetched again.
+   */
+  setToken(token: string | null): void {
     this.token = token;
   }
 

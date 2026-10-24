@@ -386,7 +386,8 @@ pattern gallery one click away.
   to append it after the last node. Kinds the server cannot run yet are shown
   but disabled, labelled *coming in P0b* or *coming in P0c*. *Remote agent* is
   a shorthand: it adds an `llm_agent` with one `a2a:` tool, which is all the
-  spec has for it.
+  spec has for it. On screens narrower than 1280px the palette is a rail of
+  icons (each keeps its name and blurb for screen readers and as a tooltip).
 - **Edges.** Drag from a node's right handle to another node's left handle.
   Delete or Backspace removes the selected nodes or edges.
 - **Inspector.** Edit a node's id (edges follow a rename), description,
@@ -397,9 +398,13 @@ pattern gallery one click away.
 - **Patterns.** Pipeline and release-notes run today. Router, fan-out,
   supervisor, critic loop, debate, map-reduce, handoff and plan-execute are
   in the gallery, marked *needs P0b*: you can look at them but not load them.
-- **Tidy** lays the graph out again: columns follow the edges, so the layout
-  is the same for the same spec. Loading a pattern or importing a spec can be
-  undone from the banner it shows.
+- **Layout.** The graph flows left to right, or top to bottom when the canvas
+  is taller than it is wide (a laptop screen, beside the palette and panels),
+  so a pipeline fits at a readable size; crossing between the two lays it out
+  again. Ranks follow the edges, so the layout is the same for the same spec.
+  *Tidy* lays it out again by hand, and a loaded pattern, import or past run
+  is fitted to the view, never below 75% zoom (pan for the rest). Loading a
+  pattern or importing a spec can be undone from the banner it shows.
 - **Validation** runs as you edit. It checks the spec against the JSON Schema
   from `GET /studio/schema` and against this release's rules (one pipeline
   path, kinds, tool references against the registry). Problems are marked on
@@ -425,8 +430,14 @@ the event stream:
 - if the stream drops, it reconnects (0.5 s, then 1, 2, 4 and 8 s) with
   `Last-Event-ID`, and events already seen are ignored, so nothing is played
   twice;
-- *Cancel run* calls `POST /studio/runs/{id}/cancel`. The canvas is locked
-  while a run is live.
+- when it gives up, or the stream answers 404, it reads the run's summary
+  (`GET /studio/runs/{id}`). A run that ended takes its outcome and totals
+  from there. A run still going stays locked, with *Cancel run* and
+  *Reconnect* (which resumes after the last event seen). A run that can't be
+  read at all (gone, or on another replica) ends as *outcome unknown*;
+- *Cancel run* calls `POST /studio/runs/{id}/cancel`, also while the run is
+  being started (it is sent as soon as the run has an id). The canvas is
+  locked while a run is live.
 
 **A2A.** For each remote call in the run: the request (method, parts and
 sizes), the task's states (`submitted → working → completed`, or where it
@@ -448,8 +459,9 @@ compare them: A is the earlier, and the table gives totals and per-node tokens
 and latency, with B − A.
 
 **Export and import.** *Export* copies or downloads the spec as JSON
-(`<name>.studio.json`). *Import* takes pasted JSON or a file. It rejects what
-is not a spec and loads the rest, with problems marked as usual. There is no
+(`<name>.spec.json`). *Import* takes pasted JSON or a file. It rejects what
+is not a spec (including an unknown node kind or the same edge listed twice)
+and loads the rest, with problems marked as usual. There is no
 ADK Python export yet.
 
 On a narrow screen the canvas is read-only (tap a node to inspect it); the

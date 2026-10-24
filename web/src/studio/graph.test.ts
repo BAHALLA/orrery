@@ -5,6 +5,8 @@ import {
   connect,
   graphToSpec,
   layout,
+  LEVEL,
+  relayout,
   removeEdges,
   removeNodes,
   specToGraph,
@@ -154,5 +156,52 @@ describe("editing", () => {
     expect(uniqueId("agent", ["agent", "agent_2"])).toBe("agent_3");
     expect(uniqueId("Remote A2A!", [])).toBe("remote_a2a_");
     expect(uniqueId("42", [])).toBe("node");
+  });
+
+  it("gives a from → to pair listed twice its own id, so deleting one keeps the other", () => {
+    const spec: CompositionSpec = {
+      ...RELEASE_NOTES,
+      edges: [...RELEASE_NOTES.edges, { from: "research", to: "writer" }],
+    };
+    const g = specToGraph(spec);
+    const ids = g.edges.map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const twin = g.edges.at(-1)!;
+    expect(graphToSpec(removeEdges(g, [twin.id])).edges).toEqual(RELEASE_NOTES.edges);
+    // A rename keeps the twins apart.
+    const renamed = updateNode(g, "research", { ...g.nodes[0]!.data.spec, id: "scout" });
+    expect(new Set(renamed.edges.map((e) => e.id)).size).toBe(renamed.edges.length);
+  });
+
+  it("lays out top to bottom on a tall canvas, and extends a pipeline downwards", () => {
+    const pos = layout(
+      ["a", "b", "c"],
+      [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+      "TB",
+    );
+    expect(pos).toEqual({ a: { x: 0, y: 0 }, b: { x: 0, y: LEVEL }, c: { x: 0, y: 2 * LEVEL } });
+    const g = specToGraph(RELEASE_NOTES, "TB");
+    expect(g.direction).toBe("TB");
+    expect(graphToSpec(g)).toEqual(RELEASE_NOTES);
+    const added = addNode(g, newNode("llm_agent", "editor"));
+    expect(added.nodes.at(-1)!.position).toEqual({ x: 0, y: 3 * LEVEL });
+    const flipped = relayout(g, "LR");
+    expect(flipped.direction).toBe("LR");
+    expect(flipped.nodes[1]!.position).toEqual({ x: COLUMN, y: 0 });
+  });
+
+  it("redraws a node's child links when its children change", () => {
+    const sup = specToGraph(TEMPLATES.find((t) => t.id === "supervisor")!.spec);
+    const boss = sup.nodes.find((n) => n.data.spec.children?.length)!;
+    const kept = boss.data.spec.children!.slice(0, 1);
+    const next = updateNode(sup, boss.id, { ...boss.data.spec, children: kept });
+    const links = next.edges.filter((e) => e.data?.child && e.source === boss.id);
+    expect(links.map((e) => e.target)).toEqual(kept);
+    // Spec edges are untouched, and the spec round-trips.
+    expect(graphToSpec(next).edges).toEqual(graphToSpec(sup).edges);
+    expect(graphToSpec(next).nodes.find((n) => n.id === boss.id)!.children).toEqual(kept);
   });
 });

@@ -71,7 +71,8 @@ export function parseSpec(text: string): ImportResult {
       return { ok: false, error: `nodes[${i}] is not an object.` };
     const { id, kind } = node as Record<string, unknown>;
     if (typeof id !== "string" || !id) return { ok: false, error: `nodes[${i}] has no id.` };
-    if (typeof kind !== "string" || !(kind in KINDS)) {
+    // Own keys only: `in` would take "constructor" or "__proto__" for a kind.
+    if (typeof kind !== "string" || !Object.hasOwn(KINDS, kind)) {
       return {
         ok: false,
         error: `nodes[${i}] ("${id}") has an unknown kind ${JSON.stringify(kind)}.`,
@@ -81,11 +82,20 @@ export function parseSpec(text: string): ImportResult {
       return { ok: false, error: `Two nodes are called "${id}": the canvas needs unique ids.` };
     ids.add(id);
   }
+  const pairs = new Set<string>();
   for (const [j, edge] of edges.entries()) {
     const { from, to } = (edge ?? {}) as Record<string, unknown>;
     if (typeof from !== "string" || typeof to !== "string") {
       return { ok: false, error: `edges[${j}] needs "from" and "to".` };
     }
+    const pair = JSON.stringify([from, to]);
+    if (pairs.has(pair)) {
+      return {
+        ok: false,
+        error: `Two edges go from "${from}" to "${to}" (edges[${j}]): keep one.`,
+      };
+    }
+    pairs.add(pair);
   }
   const full = {
     spec_version: 1,

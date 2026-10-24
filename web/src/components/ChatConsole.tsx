@@ -309,7 +309,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                 </p>
               }
             >
-              <StudioView token={token} />
+              <StudioView token={token} active={view === "studio"} />
             </Suspense>
           </div>
         ) : null}

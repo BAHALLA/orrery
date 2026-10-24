@@ -17,6 +17,8 @@ export interface NodeDecor {
   needs: string | null;
   /** Unix seconds, ticking while the node runs. */
   now: number;
+  /** The graph flows top to bottom: handles go on the top and bottom edges. */
+  vertical: boolean;
 }
 
 const ring: Record<string, string> = {
@@ -54,7 +56,11 @@ export const NodeCard = memo(function NodeCard({ data, selected }: NodeProps<Stu
         decor.needs ? "border-dashed opacity-80" : ""
       } ${issues.length && status === "pending" ? "border-crit-border" : ""}`}
     >
-      <Handle type="target" position={Position.Left} className={handle} />
+      <Handle
+        type="target"
+        position={decor.vertical ? Position.Top : Position.Left}
+        className={handle}
+      />
       {status === "active" ? (
         <span
           aria-hidden="true"
@@ -153,7 +159,11 @@ export const NodeCard = memo(function NodeCard({ data, selected }: NodeProps<Stu
           </span>
         )}
       </div>
-      <Handle type="source" position={Position.Right} className={handle} />
+      <Handle
+        type="source"
+        position={decor.vertical ? Position.Bottom : Position.Right}
+        className={handle}
+      />
     </div>
   );
 });

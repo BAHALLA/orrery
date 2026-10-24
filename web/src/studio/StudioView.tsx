@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { ApiError } from "../api/client";
 import { BREAKPOINT_LG, useMediaQuery } from "../components/a11y";
@@ -20,6 +20,7 @@ import {
   specToGraph,
   uniqueId,
   updateNode,
+  type Direction,
   type StudioGraph,
 } from "./graph";
 import { HistoryPanel } from "./HistoryPanel";
@@ -103,6 +104,11 @@ function useNow(on: boolean): number {
 
 interface Props {
   token: string;
+  /**
+   * False while the console shows another view: the Studio stays mounted (a
+   * run keeps streaming) but stops its clock, so it does not re-render.
+   */
+  active?: boolean;
 }
 
 /**
@@ -111,8 +117,14 @@ interface Props {
  * watch it run. Admins only; lazy-loaded, so none of it is in the chat
  * console's first load.
  */
-export default function StudioView({ token }: Props) {
-  const client = useMemo(() => new StudioClient(token), [token]);
+export default function StudioView({ token, active = true }: Props) {
+  // One client for the view's life: a silent token renewal swaps its token
+  // instead of making a new client, which would refetch the registry (losing
+  // resolved cards) and strand a stream being followed on the old token.
+  const client = useMemo(() => new StudioClient(token), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    client.setToken(token);
+  }, [client, token]);
   const [schema, setSchema] = useState<StudioSchema | null>(null);
   const [unavailable, setUnavailable] = useState<{ status: number; message: string } | null>(null);
   // Until the schema answers, it is not known whether the Studio is mounted here.
@@ -129,15 +141,45 @@ export default function StudioView({ token }: Props) {
   const [pinned, setPinned] = useState<PinnedIssue[]>([]);
   const [dialog, setDialog] = useState<null | "templates" | "export" | "import">(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | undefined>(undefined);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const directionRef = useRef<Direction>("LR");
+  // Bumped when the graph is replaced or laid out again, so the canvas refits.
+  const [fitSignal, setFitSignal] = useState(0);
+  const refit = useCallback(() => setFitSignal((n) => n + 1), []);
   const caps = P0A;
   const run = useStudioRun(client);
   const wide = useMediaQuery(BREAKPOINT_LG);
   const live = run.busy;
   const editable = !live;
-  const now = useNow(live);
+  const now = useNow(live && active);
   // Bumped to move focus to the run input (once the Run tab has rendered).
   const [focusInput, setFocusInput] = useState(0);
   const tabs = useTabs(TAB_IDS, tab, setTab);
+
+  // A live region only speaks when its text changes: clear it first, so the
+  // same message twice ("Added writer_2." after an undo) is announced twice.
+  const announce = useCallback((message: string) => {
+    setNotice(null);
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(message), 50);
+  }, []);
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+
+  /** Where focus goes when the thing holding it is deleted: the panel beside the canvas. */
+  const focusPanel = useCallback(() => {
+    requestAnimationFrame(() => panelRef.current?.focus());
+  }, []);
+
+  const onDirection = useCallback(
+    (direction: Direction) => {
+      if (direction === directionRef.current) return;
+      directionRef.current = direction;
+      setGraph((g) => (g.nodes.length ? relayout(g, direction) : { ...g, direction }));
+      refit();
+    },
+    [refit],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -203,16 +245,17 @@ export default function StudioView({ token }: Props) {
       setSelectedId(null);
       setPinned([]);
       setDialog(null);
+      refit();
     },
-    [graph],
+    [graph, refit],
   );
 
   const loadTemplate = useCallback(
     (t: Template) => {
-      replaceGraph(specToGraph(t.spec), `Loaded ${t.title}`);
-      setNotice(`Loaded the ${t.title} template.`);
+      replaceGraph(specToGraph(t.spec, directionRef.current), `Loaded ${t.title}`);
+      announce(`Loaded the ${t.title} template.`);
     },
-    [replaceGraph],
+    [replaceGraph, announce],
   );
 
   const addKind = useCallback(
@@ -224,9 +267,9 @@ export default function StudioView({ token }: Props) {
       setGraph((g) => addNode(g, newNode(kind, id)));
       setSelectedId(id);
       setTab("inspect");
-      setNotice(`Added ${id}.`);
+      announce(`Added ${id}.`);
     },
-    [graph.nodes],
+    [graph.nodes, announce],
   );
 
   const onRun = useCallback(async () => {
@@ -247,17 +290,17 @@ export default function StudioView({ token }: Props) {
         setSelectedId(firstNode ?? null);
         setTab("inspect");
       }
-      setNotice(
+      announce(
         `The server refused the composition: ${refused.length} problem${refused.length === 1 ? "" : "s"}, marked on the canvas.`,
       );
     }
-  }, [input, run, spec]);
+  }, [input, run, spec, announce]);
 
   const showRun = useCallback(
     (runId: string) => {
       const record = run.history.find((r) => r.runId === runId);
       if (record && JSON.stringify(record.spec) !== JSON.stringify(spec)) {
-        replaceGraph(specToGraph(record.spec), "Opened a past run");
+        replaceGraph(specToGraph(record.spec, directionRef.current), "Opened a past run");
       }
       run.show(runId);
       setTab("run");
@@ -389,8 +432,11 @@ export default function StudioView({ token }: Props) {
               type="button"
               className={toolbarButton}
               disabled={live || !graph.nodes.length}
-              onClick={() => setGraph((g) => relayout(g))}
-              title="Lay the graph out again, left to right"
+              onClick={() => {
+                setGraph((g) => relayout(g, directionRef.current));
+                refit();
+              }}
+              title="Lay the graph out again"
             >
               <LayoutIcon size={15} />
               <span className="sr-only sm:not-sr-only">Tidy</span>
@@ -434,9 +480,14 @@ export default function StudioView({ token }: Props) {
               type="button"
               className="font-semibold underline underline-offset-2"
               onClick={() => {
-                setGraph(undo.graph);
+                setGraph(
+                  (undo.graph.direction ?? "LR") === directionRef.current
+                    ? undo.graph
+                    : relayout(undo.graph, directionRef.current),
+                );
                 setUndo(null);
                 setSelectedId(null);
+                refit();
               }}
             >
               Undo
@@ -467,11 +518,11 @@ export default function StudioView({ token }: Props) {
           {wide ? (
             <aside
               aria-label="Palette"
-              className="orrery-scroll w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-3 dark:border-slate-800 dark:bg-slate-900/40"
+              className="orrery-scroll w-14 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-2 xl:w-60 xl:p-3 dark:border-slate-800 dark:bg-slate-900/40"
             >
               <Palette caps={caps} editable={editable} onAdd={addKind} />
-              <p className={`${sectionTitle} mt-5 px-1`}>Registry</p>
-              <ul className="mt-1.5 flex flex-col gap-1 px-1 text-xs text-slate-600 dark:text-slate-300">
+              <p className={`${sectionTitle} mt-5 hidden px-1 xl:block`}>Registry</p>
+              <ul className="mt-1.5 hidden flex-col gap-1 px-1 text-xs text-slate-600 xl:flex dark:text-slate-300">
                 <li className="flex justify-between">
                   <span>MCP servers</span>
                   <span className="font-mono tabular-nums">{registry?.mcp.length ?? "…"}</span>
@@ -487,7 +538,7 @@ export default function StudioView({ token }: Props) {
                   </span>
                 </li>
               </ul>
-              <p className="mt-4 px-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              <p className="mt-4 hidden px-1 text-[11px] leading-relaxed text-slate-500 xl:block dark:text-slate-400">
                 Runs are read-only (L2) and never touch the live agents, catalogue, chats or memory.
               </p>
             </aside>
@@ -511,6 +562,13 @@ export default function StudioView({ token }: Props) {
               }}
               now={now}
               empty={emptyState}
+              fitSignal={fitSignal}
+              onDirection={onDirection}
+              onRemoved={() => {
+                setTab("inspect");
+                announce("Removed from the composition.");
+                focusPanel();
+              }}
             />
             {!wide && graph.nodes.length ? (
               <p className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 rounded-full bg-white/90 px-2.5 py-1 text-[11px] text-slate-600 shadow-sm dark:bg-slate-900/90 dark:text-slate-300">
@@ -521,7 +579,7 @@ export default function StudioView({ token }: Props) {
 
           <aside
             aria-label="Studio panels"
-            className="flex shrink-0 flex-col bg-white lg:w-[25rem] lg:border-l lg:border-slate-200 dark:bg-slate-900 lg:dark:border-slate-800"
+            className="flex shrink-0 flex-col bg-white lg:w-[22rem] lg:border-l 2xl:w-[25rem] lg:border-slate-200 dark:bg-slate-900 lg:dark:border-slate-800"
           >
             <div
               role="tablist"
@@ -549,7 +607,7 @@ export default function StudioView({ token }: Props) {
                     {...tabs.tabProps(t.id)}
                     id={`studio-tab-${t.id}`}
                     aria-controls="studio-tabpanel"
-                    className={`relative -mb-px inline-flex items-center gap-1 border-b-2 px-2.5 py-2 text-sm font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+                    className={`relative -mb-px inline-flex items-center gap-1 border-b-2 px-2 py-2 text-[13px] font-medium whitespace-nowrap 2xl:px-2.5 2xl:text-sm focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
                       tab === t.id
                         ? "border-brand-600 text-slate-900 dark:border-brand-400 dark:text-white"
                         : "border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
@@ -568,8 +626,10 @@ export default function StudioView({ token }: Props) {
               })}
             </div>
             <div
+              ref={panelRef}
               id="studio-tabpanel"
               role="tabpanel"
+              tabIndex={0}
               aria-labelledby={`studio-tab-${tab}`}
               className="orrery-scroll min-h-0 flex-1 p-4 lg:overflow-y-auto"
             >
@@ -590,7 +650,8 @@ export default function StudioView({ token }: Props) {
                     onRemove={(id) => {
                       setGraph((g) => removeNodes(g, [id]));
                       setSelectedId(null);
-                      setNotice(`Removed ${id}.`);
+                      announce(`Removed ${id}.`);
+                      focusPanel();
                     }}
                     onConnect={(from, to) => setGraph((g) => connect(g, from, to))}
                     onDisconnect={(edgeId) => setGraph((g) => removeEdges(g, [edgeId]))}
@@ -614,11 +675,13 @@ export default function StudioView({ token }: Props) {
                   inputIssues={issues.input}
                   problems={clientIssues.length}
                   busy={run.busy}
-                  connection={run.connection}
+                  cancelling={run.cancelling}
+                  connection={view && view.runId === run.liveRunId ? run.connection : "idle"}
                   error={run.error}
                   onClearError={run.clearError}
                   onRun={() => void onRun()}
                   onCancel={() => void run.cancel()}
+                  onReconnect={run.reconnect}
                   now={now}
                 />
               ) : tab === "a2a" ? (
@@ -656,8 +719,8 @@ export default function StudioView({ token }: Props) {
           initialTab={dialog}
           onClose={() => setDialog(null)}
           onImport={(imported, notes) => {
-            replaceGraph(specToGraph(imported), `Imported ${imported.name}`);
-            setNotice([`Imported ${imported.name}.`, ...notes].join(" "));
+            replaceGraph(specToGraph(imported, directionRef.current), `Imported ${imported.name}`);
+            announce([`Imported ${imported.name}.`, ...notes].join(" "));
           }}
         />
       ) : null}

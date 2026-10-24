@@ -55,4 +55,25 @@ describe("import", () => {
     });
     expect(notes).toHaveLength(1);
   });
+
+  it.each(["constructor", "toString", "__proto__", "hasOwnProperty"])(
+    "refuses %s as a node kind (own keys only)",
+    (kind) => {
+      const text = JSON.stringify({ ...RELEASE_NOTES, nodes: [{ id: "a", kind }], edges: [] });
+      const result = parseSpec(text);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/unknown kind/);
+    },
+  );
+
+  it("refuses an edge listed twice", () => {
+    const text = JSON.stringify({
+      ...RELEASE_NOTES,
+      edges: [...RELEASE_NOTES.edges, { from: "writer", to: "critic" }],
+    });
+    expect(parseSpec(text)).toEqual({
+      ok: false,
+      error: 'Two edges go from "writer" to "critic" (edges[2]): keep one.',
+    });
+  });
 });

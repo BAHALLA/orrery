@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { releaseNotesRun } from "./fixtures/events";
 import {
+  applySummary,
   budgetUse,
+  markLost,
   initialRun,
   isFinished,
   reduceRun,
@@ -146,5 +148,57 @@ describe("reduceRun", () => {
     const view = fold(releaseNotesRun().slice(0, 7));
     const use = Object.fromEntries(budgetUse(view, 103).map((b) => [b.name, b.used]));
     expect(use).toEqual({ max_tokens: 1200, max_tool_calls: 2, max_remote_calls: 1, timeout_s: 3 });
+  });
+
+  it("ignores everything but a missing run.end once the run is over", () => {
+    const run = releaseNotesRun();
+    const done = fold(run);
+    const late = [
+      { ...run[1]!, seq: 50 },
+      { ...(run.find((e) => e.type === "budget.hit") ?? run[2]!), seq: 51 },
+      { ...run.at(-1)!, seq: 52 },
+    ] as StudioEvent[];
+    expect(fold(late, done)).toBe(done);
+  });
+
+  it("takes an outcome and totals from the summary, then still accepts the run.end", () => {
+    const run = releaseNotesRun();
+    const partial = fold(run.slice(0, 5));
+    expect(partial.active).toBe("writer");
+    const summary = {
+      run_id: "run-1",
+      status: "cancelled",
+      spec_name: "release-notes",
+      spec_digest: "x",
+      created_at: 100,
+      ended_at: 103,
+      error: "cancelled by alice",
+      totals: null,
+      event_count: 5,
+      dropped_events: 0,
+    } as const;
+    const settled = applySummary(partial, summary);
+    expect(settled).toMatchObject({
+      status: "cancelled",
+      active: null,
+      error: "cancelled by alice",
+    });
+    expect(settled.nodes.writer?.status).toBe("cancelled");
+    expect(isFinished(settled)).toBe(true);
+    expect(applySummary(partial, { ...summary, status: "running" })).toBe(partial);
+    // Totals missing from the summary still come with the run.end, and nothing else does.
+    const ended = reduceRun(settled, run.at(-1)!);
+    expect(ended.totals).not.toBeNull();
+    expect(reduceRun(settled, { ...run[3]!, seq: 99 } as StudioEvent)).toBe(settled);
+  });
+
+  it("marks a run it can no longer read as lost, and its running node as unknown", () => {
+    const partial = fold(releaseNotesRun().slice(0, 5));
+    const lost = markLost(partial);
+    expect(lost.status).toBe("lost");
+    expect(isFinished(lost)).toBe(true);
+    expect(lost.nodes.writer?.status).toBe("unknown");
+    expect(lost.nodes.research?.status).toBe("ok");
+    expect(markLost(fold(releaseNotesRun()))).toEqual(fold(releaseNotesRun()));
   });
 });
