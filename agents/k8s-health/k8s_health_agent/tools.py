@@ -631,6 +631,12 @@ async def restart_deployment(name: str, namespace: str = "default") -> dict[str,
 _REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
 
 
+def _without_hash(template: dict[str, Any]) -> dict[str, Any]:
+    """A serialized pod template minus the ReplicaSet's own pod-template-hash label."""
+    template.get("metadata", {}).get("labels", {}).pop("pod-template-hash", None)
+    return template
+
+
 @destructive("rolls back a deployment to the previous revision, which changes running pods")
 async def rollback_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
     """Rolls back a deployment to its previous revision.
@@ -671,7 +677,7 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
             if not any(o.uid == meta.uid for o in rs_meta.owner_references or []):
                 continue
             revision = (rs_meta.annotations or {}).get(_REVISION_ANNOTATION, "")
-            if revision.isdigit() and rs.spec is not None and rs.spec.template is not None:
+            if revision.isdecimal() and rs.spec is not None and rs.spec.template is not None:
                 revisions.append((int(revision), rs))
         revisions.sort(key=lambda pair: pair[0])
         if len(revisions) < 2:
@@ -680,9 +686,17 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
                 "message": f"Deployment '{name}' has no previous revision to roll back to.",
             }
         (previous, rs), (current, _) = revisions[-2], revisions[-1]
-        template = apps.api_client.sanitize_for_serialization(rs.spec.template)
-        # The hash is the ReplicaSet's, not part of what the deployment asked for.
-        template.get("metadata", {}).get("labels", {}).pop("pod-template-hash", None)
+        template = _without_hash(apps.api_client.sanitize_for_serialization(rs.spec.template))
+        if spec is not None and template == _without_hash(
+            apps.api_client.sanitize_for_serialization(spec.template)
+        ):
+            return {
+                "status": "success",
+                "message": (
+                    f"Deployment '{name}' already runs the template of revision {previous}; "
+                    "nothing was changed."
+                ),
+            }
         body: list[dict[str, Any]] = [
             {"op": "replace", "path": "/spec/template", "value": template}
         ]
@@ -701,6 +715,14 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
             ),
         }
     except ApiException as e:
+        if e.status in (409, 422):
+            return {
+                "status": "error",
+                "message": (
+                    f"Deployment '{name}' changed while the rollback was prepared; "
+                    "nothing was changed. Check its state, then ask again."
+                ),
+            }
         logger.exception("Failed to rollback deployment '%s'", name)
         return {"status": "error", "message": f"Failed to rollback '{name}': {e.reason}"}
 

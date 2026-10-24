@@ -586,10 +586,55 @@ async def test_rollback_deployment_api_error(mock_api):
     api = _rollback_api(
         mock_api, _deployment(), [_replica_set("3", "web:3"), _replica_set("2", "web:2")]
     )
-    api.patch_namespaced_deployment.side_effect = _api_exception("Conflict")
+    api.patch_namespaced_deployment.side_effect = _api_exception("Forbidden")
 
     result = await rollback_deployment("web")
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_a_deployment_changed_mid_rollback_is_reported_as_such(mock_api):
+    """The resourceVersion test fails with a 422: say what happened, not the reason code."""
+    api = _rollback_api(
+        mock_api, _deployment(), [_replica_set("3", "web:3"), _replica_set("2", "web:2")]
+    )
+    api.patch_namespaced_deployment.side_effect = ApiException(status=422, reason="Invalid")
+
+    result = await rollback_deployment("web")
+    assert result["status"] == "error" and "changed while" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_rollback_to_the_template_already_running_changes_nothing(mock_api):
+    """As kubectl: if the current template is already the target's, skip the patch."""
+    deployment = _deployment()
+    deployment.spec.template = _template("web:2")
+    api = _rollback_api(
+        mock_api, deployment, [_replica_set("3", "web:3"), _replica_set("2", "web:2")]
+    )
+
+    result = await rollback_deployment("web")
+
+    assert result["status"] == "success" and "nothing was changed" in result["message"]
+    api.patch_namespaced_deployment.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_a_non_ascii_digit_revision_is_skipped_not_a_crash(mock_api):
+    api = _rollback_api(
+        mock_api,
+        _deployment(),
+        [_replica_set("3", "web:3"), _replica_set("2", "web:2"), _replica_set("²", "evil:1")],
+    )
+
+    result = await rollback_deployment("web")
+
+    assert result["status"] == "success"
+    body = api.patch_namespaced_deployment.call_args.args[2]
+    assert body[1]["value"]["spec"]["containers"][0]["image"] == "web:2"
 
 
 def test_rollback_deployment_has_destructive_guardrail():
