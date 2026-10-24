@@ -62,7 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the last draft; loops nest at most 2 deep (caps multiply). Allowlisted models are built at startup (a bad name or
   missing key fails it), and Gemini safety filters follow each agent's model
   rather than `MODEL_PROVIDER`. Run persistence writes events and the run row
-  in one transaction and retries with backoff; `?resolve=true` on the registry
+  in one transaction and retries with backoff; Studio statements on
+  PostgreSQL time out after 10 s, and a finished run whose writer is stuck
+  for 5 minutes is dropped from memory with a warning; `?resolve=true` on the registry
   and composition writes are rate-limited, and following runs on other
   replicas is capped and backs off.
 - **Calling remote A2A agents ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).**

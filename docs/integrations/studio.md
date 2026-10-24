@@ -65,7 +65,9 @@ charges the same per-process ledger as chat.
 to four new tables (`studio_compositions`, `studio_composition_versions`,
 `studio_runs`, `studio_run_events`), created at startup if missing; no
 existing table changes. An unreachable database fails startup, unless
-`ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` (the session store's rule). Without
+`ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` (the session store's rule). The Studio's
+connections set `statement_timeout` to 10 s, so a hung query fails (and is
+retried) instead of holding a thread. Without
 PostgreSQL both stay in memory, on each replica, bounded by
 `ORRERY_STUDIO_MAX_RUNS`.
 

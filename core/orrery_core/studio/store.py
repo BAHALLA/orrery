@@ -376,18 +376,34 @@ _events = sa.Table(
 )
 
 
+#: Longest a Studio store statement may run on PostgreSQL before it is
+#: cancelled (milliseconds). Studio's queries are small; this only bounds a hang.
+STATEMENT_TIMEOUT_MS = 10_000
+
+
 class SqlStudioStore:
     """Shared across replicas through the platform's database (PostgreSQL)."""
 
-    def __init__(self, *, db_url: str, connect_timeout: int = 5) -> None:
+    def __init__(
+        self,
+        *,
+        db_url: str,
+        connect_timeout: int = 5,
+        statement_timeout_ms: int = STATEMENT_TIMEOUT_MS,
+    ) -> None:
         from ..persistence.db import is_postgres_url, to_sync_url
 
         if is_postgres_url(db_url):
+            # A statement that hangs would hold its caller's thread (the
+            # default executor, shared with chat) and the run's writer forever.
             self._engine = sa.create_engine(
                 to_sync_url(db_url),
                 future=True,
                 pool_pre_ping=True,
-                connect_args={"connect_timeout": connect_timeout},
+                connect_args={
+                    "connect_timeout": connect_timeout,
+                    "options": f"-c statement_timeout={int(statement_timeout_ms)}",
+                },
             )
         else:  # SQLite: the tests (and nothing else)
             self._engine = sa.create_engine(db_url, future=True)

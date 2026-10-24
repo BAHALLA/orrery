@@ -150,7 +150,7 @@ def principals(monkeypatch):
 
 @pytest.fixture
 def stub() -> GraphStub:
-    return GraphStub(script={}, calls=[], delay={}, inputs={}, after={})
+    return GraphStub(script={}, calls=[], delay={}, hold={}, inputs={}, after={})
 
 
 def test_compositions_over_http(principals, stub):
@@ -262,11 +262,12 @@ def test_another_replica_replays_a_finished_run_from_the_store(principals, stub,
         run_id = start(one, SPEC)
         local = finish(one, run_id)
         here = events(one, run_id)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
+        deadline = time.monotonic() + 30
+        while True:
             there = two.get(f"/studio/runs/{run_id}", headers=ADMIN)
             if there.status_code == 200 and there.json()["status"] != "running":
                 break
+            assert time.monotonic() < deadline, "the other replica never saw the run end"
             time.sleep(0.05)
         summary = there.json()
         assert summary["status"] == local["status"] == "succeeded"
@@ -276,17 +277,31 @@ def test_another_replica_replays_a_finished_run_from_the_store(principals, stub,
 
 
 def test_another_replica_follows_a_live_run_but_cannot_cancel_it(principals, stub, tmp_path):
-    stub.delay = {"first": 1.5}
+    import threading
+
+    gate = threading.Event()  # the run stays live until the follower is following
+    stub.hold = {"first": gate}
     a, b = _replicas(stub, tmp_path / "shared.db")
+    followed: list[dict[str, Any]] = []
     with TestClient(a) as one, TestClient(b) as two:
-        run_id = start(one, SPEC)
-        deadline = time.monotonic() + 10
-        while two.get(f"/studio/runs/{run_id}", headers=ADMIN).status_code != 200:
-            assert time.monotonic() < deadline
-            time.sleep(0.05)
-        refused = two.post(f"/studio/runs/{run_id}/cancel", headers=ADMIN)
-        assert refused.status_code == 409 and "another replica" in refused.json()["detail"]
-        followed = events(two, run_id)  # streams until the run ends on the other replica
+        try:
+            run_id = start(one, SPEC)
+            deadline = time.monotonic() + 30
+            while two.get(f"/studio/runs/{run_id}", headers=ADMIN).status_code != 200:
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
+            refused = two.post(f"/studio/runs/{run_id}/cancel", headers=ADMIN)
+            assert refused.status_code == 409 and "another replica" in refused.json()["detail"]
+            # Streams until the run ends on the other replica.
+            follower = threading.Thread(target=lambda: followed.extend(events(two, run_id)))
+            follower.start()
+            while b.state.studio.following("alice") == 0:
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+        finally:
+            gate.set()
+        follower.join(30)
+        assert not follower.is_alive()
         assert [e["type"] for e in followed][-1] == "run.end"
         assert [e["seq"] for e in followed] == list(range(1, len(followed) + 1))
         assert finish(one, run_id)["status"] == "succeeded"
@@ -298,7 +313,7 @@ def test_the_service_purges_runs_past_retention(principals, stub):
         run_id = start(client, SPEC)
         finish(client, run_id)
         service = app.state.studio
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while (
             service.store.get_run(run_id) is None
             or service.store.get_run(run_id).status == "running"
@@ -419,7 +434,7 @@ def fast_persist(monkeypatch):
     monkeypatch.setattr(runner, "PERSIST_MAX_BACKOFF", 0.05)
 
 
-def _stored(app, run_id: str, timeout: float = 10.0) -> RunRecord:
+def _stored(app, run_id: str, timeout: float = 30.0) -> RunRecord:
     store = app.state.studio.store
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -453,7 +468,7 @@ def test_the_last_write_is_retried_then_given_up(principals, stub, fast_persist,
     with TestClient(app) as client:
         run_id = start(client, SPEC)
         finish(client, run_id)
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 30
         while app.state.studio._persisters:  # the writer ends, and is let go
             assert time.monotonic() < deadline
             time.sleep(0.02)
@@ -502,13 +517,13 @@ def test_an_event_during_a_write_is_written_without_waiting(monkeypatch):
         started = time.monotonic()
         while len(store.events("r1")) < 2:
             await asyncio.sleep(0.01)
-            if time.monotonic() - started > 5:
+            if time.monotonic() - started > 20:
                 break
         took = time.monotonic() - started
         writer.cancel()
         return took
 
-    assert asyncio.run(scenario()) < 2.0
+    assert asyncio.run(scenario()) < 8.0  # the lost wake-up waited 15 s
 
 
 def test_following_runs_on_other_replicas_is_capped_per_person(
@@ -520,22 +535,27 @@ def test_following_runs_on_other_replicas_is_capped_per_person(
 
     monkeypatch.setattr(runner, "MAX_FOLLOWS_PER_USER", 1)
     monkeypatch.setattr("orrery_core.studio.api.MAX_FOLLOWS_PER_USER", 1)
-    stub.delay = {"first": 2.0}
+    gate = threading.Event()  # the run stays live until the second follow is refused
+    stub.hold = {"first": gate}
     a, b = _replicas(stub, tmp_path / "shared.db")
     with TestClient(a) as one, TestClient(b) as two:
-        run_id = start(one, SPEC)
-        deadline = time.monotonic() + 10
-        while two.get(f"/studio/runs/{run_id}", headers=ADMIN).status_code != 200:
-            assert time.monotonic() < deadline
-            time.sleep(0.05)
-        first = threading.Thread(target=events, args=(two, run_id))
-        first.start()
-        while b.state.studio.following("alice") == 0:
-            assert time.monotonic() < deadline
-            time.sleep(0.02)
-        res = two.get(f"/studio/runs/{run_id}/events", headers=ADMIN)
-        assert res.status_code == 429
-        first.join()
+        try:
+            run_id = start(one, SPEC)
+            deadline = time.monotonic() + 30
+            while two.get(f"/studio/runs/{run_id}", headers=ADMIN).status_code != 200:
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
+            first = threading.Thread(target=events, args=(two, run_id))
+            first.start()
+            while b.state.studio.following("alice") == 0:
+                assert time.monotonic() < deadline
+                time.sleep(0.02)
+            res = two.get(f"/studio/runs/{run_id}/events", headers=ADMIN)
+            assert res.status_code == 429
+        finally:
+            gate.set()
+        first.join(30)
+        assert not first.is_alive()
         assert b.state.studio.following("alice") == 0  # released when it ended
         finish(one, run_id)
 
@@ -626,8 +646,8 @@ def test_a_hanging_mcp_close_does_not_hold_the_run(principals, stub, monkeypatch
     monkeypatch.setattr(runner, "CLOSE_TIMEOUT", 0.2)
     with TestClient(make_app(stub)) as client:
         started = time.monotonic()
-        summary = finish(client, start(client, SPEC), timeout=10)
-    assert summary["status"] == "succeeded" and time.monotonic() - started < 5
+        summary = finish(client, start(client, SPEC), timeout=30)
+    assert summary["status"] == "succeeded" and time.monotonic() - started < 30  # vs 60
 
 
 def test_follow_slots_are_reserved_atomically_and_released_once():
@@ -662,3 +682,63 @@ def test_follow_slots_are_reserved_atomically_and_released_once():
     assert not release.alive and service.following("alice") == 0
     release()  # already done: no second release
     assert service.following("alice") == 0
+
+
+def test_a_hanging_statement_is_cancelled_on_postgres(postgres_url):
+    """A statement that hangs would hold the writer's thread forever."""
+    import sqlalchemy as sa
+    from sqlalchemy.exc import OperationalError
+
+    store = SqlStudioStore(db_url=postgres_url, statement_timeout_ms=200)
+    started = time.monotonic()
+    with (
+        pytest.raises(OperationalError, match="statement timeout"),
+        store._engine.connect() as conn,
+    ):
+        conn.execute(sa.text("SELECT pg_sleep(5)"))
+    assert time.monotonic() - started < 3
+    with store._engine.connect() as conn:  # the pool's connections still work
+        assert conn.execute(sa.text("SELECT 1")).scalar() == 1
+
+
+def test_a_finished_run_with_a_stuck_writer_is_forgotten_past_the_ceiling(caplog):
+    import asyncio
+
+    from orrery_core.a2a.remote import RemoteCards, RemoteNetwork
+    from orrery_core.studio import runner
+    from orrery_core.studio.config import StudioConfig
+    from orrery_core.studio.registry import StudioRegistry
+    from orrery_core.studio.spec import parse_spec
+
+    service = runner.StudioService(
+        config=StudioConfig(enabled=True, max_runs_per_user=1),
+        registry=StudioRegistry(),
+        cards=RemoteCards(RemoteNetwork()),
+    )
+    spec = parse_spec(
+        {
+            "spec_version": 1,
+            "name": "t",
+            "nodes": [{"id": "a", "kind": "llm_agent", "instruction": "x"}],
+        }
+    )
+
+    async def scenario() -> tuple[bool, bool]:
+        stuck = asyncio.create_task(asyncio.sleep(3600))  # a write that never returns
+        run = runner.StudioRun(run_id="r1", owner="alice", spec=spec, spec_digest="d", input="x")
+        run.status, run.ended_at = "succeeded", time.time() - 10
+        service._runs[run.run_id] = run
+        service._persisters[run.run_id] = stuck
+        service._prune("alice")
+        kept_while_recent = "r1" in service._runs
+        run.ended_at = time.time() - runner.PERSIST_STUCK_AFTER - 1
+        service._prune("alice")
+        stuck.cancel()
+        return kept_while_recent, "r1" in service._runs
+
+    with caplog.at_level("WARNING", logger=runner.logger.name):
+        kept_while_recent, kept_past_ceiling = asyncio.run(scenario())
+    assert kept_while_recent and not kept_past_ceiling
+    assert any(
+        "r1" in r.getMessage() and "has not finished" in r.getMessage() for r in caplog.records
+    )

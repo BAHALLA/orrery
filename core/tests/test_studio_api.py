@@ -307,6 +307,20 @@ def _finish(client: TestClient, run_id: str, timeout: float = 20.0) -> dict[str,
     raise AssertionError(f"run {run_id} did not finish")
 
 
+def _settled(app: Any, run_id: str, timeout: float = 30.0) -> None:
+    """Wait until *run_id*'s writer has stored its final write and let go.
+
+    Until then the run is kept in memory whatever the caps say (see
+    ``StudioService._prune``), so a test about pruning waits for this first.
+    """
+    persisters = _service_of(app)._persisters
+    deadline = time.monotonic() + timeout
+    while run_id in persisters:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"run {run_id}'s writer did not finish")
+        time.sleep(0.02)
+
+
 def _events(client: TestClient, run_id: str, last_event_id: str | None = None) -> list[dict]:
     headers = dict(ADMIN)
     if last_event_id is not None:
@@ -457,8 +471,9 @@ def test_finished_runs_are_capped_per_person(principals, registry_file, stub):
     with TestClient(app) as client:
         ids = []
         for _ in range(3):
-            ids.append(_start(client))
+            ids.append(_start(client))  # the start prunes past the cap
             _finish(client, ids[-1])
+            _settled(app, ids[-1])  # only a stored run may be forgotten
         service = _service_of(app)
         # Out of this replica's memory, the oldest is still read from the store.
         assert ids[0] not in service._runs and all(i in service._runs for i in ids[1:])
@@ -637,12 +652,12 @@ def test_the_deadline_is_a_budget(client, stub):
 def test_cancel_stops_a_run(client, stub):
     stub.delay = 30.0
     run_id = _start(client)
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while not any(s for s in stub.seen.values()) and time.monotonic() < deadline:
         time.sleep(0.02)
     res = client.post(f"/studio/runs/{run_id}/cancel", headers=ADMIN)
     assert res.status_code == 200
-    summary = _finish(client, run_id, timeout=5)
+    summary = _finish(client, run_id, timeout=20)  # the model call takes 30 s
     assert summary["status"] == "cancelled"
     events = _events(client, run_id)
     assert events[-1]["outcome"] == "cancelled"

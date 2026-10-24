@@ -505,7 +505,11 @@ Where the code differs from, or pins down, the design above:
   was in doubt is retried whole; failures back off (to 5 s) and the final
   write is tried 8 times (its own attempts, after any failures mid-run). A
   finished run leaves the replica's memory only once its writer is done:
-  pruning it earlier made the store show it `running` (a CI race). `create_all` runs under a PostgreSQL advisory lock,
+  pruning it earlier made the store show it `running` (a CI race). Every
+  Studio statement on PostgreSQL has a 10 s `statement_timeout`, so a hung
+  query cannot pin an executor thread (shared with chat) or the writer; a
+  writer still there 5 minutes after its run ended is taken as stuck, and
+  the run is forgotten anyway, with a warning. `create_all` runs under a PostgreSQL advisory lock,
   so replicas booting together do not race. At most 50 versions are kept per
   composition; saves are rate-limited (30/minute per person). Runs older than
   `ORRERY_STUDIO_RUN_RETENTION_DAYS` (14) are purged hourly. Without

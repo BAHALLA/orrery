@@ -55,6 +55,8 @@ class GraphStub(BaseLlm):
     script: dict[str, Callable[[int, str], Reply]] = {}
     calls: list[tuple[str, str, float, float]] = []
     delay: dict[str, float] = {}
+    #: node id -> a ``threading.Event`` the node's model call waits for (60 s at most).
+    hold: dict[str, Any] = {}
     #: node id -> the input text of each of its turns.
     inputs: dict[str, list[str]] = {}
     #: node id -> calls made once the first tool calls have answered (once).
@@ -78,6 +80,8 @@ class GraphStub(BaseLlm):
         started = time.monotonic()
         if wait := self.delay.get(node):
             await asyncio.sleep(wait)
+        if gate := self.hold.get(node):
+            await asyncio.to_thread(gate.wait, 60)
         self.calls.append((node, self.model, started, time.monotonic()))
         if not responses:
             self.inputs.setdefault(node, []).append(text)
@@ -209,7 +213,7 @@ def entered(trace: list[dict]) -> list[str]:
 
 @pytest.fixture
 def stub() -> GraphStub:
-    return GraphStub(script={}, calls=[], delay={}, inputs={}, after={})
+    return GraphStub(script={}, calls=[], delay={}, hold={}, inputs={}, after={})
 
 
 # ── Router ───────────────────────────────────────────────────────────

@@ -551,6 +551,11 @@ CLOSE_TIMEOUT = 10.0
 PERSIST_MAX_BACKOFF = 5.0
 #: Attempts at a finished run's last write before giving up.
 PERSIST_FINAL_ATTEMPTS = 8
+#: Seconds a finished run is kept for a writer that has not let go. Past it
+#: the writer is taken as stuck (a write hanging in its thread) and the run is
+#: forgotten anyway. Well above an honest final write: 8 attempts, each bounded
+#: by the store's connect and statement timeouts, with backoff.
+PERSIST_STUCK_AFTER = 300.0
 #: Seconds between store reads when following a run on another replica;
 #: while nothing new comes, the wait grows to :data:`FOLLOW_MAX_INTERVAL`.
 FOLLOW_INTERVAL = 1.0
@@ -654,28 +659,45 @@ class StudioService:
         Only a run whose final write is done is forgotten (finished, and its
         writer gone): before that the store may still show it running, or not
         at all. Until then the caps are exceeded briefly rather than a run lost.
+        A writer still there :data:`PERSIST_STUCK_AFTER` seconds after its run
+        ended is taken as stuck, and the run is forgotten anyway (logged).
         A forgotten run is read from the store (if its writer gave up after
         :data:`PERSIST_FINAL_ATTEMPTS`, it is gone).
         """
+        now = time.time()
 
         def prunable(run: StudioRun) -> bool:
-            return run.finished and run.run_id not in self._persisters
+            if not run.finished:
+                return False
+            if run.run_id not in self._persisters:
+                return True
+            return now - (run.ended_at or now) > PERSIST_STUCK_AFTER
 
-        now = time.time()
-        for run_id, run in list(self._runs.items()):
+        def forget(run: StudioRun) -> None:
+            if run.run_id in self._persisters:
+                logger.warning(
+                    "Studio run %s ended %.0fs ago and its store write has not "
+                    "finished; forgetting it here (other replicas may report it "
+                    "running)",
+                    run.run_id,
+                    now - (run.ended_at or now),
+                )
+            del self._runs[run.run_id]
+
+        for run in list(self._runs.values()):
             if prunable(run) and now - (run.ended_at or now) > self.config.retention_seconds:
-                del self._runs[run_id]
+                forget(run)
         if owner is not None:
             mine = [r for r in self._runs.values() if r.owner == owner]
             for run in [r for r in mine if prunable(r)][
                 : max(0, len(mine) + 1 - self.config.max_runs_per_user)
             ]:
-                del self._runs[run.run_id]
+                forget(run)
         while len(self._runs) > self.config.max_runs:
             oldest = next((r for r in self._runs.values() if prunable(r)), None)
             if oldest is None:
                 break
-            del self._runs[oldest.run_id]
+            forget(oldest)
 
     def running(self, owner: str | None = None) -> int:
         return sum(
