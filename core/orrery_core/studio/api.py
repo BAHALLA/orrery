@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import weakref
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -63,6 +64,7 @@ from .events import events_json_schema
 from .runner import MAX_FOLLOWS_PER_USER, RunElsewhere, StudioService, TooManyRuns
 from .spec import (
     MAX_INPUT_CHARS,
+    MAX_LOOP_DEPTH,
     MAX_LOOP_ITERATIONS,
     MAX_NODES,
     MAX_PARALLEL_BRANCHES,
@@ -175,6 +177,7 @@ def capabilities(service: StudioService) -> dict[str, Any]:
             "max_parallel_branches": MAX_PARALLEL_BRANCHES,
             "max_supervisor_depth": MAX_SUPERVISOR_DEPTH,
             "max_loop_iterations": MAX_LOOP_ITERATIONS,
+            "max_loop_depth": MAX_LOOP_DEPTH,
             "max_input_chars": MAX_INPUT_CHARS,
         },
     }
@@ -303,16 +306,16 @@ def mount_studio(
         after = int(raw) if raw.isdigit() else 0
         # Following a run on another replica polls the store: a few per person.
         follows = isinstance(run, RunRecord) and not run.finished
-        if follows and service.following(auth.subject) >= MAX_FOLLOWS_PER_USER:
+        # Reserved before any await (atomic on the event loop); released once,
+        # when the stream ends or, if it never starts, when it is collected.
+        if follows and not service.start_follow(auth.subject):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"at most {MAX_FOLLOWS_PER_USER} runs on other replicas followed at once",
             )
+        release: list[Callable[[], Any]] = []
 
         async def frames() -> AsyncIterator[str]:
-            # Counted while it streams (a response never started holds nothing).
-            if follows:
-                service.start_follow(auth.subject)
             try:
                 async for event in service.stream(run, after):
                     if event is None:
@@ -321,11 +324,14 @@ def mount_studio(
                     data = json.dumps(event, separators=(",", ":"))
                     yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {data}\n\n"
             finally:
-                if follows:
-                    service.end_follow(auth.subject)
+                for done in release:
+                    done()
 
+        stream = frames()
+        if follows:
+            release.append(weakref.finalize(stream, service.end_follow, auth.subject))
         return StreamingResponse(
-            frames(),
+            stream,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )

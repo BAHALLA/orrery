@@ -467,7 +467,9 @@ Where the code differs from, or pins down, the design above:
   says `stopped: true` and the branch ends with the answer the source was
   judging (its predecessor's: the last draft, not the critic's rejection), so
   the run still succeeds. A loop strictly inside another (its nodes a subset)
-  starts from zero whenever the outer back edge is taken.
+  starts from zero whenever the outer back edge is taken, so caps multiply:
+  with two levels an inner body may run (5+1)² = 36 times. Loops therefore
+  nest at most 2 deep (`loop_too_deep`); the run's budgets bound the rest.
 - **No loop around a parallel section** (`loop_around_parallel`): ADK's
   `JoinNode` does not reset when its section is entered again, so a second
   round fired the join on the first round's answers (seen in review: nodes
@@ -501,7 +503,9 @@ Where the code differs from, or pins down, the design above:
   one transaction, so a reader that sees a run finished has all its events.
   The append skips sequence numbers already stored, so a batch whose commit
   was in doubt is retried whole; failures back off (to 5 s) and the final
-  write is tried 8 times. `create_all` runs under a PostgreSQL advisory lock,
+  write is tried 8 times (its own attempts, after any failures mid-run). A
+  finished run leaves the replica's memory only once its writer is done:
+  pruning it earlier made the store show it `running` (a CI race). `create_all` runs under a PostgreSQL advisory lock,
   so replicas booting together do not race. At most 50 versions are kept per
   composition; saves are rate-limited (30/minute per person). Runs older than
   `ORRERY_STUDIO_RUN_RETENTION_DAYS` (14) are purged hourly. Without

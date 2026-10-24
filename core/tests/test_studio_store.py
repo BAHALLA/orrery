@@ -87,7 +87,8 @@ def test_compositions_are_versioned_and_edits_must_name_the_latest(store):
     assert store.composition_versions(created.id) == [1, 2]
     assert store.get_composition(created.id, 1).spec == {"name": "one", "pattern": "pipeline"}
     assert store.get_composition(created.id).spec == {"name": "two"}
-    assert [c.id for c in store.list_compositions()] == [created.id]
+    # A shared PostgreSQL holds other tests' compositions: look for this one.
+    assert created.id in [c.id for c in store.list_compositions()]
     with pytest.raises(CompositionConflict):
         store.delete_composition(created.id, expected_version=1)
     store.delete_composition(created.id, expected_version=2)
@@ -537,3 +538,127 @@ def test_following_runs_on_other_replicas_is_capped_per_person(
         first.join()
         assert b.state.studio.following("alice") == 0  # released when it ended
         finish(one, run_id)
+
+
+def test_a_finished_run_is_not_forgotten_before_its_final_write(principals, stub):
+    """The per-person cap used to drop a finished run while its writer was
+    still storing it: read back, it was ``running`` (or missing)."""
+
+    class SlowStore(InMemoryStudioStore):
+        def write_run(self, run, events):  # type: ignore[override]
+            time.sleep(0.6)
+            super().write_run(run, events)
+
+    spec = spec_of([node("a")], [], "pipeline")
+    app = make_app(stub, store=SlowStore(), max_runs_per_user=2)
+    with TestClient(app) as client:
+        ids = []
+        for _ in range(3):
+            ids.append(start(client, spec))
+            finish(client, ids[-1])
+        for run_id in ids:
+            summary = client.get(f"/studio/runs/{run_id}", headers=ADMIN)
+            assert summary.status_code == 200 and summary.json()["status"] == "succeeded"
+
+
+def test_the_final_write_gets_all_its_attempts_after_failures_mid_run(
+    principals, stub, fast_persist, monkeypatch
+):
+    from orrery_core.studio import runner
+
+    monkeypatch.setattr(runner, "PERSIST_FINAL_ATTEMPTS", 3)
+
+    class MidRunOutage(InMemoryStudioStore):
+        """Every write fails while the run goes on; the final one fails twice."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.final_failures = 0
+
+        def write_run(self, run, events):  # type: ignore[override]
+            if run.status == "running":
+                raise OSError("database down")
+            if self.final_failures < 2:
+                self.final_failures += 1
+                raise OSError("still down")
+            super().write_run(run, events)
+
+    stub.delay = {"first": 0.3}  # long enough for many failed writes first
+    store = MidRunOutage()
+    app = make_app(stub, store=store)
+    with TestClient(app) as client:
+        run_id = start(client, SPEC)
+        finish(client, run_id)
+        record = _stored(app, run_id)
+    assert record.status == "succeeded" and store.final_failures == 2
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def sql_store(request, tmp_path):
+    if request.param == "sqlite":
+        return SqlStudioStore(db_url=f"sqlite:///{tmp_path / 'studio.db'}")
+    return SqlStudioStore(db_url=request.getfixturevalue("postgres_url"))
+
+
+def test_write_run_is_all_or_nothing(sql_store, monkeypatch):
+    run_id = uuid.uuid4().hex
+
+    def broken_save(conn, run):
+        raise RuntimeError("the row write failed")
+
+    monkeypatch.setattr(SqlStudioStore, "_save", staticmethod(broken_save))
+    with pytest.raises(RuntimeError):
+        sql_store.write_run(_run(run_id), [{"seq": 1, "type": "run.start"}])
+    monkeypatch.undo()
+    assert sql_store.events(run_id) == [] and sql_store.get_run(run_id) is None
+
+
+def test_a_hanging_mcp_close_does_not_hold_the_run(principals, stub, monkeypatch):
+    import asyncio
+
+    from orrery_core.studio import runner
+    from orrery_core.studio.compiler import CompiledComposition
+
+    async def hang(self) -> None:
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(CompiledComposition, "close", hang)
+    monkeypatch.setattr(runner, "CLOSE_TIMEOUT", 0.2)
+    with TestClient(make_app(stub)) as client:
+        started = time.monotonic()
+        summary = finish(client, start(client, SPEC), timeout=10)
+    assert summary["status"] == "succeeded" and time.monotonic() - started < 5
+
+
+def test_follow_slots_are_reserved_atomically_and_released_once():
+    import gc
+    import weakref
+
+    from orrery_core.a2a.remote import RemoteCards, RemoteNetwork
+    from orrery_core.studio import runner
+    from orrery_core.studio.config import StudioConfig
+    from orrery_core.studio.registry import StudioRegistry
+
+    service = runner.StudioService(
+        config=StudioConfig(enabled=True),
+        registry=StudioRegistry(),
+        cards=RemoteCards(RemoteNetwork()),
+    )
+    taken = [service.start_follow("alice") for _ in range(runner.MAX_FOLLOWS_PER_USER + 1)]
+    assert taken == [True] * runner.MAX_FOLLOWS_PER_USER + [False]
+    for _ in range(runner.MAX_FOLLOWS_PER_USER):
+        service.end_follow("alice")
+    assert service.following("alice") == 0
+
+    # A stream that never starts still gives its slot back, once.
+    async def never_started():
+        yield ""
+
+    assert service.start_follow("alice")
+    stream = never_started()
+    release = weakref.finalize(stream, service.end_follow, "alice")
+    del stream
+    gc.collect()
+    assert not release.alive and service.following("alice") == 0
+    release()  # already done: no second release
+    assert service.following("alice") == 0

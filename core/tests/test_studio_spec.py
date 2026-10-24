@@ -762,3 +762,21 @@ def test_graph_order_is_breadth_first_then_children():
 def test_spec_version_stays_one_and_p0a_specs_still_parse():
     assert SPEC_VERSION == 1
     assert _errors(_spec()) == []
+
+
+def _nested_loops(levels: int) -> dict[str, Any]:
+    # w -> c1 -> c2 -> ... ; ci loops back to w, so each loop holds the ones before it.
+    labelled = [_labelled(f"c{i}", "again", "on") for i in range(1, levels + 1)]
+    edges = [{"from": "w", "to": "c1"}]
+    for i in range(1, levels + 1):
+        edges.append({"from": f"c{i}", "to": "w", "when": "again", "max_iterations": 2})
+        if i < levels:
+            edges.append({"from": f"c{i}", "to": f"c{i + 1}", "when": "on"})
+    return _graph([_node("w"), *labelled], edges, "critic_loop")
+
+
+def test_loops_nest_two_deep_and_no_more():
+    assert _errors(_nested_loops(2)) == []
+    errors = _errors(_nested_loops(3))
+    assert [e["code"] for e in errors] == ["loop_too_deep"]
+    assert "nested 3 deep" in errors[0]["msg"]

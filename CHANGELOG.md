@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `critic-loop.json`. `spec_version` stays 1. A loop may not contain a
   parallel section (`loop_around_parallel`), and a branch may not fan out
   again; nested loops count per entry, and a loop that stops at its cap ends
-  with the last draft. Allowlisted models are built at startup (a bad name or
+  with the last draft; loops nest at most 2 deep (caps multiply). Allowlisted models are built at startup (a bad name or
   missing key fails it), and Gemini safety filters follow each agent's model
   rather than `MODEL_PROVIDER`. Run persistence writes events and the run row
   in one transaction and retries with backoff; `?resolve=true` on the registry

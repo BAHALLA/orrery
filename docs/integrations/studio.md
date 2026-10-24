@@ -197,7 +197,7 @@ every P0a spec still validates and runs the same way.
 |---|---|
 | **Labels** | `"output": {"labels": ["a", "b"]}` on an `llm_agent` or `supervisor`: the node answers `{label, answer}` (structured output); the next node gets `answer`. |
 | **Routing** | Edges out of a labelled node carry `when: "<label>"`, one edge per label. Or put a `router` node right after it, and the `when` edges on the router. A label with no edge ends the run there, with that answer (`POST /studio/validate` warns). Each choice emits `route.decision`. |
-| **Loops** | A back edge with `when` and `max_iterations` (1–5). Each pass emits `loop.iteration`; at the cap the edge is not taken (`stopped: true`) and the branch ends with the answer the source was judging (in a critic loop, the last draft, not the rejection). A loop nested in another counts per entry: each time the outer edge is taken, the inner one starts from zero. A cycle without `max_iterations` is refused, and so is a loop containing a `parallel` or `join` node (`loop_around_parallel`): a join does not start over. |
+| **Loops** | A back edge with `when` and `max_iterations` (1–5). Each pass emits `loop.iteration`; at the cap the edge is not taken (`stopped: true`) and the branch ends with the answer the source was judging (in a critic loop, the last draft, not the rejection). A loop nested in another counts per entry: each time the outer edge is taken, the inner one starts from zero, so nested caps multiply (an inner body can run up to (inner cap + 1) × (outer cap + 1) times; budgets still bound the run). Loops nest at most 2 deep (`loop_too_deep`). A cycle without `max_iterations` is refused, and so is a loop containing a `parallel` or `join` node (`loop_around_parallel`): a join does not start over. |
 | **Parallel** | A `parallel` node with 2–6 outgoing edges, each branch a chain of `llm_agent` nodes (no routing, loops or nested fan-out), all meeting at one `join`. The branches run concurrently; the join's successor gets each branch's answer as a `## <branch id>` block, in edge order. |
 | **Supervisor** | A `supervisor` node lists `children` (`llm_agent` or `supervisor` ids, at most 3 levels). Each child is a tool the supervisor's model calls (an ADK `AgentTool`); each call counts as a delegation against `max_delegations`. Children have no edges; their `node.enter`/`node.exit` carry `parent`. |
 | **Per-node models** | `"model": "<name>"` on an `llm_agent` or `supervisor`, from `ORRERY_STUDIO_MODELS`. No fallback chain: a failing model fails the node. Gemini's safety filters follow the node's model, not `MODEL_PROVIDER`. `run.end` totals tokens by model. |
@@ -243,7 +243,7 @@ source, an unknown label, two edges for one label, or a labelled node's edge
 without `when`; a fan-out that is not a `parallel` node, or one with more than
 6 branches (`too_many_branches`); a join that does not close its parallel's
 branches, or a branch that fans out again; a loop around a parallel section
-(`loop_around_parallel`); a cycle without `max_iterations` (`unbounded_cycle`), or
+(`loop_around_parallel`); loops nested more than 2 deep (`loop_too_deep`); a cycle without `max_iterations` (`unbounded_cycle`), or
 `max_iterations` on an edge that is not a back edge; supervisor children that
 are not agents, have two parents, have edges, or nest deeper than 3
 (`too_deep`); a `model` not in `ORRERY_STUDIO_MODELS` (`model_not_allowed`);
@@ -314,7 +314,9 @@ are not sent `tasks/cancel` in P0a.
 its events to the store as it goes (every quarter second), each batch in one
 transaction with the run's row. A failed write is sent again with backoff (up
 to 5 s apart; a stored event is not written twice), and the last one is tried
-8 times before the run is left to read as lost. A run is visible only
+8 times, however many writes failed before, before the run is left to read
+as lost. The replica keeps a finished run in memory until that last write is
+done, so a read never finds it half-stored. A run is visible only
 to the person who started it: to anyone else it is a 404, on every replica.
 
 **Several replicas.** With PostgreSQL, any replica serves `GET /studio/runs`,
@@ -371,7 +373,7 @@ minute per person, and `?resolve=true` on the registry to 6 a minute (429 with
  "models": ["anthropic/claude-sonnet-4-5", "gemini-2.5-flash"],
  "human_approval": false, "stored_compositions": true,
  "limits": {"max_nodes": 30, "max_parallel_branches": 6, "max_supervisor_depth": 3,
-            "max_loop_iterations": 5, "max_input_chars": 8192}}
+            "max_loop_iterations": 5, "max_loop_depth": 2, "max_input_chars": 8192}}
 ```
 
 `budget_ceilings` is `{max_tokens, max_tool_calls, max_delegations,

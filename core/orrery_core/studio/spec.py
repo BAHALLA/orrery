@@ -50,6 +50,9 @@ MAX_NODES = 30
 MAX_PARALLEL_BRANCHES = 6
 MAX_SUPERVISOR_DEPTH = 3
 MAX_LOOP_ITERATIONS = 5
+#: Loops nested in loops: an inner loop starts over each time an outer one is
+#: taken, so nested caps multiply (two levels: up to (5+1)^2 passes).
+MAX_LOOP_DEPTH = 2
 #: Longest run input, in characters (the console's message bound).
 MAX_INPUT_CHARS = 8192
 
@@ -857,6 +860,18 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
                     f"a loop cannot contain a parallel section ({', '.join(fan)}): loop "
                     "before the parallel node or after its join",
                     "loop_around_parallel",
+                )
+            )
+
+    for j, body in loop_body.items():
+        depth = 1 + sum(1 for k, other in loop_body.items() if k != j and body < other)
+        if depth > MAX_LOOP_DEPTH:
+            errors.append(
+                SpecError(
+                    ("edges", j),
+                    f"this loop is nested {depth} deep; at most {MAX_LOOP_DEPTH} (nested "
+                    "loops multiply: an inner one starts over on each outer pass)",
+                    "loop_too_deep",
                 )
             )
 

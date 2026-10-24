@@ -651,20 +651,28 @@ class StudioService:
 
         *owner* is about to start one: their oldest finished runs go first once
         they hold ``max_runs_per_user``, so one person cannot crowd out the rest.
-        Forgotten here, a run is still in the store.
+        Only a run whose final write is done is forgotten (finished, and its
+        writer gone): before that the store may still show it running, or not
+        at all. Until then the caps are exceeded briefly rather than a run lost.
+        A forgotten run is read from the store (if its writer gave up after
+        :data:`PERSIST_FINAL_ATTEMPTS`, it is gone).
         """
+
+        def prunable(run: StudioRun) -> bool:
+            return run.finished and run.run_id not in self._persisters
+
         now = time.time()
         for run_id, run in list(self._runs.items()):
-            if run.finished and now - (run.ended_at or now) > self.config.retention_seconds:
+            if prunable(run) and now - (run.ended_at or now) > self.config.retention_seconds:
                 del self._runs[run_id]
         if owner is not None:
             mine = [r for r in self._runs.values() if r.owner == owner]
-            for run in [r for r in mine if r.finished][
+            for run in [r for r in mine if prunable(r)][
                 : max(0, len(mine) + 1 - self.config.max_runs_per_user)
             ]:
                 del self._runs[run.run_id]
         while len(self._runs) > self.config.max_runs:
-            oldest = next((r for r in self._runs.values() if r.finished), None)
+            oldest = next((r for r in self._runs.values() if prunable(r)), None)
             if oldest is None:
                 break
             del self._runs[oldest.run_id]
@@ -750,8 +758,12 @@ class StudioService:
         sent = 0
         first = True
         failures = 0
+        final = False
         while True:
             finished = run.finished
+            if finished and not final:
+                # The final write gets all its attempts, whatever failed before.
+                final, failures = True, 0
             batch = run.events[sent:]
             if batch or first or finished:
                 record = run.record(self.replica, timeout_s)
@@ -1046,8 +1058,17 @@ class StudioService:
     def following(self, subject: str) -> int:
         return self._follows.get(subject, 0)
 
-    def start_follow(self, subject: str) -> None:
-        self._follows[subject] = self._follows.get(subject, 0) + 1
+    def start_follow(self, subject: str) -> bool:
+        """Reserve one of *subject*'s follow slots; ``False`` when all are taken.
+
+        Check and increment with no await between them, so concurrent requests
+        cannot both take the last slot.
+        """
+        held = self._follows.get(subject, 0)
+        if held >= MAX_FOLLOWS_PER_USER:
+            return False
+        self._follows[subject] = held + 1
+        return True
 
     def end_follow(self, subject: str) -> None:
         left = self._follows.get(subject, 0) - 1
