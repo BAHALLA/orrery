@@ -160,9 +160,9 @@ def setup_logging(level: int | str | None = None) -> None:
     handler.setFormatter(JSONFormatter())
     root.addHandler(handler)
     # LiteLLM logs a line per model call at INFO ("LiteLLM completion()
-    # model=..."), which buries the audit trail. Its own LITELLM_LOG still
-    # raises them when someone is debugging the provider.
-    # LOG_LEVEL=DEBUG does not re-enable them; LITELLM_LOG does.
+    # model=..."), which buries the audit trail, so its loggers stay at WARNING
+    # even with LOG_LEVEL=DEBUG. Setting LITELLM_LOG (someone debugging the
+    # provider) makes them follow LOG_LEVEL instead.
     for name in _CHATTY_LOGGERS:
         logging.getLogger(name).setLevel(
             logging.NOTSET if os.getenv("LITELLM_LOG") else max(logging.WARNING, root.level)

@@ -253,9 +253,9 @@ def _audit_response(tool_response: Any, mode: str = "full") -> Any:
 
     ``summary`` records the status, the measured size, an MCP ``is_error`` flag,
     and for a tool's own failure (``status: error``) a short ``message``. ``none``
-    records nothing. In
-    ``full`` mode small results (the overwhelming majority — status dicts, counts, short
-    summaries) are kept verbatim so the trail stays useful for debugging.
+    records nothing. In ``full`` mode small results (the overwhelming majority —
+    status dicts, counts, short summaries) are kept verbatim so the trail stays
+    useful for debugging.
     Anything over :data:`MAX_AUDIT_RESPONSE_CHARS` is replaced by its status and
     measured size rather than serialized in full. Size is measured with a walk
     that sums string lengths, not by serializing — serializing to decide would
