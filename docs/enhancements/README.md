@@ -30,6 +30,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--blue">P2</span> | [AEP-028](aep-028-plan-approval.md) | Plan-Level Approval for Multi-Step Changes | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-029](aep-029-answer-feedback.md) | User Feedback on Answers | <span class="badge badge--amber">proposed</span> | Medium | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-030](aep-030-chat-attachments.md) | Chat Attachments, Processed and Never Stored | <span class="badge badge--green">completed</span> | Medium | Medium-High |
+| <span class="badge badge--blue">P2</span> | [AEP-031](aep-031-orrery-studio.md) | Orrery Studio: Composing Agents, A2A and MCP on a Canvas | <span class="badge badge--amber">proposed</span> ([ADR-008](../adr/008-consuming-remote-a2a-agents.md)) | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-026](aep-026-experience-capture-rex.md) | Experience Capture & REX Generation | <span class="badge badge--amber">proposed</span> | Medium-High | Medium-High |
 | <span class="badge badge--blue">P2</span> | [AEP-005](aep-005-a2a-protocol.md) | Agent-to-Agent (A2A) Protocol Support | <span class="badge badge--amber">in-progress</span> ([ADR-007](../adr/007-a2a-exposition.md)) | High | High |
 | <span class="badge badge--blue">P2</span> | [AEP-006](aep-006-artifacts.md) | Artifact Management for Reports & Logs | <span class="badge badge--amber">proposed</span> | Low | Medium |
@@ -98,6 +99,7 @@ tool organization, and load/chaos coverage:
 - **AEP-028**: Plan-level approval — approve a declared multi-step change once, instead of a card per step, without widening authorization
 - **AEP-029**: User feedback on answers — 👍/👎 linked to the trace, feeding AEP-022's eval harvesting
 - **AEP-030 ✅**: Chat attachments — images and text files processed in memory for one turn, never stored *(completed 2026-10-19)*
+- **AEP-031**: Orrery Studio — compose local agents, remote A2A agents and MCP servers in named patterns on a canvas, run them as ephemeral drafts and watch a live trace graph
 
 > **AEP-020 – 023** were identified by benchmarking Orrery against the mature
 > [Hermes agent architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture):
@@ -146,3 +148,4 @@ Custom agent classes for domain-specific DevOps patterns:
 | 2026-10-15 | AEP-009: proposed → in-progress | `POST /chat/stream` (SSE) with live tool progress via `ProgressPlugin`, then Slack and Google Chat progress. Provider token streaming remains to be checked. |
 | 2026-10-19 | AEP-030 added and completed (P2) | Chat attachments processed in memory under hard caps and never stored; the session keeps only a placeholder. |
 | 2026-10-23 | AEP-005: proposed → in-progress | Inbound A2A exposition of the coordinator shipped under [ADR-007](../adr/007-a2a-exposition.md), which supersedes the original design. Consuming remote agents is not built. |
+| 2026-10-24 | AEP-031 added (P2), ADR-008 proposed | A composition spec compiled to ADK `Workflow`s (ADK's `AgentConfig` resolves code by import path, so an API cannot accept it), ephemeral studio runs that never touch the live tree, trace events v2, an admin-curated endpoint registry, and `GuardedRemoteA2aAgent` for the consuming side of A2A. |
