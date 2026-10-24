@@ -1,6 +1,7 @@
 """Kubernetes tools exposed to the k8s health agent."""
 
 import asyncio
+import json
 import logging
 import re
 from datetime import UTC
@@ -631,6 +632,15 @@ async def restart_deployment(name: str, namespace: str = "default") -> dict[str,
 _REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
 
 
+def _server_message(e: ApiException) -> str:
+    """The API server's own explanation (an admission denial, say), else the reason."""
+    try:
+        message = json.loads(e.body or "").get("message")
+    except ValueError, AttributeError:
+        message = None
+    return message if isinstance(message, str) and message else str(e.reason)
+
+
 def _without_hash(template: dict[str, Any]) -> dict[str, Any]:
     """A serialized pod template minus the ReplicaSet's own pod-template-hash label."""
     template.get("metadata", {}).get("labels", {}).pop("pod-template-hash", None)
@@ -715,7 +725,10 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
             ),
         }
     except ApiException as e:
-        if e.status in (409, 422):
+        detail = str(e.body or "")
+        # Only the resourceVersion test means "changed"; a 422 is also how a
+        # validation or admission policy refuses the old template.
+        if e.status == 409 or (e.status == 422 and "/metadata/resourceVersion" in detail):
             return {
                 "status": "error",
                 "message": (
@@ -724,7 +737,10 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
                 ),
             }
         logger.exception("Failed to rollback deployment '%s'", name)
-        return {"status": "error", "message": f"Failed to rollback '{name}': {e.reason}"}
+        return {
+            "status": "error",
+            "message": f"Failed to rollback '{name}': {_server_message(e)}",
+        }
 
 
 @destructive("patches a deployment manifest, which can change any aspect of the workload")

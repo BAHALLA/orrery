@@ -599,10 +599,29 @@ async def test_a_deployment_changed_mid_rollback_is_reported_as_such(mock_api):
     api = _rollback_api(
         mock_api, _deployment(), [_replica_set("3", "web:3"), _replica_set("2", "web:2")]
     )
-    api.patch_namespaced_deployment.side_effect = ApiException(status=422, reason="Invalid")
+    failed = ApiException(status=422, reason="Invalid")
+    failed.body = '{"message": "testing value /metadata/resourceVersion failed"}'
+    api.patch_namespaced_deployment.side_effect = failed
 
     result = await rollback_deployment("web")
     assert result["status"] == "error" and "changed while" in result["message"]
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_a_policy_refusing_the_old_template_says_why(mock_api):
+    """A 422 is also an admission denial: report the server's reason, not a change."""
+    api = _rollback_api(
+        mock_api, _deployment(), [_replica_set("3", "web:3"), _replica_set("2", "web:2")]
+    )
+    denied = ApiException(status=422, reason="Invalid")
+    denied.body = '{"message": "image web:2 is not signed", "reason": "Invalid"}'
+    api.patch_namespaced_deployment.side_effect = denied
+
+    result = await rollback_deployment("web")
+    assert result["status"] == "error"
+    assert "image web:2 is not signed" in result["message"]
+    assert "changed while" not in result["message"]
 
 
 @pytest.mark.asyncio
