@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-24
+
+A console and hardening release. The **Agents** tab shows what is running
+(versions, models, gates, catalog history) and makes composing agents quicker.
+Every turn now has a deadline, so a wedged turn can no longer hold its session
+forever, and the Helm chart grants the agent's ServiceAccount exactly the
+Kubernetes access its tools use. Slack approval cards are actually posted, turns
+in one session run one at a time, the patch tools change only what they are
+for, and redaction covers credentials in URLs and Google API keys.
+
+**Upgrade notes.**
+
+- The Helm chart now creates a ClusterRole and ClusterRoleBinding by default
+  (`rbac.create: true`, `profile: read`), which needs cluster-admin to install.
+  Set `rbac.create: false` to keep managing RBAC yourself. It refuses to bind
+  the namespace's `default` ServiceAccount: with `serviceAccount.create: false`,
+  set `serviceAccount.name`.
+- Turns stop after 15 minutes (`ORRERY_TURN_TIMEOUT_SECONDS`, `0` disables).
+- `patch_deployment` and `patch_statefulset` refuse fields outside their
+  allowlist (security contexts, volumes, host access, scheduling, command, …);
+  change those through a reviewed manifest.
+
 ### Added
 
 - The console's **Agents** tab shows what is running. A deployment panel gives
@@ -1429,7 +1451,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/BAHALLA/orrery/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/BAHALLA/orrery/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/BAHALLA/orrery/compare/v0.6.9...v0.7.0
 [0.6.9]: https://github.com/BAHALLA/orrery/compare/v0.6.8...v0.6.9
