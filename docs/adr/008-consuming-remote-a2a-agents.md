@@ -46,16 +46,22 @@ one request to one registered remote and returns its reply. It holds a
 `RemoteA2aAgent` internally for the protocol and event conversion (so A2A
 version changes follow ADK), runs it in a fresh in-memory session so that
 **only the request** leaves, and is labelled with `set_guard()` like every
-other tool. Every existing tool-level control therefore applies unchanged:
+other tool. That inner run has **no plugins** (`include_plugins=False`): the
+outer tool call is already guarded, and an inner `SafetyScreenPlugin.before_run`
+would block legitimate requests that quote suspicious text. The tool carries a
+`delegates_remotely` marker that `DelegationGuardPlugin` and `ProgressPlugin`
+check alongside `isinstance(tool, AgentTool)`, so a remote call counts as a
+delegation. Its function name is derived safely (`a2a_<entry>_<skill>`): model
+providers allow no `.` or `:` in tool names. Every existing tool-level control therefore applies unchanged:
 autonomy, RBAC, confirmation, AEP-027 counting, the safety screen, PII
 redaction, the output cap and the audit log. A wiring test fails on any other
 use of `RemoteA2aAgent` in the codebase.
 
 ### Where remote agents come from
 
-Only from a registry: a YAML file named by `ORRERY_A2A_REMOTES` (deployment
-config, like `ORRERY_MCP_CONFIG`), never from a request or the console in v1.
-An entry has `card_url`, the `skills` it may be used for,
+Only from a registry: the `a2a:` section of the YAML file named by
+`ORRERY_STUDIO_REGISTRY` (deployment config, like `ORRERY_MCP_CONFIG`), never
+from a request or the console in v1. An entry has `card_url`, the `skills` it may be used for,
 `effect: read_only | acting`, optional auth and `private_network`.
 
 - **Pinning.** The card is fetched once and pinned by the SHA-256 of the
@@ -82,7 +88,13 @@ taking a **set** of allowed origins. Both transports keep the same rules:
 - metadata and link-local addresses always blocked; proxy variables ignored;
 - reads capped while streaming (card and reply bytes, part count), before any
   plugin sees the data;
-- connect, read and total timeouts from the entry (defaults 5 s / 60 s / 120 s).
+- connect, read and total timeouts from the entry (defaults 5 s / 60 s / 120 s);
+- TLS verified against the system store, plus one deployment-level CA bundle
+  if `ORRERY_A2A_CA_FILE` is set (for an internal CA such as the demo fleet's).
+  Registry entries never name files.
+
+Plain http is allowed only loopback to loopback, as ADK and the MCP guard
+already allow; tests use that.
 
 The client is supplied through `a2a_client_factory` (the `httpx_client`
 argument is deprecated in 2.12). ADK's `auth_scheme` is not used: it can raise
@@ -97,7 +109,7 @@ auth-required events back to the caller.
   the header (LangGraph, plain a2a-sdk agents). Those are bounded by the
   delegation budget and the run deadline instead.
 - Credentials: none by default. A bearer token only from an env var whose name
-  starts with `ORRERY_A2A_SECRET_` and that the entry binds to its own origin.
+  starts with `ORRERY_STUDIO_SECRET_` and that the entry binds to its own origin.
   The calling user's token is **never** forwarded. Delegated identity needs
   RFC 8693 token exchange ([ADR-004](004-user-token-exchange.md)) with the
   remote as audience.
@@ -110,8 +122,9 @@ auth-required events back to the caller.
   outcome and the output cap would never run. With a dict, every plugin edits
   it in place.
 - A remote `input-required` is returned as `task_state: input-required` with
-  the question. It goes to a human through the same out-of-band path as an
-  approval (AEP-031), never answered by a model on its own.
+  the question and the remote's `task_id` and `context_id`. It goes to a human
+  through the same out-of-band path as an approval (AEP-031), never answered by
+  a model on its own; the answer is sent on that same task (P0c).
 - Each exchange emits an `a2a.message` trace event (AEP-031).
 
 ### Effect and approval

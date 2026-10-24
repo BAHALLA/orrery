@@ -16,7 +16,7 @@ Orrery has the parts of a composable agent runtime and none of the composition:
 |------------|-------|-------------------------|
 | Patterns | Sequential, parallel + `JoinNode`, router, critic loop and agent-as-tool exist in ADK 2.12 and in the triage `Workflow` | Hand-written Python only. `AgentGateway` accepts a `Workflow` root, but nothing builds one from data |
 | Runtime editing | `PUT /admin/catalog`: declarative agents (instruction + catalogue tools) and on/off switches | No topology, no toolsets or nested agents, and a save replaces the **live** tree for everyone |
-| Models | One process-wide `MODEL_PROVIDER`/`MODEL_NAME` wrapped in `FallbackLlm` | No per-agent model, so no "same pattern, two models" comparison |
+| Models | One process-wide `MODEL_PROVIDER`/`MODEL_NAME` (wrapped in `FallbackLlm` when `MODEL_FALLBACK_CHAIN` is set) | No per-agent model, so no "same pattern, two models" comparison |
 | MCP | Hardened client (`GuardedMcpToolset`), three transports | Servers fixed in `ORRERY_MCP_CONFIG` at startup |
 | A2A | Inbound only ([ADR-007](../adr/007-a2a-exposition.md)) | No way to call a remote agent |
 | Budgets | AEP-027 counts tool calls and delegations per agent run | No token or wall-clock budget for a whole multi-agent run |
@@ -53,9 +53,15 @@ A Studio run is **separate from**, not **isolated from**, the live system:
 - It never changes the live agent tree, the catalog or chat sessions.
 - Its catalogue tools are the real ones. A `kafka_*` or `kubectl_*` tool in a
   composition reads the real cluster. Studio runs are therefore capped at **L2**
-  (reads only) for catalogue tools, whatever the deployment's ceiling.
-- Plugins are instantiated fresh per run (`build_plugins()`), so rate-limit,
-  delegation and budget state never mixes with chat traffic.
+  (reads only), whatever the deployment's ceiling. `AutonomyPlugin` has one
+  level per session, so in P0a/P0b the whole run is L2. Acting remotes (P0c)
+  need a per-tool rule.
+- Plugins are instantiated fresh per run (`default_plugins(autonomy_level="L2")`),
+  so delegation, repeat and circuit-breaker state never mixes with chat traffic.
+  The one exception is the daily token ledger: the per-run `TokenBudgetPlugin`
+  gets the process's shared ledger, otherwise every run would start at zero.
+- The default thread-pool executor is still shared with chat; a separate
+  executor for studio tools is a P1 item.
 
 Whether the Studio runs in the main deployment behind a flag, or as its own
 deployment with its own catalogue (recommended for the public demo), is a P1
@@ -137,7 +143,8 @@ Errors are field-level, so the console can point at the node.
 ### 2. Runs
 
 Each run gets its own `AgentGateway` with `app_name="orrery-studio"`,
-`memory_service=None`, `verified_confirmation=True` and a fresh plugin list.
+`session_service=InMemorySessionService()` (explicitly, so no durable store is
+ever picked up), `memory_service=None`, `verified_confirmation=True` and a fresh plugin list.
 That is the same plugin stack chat uses, with no second runner to keep in step.
 `AgentGateway` already accepts a `Workflow` root.
 
@@ -147,7 +154,8 @@ That is the same plugin stack chat uses, with no second runner to keep in step.
   `GET /studio/runs/{id}`.
 - `POST /studio/runs/{id}/cancel`. This cancels the run's task: in-flight model
   and HTTP calls are cancelled, toolsets are closed, and the run ends as
-  `cancelled`. A remote A2A task is sent `tasks/cancel` (best effort).
+  `cancelled`. A sync tool already running in a worker thread cannot be
+  interrupted and finishes in the background (harmless at L2). A remote A2A task is sent `tasks/cancel` (best effort).
 - `POST /studio/runs/{id}/approvals/{approval_id}` resumes a run paused at a
   `human_approval` node or by a remote `input-required` (P0c).
 
@@ -158,7 +166,8 @@ appear in chat history.
 **Budgets.** AEP-027 counts per agent run. Studio adds a **composition ledger**
 for the whole run: tokens (from `usage_metadata`), tool calls, delegations,
 remote calls and a deadline. Whichever runs out first ends the run with a
-`budget.hit` event. `ORRERY_DAILY_TOKEN_BUDGET_PER_USER` still applies.
+`budget.hit` event. `ORRERY_DAILY_TOKEN_BUDGET_PER_USER` still applies, through
+the shared ledger (above).
 
 **Replicas.** In P0a a run lives on the replica that started it. The SSE and
 cancel endpoints return 404 elsewhere, and the console uses sticky sessions.
@@ -179,7 +188,10 @@ on its own. Instead, the node:
 
 - writes a pending entry to the existing confirmation store with the run,
   node and a digest of the payload;
-- pauses the run and emits `approval.requested`;
+- pauses the run and emits `approval.requested`. Mechanically the node yields a
+  `RequestInput`, but the client can never answer it: `/chat` and `/studio`
+  refuse client-supplied resumes for studio sessions, and only the server
+  injects the resume after `consume_approved()`;
 - resumes only on the approval endpoint, called by a human admin, and checks
   with `consume_approved()`, like the requester-verified gate.
 
@@ -219,7 +231,8 @@ mcp:
   - id: tirraflow
     url: https://tirraflow.com/mcp
     transport: streamable_http
-    tools: { search_articles: read_only, get_article: read_only, list_series: read_only }
+    tools: [search_articles, get_article, list_series]
+    read_only: [search_articles, get_article, list_series]
 a2a:
   - id: demo-writer
     card_url: https://demo-writer.studio.internal/.well-known/agent-card.json
@@ -262,11 +275,13 @@ A `studio` view in `web/` (React 19, TypeScript, Tailwind 4), with
 
 **Access.** `/studio/*` requires `require_admin` **and** a human principal (a
 client listed in `ORRERY_HUMAN_CLIENTS`). Service tokens with an admin role are
-refused.
+refused. With `ORRERY_HUMAN_CLIENTS` unset every console token counts as human,
+so the Studio refuses to start without it.
 
-**CSP.** React Flow sets inline `style` attributes. The console's CSP must
-allow them (`style-src 'unsafe-inline'`, or nonce-based styles) before the
-canvas ships. Check this against the deployed nginx policy in P1.
+**CSP.** The console's CSP comes from `serving/security_headers.py`. React and
+React Flow set styles through the CSSOM, which `style-src 'self'` allows, so
+nothing is loosened in advance: the canvas is tested under the real policy in
+P1, and any deployment-side nginx policy is checked then too.
 
 ### 7. The demo fleet
 
@@ -275,8 +290,9 @@ A2A across frameworks can be shown without opening egress:
 
 - a plain `a2a-sdk` agent and a LangGraph agent: different frameworks, same
   protocol;
-- each served over **https** with an internal CA, since ADK refuses plain
-  http cards off loopback;
+- each served over **https** with an internal CA (given to Orrery as
+  `ORRERY_A2A_CA_FILE`), since ADK refuses plain http cards off loopback. CI
+  tests use plain http on loopback instead, which ADK and the guard allow;
 - MCP: Tirraflow's own public `/mcp`, plus one small local server (time/units).
 
 Orrery's own A2A adapter is **not** in the fleet until P2. It refuses any
@@ -297,8 +313,9 @@ counter, and an amendment to ADR-007.
      `a2a.message` and `mcp.call` events;
    - the composition ledger;
    - the demo: research (LLM + Tirraflow MCP) → writer (plain `a2a-sdk` agent
-     over https) → critic (LLM), as an end-to-end test in CI with a stub
-     model.
+     over https in the compose demo) → critic (LLM), and the same pipeline as
+     an end-to-end test in CI with a stub model and loopback http;
+   - `ORRERY_STUDIO_ENABLED` refuses to start without `ORRERY_HUMAN_CLIENTS`.
 2. **P0b, patterns and storage:**
    - `router`, `loop`, `parallel`/`join` and `supervisor`;
    - per-node models;
@@ -362,7 +379,7 @@ counter, and an amendment to ADR-007.
 
 **P0a**
 
-- [ ] The demo pipeline runs end to end in CI (stub model, real `a2a-sdk` agent over https, local MCP server). It emits `run.*`, `node.*`, `a2a.message` and `mcp.call` events.
+- [ ] The demo pipeline runs end to end in CI (stub model, real `a2a-sdk` agent on a loopback socket, local MCP server). It emits `run.*`, `node.*`, `a2a.message` and `mcp.call` events.
 - [ ] `GuardedRemoteA2aTool` refuses (tests):
   - unregistered remotes;
   - a changed card digest;
