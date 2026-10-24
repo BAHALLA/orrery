@@ -117,7 +117,7 @@ from .repeat_guard_plugin import (
 )
 from .resilience_plugin import ResiliencePlugin
 from .safety_plugin import SafetyScreenPlugin
-from .token_budget_plugin import TokenBudgetPlugin, create_usage_ledger
+from .token_budget_plugin import TokenBudgetPlugin, UsageLedger, shared_usage_ledger
 from .tool_ledger_plugin import (
     LedgerEntry,
     ToolLedger,
@@ -212,6 +212,7 @@ def default_plugins(
     daily_token_budget_per_user: int | None = None,
     daily_token_budget: int | None = None,
     token_budget_storage_uri: str | None = None,
+    token_ledger: UsageLedger | None = None,
 ) -> list[BasePlugin]:
     """Create the standard set of cross-cutting plugins.
 
@@ -290,6 +291,10 @@ def default_plugins(
             counters across replicas. ``None`` resolves from
             ``ORRERY_RATE_LIMIT_STORAGE_URI``; unset or ``memory://`` counts
             per process.
+        token_ledger: Where the daily budgets are counted. ``None`` uses the
+            process's shared ledger for the storage URI, so every
+            ``default_plugins()`` call in a process (chat, and each Studio run)
+            spends from the same counters.
     """
     if enable_tracing is None:
         enable_tracing = env_flag("OTEL_TRACING_ENABLED", default=False)
@@ -349,7 +354,9 @@ def default_plugins(
         )
         plugins.append(
             TokenBudgetPlugin(
-                per_user=per_user, total=total, ledger=create_usage_ledger(storage_uri)
+                per_user=per_user,
+                total=total,
+                ledger=token_ledger or shared_usage_ledger(storage_uri),
             )
         )
         if (not storage_uri or storage_uri.startswith("memory://")) and env_flag(

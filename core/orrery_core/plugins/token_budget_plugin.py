@@ -198,6 +198,32 @@ def create_usage_ledger(storage_uri: str | None) -> UsageLedger:
     return StorageUsageLedger(storage_uri)
 
 
+_shared_ledgers: dict[str, UsageLedger] = {}
+_shared_ledgers_lock = threading.Lock()
+
+
+def shared_usage_ledger(storage_uri: str | None) -> UsageLedger:
+    """The process's one ledger for *storage_uri* (built on first use).
+
+    ``default_plugins()`` is called more than once in a process when the Studio
+    builds fresh plugins per run (AEP-031). A fresh in-memory ledger each time
+    would start every run at zero, so ``ORRERY_DAILY_TOKEN_BUDGET_PER_USER``
+    would bound nothing. Every caller in the process shares this one instead.
+    """
+    key = "memory://" if not storage_uri or storage_uri.startswith("memory://") else storage_uri
+    with _shared_ledgers_lock:
+        ledger = _shared_ledgers.get(key)
+        if ledger is None:
+            ledger = _shared_ledgers[key] = create_usage_ledger(storage_uri)
+        return ledger
+
+
+def reset_shared_usage_ledgers() -> None:
+    """Forget the shared ledgers (tests)."""
+    with _shared_ledgers_lock:
+        _shared_ledgers.clear()
+
+
 class TokenBudgetPlugin(BasePlugin):
     """Refuse model calls once a caller's or the deployment's daily tokens are spent.
 

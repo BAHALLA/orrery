@@ -29,6 +29,16 @@ Residual: the check resolves the name, then the connection pool resolves it
 again, so a DNS server answering differently within that window (rebinding) is
 not caught. Where that matters, configure the server by IP address: a literal
 is checked exactly, with no lookup to race.
+
+**Shared with outbound A2A (ADR-008).** The checks are library-neutral
+functions (:func:`origin_refusal`, :func:`address_refusal`,
+:func:`check_destination`) that two transports call on every request:
+:class:`GuardedTransport` for the MCP SDK's HTTP library (one origin) and
+:class:`GuardedHttpxTransport` for ``httpx``, which a2a-sdk uses (a *set* of
+origins, a streaming byte cap). For A2A, a private address also needs its host
+or network in :class:`PrivateAllowlist` (``ORRERY_A2A_PRIVATE_ALLOW``); MCP's
+``allow_private_network`` keeps meaning any private address unless a list is
+passed. The MCP rules and messages are unchanged.
 """
 
 from __future__ import annotations
@@ -36,9 +46,12 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import os
+import re
 import socket
 import ssl
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -47,6 +60,9 @@ from urllib.parse import urlsplit
 # SDK that cannot use it. Decided the way ADK decides it (by SDK version, not
 # by which library happens to be importable). ty sees a union of the two
 # modules, hence the ignores on the subclasses below.
+# a2a-sdk and ADK's RemoteA2aAgent use httpx whatever the MCP SDK uses, so the
+# A2A transport below is built on it explicitly.
+import httpx as httpx_std
 from google.adk.dependencies._mcp import IS_MCP_SDK_V2
 
 if IS_MCP_SDK_V2:
@@ -62,6 +78,89 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 class BlockedDestination(httpx.ConnectError):  # ty: ignore[unsupported-base]
     """A request to a host or address this server's config does not allow."""
+
+
+class McpResponseTooLarge(httpx.ReadError):  # ty: ignore[unsupported-base]
+    """An MCP response (or one SSE event) past the byte cap, refused while streaming."""
+
+
+class McpRefusedEncoding(httpx.DecodingError):  # ty: ignore[unsupported-base]
+    """A compressed MCP response: refused, since the byte cap counts wire bytes."""
+
+
+#: Env var: the most bytes one MCP response body, or one event of an SSE
+#: stream, may hold (default :data:`DEFAULT_MCP_MAX_RESPONSE_BYTES`).
+MCP_MAX_RESPONSE_BYTES_ENV = "ORRERY_MCP_MAX_RESPONSE_BYTES"
+DEFAULT_MCP_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+def mcp_max_response_bytes() -> int:
+    raw = os.getenv(MCP_MAX_RESPONSE_BYTES_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MCP_MAX_RESPONSE_BYTES
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError(f"{MCP_MAX_RESPONSE_BYTES_ENV} must be a positive number of bytes")
+    return int(raw)
+
+
+#: What ends one server-sent event (a blank line, in any of SSE's line endings).
+_SSE_BOUNDARY = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+class _ByteCap:
+    """Counts a body's bytes against *cap*: the whole body, or each SSE event.
+
+    A long-lived SSE stream (MCP's SSE transport, a streamable-HTTP GET) has
+    no natural end, so it is held to *cap* per event, not in total.
+    """
+
+    def __init__(self, cap: int, *, per_event: bool) -> None:
+        self.cap = cap
+        self.per_event = per_event
+        self.pending = 0
+        self._tail = b""
+
+    def add(self, chunk: bytes) -> bool:
+        """Count *chunk*; ``False`` once the body (or the current event) is past the cap."""
+        if not self.per_event:
+            self.pending += len(chunk)
+            return self.pending <= self.cap
+        # Scan from the carried tail, so a boundary split across chunks is found;
+        # the tail's bytes are already in ``pending``.
+        combined = self._tail + chunk
+        offset = len(self._tail)
+        start = 0
+        within = True
+        while (match := _SSE_BOUNDARY.search(combined, start)) is not None:
+            event_bytes = self.pending + max(0, match.end() - max(start, offset))
+            within = within and event_bytes <= self.cap
+            self.pending = 0
+            start = match.end()
+            offset = max(offset, start)
+        self.pending += len(combined) - max(start, offset)
+        self._tail = combined[-3:]
+        return within and self.pending <= self.cap
+
+
+class _McpCappedStream(httpx.AsyncByteStream):  # ty: ignore[unsupported-base]
+    def __init__(self, inner: Any, counter: _ByteCap, request: Any) -> None:
+        self._inner = inner
+        self._counter = counter
+        self._request = request
+
+    async def __aiter__(self) -> Any:
+        async for chunk in self._inner:
+            if not self._counter.add(chunk):
+                unit = "an event of " if self._counter.per_event else ""
+                raise McpResponseTooLarge(
+                    f"{unit}the response from MCP server {self._request.url.host} exceeds "
+                    f"{self._counter.cap} bytes ({MCP_MAX_RESPONSE_BYTES_ENV})",
+                    request=self._request,
+                )
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
 
 
 # IPv6 ranges that carry an IPv4 address in their low 32 bits. Python's
@@ -130,50 +229,229 @@ async def _resolve(host: str, port: int) -> list[str]:
     return [str(info[4][0]) for info in infos]
 
 
-class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base]
-    """An HTTP transport pinned to one origin, refusing non-public addresses."""
+Origin = tuple[str, str, int]
+"""``(scheme, host, port)``, host lowercased, port filled in from the scheme."""
 
-    def __init__(self, *, url: str, allow_private_network: bool = False, **kwargs: Any) -> None:
+
+def origin_of(url: str) -> Origin:
+    """The :data:`Origin` of *url*."""
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    return (scheme, (parts.hostname or "").lower(), parts.port or _DEFAULT_PORTS.get(scheme, 0))
+
+
+def _show(origin: Origin) -> str:
+    return f"{origin[0]}://{origin[1]}:{origin[2]}"
+
+
+@dataclass(frozen=True)
+class PrivateAllowlist:
+    """Hosts and networks a ``private_network`` entry may reach (deployment config).
+
+    Read from ``ORRERY_A2A_PRIVATE_ALLOW``: comma-separated hostnames and CIDRs.
+    A hostname listed here may resolve to any private address (still never a
+    link-local or metadata one); an address inside a listed network may be
+    reached by any host.
+    """
+
+    hosts: frozenset[str] = frozenset()
+    networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+
+    @classmethod
+    def parse(cls, raw: str) -> PrivateAllowlist:
+        hosts: set[str] = set()
+        networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        for item in (part.strip() for part in raw.split(",")):
+            if not item:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                if not _HOSTNAME.match(item):
+                    raise ValueError(
+                        f"{PRIVATE_ALLOW_ENV}: {item!r} is neither a hostname nor a CIDR"
+                    ) from None
+                hosts.add(item.lower())
+        return cls(frozenset(hosts), tuple(networks))
+
+    @classmethod
+    def from_env(cls) -> PrivateAllowlist:
+        return cls.parse(os.getenv(PRIVATE_ALLOW_ENV, ""))
+
+    def __bool__(self) -> bool:
+        return bool(self.hosts or self.networks)
+
+    def allows(self, host: str, address: str | None = None) -> bool:
+        """Whether *host* (or *address*, one of its resolved addresses) is listed."""
+        if host.lower() in self.hosts:
+            return True
+        if address is None:
+            address = literal_ip(host)
+        if address is None:
+            return False
+        ip = _address(address)
+        return any(ip.version == net.version and ip in net for net in self.networks)
+
+
+#: Env var holding the :class:`PrivateAllowlist`.
+PRIVATE_ALLOW_ENV = "ORRERY_A2A_PRIVATE_ALLOW"
+_HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$",
+    re.I,
+)
+
+
+def origin_refusal(target: Origin, allowed: Collection[Origin], *, label: str) -> str | None:
+    """Why a request to *target* is refused, or ``None`` when it is one of *allowed*."""
+    if target in allowed:
+        return None
+    shown = ", ".join(sorted(_show(o) for o in allowed)) or "nothing"
+    return f"{label} request to {_show(target)} refused: only {shown} is configured"
+
+
+def address_refusal(
+    host: str,
+    addresses: Sequence[str],
+    *,
+    label: str,
+    allow_private: bool,
+    private_allow: PrivateAllowlist | None = None,
+) -> str | None:
+    """Why *host*, resolving to *addresses*, may not be reached; ``None`` when it may.
+
+    Library-neutral: both HTTP stacks' transports call it on every request.
+
+    - link-local and metadata addresses: always refused;
+    - public addresses: always allowed;
+    - a loopback host (``localhost``, ``127.0.0.1``, ``::1``) may reach loopback;
+    - anything else private only with *allow_private*, and then, when a
+      *private_allow* list is given, only for a host or address it lists, and
+      never a loopback address. With no list (the MCP config's
+      ``allow_private_network``) any private address, as before.
+    """
+    loopback_host = host in LOOPBACK_HOSTS
+    for address in addresses:
+        if never_allowed(address):
+            return (
+                f"{label} request to {host} refused: it resolves to {address}, a "
+                "link-local or metadata address"
+            )
+        if is_public(address):
+            continue
+        if loopback_host and _is_loopback(address):
+            continue
+        if _is_loopback(address) and private_allow is not None:
+            # A listed name (or network) is for an internal service, never for
+            # this host: an allowlisted hostname re-pointed at 127.0.0.1 would
+            # reach Orrery's own ports. Only a loopback URL reaches loopback.
+            return (
+                f"{label} request to {host} refused: it resolves to {address}, a "
+                "loopback address (only a loopback URL may reach loopback)"
+            )
+        if allow_private and (private_allow is None or private_allow.allows(host, address)):
+            continue
+        hint = (
+            f"add the host or its network to {PRIVATE_ALLOW_ENV}"
+            if allow_private
+            else "set allow_private_network for an internal server"
+            if private_allow is None
+            else f"set private_network and list the host in {PRIVATE_ALLOW_ENV}"
+        )
+        return (
+            f"{label} request to {host} refused: it resolves to {address}, which "
+            f"is not a public address ({hint})"
+        )
+    return None
+
+
+async def check_destination(
+    url: Any,
+    *,
+    allowed: Collection[Origin],
+    label: str,
+    allow_private: bool,
+    private_allow: PrivateAllowlist | None = None,
+) -> str | None:
+    """Origin check, then address check on what the host resolves to now.
+
+    *url* is an ``httpx`` or ``httpx2`` URL (both have ``scheme``/``host``/
+    ``port``). Raises ``OSError`` when the host does not resolve.
+    """
+    host = (url.host or "").lower()
+    target = (url.scheme, host, url.port or _DEFAULT_PORTS.get(url.scheme, 0))
+    if (why := origin_refusal(target, allowed, label=label)) is not None:
+        return why
+    addresses = await _resolve(host, target[2])
+    return address_refusal(
+        host, addresses, label=label, allow_private=allow_private, private_allow=private_allow
+    )
+
+
+class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base]
+    """An HTTP transport pinned to one origin, refusing non-public addresses.
+
+    Bodies are capped while they stream, before the SDK parses them: a plain
+    response at *max_response_bytes* in total, an SSE stream at that much per
+    event. Compression is refused as for A2A (``Accept-Encoding: identity``,
+    and an encoded response fails), since a cap on wire bytes would not bound
+    what httpx decodes.
+    """
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        allow_private_network: bool = False,
+        private_allow: PrivateAllowlist | None = None,
+        max_response_bytes: int | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
-        parts = urlsplit(url)
-        self._scheme = parts.scheme
-        self._host = (parts.hostname or "").lower()
-        self._port = parts.port or _DEFAULT_PORTS.get(parts.scheme, 0)
+        self._origin = origin_of(url)
         self._allow_private = allow_private_network
-        self._loopback_only = self._host in LOOPBACK_HOSTS
+        self._private_allow = private_allow
+        self._max_bytes = (
+            max_response_bytes if max_response_bytes is not None else mcp_max_response_bytes()
+        )
 
     async def handle_async_request(self, request: Any) -> Any:
-        url = request.url
-        host = (url.host or "").lower()
-        port = url.port or _DEFAULT_PORTS.get(url.scheme, 0)
-        if (url.scheme, host, port) != (self._scheme, self._host, self._port):
-            raise BlockedDestination(
-                f"MCP request to {url.scheme}://{host}:{port} refused: only "
-                f"{self._scheme}://{self._host}:{self._port} is configured",
-                request=request,
-            )
         try:
-            addresses = await _resolve(host, port)
+            why = await check_destination(
+                request.url,
+                allowed={self._origin},
+                label="MCP",
+                allow_private=self._allow_private,
+                private_allow=self._private_allow,
+            )
         except OSError as exc:  # gaierror: surface it as the connect failure it is
+            host = request.url.host
             raise httpx.ConnectError(f"MCP server {host} did not resolve: {exc}") from exc
-        for address in addresses:
-            if never_allowed(address):
-                raise BlockedDestination(
-                    f"MCP request to {host} refused: it resolves to {address}, a "
-                    "link-local or metadata address",
-                    request=request,
-                )
-            if self._allow_private or is_public(address):
-                continue
-            if self._loopback_only and _is_loopback(address):
-                continue
-            raise BlockedDestination(
-                f"MCP request to {host} refused: it resolves to {address}, which "
-                "is not a public address (set allow_private_network for an "
-                "internal server)",
+        if why is not None:
+            raise BlockedDestination(why, request=request)
+        request.headers["Accept-Encoding"] = "identity"
+        response = await super().handle_async_request(request)
+        host = request.url.host
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "identity"):
+            await response.aclose()
+            raise McpRefusedEncoding(
+                f"the response from MCP server {host} is {encoding}-encoded; compressed "
+                "responses are refused (the byte cap counts what arrives)",
                 request=request,
             )
-        return await super().handle_async_request(request)
+        sse = response.headers.get("content-type", "").lower().startswith("text/event-stream")
+        declared = response.headers.get("content-length", "")
+        if not sse and declared.isdigit() and int(declared) > self._max_bytes:
+            await response.aclose()
+            raise McpResponseTooLarge(
+                f"the response from MCP server {host} declares {declared} bytes, over the "
+                f"{self._max_bytes}-byte cap ({MCP_MAX_RESPONSE_BYTES_ENV})",
+                request=request,
+            )
+        response.stream = _McpCappedStream(
+            response.stream, _ByteCap(self._max_bytes, per_event=sse), request
+        )
+        return response
 
 
 def ssl_context(
@@ -196,13 +474,19 @@ def client_factory(
     url: str,
     allow_private_network: bool = False,
     verify: ssl.SSLContext | bool = True,
+    private_allow: PrivateAllowlist | None = None,
+    max_response_bytes: int | None = None,
 ) -> Callable[..., Any]:
     """An ``httpx_client_factory`` for ADK's MCP connection params.
+
+    *max_response_bytes* defaults to ``ORRERY_MCP_MAX_RESPONSE_BYTES`` (8 MiB),
+    read here, so a bad value fails when the server is configured.
 
     Same signature as the SDK's default factory. Redirects stay off: the SDK
     follows the ones within the origin itself, and the transport refuses the
     rest anyway.
     """
+    cap = max_response_bytes if max_response_bytes is not None else mcp_max_response_bytes()
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -211,7 +495,11 @@ def client_factory(
     ) -> Any:
         kwargs: dict[str, Any] = {
             "transport": GuardedTransport(
-                url=url, allow_private_network=allow_private_network, verify=verify
+                url=url,
+                allow_private_network=allow_private_network,
+                private_allow=private_allow,
+                max_response_bytes=cap,
+                verify=verify,
             ),
             "follow_redirects": False,
         }
@@ -224,3 +512,130 @@ def client_factory(
         return httpx.AsyncClient(**kwargs)
 
     return factory
+
+
+# ── The same guard for ``httpx`` (a2a-sdk, ADK's RemoteA2aAgent) ─────────────
+#
+# mcp 2.x is built on httpx2 while a2a-sdk uses httpx, and a client from one
+# library is unusable by the other, so each gets its own transport. Both call
+# :func:`check_destination`; only the exception types differ.
+
+
+class BlockedRemoteDestination(httpx_std.ConnectError):
+    """An ``httpx`` request to an origin or address the entry does not allow."""
+
+
+class ResponseTooLarge(httpx_std.ReadError):
+    """A response body past the transport's byte cap, refused while streaming."""
+
+
+class RefusedEncoding(httpx_std.DecodingError):
+    """A compressed response: refused, since the byte cap counts wire bytes."""
+
+
+class _CappedStream(httpx_std.AsyncByteStream):
+    """Passes a body through, raising once it exceeds *cap* bytes."""
+
+    def __init__(self, inner: Any, cap: int, request: Any) -> None:
+        self._inner = inner
+        self._cap = cap
+        self._request = request
+
+    async def __aiter__(self) -> Any:
+        seen = 0
+        async for chunk in self._inner:
+            seen += len(chunk)
+            if seen > self._cap:
+                raise ResponseTooLarge(
+                    f"response from {self._request.url.host} exceeds {self._cap} bytes",
+                    request=self._request,
+                )
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
+    """:class:`GuardedTransport`'s rules for ``httpx``, over a *set* of origins.
+
+    Every request must target one of *allowed_origins* and resolve to a public
+    address (or loopback from a loopback origin), unless *allow_private* and
+    the host or address is in *private_allow*. Link-local and metadata
+    addresses are always refused. Response bodies are capped at
+    *max_response_bytes* while they stream, before any caller parses them.
+    Being an explicit transport, it also makes httpx ignore proxy variables.
+
+    Compression is off: every request asks for ``identity`` and a response
+    with any other ``Content-Encoding`` is refused before httpx would decode
+    it. The cap counts the bytes that arrive, so a 50 KB gzip body that
+    inflates to 50 MB would otherwise pass it; with no decoding, the bytes
+    counted are the bytes a caller reads.
+    """
+
+    def __init__(
+        self,
+        *,
+        allowed_origins: Collection[Origin],
+        allow_private: bool = False,
+        private_allow: PrivateAllowlist | None = None,
+        max_response_bytes: int = 1024 * 1024,
+        label: str = "A2A",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        if not allowed_origins:
+            raise ValueError("GuardedHttpxTransport needs at least one allowed origin")
+        self.allowed_origins = frozenset(allowed_origins)
+        self._allow_private = allow_private
+        # An entry that opts into the private network is still bounded by the
+        # deployment's list: never "any private address".
+        self._private_allow = private_allow or PrivateAllowlist()
+        self._max_bytes = max_response_bytes
+        self._label = label
+
+    async def handle_async_request(self, request: httpx_std.Request) -> httpx_std.Response:
+        try:
+            why = await check_destination(
+                request.url,
+                allowed=self.allowed_origins,
+                label=self._label,
+                allow_private=self._allow_private,
+                private_allow=self._private_allow,
+            )
+        except OSError as exc:
+            raise httpx_std.ConnectError(
+                f"{self._label} host {request.url.host} did not resolve: {exc}", request=request
+            ) from exc
+        if why is not None:
+            logger.warning("%s", why)
+            raise BlockedRemoteDestination(why, request=request)
+        request.headers["Accept-Encoding"] = "identity"
+        response = await super().handle_async_request(request)
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "identity"):
+            await response.aclose()
+            raise RefusedEncoding(
+                f"response from {request.url.host} is {encoding}-encoded; compressed "
+                "responses are refused (the byte cap counts what arrives)",
+                request=request,
+            )
+        declared = response.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > self._max_bytes:
+            await response.aclose()
+            raise ResponseTooLarge(
+                f"response from {request.url.host} declares {declared} bytes, over the "
+                f"{self._max_bytes}-byte cap",
+                request=request,
+            )
+        response.stream = _CappedStream(response.stream, self._max_bytes, request)
+        return response
+
+
+def ca_ssl_context(ca_file: str | None) -> ssl.SSLContext | bool:
+    """System roots, plus *ca_file* (``ORRERY_A2A_CA_FILE``) when set."""
+    if not ca_file:
+        return True
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=ca_file)
+    return context

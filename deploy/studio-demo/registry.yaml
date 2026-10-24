@@ -1,0 +1,25 @@
+# Orrery Studio demo registry (AEP-031 P0a). Mounted by the `studio-demo`
+# compose profile and named by ORRERY_STUDIO_REGISTRY.
+#
+# A composition can reach only what is listed here. Entries never name files
+# and never carry secrets: TLS trust is the deployment's ORRERY_A2A_CA_FILE,
+# bearer tokens come from ORRERY_STUDIO_SECRET_* variables.
+mcp:
+  # Tirraflow's public, read-only MCP server.
+  - id: tirraflow
+    url: https://tirraflow.com/mcp
+    transport: streamable_http
+    tools: [search_articles, get_article]
+    read_only: [search_articles, get_article]
+
+a2a:
+  # The plain a2a-sdk writer (writer/writer_agent.py), on the compose network.
+  # Its card is pinned on first use; set card_sha256 (GET /studio/registry
+  # ?resolve=true shows the digest) to pin it from config instead.
+  - id: demo-writer
+    card_url: https://demo-writer.studio.internal:8443/.well-known/agent-card.json
+    skills: [draft]
+    effect: read_only
+    # A private address: also listed in ORRERY_A2A_PRIVATE_ALLOW.
+    private_network: true
+    description: Drafts release notes from research notes (deterministic, no LLM).

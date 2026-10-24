@@ -439,3 +439,114 @@ def test_the_safety_screen_walks_structured_content():
     result = _mcp_result()
     assert neutralize_structure(result) > 0
     assert FILTER_MARKER in result["structuredContent"]["items"][0]["note"]
+
+
+# ── Response size: compression refused, bodies and SSE events capped ──
+
+
+@pytest.fixture
+def mcp_http_server():
+    """A loopback server with the responses a hostile MCP server could send."""
+    import gzip
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    seen: list[str] = []
+    bomb = gzip.compress(b"\0" * 5_000_000)
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def _send(self, body: bytes, *, ctype: str, encoding: str | None = None) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self) -> None:
+            seen.append(self.headers.get("Accept-Encoding", ""))
+            if self.path == "/gzip":
+                self._send(bomb, ctype="application/json", encoding="gzip")
+            elif self.path == "/big":
+                self._send(b"x" * 5000, ctype="application/json")
+            elif self.path == "/chunked":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                for _ in range(10):
+                    self.wfile.write(b"200\r\n" + b"y" * 512 + b"\r\n")
+                self.wfile.write(b"0\r\n\r\n")
+            elif self.path == "/sse-many":
+                events = b"".join(b"data: " + b"e" * 200 + b"\n\n" for _ in range(50))
+                self._send(events, ctype="text/event-stream")
+            elif self.path == "/sse-big":
+                self._send(b"data: " + b"E" * 5000 + b"\n\n", ctype="text/event-stream")
+            else:
+                self._send(b"{}", ctype="application/json")
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}", seen
+    server.shutdown()
+
+
+def _get(base: str, path: str, cap: int = 1000) -> bytes:
+    async def go() -> bytes:
+        async with client_factory(url=base, max_response_bytes=cap)() as client:
+            response = await client.get(base + path)
+            return response.content
+
+    return asyncio.run(go())
+
+
+def test_an_mcp_response_is_never_compressed(mcp_http_server):
+    base, seen = mcp_http_server
+    with pytest.raises(mcp_network.McpRefusedEncoding, match="gzip-encoded"):
+        _get(base, "/gzip", cap=10_000_000)
+    _get(base, "/ok")
+    assert seen == ["identity", "identity"]
+
+
+@pytest.mark.parametrize("path", ["/big", "/chunked"])
+def test_an_mcp_response_body_is_capped(mcp_http_server, path):
+    base, _ = mcp_http_server
+    with pytest.raises(mcp_network.McpResponseTooLarge, match="exceeds|declares"):
+        _get(base, path)
+    assert len(_get(base, path, cap=10_000)) == 5000 if path == "/big" else True
+
+
+def test_an_sse_stream_is_capped_per_event_not_in_total(mcp_http_server):
+    base, _ = mcp_http_server
+    assert len(_get(base, "/sse-many")) == 50 * 208  # 10 KB in all, 208 bytes an event
+    with pytest.raises(mcp_network.McpResponseTooLarge, match="an event of"):
+        _get(base, "/sse-big")
+
+
+def test_the_mcp_cap_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv(mcp_network.MCP_MAX_RESPONSE_BYTES_ENV, "1234")
+    assert mcp_network.mcp_max_response_bytes() == 1234
+    monkeypatch.setenv(mcp_network.MCP_MAX_RESPONSE_BYTES_ENV, "lots")
+    with pytest.raises(ValueError, match="positive number"):
+        mcp_network.mcp_max_response_bytes()
+    monkeypatch.delenv(mcp_network.MCP_MAX_RESPONSE_BYTES_ENV)
+    assert mcp_network.mcp_max_response_bytes() == mcp_network.DEFAULT_MCP_MAX_RESPONSE_BYTES
+
+
+def test_sse_events_split_across_chunks_are_counted_whole():
+    counter = mcp_network._ByteCap(12, per_event=True)
+    assert counter.add(b"data: ab\r")
+    # The boundary straddles the chunks: the first event is 12 bytes with it.
+    assert counter.add(b"\n\r\ndata: 1")
+    assert counter.pending == 7
+    assert counter.add(b"23456")
+    assert not counter.add(b"7")
+    tight = mcp_network._ByteCap(11, per_event=True)
+    tight.add(b"data: ab\r")
+    assert not tight.add(b"\n\r\n")

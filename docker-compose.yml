@@ -404,6 +404,109 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command: ["uvicorn", "slack_bot.app:api", "--host", "0.0.0.0", "--port", "3000"]
 
+  # ── Orrery Studio demo (use: docker compose --profile studio-demo up) ──
+  #
+  # AEP-031 P0a, API only: a research → writer → critic pipeline whose writer
+  # is a plain a2a-sdk agent (deploy/studio-demo/writer), reached over https
+  # with a certificate from a throwaway internal CA. See
+  # docs/integrations/studio.md for the walkthrough. Binds :8000 like the
+  # `demo` profile: run one or the other.
+
+  studio-demo-certs:
+    image: ${ORRERY_IMAGE:-ghcr.io/bahalla/orrery:latest}
+    build: .
+    profiles: [studio-demo]
+    # Root only to write into the fresh volume; the files go to appuser (1000).
+    user: "0"
+    command:
+      - python
+      - /demo/make_certs.py
+      - --out
+      - /certs
+      - --ca-out
+      - /ca
+      - --host
+      - demo-writer.studio.internal
+      - --owner
+      - "1000"
+    volumes:
+      - ./deploy/studio-demo:/demo:ro
+      - studio-demo-certs:/certs
+      - studio-demo-ca:/ca
+
+  demo-writer:
+    image: ${ORRERY_IMAGE:-ghcr.io/bahalla/orrery:latest}
+    build: .
+    container_name: demo-writer
+    profiles: [studio-demo]
+    restart: unless-stopped
+    depends_on:
+      studio-demo-certs:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases: [demo-writer.studio.internal]
+    # No published port: only Orrery, on the compose network, reaches it.
+    command:
+      - python
+      - /demo/writer/writer_agent.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8443"
+      - --public-url
+      - https://demo-writer.studio.internal:8443
+      - --certfile
+      - /certs/writer.pem
+      - --keyfile
+      - /certs/writer-key.pem
+    volumes:
+      - ./deploy/studio-demo:/demo:ro
+      - studio-demo-certs:/certs:ro
+
+  orrery-studio:
+    image: ${ORRERY_IMAGE:-ghcr.io/bahalla/orrery:latest}
+    build: .
+    container_name: orrery-studio
+    profiles: [studio-demo]
+    restart: unless-stopped
+    depends_on:
+      demo-writer:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # The Studio is for signed-in human admins: auth on, and the client
+      # whose tokens are people named (ADR-006). Mint a token with
+      #   make dev-token CLIENT=orrery-console
+      # after exporting STUDIO_DEMO_JWT_SECRET=$(cat ~/.cache/orrery/jwt-secret).
+      AUTH_ENABLED: "true"
+      JWT_ALGORITHM: HS256
+      # Empty: the server refuses to start (auth on, no secret), never runs open.
+      JWT_SECRET: ${STUDIO_DEMO_JWT_SECRET:-}
+      JWT_AUDIENCE: orrery-local
+      JWT_ISSUER: https://dev.local
+      ORRERY_HUMAN_CLIENTS: orrery-console
+      ORRERY_STUDIO_ENABLED: "true"
+      ORRERY_STUDIO_REGISTRY: /demo/registry.yaml
+      # The writer is on the compose network: a private address, allowed by name.
+      ORRERY_A2A_PRIVATE_ALLOW: demo-writer.studio.internal
+      # Trust the demo CA for outbound A2A (deployment-level; registry entries
+      # never name files).
+      ORRERY_A2A_CA_FILE: /ca/ca.pem
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-gemini}
+      MODEL_NAME: ${MODEL_NAME:-}
+      GOOGLE_GENAI_USE_ENTERPRISE: "FALSE"
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_MODEL_VERSION: ${GEMINI_MODEL_VERSION:-gemini-3.6-flash}
+    # Only the CA: the writer's key stays in the writer's volume.
+    volumes:
+      - ./deploy/studio-demo:/demo:ro
+      - studio-demo-ca:/ca:ro
+    command: ["uvicorn", "orrery_assistant.app:api", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "15"]
+
 volumes:
   kafka-data:
   postgres-data:
@@ -415,3 +518,5 @@ volumes:
   elasticsearch-data:
   assistant-data:
   slack-data:
+  studio-demo-certs:
+  studio-demo-ca:

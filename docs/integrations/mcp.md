@@ -156,6 +156,11 @@ client is held to what you configured:
 - **no proxy**: the guarded client ignores `HTTPS_PROXY`/`HTTP_PROXY`. A proxy
   resolves the name itself, out of reach of the address check. If your egress
   must go through a proxy, MCP over HTTP needs a direct route to the server.
+- **bounded responses**: every request asks for `Accept-Encoding: identity`,
+  and a compressed response is refused (a small gzip body can inflate to
+  gigabytes). A response body may hold at most `ORRERY_MCP_MAX_RESPONSE_BYTES`
+  (default 8 MiB), counted while it streams, before the SDK parses it. An SSE
+  stream is long-lived, so it is held to that much per event, not in total.
 
 !!! note "Residual: DNS rebinding"
     The check resolves the name, then the connection resolves it again, so a

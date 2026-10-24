@@ -75,6 +75,13 @@ def parse_args() -> argparse.Namespace:
         "(default: $JWT_ISSUER or 'https://dev.local').",
     )
     p.add_argument(
+        "--client",
+        default=None,
+        help="JWT `azp` claim: the OAuth client the token was issued to. A token is a "
+        "person only if its client is in the server's ORRERY_HUMAN_CLIENTS (ADR-006); "
+        "the Studio demo needs it (default: no azp).",
+    )
+    p.add_argument(
         "--secret",
         default=None,
         help="HS256 signing secret (overrides --secret-file, $JWT_SECRET, and the cached file).",
@@ -155,6 +162,8 @@ def main() -> int:
         "exp": now + args.expires_in,
         "roles": [args.role],
     }
+    if args.client:
+        claims["azp"] = args.client
 
     token = pyjwt.encode(claims, secret, algorithm="HS256")
 

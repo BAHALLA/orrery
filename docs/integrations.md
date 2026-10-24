@@ -50,6 +50,12 @@ Other agents ask Orrery to investigate, and propose changes a person approves, o
 - **Enable**: `ORRERY_A2A_ENABLED=true`, `ORRERY_A2A_JWT_AUDIENCE=…` (from source, also `uv sync --extra a2a`; the published image includes it).
 - **Setup Guide**: [A2A](integrations/a2a.md)
 
+### 8. Orrery Studio (preview, API only)
+Human admins run compositions: a pipeline of agents using registered MCP servers and remote A2A agents, separate from the live coordinator and traced step by step.
+- **Bounded**: every run at L2 (reads only), with its own budgets; remote agents and MCP servers only from a deployment-config registry, behind the network guard; a remote agent sees only the request its caller writes.
+- **Enable**: `ORRERY_STUDIO_ENABLED=true`, `ORRERY_STUDIO_REGISTRY=…`, and `ORRERY_HUMAN_CLIENTS` (required).
+- **Setup Guide**: [Studio](integrations/studio.md)
+
 ---
 
 ## Upcoming Integrations (Roadmap)

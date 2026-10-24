@@ -2,6 +2,7 @@ from orrery_assistant.admin import ChatAgentAdmin
 from orrery_assistant.agent import _specialists, root_agent
 from orrery_assistant.probes import default_probes
 from orrery_core import create_memory_service, default_plugins
+from orrery_core.agent.declarative import tool_catalogue
 from orrery_core.serving.runner import create_context_cache_config
 from orrery_core.serving.server import ServerConfig, create_app
 
@@ -23,4 +24,7 @@ api = create_app(
     # Lets admins switch specialists and compose declarative agents from the
     # console (writes need ORRERY_ADMIN_EDITING=true); stored next to sessions.
     agent_admin=ChatAgentAdmin(),
+    # What a Studio composition may reference as `catalog:<tool>` (AEP-031):
+    # the declarative-agent catalogue; the Studio uses its read-only tools only.
+    studio_catalogue=lambda: tool_catalogue(_specialists)[0],
 )

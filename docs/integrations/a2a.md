@@ -4,6 +4,8 @@ Other agents can ask Orrery to investigate, and to propose changes a person
 approves, over the [A2A protocol](https://a2a-protocol.org) 1.0 (JSON-RPC).
 This is the only way Orrery's agents are exposed to other agents. MCP is how
 Orrery *consumes* tools ([MCP servers](mcp.md)); it does not expose agents.
+Orrery can also *call* remote A2A agents, from Studio compositions
+([below](#calling-other-agents-outbound)).
 
 The design is [ADR-007](../adr/007-a2a-exposition.md). In short: ADK's
 `to_a2a()` runs the agent straight off a `Runner`, with no verified caller, a
@@ -145,6 +147,49 @@ async with httpx.AsyncClient(headers=headers, timeout=300) as http:
 
 `core/tests/test_a2a_server.py` runs this snippet against the app.
 
+## Calling other agents (outbound)
+
+Orrery calls remote A2A agents from [Studio](studio.md) compositions, and only
+through one class, `GuardedRemoteA2aTool` (`orrery_core/a2a/remote.py`, design
+in [ADR-008](../adr/008-consuming-remote-a2a-agents.md)). A test fails if
+ADK's `RemoteA2aAgent` is used anywhere else.
+
+- **A remote agent is a tool, never an agent node.** The calling model writes
+  one `request`; that text is all that leaves. The remote never sees the
+  session, other agents or earlier tool results. The tool's reply is a dict
+  (`status`, `reply`, `task_state`, `parts`, `task_id`, `context_id`), so the
+  safety screen, PII redaction (email addresses included), the output cap,
+  RBAC, autonomy, the audit trail and the run budgets all apply. A call counts
+  as a delegation.
+- **Only registered remotes.** Entries come from the Studio registry
+  (`ORRERY_STUDIO_REGISTRY`, deployment config), each limited to the skills it
+  lists. Only `effect: read_only` entries are accepted for now; `acting` is
+  refused until approvals land (AEP-031 P0c).
+- **The card is pinned** by the SHA-256 of the canonical JSON (RFC 8785) of its
+  interfaces, security schemes and skills, from `card_sha256` or on first use.
+  A changed endpoint, scheme or skill list disables the entry until an admin
+  re-pins it. Orrery checks the RPC targets itself: https (http only loopback
+  to loopback), JSON-RPC, and on the entry's origins.
+- **The network guard** (shared with MCP) checks every request on connect:
+  public addresses only, unless the entry sets `private_network` and its host
+  or network is in `ORRERY_A2A_PRIVATE_ALLOW`; link-local and metadata
+  addresses always refused; no redirects; no proxies; card and reply bytes
+  capped while they stream; connect, read and total timeouts.
+- **What is sent:** text only (8192 characters at most), `X-Orrery-Hop: 1` on
+  every request, and a bearer token only when the entry names one from an
+  `ORRERY_STUDIO_SECRET_*` variable, sent only to the entry's origins. The
+  caller's own token is never forwarded.
+- **TLS** is verified against the system store, plus `ORRERY_A2A_CA_FILE` when
+  set (one deployment-level bundle for an internal CA). Registry entries never
+  name files.
+- A remote `input-required` comes back as `status: input_required` with the
+  remote's `task_id` and `context_id`, for a person to answer (P0c); a model is
+  told not to answer it.
+
+The hop header means Orrery cannot call another Orrery deployment's `/a2a`
+(it refuses the header). Agents that do not forward it can still form a loop;
+the run's delegation, remote-call and deadline budgets bound that.
+
 ## Not yet
 
 - A shared task store, for running the A2A surface on several replicas.
@@ -152,5 +197,5 @@ async with httpx.AsyncClient(headers=headers, timeout=300) as http:
 - Linking an inbound `traceparent` to the turn's trace.
 - Keeping A2A threads out of the console: today a user's
   `GET /sessions` also lists the threads their agents opened.
-- Orrery *calling* remote A2A agents. That will be wrapped like MCP toolsets:
-  allowlisted cards, delegation treated as destructive, replies screened.
+- Calling remote agents from chat specialists (today: Studio compositions only),
+  `acting` remotes, and sending `tasks/cancel` when a run is cancelled.

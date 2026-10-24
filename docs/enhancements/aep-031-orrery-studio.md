@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> (P0a built: API only, see [Studio](../integrations/studio.md)) |
 | **Priority** | <span class="badge badge--blue">P2</span> |
 | **Effort** | High |
 | **Impact** | High |
@@ -155,7 +155,9 @@ That is the same plugin stack chat uses, with no second runner to keep in step.
 - `POST /studio/runs/{id}/cancel`. This cancels the run's task: in-flight model
   and HTTP calls are cancelled, toolsets are closed, and the run ends as
   `cancelled`. A sync tool already running in a worker thread cannot be
-  interrupted and finishes in the background (harmless at L2). A remote A2A task is sent `tasks/cancel` (best effort).
+  interrupted and finishes in the background (harmless at L2). A remote A2A
+  task is not sent `tasks/cancel` in P0a; best-effort `tasks/cancel` is a later
+  item.
 - `POST /studio/runs/{id}/approvals/{approval_id}` resumes a run paused at a
   `human_approval` node or by a remote `input-required` (P0c).
 
@@ -216,8 +218,10 @@ Superset of `ProgressStep`, on the studio SSE stream only:
 - Arguments, results and message text stay off the wire by default, as in
   `ProgressPlugin`. With `ORRERY_STUDIO_CAPTURE_CONTENT=true`, text goes out
   only **after** PII redaction, and is cut to 2 KB per event.
-- At most 2000 events per run; past that, `node.*` events are sampled and
-  `run.end` says how many were dropped.
+- At most 2000 events per run; past that, events are dropped (a few slots
+  stay reserved for `budget.hit` and `run.end`), and `run.end` says how many
+  were. P0a drops rather than samples: a sampled trace would show nodes that
+  never exited.
 
 A run's events are what the console renders, replays and compares.
 
@@ -341,7 +345,8 @@ counter, and an amendment to ADR-007.
 ### Affected Files
 
 - New:
-  - `core/orrery_core/studio/{spec,compiler,runner,ledger,events,registry,approval}.py`;
+  - `core/orrery_core/studio/{spec,compiler,runner,ledger,events,registry,config,api}.py`
+    (P0a), and `approval.py` (P0c);
   - `core/orrery_core/a2a/remote.py` (ADR-008);
   - `store.py` and the `studio_*` tables (P0b).
 - `core/orrery_core/tools/mcp_network.py`: the library-neutral check and the
@@ -358,6 +363,68 @@ counter, and an amendment to ADR-007.
   - `docs/integrations/studio.md`;
   - `docs/integrations/a2a.md` (outbound section);
   - this AEP and ADR-008.
+
+### P0a as built
+
+Where the code differs from, or pins down, the design above:
+
+- **Tool references** add `catalog:<name>` for the deployment's own catalogue
+  tools (`studio_catalogue` in `create_app`, read-only ones only). Model-facing
+  names are `mcp_<entry>_<tool>` and `a2a_<entry>_<skill>`. Validation computes
+  each node's model-facing names and refuses two that collide
+  (`tool_name_collision`: `-` and `_` map to one name; a catalogue alias may
+  match another tool) and MCP names over 64 characters (`tool_name_too_long`),
+  so a spec that passes cannot fail when ADK registers its tools.
+- **Every node kind is in the format** (`remote_a2a`, `router`, `parallel`,
+  `join`, `supervisor`, `human_approval`, plus edge `when`, `max_iterations`
+  and `screen`, and node `model` and `output`), so specs written for later
+  phases parse. P0a refuses them with a `not_supported_yet` error at the field.
+  Unknown keys are refused everywhere.
+- **Plugins** are `default_plugins(enable_auth=True, autonomy_level="L2",
+  enable_memory=False)` per run, plus a `StudioRunPlugin` (trace events and
+  the ledger) placed before `ToolOutputCapPlugin`, which answers an oversized
+  result with a replacement and so ends the after-tool chain: a capped MCP
+  result still emits its `mcp.call`. A `StudioSpentGate` sits before
+  `TokenBudgetPlugin`, so a call made once the run's budget is spent is
+  answered without reserving tokens it would never release. `default_plugins()`
+  gained a `token_ledger` argument; by default every call shares one
+  per-process ledger per storage URI (`shared_usage_ledger()`).
+- **MCP tool pins live per process**, in a store per registry entry
+  (`McpPins`), not per run, so a tool description changed between runs is
+  caught as it is for `ORRERY_MCP_CONFIG` servers. Studio MCP entries trust the
+  same `ORRERY_A2A_CA_FILE` as A2A entries, through one SSL context per
+  network built once.
+- **Attribution by node.** `mcp.call` events key MCP tools by node and name,
+  so two nodes using the same tool are told apart.
+- **A run cancelled before its task first runs** still ends: a done-callback
+  emits `run.end` (`cancelled`) and the audit record. A cancelled run's task
+  calls `uncancel()` once it has cleaned up, so its final events go out.
+- **Memory bounds.** Besides `ORRERY_STUDIO_MAX_RUNS` and retention, a person
+  keeps at most `ORRERY_STUDIO_MAX_RUNS_PER_USER` finished runs, and a run's
+  captured content is capped at `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN`.
+- **Captured content** honours `ORRERY_REDACT_IPS`. A remote reply's content
+  is taken after the safety screen: its inbound `a2a.message` is held until the
+  tool call returns, then sent with the screened reply, before the node exits.
+  Held events are keyed by the function-call id, so parallel calls from one
+  node keep their own replies.
+- **A tool call past a budget** is refused before it runs with the existing
+  `CALL_BUDGET_EXHAUSTED` status, which the circuit breaker already treats as
+  neutral, and the run then ends.
+- **A failed model call fails the run.** `ErrorHandlerPlugin` answers a model
+  error with an apology, which would otherwise pass for the node's output; the
+  run plugin records it and the run ends `failed` at that node.
+- **Runs are owner-scoped**: another admin gets 404, as on another replica.
+  Limits per person and per replica (429), and a rate limit on starts.
+- **Cards** are fetched on first use or on `GET /studio/registry?resolve=true`,
+  not at startup, and pinned on first use unless `card_sha256` is set
+  (ADR-008, implementation notes).
+- **MCP registry entries have no auth** in P0a: `headers_from_env` and token
+  exchange are refused; secret-backed headers (`ORRERY_STUDIO_SECRET_*` only)
+  are a follow-up.
+- **The demo** has the plain `a2a-sdk` writer and Tirraflow's MCP server. The
+  local time/units MCP server is in the CI test only, not the compose profile.
+  The profile authenticates with HS256 dev tokens (`make dev-token
+  CLIENT=orrery-console`), since the dev Keycloak client has no password grant.
 
 ## Security
 
@@ -379,19 +446,19 @@ counter, and an amendment to ADR-007.
 
 **P0a**
 
-- [ ] The demo pipeline runs end to end in CI (stub model, real `a2a-sdk` agent on a loopback socket, local MCP server). It emits `run.*`, `node.*`, `a2a.message` and `mcp.call` events.
-- [ ] `GuardedRemoteA2aTool` refuses (tests):
+- [x] The demo pipeline runs end to end in CI (stub model, real `a2a-sdk` agent on a loopback socket, local MCP server). It emits `run.*`, `node.*`, `a2a.message` and `mcp.call` events.
+- [x] `GuardedRemoteA2aTool` refuses (tests):
   - unregistered remotes;
   - a changed card digest;
   - RPC targets off the allowed origins;
   - redirects;
   - private and metadata addresses (unless allowlisted);
   - oversized cards and replies.
-- [ ] The remote agent receives only the tool request: a canary in an earlier tool result never reaches it (test).
-- [ ] A remote reply passes through the safety screen and PII redaction (test with an injection string and an email address).
-- [ ] Invalid specs are refused with a field-level error before any model call.
-- [ ] A studio run never changes `/admin/catalog`, the chat root or memory (test).
-- [ ] A service token with an admin role gets 403 on `/studio/runs`.
+- [x] The remote agent receives only the tool request: a canary in an earlier tool result never reaches it (test).
+- [x] A remote reply passes through the safety screen and PII redaction (test with an injection string and an email address).
+- [x] Invalid specs are refused with a field-level error before any model call.
+- [x] A studio run never changes `/admin/catalog`, the chat root or memory (test).
+- [x] A service token with an admin role gets 403 on `/studio/runs`.
 
 **P0b and later**
 

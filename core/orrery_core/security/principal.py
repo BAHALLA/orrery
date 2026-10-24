@@ -46,6 +46,8 @@ _ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
 MACHINE_SESSION_PREFIX = "m-"
 #: Session-id prefix of an A2A conversation (``a2a_server.session_id_for``).
 A2A_SESSION_PREFIX = "a2a-"
+#: Session-id prefix of an Orrery Studio run (AEP-031): never remembered.
+STUDIO_SESSION_PREFIX = "s-"
 
 
 class PrincipalKind(StrEnum):
@@ -209,13 +211,17 @@ def machine_session_prefix(auth: AuthContext) -> str:
 
 
 def is_machine_session(session_id: str | None) -> bool:
-    """Whether *session_id* was minted for a non-human principal.
+    """Whether *session_id* was minted for a non-human principal, or a Studio run.
 
-    Both prefixes are minted server-side only: no transport lets a caller
-    choose a session id, and ADK's own ids are UUIDs, which start with a hex
-    digit and have their first dash at position 8, so they match neither.
+    Long-term memory neither saves nor recalls for these. The prefixes are
+    minted server-side only: no transport lets a caller choose a session id,
+    and ADK's own ids are UUIDs, which start with a hex digit and have their
+    first dash at position 8, so they match none of them. A Studio run
+    (``s-``) is a person's, but an experiment, not a conversation to remember.
     """
-    return bool(session_id) and session_id.startswith((MACHINE_SESSION_PREFIX, A2A_SESSION_PREFIX))
+    return bool(session_id) and session_id.startswith(
+        (MACHINE_SESSION_PREFIX, A2A_SESSION_PREFIX, STUDIO_SESSION_PREFIX)
+    )
 
 
 def warn_if_unclassified(policy: PrincipalPolicy) -> None:

@@ -46,7 +46,7 @@ one request to one registered remote and returns its reply. It holds a
 `RemoteA2aAgent` internally for the protocol and event conversion (so A2A
 version changes follow ADK), runs it in a fresh in-memory session so that
 **only the request** leaves, and is labelled with `set_guard()` like every
-other tool. That inner run has **no plugins** (`include_plugins=False`): the
+other tool. That inner run has **no plugins** (a `Runner` built with `plugins=[]`): the
 outer tool call is already guarded, and an inner `SafetyScreenPlugin.before_run`
 would block legitimate requests that quote suspicious text. The tool carries a
 `delegates_remotely` marker that `DelegationGuardPlugin` and `ProgressPlugin`
@@ -134,6 +134,61 @@ auth-required events back to the caller.
   requester-verified confirmation, as ADR-007 planned. Remote agents that act
   are therefore unavailable at the default L2 ceiling, on purpose.
 - Every call counts toward AEP-027's per-run tool and delegation budgets.
+
+## Implementation notes (P0a)
+
+Where the shipped code (AEP-031 P0a) differs from, or makes precise, the
+decision above, and why:
+
+- **No plugins on the inner run.** ADK 2.12's `Runner` has no
+  `include_plugins` argument; the inner run is a `Runner` built with
+  `plugins=[]` and a fresh `InMemorySessionService`, closed after each call.
+- **Pinning is optional, and re-checked.** Without `card_sha256` the first
+  fetched card is pinned (trust on first use) and the digest is logged, as the
+  MCP adapter does for tool descriptions; `GET /studio/registry?resolve=true`
+  shows it for review. The card is fetched again every `card_refresh_s`
+  (default 300 s) and refused if its digest changed. Cards are fetched on first
+  use, not at startup, so a remote that is down does not stop Orrery starting.
+  The trust fields are `supportedInterfaces` (URL, binding, protocol version),
+  `securitySchemes`, `securityRequirements` and `skills` without `examples`.
+- **The tool's description is Orrery's own.** It names the entry and skill,
+  adds the registry entry's `description` (operator config), and says the reply
+  is data. The card's description and skill text never reach the model's tool
+  declarations.
+- **The private allowlist is checked twice.** At startup, a `private_network`
+  entry needs a non-empty `ORRERY_A2A_PRIVATE_ALLOW`, and a literal-address
+  host must be in it. Hostnames are checked on every connect against what they
+  resolve to then, since a host may be allowed through a listed network. A
+  loopback host may reach loopback without any list, as the MCP guard allows;
+  a listed host that resolves to loopback is refused (the list is for the
+  private network, not the replica itself).
+- **Missing secrets fail startup**, not the first call.
+- **Email addresses in replies are redacted.** `PIIRedactionPlugin` redacts
+  credentials, not contact details. A remote reply is someone else's text, so
+  the tool carries a `redact_contact_details` marker and the plugin redacts
+  email addresses in its results too. Other tools are unchanged.
+- **The result** also carries `task_id` and `context_id` (always),
+  `error_type` on errors, `truncated` when the reply was cut to
+  `max_reply_chars`, and `dropped_parts` (the kinds of non-text parts, which
+  never reach the model). The part count is checked after the exchange; bytes
+  are capped while they stream.
+- **Status values** are `success`, `input_required` and `error`, not the task
+  state; `task_state` carries that (`completed`, `input-required`, …).
+- **No `tasks/cancel`** is sent when the calling run is cancelled; the
+  exchange's HTTP call is cancelled and the remote task may finish.
+- **Only JSON-RPC** interfaces are used. A gRPC channel would open its own
+  connection outside the guarded httpx client. Only the JSON-RPC interfaces
+  must pass the origin and https checks; a card that also lists gRPC or
+  HTTP+JSON is accepted, and those interfaces stay in the digest.
+- **No compression.** Every request sends `Accept-Encoding: identity`, and a
+  compressed response is refused before decoding: httpx decodes after the
+  transport, so a byte cap on the wire would not bound what is read.
+- **JCS numbers** follow RFC 8785 (ECMAScript `Number::toString`): integers
+  up to 2^53 as written, everything else as the shortest round-trip double.
+- **One SSL context per network**, built once and shared by every client
+  (card fetches, RPCs and Studio MCP entries).
+- **`?resolve=true`** fetches the cards concurrently, at most 5 s each; a slow
+  card is reported in its status rather than holding the response.
 
 ## Consequences
 

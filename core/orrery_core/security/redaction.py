@@ -69,8 +69,16 @@ SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
 IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 REDACTED_IP = "[REDACTED_IP]"
 
+#: Email addresses. Off by default (an SRE answer names owners and on-call
+#: people), on for text that arrives from a third party: a remote A2A agent's
+#: reply (ADR-008) and Studio trace content (AEP-031).
+EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+REDACTED_EMAIL = "[REDACTED_EMAIL]"
 
-def redact_text(text: str, *, redact_ips: bool = False) -> tuple[str, int]:
+
+def redact_text(
+    text: str, *, redact_ips: bool = False, redact_emails: bool = False
+) -> tuple[str, int]:
     """Return *text* with secret shapes replaced, plus the replacement count."""
     count = 0
     for pattern, triggers in SECRET_VALUE_PATTERNS:
@@ -81,5 +89,8 @@ def redact_text(text: str, *, redact_ips: bool = False) -> tuple[str, int]:
         count += n
     if redact_ips:
         text, n = IPV4_PATTERN.subn(REDACTED_IP, text)
+        count += n
+    if redact_emails and "@" in text:
+        text, n = EMAIL_PATTERN.subn(REDACTED_EMAIL, text)
         count += n
     return text, count
