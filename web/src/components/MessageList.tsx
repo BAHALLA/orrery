@@ -189,7 +189,7 @@ export function MessageList({
   return (
     <div
       onScroll={handleScroll}
-      className="orrery-scroll flex-1 overflow-y-auto"
+      className="orrery-scroll relative flex-1 overflow-y-auto"
       // A log, but not a chatty one: it is busy while an answer is written, so
       // assistive tech holds the stream instead of reading every token. The
       // console's status line announces "working" and "answer ready".

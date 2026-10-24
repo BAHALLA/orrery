@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   revision's pod template back from its ReplicaSet, refused if the deployment
   changed since it was read. A paused deployment, or one with no previous
   revision, is refused with nothing changed.
+- Console: the page no longer scrolls past the app on the **Agents** tab,
+  leaving a blank band under it. A visually hidden label escaped its
+  scrolling pane and stretched the page; the panes now contain what they hold.
+- Helm: cluster-scoped RBAC names that would be over 50 characters end with a
+  hash of the full name, so two long namespaces no longer collide.
+- Google Chat: a turn stopped by the gateway deadline logs that deadline, not
+  `None`.
 
 ## [0.9.0] - 2026-10-24
 

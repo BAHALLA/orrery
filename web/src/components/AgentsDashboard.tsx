@@ -267,7 +267,7 @@ function Dashboard({
     setDisabled(on ? [] : switchable.map((c) => c.switchKey as string));
 
   return (
-    <div className="orrery-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <div className="orrery-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>

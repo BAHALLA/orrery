@@ -22,7 +22,12 @@ step when a tool starts calling something new.
 {{- end }}
 {{- /* Cluster-scoped names carry the namespace: one release name installed
 in two namespaces must not fight over one ClusterRole. */}}
-{{- $clusterName := printf "%s-%s" .Release.Namespace $name | trunc 50 | trimSuffix "-" }}
+{{- $clusterName := printf "%s-%s" .Release.Namespace $name }}
+{{- if gt (len $clusterName) 50 }}
+{{- /* Too long: keep a readable prefix and a hash of the whole, so two long
+namespaces that share their first characters still get distinct names. */}}
+{{- $clusterName = printf "%s-%s" (trunc 41 $clusterName | trimSuffix "-") (sha256sum $clusterName | trunc 8) }}
+{{- end }}
 {{- if eq $scope "cluster" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

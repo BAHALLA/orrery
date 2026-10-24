@@ -132,7 +132,7 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
         id={panelId}
         aria-labelledby={tabId(tab)}
         tabIndex={0}
-        className="orrery-scroll min-h-0 flex-1 overflow-y-auto focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500 focus-visible:outline-none"
+        className="orrery-scroll relative min-h-0 flex-1 overflow-y-auto focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500 focus-visible:outline-none"
       >
         {tab === "tools" ? (
           <ToolCallsTable entries={activity} />

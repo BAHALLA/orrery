@@ -290,7 +290,7 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
                 aria-label="Filter tools"
               />
             </div>
-            <div className="orrery-scroll mt-2 max-h-72 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
+            <div className="orrery-scroll relative mt-2 max-h-72 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
               {groups.map(([key, ts]) => (
                 <ToolGroup
                   key={key}

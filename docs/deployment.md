@@ -191,8 +191,9 @@ cluster-wide answers 403: nodes, namespaces, CRDs, node metrics, and every
 for a namespace by name). The triage sweep's Kubernetes check lists nodes, so
 under `namespaces` it reports an error every run.
 
-Cluster-scoped objects are named `<namespace>-<fullname>`, so one release name
-can be installed in several namespaces. Installing a ClusterRole needs
+Cluster-scoped objects are named `<namespace>-<fullname>` (shortened with a
+hash when that is too long), so one release name can be installed in several
+namespaces. Installing a ClusterRole needs
 cluster-admin; set `rbac.create: false` to manage RBAC yourself. The chart
 refuses to bind the namespace's `default` ServiceAccount (it would grant every
 pod that sets none): with `serviceAccount.create: false`, name an account in
