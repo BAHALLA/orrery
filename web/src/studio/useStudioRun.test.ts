@@ -175,6 +175,34 @@ describe("useStudioRun", () => {
     expect(result.current.view?.nodes.research?.status).toBe("unknown");
   });
 
+  it("follows a lost stream again after a cancel, to see the run end", async () => {
+    const { client, asClient } = fakeClient();
+    const events = eventsOf("run-a");
+    let calls = 0;
+    client.events.mockImplementation((_runId, opts) => {
+      calls += 1;
+      if (calls === 1) {
+        events.slice(0, 3).forEach(opts.onEvent);
+        return Promise.reject(new ApiError(404, "replica restarted"));
+      }
+      opts.onEvent({ ...events.at(-1)!, outcome: "cancelled" } as StudioEvent);
+      return Promise.resolve("ended");
+    });
+    client.run.mockResolvedValue(summary("run-a", "running"));
+    client.cancel.mockResolvedValue(summary("run-a", "running"));
+    client.startRun.mockResolvedValue({ run_id: "run-a" });
+    const { result } = renderHook(() => useStudioRun(asClient));
+    await act(() => result.current.start(RELEASE_NOTES, "lag"));
+    await waitFor(() => expect(result.current.connection).toBe("lost"));
+
+    await act(() => result.current.cancel());
+    expect(client.cancel).toHaveBeenCalledWith("run-a");
+    await waitFor(() => expect(client.events).toHaveBeenCalledTimes(2));
+    expect(client.events.mock.calls[1]?.[1].after).toBe(3);
+    await waitFor(() => expect(result.current.view?.status).toBe("cancelled"));
+    expect(result.current.busy).toBe(false);
+  });
+
   it("gives up reconnecting after the backoff, then asks for the summary", async () => {
     vi.useFakeTimers();
     const { client, asClient } = fakeClient();

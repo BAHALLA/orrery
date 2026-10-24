@@ -400,10 +400,13 @@ pattern gallery one click away.
   in the gallery, marked *needs P0b*: you can look at them but not load them.
 - **Layout.** The graph flows left to right, or top to bottom when the canvas
   is taller than it is wide (a laptop screen, beside the palette and panels),
-  so a pipeline fits at a readable size; crossing between the two lays it out
-  again. Ranks follow the edges, so the layout is the same for the same spec.
-  *Tidy* lays it out again by hand, and a loaded pattern, import or past run
-  is fitted to the view, never below 75% zoom (pan for the rest). Loading a
+  so a pipeline fits at a readable size. Crossing between the two (a window
+  resize) lays the graph out again only while nobody has moved a node: once
+  you drag one, positions stay put until *Tidy* or the next load. Ranks
+  follow the edges, so the layout is the same for the same spec. A loaded
+  pattern, import or past run is fitted to the view, never below 75% zoom;
+  a graph too big even then starts at its first node, and the rest is a pan
+  away. Loading a
   pattern or importing a spec can be undone from the banner it shows.
 - **Validation** runs as you edit. It checks the spec against the JSON Schema
   from `GET /studio/schema` and against this release's rules (one pipeline
@@ -468,6 +471,19 @@ On a narrow screen the canvas is read-only (tap a node to inspect it); the
 inspector and the run panel work the same. Everything runs under the
 console's CSP (`script-src 'self'; style-src 'self'`): React Flow sets
 positions and sizes through the CSSOM, which that policy allows.
+
+**Checking the canvas in a browser.** The unit tests run React Flow in
+jsdom, which has no layout, so the fit and the layout direction are covered by
+a smoke script instead: Chrome against the built console, with the server's
+CSP and canned `/studio/*` answers (no server or model needed). It checks the
+direction at 1440×900 and 1920×1080, that a dragged graph survives a resize,
+that an oversized import starts at its first node, and that nothing breaks
+the CSP.
+
+```bash
+make web-build
+uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browser chromium without Chrome
+```
 
 ## Not yet
 

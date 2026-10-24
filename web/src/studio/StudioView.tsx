@@ -16,6 +16,7 @@ import {
   graphToSpec,
   relayout,
   removeEdges,
+  reorient,
   removeNodes,
   specToGraph,
   uniqueId,
@@ -34,6 +35,7 @@ import { isFinished } from "./runState";
 import { TEMPLATES, type Template } from "./templates";
 import type { CompositionSpec, NodeKind, SpecNode, StudioRegistry, StudioSchema } from "./types";
 import { useStudioRun } from "./useStudioRun";
+import { useNow } from "./useNow";
 import { useTabs } from "./useTabs";
 import { groupIssues, validate, type Issue } from "./validate";
 
@@ -89,17 +91,6 @@ function stillPinned(p: PinnedIssue, spec: CompositionSpec, input: string): Issu
     return { ...p.issue, loc: ["nodes", at, ...p.issue.loc.slice(2)] };
   }
   return JSON.stringify({ ...spec, nodes: undefined }) === p.anchor ? p.issue : null;
-}
-
-/** Ticks once a second-ish while `on`, for live elapsed times. */
-function useNow(on: boolean): number {
-  const [now, setNow] = useState(() => Date.now() / 1000);
-  useEffect(() => {
-    if (!on) return;
-    const timer = setInterval(() => setNow(Date.now() / 1000), 250);
-    return () => clearInterval(timer);
-  }, [on]);
-  return now;
 }
 
 interface Props {
@@ -171,14 +162,18 @@ export default function StudioView({ token, active = true }: Props) {
     requestAnimationFrame(() => panelRef.current?.focus());
   }, []);
 
+  // A new direction lays out only a graph nobody has arranged by hand (see
+  // reorient); otherwise it waits for the next load or Tidy.
   const onDirection = useCallback(
     (direction: Direction) => {
       if (direction === directionRef.current) return;
       directionRef.current = direction;
-      setGraph((g) => (g.nodes.length ? relayout(g, direction) : { ...g, direction }));
-      refit();
+      const next = reorient(graph, direction);
+      if (next === graph) return;
+      setGraph(next);
+      if (next.nodes.length) refit();
     },
-    [refit],
+    [graph, refit],
   );
 
   useEffect(() => {
@@ -480,11 +475,7 @@ export default function StudioView({ token, active = true }: Props) {
               type="button"
               className="font-semibold underline underline-offset-2"
               onClick={() => {
-                setGraph(
-                  (undo.graph.direction ?? "LR") === directionRef.current
-                    ? undo.graph
-                    : relayout(undo.graph, directionRef.current),
-                );
+                setGraph(reorient(undo.graph, directionRef.current));
                 setUndo(null);
                 setSelectedId(null);
                 refit();

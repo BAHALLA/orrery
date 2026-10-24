@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { Profiler } from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { stubReactFlowDom, stubWideScreen } from "../test/reactflow";
 import { releaseNotesRun } from "./fixtures/events";
 import { DEMO_REGISTRY } from "./fixtures/registry";
 import schema from "./fixtures/studio-schema.json";
+import { KIND_MIME } from "./Canvas";
 import StudioView from "./StudioView";
 import type { StudioEvent } from "./types";
 
@@ -369,5 +371,87 @@ describe("Studio import and export", () => {
     await user.click(screen.getByRole("button", { name: "Load onto the canvas" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("no `nodes` list");
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+  });
+});
+
+describe("Studio lifecycle", () => {
+  it("keeps one client through a token renewal: no refetch, the new bearer on the next call", async () => {
+    const calls = stubStudio();
+    const user = userEvent.setup();
+    const { rerender } = render(<StudioView token="first" />);
+    await loadDemo(user);
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url.startsWith("/studio/registry"))).toHaveLength(1),
+    );
+
+    rerender(<StudioView token="renewed" />);
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+    await user.type(await screen.findByLabelText("Run input"), "lag");
+    await user.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^run$/i }));
+
+    const post = await waitFor(() => {
+      const found = calls.find((c) => c.url.endsWith("/studio/runs"));
+      expect(found).toBeDefined();
+      return found!;
+    });
+    expect(new Headers(post.init.headers).get("Authorization")).toBe("Bearer renewed");
+    expect(calls.filter((c) => c.url.startsWith("/studio/registry"))).toHaveLength(1);
+    expect(calls.filter((c) => c.url.endsWith("/studio/schema"))).toHaveLength(1);
+  });
+
+  it("stops its clock while hidden behind the chat, and starts it again on show", async () => {
+    const stream = controlledStream();
+    stubStudio({ events: () => stream.response });
+    const user = userEvent.setup();
+    let commits = 0;
+    const view = (active: boolean) => (
+      <Profiler id="studio" onRender={() => (commits += 1)}>
+        <StudioView token="t" active={active} />
+      </Profiler>
+    );
+    const { rerender } = render(view(true));
+    await loadDemo(user);
+    await user.click(screen.getByRole("button", { name: /^run$/i }));
+    await user.type(await screen.findByLabelText("Run input"), "lag");
+    await user.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^run$/i }));
+    stream.push(...releaseNotesRun().slice(0, 3));
+    await screen.findByRole("group", { name: "LLM agent research, active" });
+
+    // Live and on screen: the clock re-renders the view a few times a second.
+    commits = 0;
+    await new Promise((r) => setTimeout(r, 600));
+    expect(commits).toBeGreaterThan(0);
+
+    // Live but hidden: not once.
+    rerender(view(false));
+    await new Promise((r) => setTimeout(r, 50));
+    commits = 0;
+    await new Promise((r) => setTimeout(r, 600));
+    expect(commits).toBe(0);
+
+    rerender(view(true));
+    commits = 0;
+    await new Promise((r) => setTimeout(r, 600));
+    expect(commits).toBeGreaterThan(1);
+    stream.close();
+  });
+
+  it("refuses a dropped kind that is only a prototype key", async () => {
+    stubWideScreen();
+    stubStudio();
+    render(<StudioView token="t" />);
+    const canvas = await screen.findByRole("application", { name: "Composition canvas" });
+    const drop = (kind: string) =>
+      fireEvent.drop(canvas, {
+        clientX: 10,
+        clientY: 10,
+        dataTransfer: { types: [KIND_MIME], getData: () => kind },
+      });
+
+    for (const kind of ["constructor", "__proto__", "toString"]) drop(kind);
+    expect(screen.queryAllByRole("group", { name: /^LLM agent|^Router/ })).toHaveLength(0);
+
+    drop("llm_agent");
+    expect(await screen.findByRole("group", { name: /^LLM agent agent/ })).toBeInTheDocument();
   });
 });

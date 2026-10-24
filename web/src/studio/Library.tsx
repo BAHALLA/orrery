@@ -48,7 +48,7 @@ export function Palette({
                 title={
                   later
                     ? `${info.label}: ${later}`
-                    : `${info.blurb} Drag onto the canvas, or press to add at the end.`
+                    : `${info.label}: ${info.blurb} Drag onto the canvas, or press to add at the end.`
                 }
                 className={`group flex w-full items-center justify-center gap-2.5 rounded-lg border px-1.5 py-2 text-left xl:items-start xl:justify-start xl:px-2.5 transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
                   usable

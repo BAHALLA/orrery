@@ -3,12 +3,15 @@ import {
   addNode,
   COLUMN,
   connect,
+  fitTo,
   graphToSpec,
+  moveNodes,
   layout,
   LEVEL,
   relayout,
   removeEdges,
   removeNodes,
+  reorient,
   specToGraph,
   uniqueId,
   updateNode,
@@ -203,5 +206,57 @@ describe("editing", () => {
     // Spec edges are untouched, and the spec round-trips.
     expect(graphToSpec(next).edges).toEqual(graphToSpec(sup).edges);
     expect(graphToSpec(next).nodes.find((n) => n.id === boss.id)!.children).toEqual(kept);
+  });
+
+  it("lays an auto-laid-out graph out again for a new direction, never one placed by hand", () => {
+    const auto = specToGraph(RELEASE_NOTES, "LR");
+    const tall = reorient(auto, "TB");
+    expect(tall.direction).toBe("TB");
+    expect(tall.nodes[1]!.position).toEqual({ x: 0, y: LEVEL });
+    expect(reorient(tall, "TB")).toBe(tall);
+
+    // Writer dragged 144 to the right: a resize keeps every position and the
+    // direction (so the handles still match), until a Tidy.
+    const dragged = moveNodes(
+      auto,
+      auto.nodes.map((n) =>
+        n.id === "writer" ? { ...n, position: { x: n.position.x + 144, y: n.position.y } } : n,
+      ),
+    );
+    expect(dragged.handPlaced).toBe(true);
+    expect(reorient(dragged, "TB")).toBe(dragged);
+    const tidied = relayout(dragged, "TB");
+    expect(tidied.handPlaced).toBe(false);
+    expect(reorient(tidied, "LR").direction).toBe("LR");
+    // An empty canvas just takes the direction.
+    expect(reorient(specToGraph({ ...RELEASE_NOTES, nodes: [], edges: [] }), "TB").direction).toBe(
+      "TB",
+    );
+  });
+
+  it("fits a graph centred when it fits, and from its first rank when it overflows", () => {
+    const opts = { pad: 32, minZoom: 0.75, maxZoom: 1 };
+    // 3 nodes left to right in a wide pane: zoom 1, centred.
+    expect(
+      fitTo({ x: 0, y: -60, width: 800, height: 120 }, { width: 1000, height: 900 }, opts),
+    ).toEqual({ x: 100, y: 450, zoom: 1 });
+    // 6 nodes left to right in a 1280×800 canvas of ~400×700: clamped to 0.75,
+    // and the first rank starts at the margin rather than off screen.
+    const wide = fitTo(
+      { x: 0, y: -60, width: 1640, height: 150 },
+      { width: 400, height: 700 },
+      opts,
+    );
+    expect(wide.zoom).toBe(0.75);
+    expect(wide.x).toBe(32);
+    // The other axis still fits, so it stays centred.
+    expect(wide.y).toBeCloseTo(350 - 75 * 0.75 + 60 * 0.75);
+    // Overflowing both ways: the top-left of the graph sits at the margin.
+    const both = fitTo(
+      { x: -100, y: -200, width: 3000, height: 3000 },
+      { width: 400, height: 400 },
+      opts,
+    );
+    expect(both).toEqual({ x: 32 + 75, y: 32 + 150, zoom: 0.75 });
   });
 });

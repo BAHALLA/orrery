@@ -1,4 +1,4 @@
-import type { Edge, Node, XYPosition } from "@xyflow/react";
+import type { Edge, Node, Rect, Viewport, XYPosition } from "@xyflow/react";
 import type { CompositionSpec, SpecEdge, SpecNode } from "./types";
 
 /**
@@ -43,6 +43,11 @@ export interface StudioGraph {
   edges: StudioEdge[];
   /** The auto-layout's direction (a canvas concern, never in the spec). Left to right if unset. */
   direction?: Direction;
+  /**
+   * A node was moved by hand since the last auto-layout: the canvas keeps
+   * the positions (a resize never lays the graph out again) until a load or Tidy.
+   */
+  handPlaced?: boolean;
 }
 
 /**
@@ -218,7 +223,57 @@ export function relayout(graph: StudioGraph, direction = graph.direction ?? "LR"
   return {
     ...graph,
     direction,
+    handPlaced: false,
     nodes: graph.nodes.map((n) => ({ ...n, position: positions[n.id] ?? n.position })),
+  };
+}
+
+/** Nodes moved by hand (a drag, the arrow keys): from now on the canvas keeps their positions. */
+export function moveNodes(graph: StudioGraph, nodes: StudioNode[]): StudioGraph {
+  return { ...graph, nodes, handPlaced: true };
+}
+
+/**
+ * The graph for a canvas that now suits `direction`. An auto-laid-out graph
+ * is laid out again that way; one placed by hand is left exactly as it is
+ * (its direction too, so its handles still match its positions): the new
+ * direction waits for the next load or Tidy. Returns `graph` itself when
+ * nothing changes.
+ */
+export function reorient(graph: StudioGraph, direction: Direction): StudioGraph {
+  if ((graph.direction ?? "LR") === direction || graph.handPlaced) return graph;
+  return graph.nodes.length ? relayout(graph, direction) : { ...graph, direction };
+}
+
+export interface FitOptions {
+  /** Margin around the graph, in screen pixels. */
+  pad: number;
+  minZoom: number;
+  maxZoom: number;
+}
+
+/**
+ * The viewport that fits `bounds` (flow units) in a `pane` (pixels). Each
+ * axis the graph fits on is centred. On an axis it overflows even at
+ * `minZoom`, the graph starts at the margin instead: its first rank (or top
+ * row) is in view, and the rest is a pan away. Centring would cut off both
+ * ends, the first node included.
+ */
+export function fitTo(
+  bounds: Rect,
+  pane: { width: number; height: number },
+  { pad, minZoom, maxZoom }: FitOptions,
+): Viewport {
+  const width = Math.max(bounds.width, 1);
+  const height = Math.max(bounds.height, 1);
+  const fit = Math.min((pane.width - 2 * pad) / width, (pane.height - 2 * pad) / height);
+  const zoom = Math.min(maxZoom, Math.max(minZoom, fit));
+  const axis = (size: number, start: number, room: number) =>
+    size * zoom + 2 * pad <= room ? (room - size * zoom) / 2 - start * zoom : pad - start * zoom;
+  return {
+    x: axis(width, bounds.x, pane.width),
+    y: axis(height, bounds.y, pane.height),
+    zoom,
   };
 }
 

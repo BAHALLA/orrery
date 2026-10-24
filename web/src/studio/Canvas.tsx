@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, type DragEvent, type ReactNode } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -7,6 +7,7 @@ import {
   ReactFlow,
   applyEdgeChanges,
   applyNodeChanges,
+  useNodesInitialized,
   useReactFlow,
   useStore,
   type Connection,
@@ -18,6 +19,8 @@ import "./studio.css";
 import {
   addNode,
   connect,
+  fitTo,
+  moveNodes,
   removeEdges,
   removeNodes,
   uniqueId,
@@ -59,8 +62,13 @@ interface Props {
   onRemoved: () => void;
 }
 
-/** Fit a graph so its text stays readable: never below 0.75 (pan for the rest), never above 1. */
+/**
+ * Fit a graph so its text stays readable: never below 0.75 (pan for the
+ * rest), never above 1. FIT is React Flow's own fit (the controls' button);
+ * FIT_TO is the Studio's, which also keeps the first rank in view.
+ */
 const FIT = { padding: 0.15, minZoom: 0.75, maxZoom: 1 };
+const FIT_TO = { pad: 32, minZoom: 0.75, maxZoom: 1 };
 
 const ariaLabels = {
   "node.a11yDescription.default":
@@ -110,12 +118,20 @@ export function Canvas({
     if (tall !== null) onDirection(tall ? "TB" : "LR");
   }, [tall, onDirection]);
 
-  // `fitView` on <ReactFlow> runs once, on the first nodes; a replaced graph
-  // (a template, an import, a past run, a tidy) is fitted here. React Flow
-  // queues the fit until the new nodes are measured.
+  // A replaced graph (a template, an import, a past run, a tidy, a new
+  // direction) is fitted once its nodes are measured. React Flow's fitView
+  // centres even when the graph overflows at its minimum zoom, cutting off
+  // the first node; fitTo starts it at the margin instead.
+  const measured = useNodesInitialized();
+  const pane = useStore((s) => ({ width: s.width, height: s.height }), shallowSize);
+  const fitted = useRef(0);
   useEffect(() => {
-    if (fitSignal) void flow.fitView({ ...FIT, duration: 200 });
-  }, [fitSignal, flow]);
+    if (!fitSignal || fitted.current === fitSignal || !measured) return;
+    if (!pane.width || !pane.height || !graph.nodes.length) return;
+    fitted.current = fitSignal;
+    const viewport = fitTo(flow.getNodesBounds(flow.getNodes()), pane, FIT_TO);
+    void flow.setViewport(viewport, { duration: 200 });
+  }, [fitSignal, measured, pane, flow, graph.nodes.length]);
 
   const nodes = useMemo<StudioNode[]>(
     () =>
@@ -180,8 +196,12 @@ export function Canvas({
       }
       const rest = changes.filter((c) => c.type === "position" || c.type === "dimensions");
       if (!removed.length && !rest.length) return;
+      // A position change is a drag or an arrow key: the graph is placed by
+      // hand from then on. A dimensions change is only React Flow measuring.
+      const byHand = rest.some((c) => c.type === "position");
       onGraph((g) => {
-        const moved = rest.length ? { ...g, nodes: applyNodeChanges(rest, g.nodes) } : g;
+        const nodes = rest.length ? applyNodeChanges(rest, g.nodes) : g.nodes;
+        const moved = byHand ? moveNodes(g, nodes) : rest.length ? { ...g, nodes } : g;
         return removed.length ? removeNodes(moved, removed) : moved;
       });
       if (selectedId && removed.includes(selectedId)) onSelect(null);
@@ -250,7 +270,6 @@ export function Canvas({
         nodesConnectable={editable}
         deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         ariaLabelConfig={ariaLabels}
-        fitView
         fitViewOptions={FIT}
         minZoom={0.3}
         maxZoom={1.75}
@@ -277,6 +296,13 @@ export function Canvas({
       ) : null}
     </div>
   );
+}
+
+function shallowSize(
+  a: { width: number; height: number },
+  b: { width: number; height: number },
+): boolean {
+  return a.width === b.width && a.height === b.height;
 }
 
 function nodeAria(n: StudioNode, issues: IssueMap, run: RunView | null): string {
