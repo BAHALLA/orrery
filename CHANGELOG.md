@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The console's **Agents** tab shows what is running. A deployment panel gives
+  the Orrery, ADK and Python versions, the coordinator's model (each link of a
+  fallback chain), the autonomy level, the env's specialist selection, the
+  catalog version with who changed it and when, and how long the process has
+  been up. Each agent card shows its entry-point key, package and version, its
+  model, and whether an approval gate guards its tools (a guarded agent without
+  one is flagged). `GET /admin/agents` returns the same fields.
+- Editing agents is quicker. A "New agent" button in the page header and on
+  the composed-agents grid; "Compose from these tools" on a specialist;
+  Duplicate on a composed agent; All on / All off; a filter for on and off
+  agents. The editor validates the name as you type (the server's rule and
+  name clashes), selects a specialist's tools as a group, lists the chosen
+  tools as removable chips, warns how many need approval or are destructive,
+  offers an instruction template, and keeps with Ctrl/Cmd+Enter. Cards with a
+  pending change are marked, and the save bar lists what the save will change.
+
 ## [0.8.0] - 2026-10-24
 
 A cost and hygiene release. Daily token budgets cap what one caller, and the

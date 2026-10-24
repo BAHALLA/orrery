@@ -3,13 +3,15 @@ import type {
   CatalogResponse,
   CatalogUpdate,
   DeclarativeAgent,
+  DeploymentInfo,
   InventoryAgent,
   ToolGuard,
 } from "../api/types";
 import type { SystemController } from "../system/useSystem";
 import { AgentForm } from "./AgentForm";
+import { ageLabel, describeChanges, draftChanges, guardCounts } from "./agentDraft";
 import { GUARD_ORDER, guardChip, guardDot, guardLabel, guardTitle } from "./guards";
-import { PlusIcon, SearchIcon } from "./icons";
+import { AlertIcon, PlusIcon, SearchIcon, ShieldIcon } from "./icons";
 
 interface Props {
   system: SystemController;
@@ -39,10 +41,16 @@ const sameDraft = (a: string[], b: DeclarativeAgent[], c: string[], d: Declarati
 const sectionTitle =
   "text-xs font-semibold tracking-wider text-slate-500 uppercase dark:text-slate-400";
 
+const pill =
+  "rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300";
+
+type Show = "all" | "on" | "off";
+
 /**
- * What the coordinator can reach, for admins, as a full page: each agent with
- * its tools grouped by guard level, and — when the deployment allows editing —
- * a switch per specialist and the composed agents, saved together.
+ * What the coordinator can reach, for admins, as a full page: what is running
+ * (versions, model), each agent with its tools grouped by guard level, and —
+ * when the deployment allows editing — a switch per specialist and the
+ * composed agents, saved together.
  *
  * Served agents come from the running tree (`/admin/agents`), so a disabled
  * specialist is absent there because it is absent from what runs. The catalog
@@ -50,7 +58,7 @@ const sectionTitle =
  * catalog's tool list) and the ones the deployment's env excludes.
  */
 export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
-  const { agents, agentsError, loadAgents, loadCatalog, saveCatalog } = system;
+  const { agents, deployment, agentsError, loadAgents, loadCatalog, saveCatalog } = system;
   // Only a well-formed catalog counts: an older server answers with something else.
   const catalog = system.catalog?.catalog ? system.catalog : null;
   const [savedVersion, setSavedVersion] = useState<number | null>(null);
@@ -85,6 +93,7 @@ export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
       // A successful save re-seeds the draft from the new version.
       key={catalog?.catalog.version ?? "read-only"}
       agents={agents}
+      deployment={deployment}
       catalog={catalog}
       active={active}
       onDirtyChange={onDirtyChange}
@@ -108,10 +117,21 @@ interface Card {
   /** The catalog key, for a specialist the admin can switch. */
   switchKey?: string | undefined;
   on: boolean;
+  /** Whether it is on in the saved catalog: differs from `on` while a switch is pending. */
+  savedOn: boolean;
+  /** Only for agents being served now: the tree is the source of these. */
+  live?: Pick<InventoryAgent, "key" | "package" | "version" | "model" | "gated"> | undefined;
+}
+
+interface Editing {
+  index: number | null;
+  agent: DeclarativeAgent;
+  specialist?: string | undefined;
 }
 
 function Dashboard({
   agents,
+  deployment,
   catalog,
   active,
   onDirtyChange,
@@ -121,6 +141,7 @@ function Dashboard({
   onSave,
 }: {
   agents: InventoryAgent[];
+  deployment: DeploymentInfo | null;
   catalog: CatalogResponse | null;
   active: boolean;
   onDirtyChange: (dirty: boolean) => void;
@@ -130,22 +151,17 @@ function Dashboard({
   onSave: (update: CatalogUpdate) => Promise<void>;
 }) {
   const editable = catalog?.editing_enabled === true;
-  const [disabled, setDisabled] = useState<string[]>(catalog?.catalog.disabled_specialists ?? []);
-  const [composed, setComposed] = useState<DeclarativeAgent[]>(catalog?.catalog.agents ?? []);
-  const [editing, setEditing] = useState<{ index: number | null; agent: DeclarativeAgent } | null>(
-    null,
-  );
+  const savedDisabled = catalog?.catalog.disabled_specialists ?? [];
+  const savedAgents = catalog?.catalog.agents ?? [];
+  const [disabled, setDisabled] = useState<string[]>(savedDisabled);
+  const [composed, setComposed] = useState<DeclarativeAgent[]>(savedAgents);
+  const [editing, setEditing] = useState<Editing | null>(null);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
+  const [show, setShow] = useState<Show>("all");
 
-  const dirty =
-    editable &&
-    !sameDraft(
-      disabled,
-      composed,
-      catalog?.catalog.disabled_specialists ?? [],
-      catalog?.catalog.agents ?? [],
-    );
+  const dirty = editable && !sameDraft(disabled, composed, savedDisabled, savedAgents);
+  const changes = describeChanges(draftChanges(savedDisabled, disabled, savedAgents, composed));
 
   // An open agent dialog counts too: its text isn't in the draft until "Keep agent".
   const unsaved = dirty || editing !== null;
@@ -170,13 +186,15 @@ function Dashboard({
             .map((t) => ({ name: t.ref, guard: t.guard, reason: t.reason })),
         switchKey: editable ? s.key : undefined,
         on: !disabled.includes(s.key),
+        savedOn: !(catalog?.catalog.disabled_specialists ?? []).includes(s.key),
+        live,
       };
     });
     // Composed agents get their own section while editing; elsewhere they are
     // just more agents being served.
     const rest = agents
       .filter((a) => !claimed.has(a.name) && !(editable && a.source === "declarative"))
-      .map<Card>((a) => ({ ...a, on: true }));
+      .map<Card>((a) => ({ ...a, on: true, savedOn: true, live: a }));
     return [...fromCatalog, ...rest];
   }, [agents, catalog, disabled, editable]);
 
@@ -185,15 +203,29 @@ function Dashboard({
   const count = (g: ToolGuard) => allTools.filter((t) => t.guard === g).length;
 
   const needle = query.trim().toLowerCase();
-  const visible = needle
-    ? cards.flatMap((c) => {
-        if (`${c.name} ${c.description}`.toLowerCase().includes(needle)) return [c];
-        const tools = c.tools.filter((t) => t.name.toLowerCase().includes(needle));
-        return tools.length ? [{ ...c, tools }] : [];
-      })
-    : cards;
+  const visible = cards
+    .filter((c) => show === "all" || (show === "on") === c.on)
+    .flatMap((c) => {
+      if (!needle) return [c];
+      const meta = `${c.name} ${c.description} ${c.live?.package ?? ""} ${c.live?.model ?? ""}`;
+      if (meta.toLowerCase().includes(needle)) return [c];
+      const tools = c.tools.filter((t) => t.name.toLowerCase().includes(needle));
+      return tools.length ? [{ ...c, tools }] : [];
+    });
 
   const excluded = catalog?.specialists.filter((s) => !s.available) ?? [];
+  const switchable = cards.filter((c) => c.switchKey);
+
+  // Every name a new composed agent may not take: the server refuses a clash.
+  const takenNames = (except: string | null) =>
+    new Set(
+      [
+        ...cards.map((c) => c.name),
+        ...agents.map((a) => a.name),
+        ...(catalog?.file_agents ?? []),
+        ...composed.map((a) => a.name),
+      ].filter((n) => n !== except),
+    );
 
   const save = async () => {
     if (!catalog) return;
@@ -208,10 +240,13 @@ function Dashboard({
   };
 
   const discard = () => {
-    setDisabled(catalog?.catalog.disabled_specialists ?? []);
-    setComposed(catalog?.catalog.agents ?? []);
+    setDisabled(savedDisabled);
+    setComposed(savedAgents);
     onDiscard();
   };
+
+  const setAll = (on: boolean) =>
+    setDisabled(on ? [] : switchable.map((c) => c.switchKey as string));
 
   return (
     <div className="orrery-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -225,11 +260,14 @@ function Dashboard({
               What the coordinator can delegate to, and how each tool is guarded.
             </p>
           </div>
-          {catalog ? (
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Catalog version {catalog.catalog.version}
-              {catalog.catalog.updated_by ? ` · last changed by ${catalog.catalog.updated_by}` : ""}
-            </p>
+          {editable ? (
+            <button
+              type="button"
+              onClick={() => setEditing({ index: null, agent: EMPTY_AGENT })}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-500"
+            >
+              <PlusIcon /> New agent
+            </button>
           ) : null}
         </div>
 
@@ -241,6 +279,8 @@ function Dashboard({
             Saved as version {savedVersion} — new turns use these agents.
           </p>
         ) : null}
+
+        <DeploymentPanel deployment={deployment} catalog={catalog} />
 
         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Agents served" value={live.length} />
@@ -264,11 +304,32 @@ function Dashboard({
 
         <section aria-labelledby="specialists-title" className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 id="specialists-title" className={sectionTitle}>
-              Specialists
-            </h3>
-            <div className="flex flex-wrap items-center gap-4">
-              <ul className="hidden items-center gap-3 text-xs text-slate-500 md:flex dark:text-slate-400">
+            <div className="flex items-center gap-3">
+              <h3 id="specialists-title" className={sectionTitle}>
+                Specialists
+              </h3>
+              {editable && switchable.length > 1 ? (
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setAll(true)}
+                    className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+                  >
+                    All on
+                  </button>
+                  <span className="text-slate-300 dark:text-slate-700">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setAll(false)}
+                    className="font-medium text-brand-600 hover:underline dark:text-brand-400"
+                  >
+                    All off
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <ul className="hidden items-center gap-3 text-xs text-slate-500 lg:flex dark:text-slate-400">
                 {GUARD_ORDER.filter((g) => g !== "dynamic").map((g) => (
                   <li key={g} className="inline-flex items-center gap-1.5">
                     <span className={`h-1.5 w-1.5 rounded-full ${guardDot[g]}`} />
@@ -276,6 +337,30 @@ function Dashboard({
                   </li>
                 ))}
               </ul>
+              {editable ? (
+                <div
+                  role="radiogroup"
+                  aria-label="Show agents"
+                  className="inline-flex rounded-lg border border-slate-300 p-0.5 text-xs dark:border-slate-700"
+                >
+                  {(["all", "on", "off"] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      role="radio"
+                      aria-checked={show === s}
+                      onClick={() => setShow(s)}
+                      className={`rounded-md px-2.5 py-1 font-medium capitalize ${
+                        show === s
+                          ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
+                          : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <div className="relative">
                 <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-slate-500" />
                 <input
@@ -304,12 +389,22 @@ function Dashboard({
                       }
                     : undefined
                 }
+                onCompose={
+                  editable && c.switchKey
+                    ? () =>
+                        setEditing({
+                          index: null,
+                          agent: EMPTY_AGENT,
+                          specialist: c.switchKey,
+                        })
+                    : undefined
+                }
               />
             ))}
           </ul>
           {visible.length === 0 ? (
             <p className="py-6 text-center text-sm text-slate-500">
-              No agent or tool matches “{query}”.
+              {needle ? `No agent or tool matches “${query}”.` : `No agent is ${show}.`}
             </p>
           ) : null}
           {excluded.length ? (
@@ -328,81 +423,58 @@ function Dashboard({
 
         {editable && catalog ? (
           <section aria-labelledby="composed-title" className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 id="composed-title" className={sectionTitle}>
-                  Composed agents
-                </h3>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  A brief over existing tools — no new code, the same guards.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setEditing({ index: null, agent: EMPTY_AGENT })}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:border-brand-400 hover:text-brand-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:text-brand-300"
-              >
-                <PlusIcon /> New agent
-              </button>
-            </div>
-            {composed.length || catalog.file_agents.length ? (
-              <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {catalog.file_agents.map((name) => (
-                  <li
-                    key={name}
-                    className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50"
-                  >
-                    <p className="font-mono text-sm font-medium text-slate-700 dark:text-slate-200">
-                      {name}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      From the deployment's config file — fixed here.
-                    </p>
-                  </li>
-                ))}
-                {composed.map((a, i) => (
-                  <li
-                    key={a.name || i}
-                    className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
-                  >
-                    <p className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100">
-                      {a.name}
-                    </p>
-                    <p
-                      className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400"
-                      title={a.description}
-                    >
-                      {a.description}
-                    </p>
-                    <div className="mt-3 flex items-center gap-3 text-xs">
-                      <span className="text-slate-500">
-                        {a.tools.length} tool{a.tools.length === 1 ? "" : "s"}
-                      </span>
-                      <button
-                        type="button"
-                        className="ml-auto font-medium text-brand-600 hover:underline dark:text-brand-400"
-                        onClick={() => setEditing({ index: i, agent: a })}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Remove agent ${a.name}`}
-                        className="font-medium text-crit-fg hover:underline"
-                        onClick={() => setComposed((list) => list.filter((_, j) => j !== i))}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="rounded-xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700">
-                None yet. Compose one to give the coordinator a focused brief over tools it already
-                has.
+            <div>
+              <h3 id="composed-title" className={sectionTitle}>
+                Composed agents
+              </h3>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                A brief over existing tools — no new code, the same guards.
               </p>
-            )}
+            </div>
+            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {catalog.file_agents.map((name) => (
+                <li
+                  key={name}
+                  className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50"
+                >
+                  <p className="font-mono text-sm font-medium text-slate-700 dark:text-slate-200">
+                    {name}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    From the deployment's config file — fixed here.
+                  </p>
+                </li>
+              ))}
+              {composed.map((a, i) => (
+                <ComposedCard
+                  key={a.name || i}
+                  agent={a}
+                  saved={savedAgents.find((s) => s.name === a.name)}
+                  tools={catalog.tools}
+                  onEdit={() => setEditing({ index: i, agent: a })}
+                  onDuplicate={() =>
+                    setEditing({
+                      index: null,
+                      agent: { ...a, name: copyName(a.name, takenNames(null)) },
+                    })
+                  }
+                  onRemove={() => setComposed((list) => list.filter((_, j) => j !== i))}
+                />
+              ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setEditing({ index: null, agent: EMPTY_AGENT })}
+                  className="flex h-full min-h-28 w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500 hover:border-brand-400 hover:text-brand-700 dark:border-slate-700 dark:hover:text-brand-300"
+                >
+                  <PlusIcon />
+                  {composed.length ? "Compose another" : "Compose your first agent"}
+                  <span className="text-xs">
+                    A focused brief over tools the coordinator already has.
+                  </span>
+                </button>
+              </li>
+            </ul>
           </section>
         ) : null}
       </div>
@@ -416,7 +488,8 @@ function Dashboard({
               </p>
             ) : (
               <p className="min-w-0 flex-1 text-sm text-slate-600 dark:text-slate-300">
-                Unsaved changes — nothing is served until you save.
+                <span className="font-medium">Unsaved:</span> {changes ?? "reordered"} — nothing is
+                served until you save.
               </p>
             )}
             <button
@@ -443,6 +516,10 @@ function Dashboard({
           active={active}
           initial={editing.agent}
           tools={catalog.tools}
+          specialist={editing.specialist}
+          taken={takenNames(
+            editing.index === null ? null : (composed[editing.index]?.name ?? null),
+          )}
           onCancel={() => setEditing(null)}
           onDone={(agent) => {
             setComposed((list) =>
@@ -455,6 +532,84 @@ function Dashboard({
         />
       ) : null}
     </div>
+  );
+}
+
+/** `name_copy`, `name_copy_2`, ...: the first one no agent has. */
+function copyName(name: string, taken: ReadonlySet<string>): string {
+  const base = `${name}_copy`.slice(0, 41);
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const next = `${base.slice(0, 38)}_${n}`;
+    if (!taken.has(next)) return next;
+  }
+}
+
+function DeploymentPanel({
+  deployment,
+  catalog,
+}: {
+  deployment: DeploymentInfo | null;
+  catalog: CatalogResponse | null;
+}) {
+  if (!deployment && !catalog) return null;
+  const rows: [string, string, (string | undefined)?][] = [];
+  if (deployment) {
+    rows.push(["Orrery", deployment.orrery_version || "unknown"]);
+    rows.push(["Model", deployment.model || deployment.model_provider, deployment.model_provider]);
+    rows.push(["Autonomy", deployment.autonomy_level ?? "not set"]);
+    rows.push(["ADK", deployment.adk_version || "unknown"]);
+    rows.push(["Python", deployment.python_version]);
+    rows.push([
+      "Up since",
+      ageLabel(deployment.started_at).replace(" ago", ""),
+      new Date(deployment.started_at * 1000).toLocaleString(),
+    ]);
+    if (deployment.enabled_specialists || deployment.disabled_specialists) {
+      rows.push([
+        "Selected by env",
+        [
+          deployment.enabled_specialists ? `only ${deployment.enabled_specialists}` : "",
+          deployment.disabled_specialists ? `not ${deployment.disabled_specialists}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ]);
+    }
+  }
+  if (catalog) {
+    const c = catalog.catalog;
+    rows.push([
+      "Catalog",
+      `v${c.version}${c.updated_by ? ` · ${c.updated_by}` : ""}${c.updated_at ? ` · ${ageLabel(c.updated_at)}` : ""}`,
+      c.updated_at ? new Date(c.updated_at * 1000).toLocaleString() : undefined,
+    ]);
+    if (catalog.applied_version !== c.version) {
+      rows.push(["Serving", `v${catalog.applied_version} (catching up)`]);
+    }
+  }
+
+  return (
+    <section
+      aria-label="Deployment"
+      className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"
+    >
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+        {rows.map(([label, value, title]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-[11px] font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400">
+              {label}
+            </dt>
+            <dd
+              className="truncate font-mono text-[13px] text-slate-800 dark:text-slate-100"
+              title={title ?? value}
+            >
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
@@ -472,19 +627,33 @@ function Stat({ label, value, dot }: { label: string; value: number; dot?: strin
   );
 }
 
-function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | undefined }) {
+function AgentCard({
+  card,
+  onToggle,
+  onCompose,
+}: {
+  card: Card;
+  onToggle?: (() => void) | undefined;
+  onCompose?: (() => void) | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
   const groups = GUARD_ORDER.map((g) => ({
     guard: g,
     tools: card.tools.filter((t) => t.guard === g),
   })).filter((g) => g.tools.length > 0);
+  const guarded = card.tools.some((t) => t.guard !== "read");
+  const pending = card.on !== card.savedOn;
+  const meta = card.live;
 
   return (
     <li
       className={`flex flex-col rounded-xl border bg-white p-4 transition-opacity dark:bg-slate-900 ${
-        card.on
-          ? "border-slate-200 dark:border-slate-800"
-          : "border-dashed border-slate-300 opacity-60 dark:border-slate-700"
-      }`}
+        pending
+          ? "border-brand-400 ring-1 ring-brand-400/40"
+          : card.on
+            ? "border-slate-200 dark:border-slate-800"
+            : "border-dashed border-slate-300 dark:border-slate-700"
+      } ${card.on ? "" : "opacity-70"}`}
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
@@ -492,10 +661,20 @@ function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | u
             <span className="font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
               {card.name}
             </span>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              {sourceLabel[card.source] ?? card.source}
-            </span>
-            {!card.on ? (
+            <span className={pill}>{sourceLabel[card.source] ?? card.source}</span>
+            {meta?.version ? (
+              <span
+                className={pill}
+                title={meta.package ? `${meta.package} ${meta.version}` : undefined}
+              >
+                v{meta.version}
+              </span>
+            ) : null}
+            {pending ? (
+              <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                {card.on ? "turns on when saved" : "turns off when saved"}
+              </span>
+            ) : !card.on ? (
               <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                 off
               </span>
@@ -503,8 +682,8 @@ function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | u
           </div>
           {card.description ? (
             <p
-              className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500 dark:text-slate-400"
-              title={card.description}
+              className={`mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400 ${expanded ? "" : "line-clamp-2"}`}
+              title={expanded ? undefined : card.description}
             >
               {card.description}
             </p>
@@ -530,6 +709,29 @@ function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | u
         ) : null}
       </div>
 
+      {meta && (meta.model || meta.package || meta.key || (guarded && meta.gated !== undefined)) ? (
+        <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+          {meta.key ? <Meta label="key" value={meta.key} /> : null}
+          {meta.package ? <Meta label="package" value={meta.package} /> : null}
+          {meta.model ? <Meta label="model" value={meta.model} /> : null}
+          {guarded && meta.gated !== undefined ? (
+            <div className="inline-flex items-center gap-1">
+              {meta.gated ? (
+                <>
+                  <ShieldIcon size={12} className="text-ok-fg" />
+                  <span>approval gate on</span>
+                </>
+              ) : (
+                <>
+                  <AlertIcon size={12} className="text-crit-fg" />
+                  <span className="text-crit-fg">no approval gate</span>
+                </>
+              )}
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
+
       <div className="mt-3 flex flex-col gap-2.5 border-t border-slate-100 pt-3 dark:border-slate-800">
         {groups.map(({ guard, tools }) => (
           <div key={guard}>
@@ -554,6 +756,143 @@ function AgentCard({ card, onToggle }: { card: Card; onToggle?: (() => void) | u
           </div>
         ))}
         {groups.length === 0 ? <p className="text-xs text-slate-500">No tools.</p> : null}
+      </div>
+
+      {card.description.length > 140 || onCompose ? (
+        <div className="mt-3 flex items-center gap-3 text-xs">
+          {card.description.length > 140 ? (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((e) => !e)}
+              className="font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+            >
+              {expanded ? "Less" : "Full description"}
+            </button>
+          ) : null}
+          {onCompose ? (
+            <button
+              type="button"
+              onClick={onCompose}
+              className="ml-auto font-medium text-brand-600 hover:underline dark:text-brand-400"
+            >
+              Compose from these tools
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="inline-flex min-w-0 items-center gap-1">
+      <dt>{label}</dt>
+      <dd className="truncate font-mono text-slate-700 dark:text-slate-200" title={value}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function ComposedCard({
+  agent,
+  saved,
+  tools,
+  onEdit,
+  onDuplicate,
+  onRemove,
+}: {
+  agent: DeclarativeAgent;
+  saved: DeclarativeAgent | undefined;
+  tools: CatalogResponse["tools"];
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onRemove: () => void;
+}) {
+  const counts = guardCounts(agent.tools, tools);
+  const state = !saved ? "new" : JSON.stringify(saved) !== JSON.stringify(agent) ? "edited" : null;
+  const SHOWN = 6;
+
+  return (
+    <li
+      className={`flex flex-col rounded-xl border bg-white p-4 dark:bg-slate-900 ${
+        state
+          ? "border-brand-400 ring-1 ring-brand-400/40"
+          : "border-slate-200 dark:border-slate-800"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <p className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100">
+          {agent.name}
+        </p>
+        {state ? (
+          <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+            {state} · unsaved
+          </span>
+        ) : null}
+      </div>
+      <p
+        className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400"
+        title={agent.description}
+      >
+        {agent.description}
+      </p>
+      <ul className="mt-2 flex flex-wrap gap-1" aria-label={`${agent.name} tools`}>
+        {agent.tools.slice(0, SHOWN).map((ref) => (
+          <li
+            key={ref}
+            className="rounded-md border border-slate-200 px-1.5 py-0.5 font-mono text-[11px] text-slate-600 dark:border-slate-700 dark:text-slate-300"
+          >
+            {ref}
+          </li>
+        ))}
+        {agent.tools.length > SHOWN ? (
+          <li className="px-1 py-0.5 text-[11px] text-slate-500">
+            +{agent.tools.length - SHOWN} more
+          </li>
+        ) : null}
+      </ul>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+        <span className="inline-flex items-center gap-2 text-slate-500">
+          {agent.tools.length} tool{agent.tools.length === 1 ? "" : "s"}
+          {counts.confirm ? (
+            <span className="inline-flex items-center gap-1" title="Need approval">
+              <span className={`h-1.5 w-1.5 rounded-full ${guardDot.confirm}`} />
+              {counts.confirm}
+            </span>
+          ) : null}
+          {counts.destructive ? (
+            <span className="inline-flex items-center gap-1" title="Destructive">
+              <span className={`h-1.5 w-1.5 rounded-full ${guardDot.destructive}`} />
+              {counts.destructive}
+            </span>
+          ) : null}
+        </span>
+        <button
+          type="button"
+          className="ml-auto font-medium text-brand-600 hover:underline dark:text-brand-400"
+          onClick={onEdit}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          aria-label={`Duplicate agent ${agent.name}`}
+          className="font-medium text-slate-600 hover:underline dark:text-slate-300"
+          onClick={onDuplicate}
+        >
+          Duplicate
+        </button>
+        <button
+          type="button"
+          aria-label={`Remove agent ${agent.name}`}
+          className="font-medium text-crit-fg hover:underline"
+          onClick={onRemove}
+        >
+          Remove
+        </button>
       </div>
     </li>
   );

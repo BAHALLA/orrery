@@ -296,7 +296,7 @@ package.
 | `POST /onboarding/selftest` | Model connectivity + integration probes. |
 | `GET /admin/catalog` | **Admin only.** The editable agent catalog (switched-off specialists, composed agents, version) and what it may contain. |
 | `PUT /admin/catalog` | **Admin only, and only with `ORRERY_ADMIN_EDITING=true`.** Replace the catalog. 409 if it changed since the version you edited, 422 if it can't be built — in both cases nothing changes. |
-| `GET /admin/agents` | **Admin only.** Every specialist the coordinator can reach, its source (built-in / plugin / declarative / MCP) and each tool's guard level — the **Agents** tab. |
+| `GET /admin/agents` | **Admin only.** Every specialist the coordinator can reach: its source (built-in / plugin / declarative / MCP), entry-point key, package and version, model, whether a confirmation gate guards it, and each tool's guard level. A `deployment` block gives the Orrery, ADK and Python versions, the coordinator's model, the autonomy level, the env's specialist selection and when the process started — the **Agents** tab. |
 
 Session-scoped endpoints pin `user_id` to the verified subject, so another
 user's session id resolves to a plain 404 — indistinguishable from one that

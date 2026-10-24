@@ -178,11 +178,39 @@ export interface InventoryAgent {
   /** builtin | plugin | declarative | mcp */
   source: string;
   tools: { name: string; guard: ToolGuard; reason: string }[];
+  /** Entry-point key (`kafka`); empty for declarative and MCP agents. Older servers omit it. */
+  key?: string;
+  /** The installed package that registered it, and its version. */
+  package?: string;
+  version?: string;
+  /** The model it calls (`a → b` for a fallback chain). */
+  model?: string;
+  /** Whether a confirmation gate guards its tools. */
+  gated?: boolean;
+}
+
+/** What is running, for the admin view (GET /admin/agents). */
+export interface DeploymentInfo {
+  app_name: string;
+  orrery_version: string;
+  adk_version: string;
+  python_version: string;
+  model: string;
+  model_provider: string;
+  autonomy_level: string | null;
+  admin_editing: boolean;
+  /** ORRERY_SPECIALISTS / ORRERY_DISABLED_SPECIALISTS as set; empty when unset. */
+  enabled_specialists: string;
+  disabled_specialists: string;
+  /** Epoch seconds. */
+  started_at: number;
 }
 
 /** GET /admin/agents response (admin only). */
 export interface AgentsResponse {
   agents: InventoryAgent[];
+  /** Older servers omit it. */
+  deployment?: DeploymentInfo | null;
 }
 
 /** A declarative agent: a brief over existing tools (no new code). */

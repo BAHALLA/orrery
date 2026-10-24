@@ -296,8 +296,12 @@ result, with every tool's guard level, in the console's **Agents** tab.
 ### Editing from the console {: #admin-editing }
 
 With `ORRERY_ADMIN_EDITING=true`, admins can do the same from the console's
-**Agents** tab, without a restart: switch specialists off, and compose, edit or
-remove declarative agents with a tool picker that shows each tool's guard level.
+**Agents** tab, without a restart: switch specialists off, and compose, edit,
+duplicate or remove declarative agents with a tool picker that shows each tool's
+guard level. The editor checks the name rule and name clashes as you type,
+selects a specialist's tools as a group ("Compose from these tools" on a card
+opens it narrowed to that specialist), and says how many chosen tools need
+approval or are destructive. The save bar lists what the save will change.
 
 - **The deployment stays the ceiling.** Only specialists the env allows can be
   switched. An env-excluded one is shown as unavailable, and agents from
