@@ -12,6 +12,8 @@ Checks:
 2. 1920x1080: wide, so left to right, zoom 1.
 3. Drag a node at 1440, widen the window to 1920: the hand-placed positions
    survive the direction flip (no relayout), and Tidy then lays it out again.
+   A zoom from the controls' button (pressed from the keyboard) survives a
+   resize, and their fit button fits at zoom 1, like a load.
 4. 1280x800: a graph loaded over another one is fitted to its own measured
    nodes (a 2-node then a 3-node pipeline: every node in the pane, equal
    margins); a 6-node pipeline import overflows even at the minimum zoom
@@ -38,8 +40,9 @@ import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import Page, async_playwright  # ty: ignore[unresolved-import]
 
 WEB = Path(__file__).resolve().parent.parent
 
@@ -115,7 +118,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     schema: bytes = b"{}"
 
-    def log_message(self, *args: object) -> None:  # quiet
+    def log_message(self, format: str, *args: Any) -> None:  # quiet
         pass
 
     def end_headers(self) -> None:
@@ -311,6 +314,23 @@ async def main() -> int:
             c = await canvas(page)
             check(c["left"] and not c["top"], "left-to-right layout")
             check(c["zoom"] == 1, f"fits at zoom 1 (got {c['zoom']})")
+
+            print("1920: a zoom from the controls (by keyboard) survives a resize")
+            await page.get_by_role("button", name="Zoom in").focus()
+            await page.keyboard.press("Enter")
+            await settle(page)
+            zoomed = (await canvas(page))["zoom"]
+            check(zoomed > 1, f"zoomed in (got {zoomed})")
+            await page.set_viewport_size({"width": 1920, "height": 1000})  # still wide
+            await settle(page)
+            c = await canvas(page)
+            check(c["zoom"] == zoomed, f"the zoom is kept (got {c['zoom']})")
+            await page.get_by_role("button", name="Fit the composition in view").click()
+            await settle(page)
+            c = await canvas(page)
+            check(
+                c["zoom"] == 1, f"the fit button fits at zoom 1, as a load does (got {c['zoom']})"
+            )
             await page.context.close()
 
             print("1280x800: a graph loaded over another is fitted to its own nodes")

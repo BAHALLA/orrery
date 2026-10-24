@@ -135,6 +135,9 @@ export function Canvas({
   const pane = useStore((s) => ({ width: s.width, height: s.height }), shallowSize);
   const fitted = useRef({ signal: 0, pane: "" });
   const userMoved = useRef(false);
+  const markUserMoved = useCallback(() => {
+    userMoved.current = true;
+  }, []);
   useEffect(() => {
     if (!fitSignal || !measured || !pane.width || !pane.height) return;
     const paneKey = `${pane.width}x${pane.height}`;
@@ -302,7 +305,16 @@ export function Canvas({
         proOptions={{ hideAttribution: false }}
       >
         <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
-        <Controls showInteractive={false} position="bottom-left" />
+        {/* Its buttons zoom programmatically (no event reaches onMoveStart), so
+            each marks the view as the person's own; its fit matches a load's. */}
+        <Controls
+          showInteractive={false}
+          position="bottom-left"
+          fitViewOptions={FIT}
+          onZoomIn={markUserMoved}
+          onZoomOut={markUserMoved}
+          onFitView={markUserMoved}
+        />
         {/* A tall, narrow canvas has no room for it: it would sit on the graph. */}
         {vertical ? null : (
           <MiniMap
