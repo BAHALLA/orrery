@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-24
+
+A fix release. `rollback_deployment` actually rolls back (it reported success
+while changing nothing), the console no longer scrolls past the app on the
+**Agents** tab, and two small follow-ups from 0.9.0's review. No upgrade
+steps; Helm releases whose cluster-scoped RBAC names were already truncated
+get new names on upgrade (Helm replaces them).
+
 ### Fixed
 
 - `rollback_deployment` actually rolls back. It set the `rollback-to`
@@ -1467,38 +1475,6 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.9.0...HEAD
-[0.9.0]: https://github.com/BAHALLA/orrery/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/BAHALLA/orrery/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/BAHALLA/orrery/compare/v0.6.9...v0.7.0
-[0.6.9]: https://github.com/BAHALLA/orrery/compare/v0.6.8...v0.6.9
-[0.6.8]: https://github.com/BAHALLA/orrery/compare/v0.6.7...v0.6.8
-[0.6.7]: https://github.com/BAHALLA/orrery/compare/v0.6.6...v0.6.7
-[0.6.6]: https://github.com/BAHALLA/orrery/compare/v0.5.0...v0.6.6
-[0.6.5]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
-[0.6.4]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
-[0.6.3]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
-[0.6.2]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
-[0.6.1]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
-[0.6.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.6.6
-[0.5.0]: https://github.com/BAHALLA/orrery/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/BAHALLA/orrery/compare/v0.3.1...v0.4.1
-[0.4.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.4.1
-[0.3.1]: https://github.com/BAHALLA/orrery/compare/v0.2.3...v0.3.1
-[0.3.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.3.1
-[0.2.3]: https://github.com/BAHALLA/orrery/compare/v0.1.11...v0.2.3
-[0.2.2]: https://github.com/BAHALLA/orrery/releases/tag/v0.2.3
-[0.2.1]: https://github.com/BAHALLA/orrery/releases/tag/v0.2.3
-[0.2.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.2.3
-[0.1.11]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.10]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.9]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.8]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.7]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.6]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.5]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.4]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.3]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.2]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.1]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
-[0.1.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.1.11
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/BAHALLA/orrery/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.9.0
