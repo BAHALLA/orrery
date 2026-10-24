@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -98,20 +99,32 @@ def worker_thread_count() -> int:
     return max(_MIN_THREADS, min(_MAX_THREADS, scaled))
 
 
+#: The pool this module installed on each loop, so a reconfigure can retire it.
+_installed: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, ThreadPoolExecutor] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def configure_default_executor(loop: asyncio.AbstractEventLoop | None = None) -> int:
     """Install the sized worker pool as the running loop's default executor.
 
     Call once during startup, from inside the loop that will serve requests —
     every ``asyncio.to_thread`` and ``run_in_executor(None, ...)`` in the
     process picks it up with no per-call change. Idempotent in effect: calling
-    it again simply installs a fresh pool.
+    it again installs a fresh pool and shuts the one it replaces down (asyncio
+    does not), so its idle threads exit instead of leaking.
 
     Returns:
         The configured thread count (for logging by the caller).
     """
     loop = loop or asyncio.get_running_loop()
     threads = worker_thread_count()
-    loop.set_default_executor(ThreadPoolExecutor(max_workers=threads, thread_name_prefix="orrery"))
+    pool = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="orrery")
+    loop.set_default_executor(pool)
+    if (previous := _installed.get(loop)) is not None:
+        # Work already queued on it still finishes; only new work moves.
+        previous.shutdown(wait=False)
+    _installed[loop] = pool
     logger.info(
         "Blocking-tool executor sized to %d threads (effective CPUs: %.2f)",
         threads,

@@ -118,6 +118,21 @@ async def test_installs_the_pool_on_the_running_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reconfiguring_shuts_the_replaced_pool_down(monkeypatch):
+    """asyncio's set_default_executor leaves the old pool and its threads alive."""
+    monkeypatch.setenv(MAX_WORKER_THREADS_ENV, "2")
+    configure_default_executor()
+    loop = asyncio.get_running_loop()
+    first = getattr(loop, "_default_executor", None)  # noqa: SLF001 — no public accessor
+    await asyncio.to_thread(lambda: None)  # start one of its threads
+
+    configure_default_executor()
+
+    assert first is not None and first._shutdown  # noqa: SLF001
+    assert getattr(loop, "_default_executor", None) is not first
+
+
+@pytest.mark.asyncio
 async def test_offloaded_work_runs_on_the_configured_pool(monkeypatch):
     """to_thread and run_in_executor(None, ...) both route to the default
     executor, so every blocking tool in the platform picks this up for free."""

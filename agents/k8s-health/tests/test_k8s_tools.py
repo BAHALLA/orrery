@@ -538,6 +538,69 @@ def test_patch_deployment_has_destructive_guardrail():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool", [patch_deployment, patch_statefulset])
+@pytest.mark.parametrize(
+    ("pod_spec", "path"),
+    [
+        ({"hostPID": True}, "spec.template.spec.hostPID"),
+        ({"hostNetwork": True}, "spec.template.spec.hostNetwork"),
+        ({"volumes": [{"name": "root", "hostPath": {"path": "/"}}]}, "spec.template.spec.volumes"),
+        (
+            {"containers": [{"name": "app", "securityContext": {"privileged": True}}]},
+            "spec.template.spec.containers[0].securityContext",
+        ),
+        # Removing hardening names no dangerous key: null and $patch delete it.
+        (
+            {"containers": [{"name": "app", "securityContext": None}]},
+            "spec.template.spec.containers[0].securityContext",
+        ),
+        ({"containers": [{"name": "app", "$patch": "delete"}]}, "containers[0].$patch"),
+        ({"securityContext": {"runAsUser": 0}}, "spec.template.spec.securityContext"),
+        ({"containers": [{"name": "app", "ports": [{"hostPort": 80}]}]}, "containers[0].ports"),
+        ({"tolerations": [{"operator": "Exists"}]}, "spec.template.spec.tolerations"),
+        ({"serviceAccountName": "cluster-admin-sa"}, "spec.template.spec.serviceAccountName"),
+        ({"containers": [{"name": "app", "command": ["sh", "-c", "x"]}]}, "containers[0].command"),
+    ],
+)
+async def test_patches_outside_the_tools_scope_are_refused(tool, pod_spec, path):
+    """An approver skimming a nested patch mid-incident is not a security review."""
+    with patch("k8s_health_agent.tools._apps_api") as api:
+        result = await tool("web", patch={"spec": {"template": {"spec": pod_spec}}})
+
+    assert result["status"] == "error"
+    assert path in result["message"]
+    api.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", [patch_deployment, patch_statefulset])
+async def test_the_changes_the_tools_exist_for_still_go_through(tool):
+    body = {
+        "metadata": {"annotations": {"team": "orders"}},
+        "spec": {
+            "replicas": 3,
+            "template": {
+                "metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": "now"}},
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "app",
+                            "image": "orders:v2",
+                            "resources": {"limits": {"memory": "512Mi"}},
+                            "env": [{"name": "LOG_LEVEL", "value": "debug"}],
+                        }
+                    ]
+                },
+            },
+        },
+    }
+    with patch("k8s_health_agent.tools._apps_api"):
+        result = await tool("web", patch=body)
+
+    assert result["status"] == "success"
+
+
+@pytest.mark.asyncio
 async def test_patch_deployment_rejects_non_dict_patch():
     result = await patch_deployment("web", patch="not-a-dict")
     assert result["status"] == "error"

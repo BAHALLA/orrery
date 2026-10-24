@@ -21,7 +21,10 @@ the channel/thread scope mapping, and the button-posting callback.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Callable
+import inspect
+import logging
+from collections.abc import Callable, Generator
+from contextvars import ContextVar
 from typing import Any
 
 from google.adk.agents.context import Context
@@ -130,22 +133,39 @@ def build_confirmation_blocks(
     ]
 
 
-def slack_confirmation(
-    store: AnyConfirmationStore,
-    slack_client: Any,
-    channel_ref: dict[str, str],
-) -> Callable:
+logger = logging.getLogger("orrery.slack.confirmation")
+
+#: Where the current turn's approval card goes: (channel, thread_ts). One per
+#: turn, set by the handler around the agent run. It was a process-wide dict
+#: each message overwrote, so with two turns in flight a card (and the scope
+#: its approval is matched in) could land in the other turn's channel.
+#: ContextVars follow the turn into AgentTool sub-runs and nowhere else.
+_SLACK_TARGET: ContextVar[tuple[str, str] | None] = ContextVar("orrery_slack_target", default=None)
+
+
+@contextlib.contextmanager
+def slack_target(channel: str, thread_ts: str) -> Generator[None]:
+    """Route this turn's approval cards to *channel* / *thread_ts*."""
+    token = _SLACK_TARGET.set((channel, thread_ts))
+    try:
+        yield
+    finally:
+        _SLACK_TARGET.reset(token)
+
+
+def slack_confirmation(store: AnyConfirmationStore, slack_client: Any) -> Callable:
     """Create a before_tool_callback that posts Slack buttons for guarded tools.
+
+    The card goes to the turn's own conversation (see :func:`slack_target`).
 
     Args:
         store: Shared confirmation store for tracking pending approvals.
         slack_client: The Slack WebClient for posting messages.
-        channel_ref: Mutable dict with 'channel' and 'thread_ts' keys,
-            updated per-message by the handler so the callback knows
-            where to post the buttons.
     """
 
-    def callback(*, tool: BaseTool, args: dict[str, Any], tool_context: Context) -> dict | None:
+    async def callback(
+        *, tool: BaseTool, args: dict[str, Any], tool_context: Context
+    ) -> dict | None:
         # A FunctionTool keeps its guard metadata on the function; any other
         # tool (an MCP tool) carries it on itself. Returning early for tools
         # without a function let them run ungated whatever their guard level.
@@ -155,8 +175,17 @@ def slack_confirmation(
         if level is None:
             return None  # not guarded, proceed
 
-        channel = channel_ref.get("channel", "")
-        thread_ts = channel_ref.get("thread_ts", "") or None
+        target = _SLACK_TARGET.get()
+        if target is None:
+            # No conversation to ask in: refuse rather than guess one.
+            return blocked_payload(
+                tool.name,
+                level=level,
+                reason=get_guard_reason(func),
+                notice="No Slack conversation to send the approval to; the call was not run.",
+            )
+        channel, raw_thread_ts = target
+        thread_ts = raw_thread_ts or None
         scope_key, parent_scope = slack_scope(channel, thread_ts)
 
         args_hash = hash_args(args)
@@ -190,20 +219,25 @@ def slack_confirmation(
 
         blocks = build_confirmation_blocks(tool.name, args, reason, level, pending.action_id)
 
-        with contextlib.suppress(Exception):
-            slack_client.chat_postMessage(
+        # The bots run on Bolt's AsyncApp, whose client returns a coroutine:
+        # called without await, the card was silently never sent while the
+        # model told the user it had been. A sync client is still accepted.
+        try:
+            posted = slack_client.chat_postMessage(
                 channel=channel,
-                thread_ts=channel_ref.get("thread_ts", ""),
+                thread_ts=raw_thread_ts,
                 text=f"Confirmation required for `{tool.name}`",
                 blocks=blocks,
             )
+            if inspect.isawaitable(posted):
+                await posted
+        except Exception:
+            logger.warning("Could not post the approval card for %s", tool.name, exc_info=True)
+            notice = "The Slack approval card could not be posted; the call was not run."
+        else:
+            notice = "A Slack approval button has been sent. Waiting for user response."
 
-        return blocked_payload(
-            tool.name,
-            level=level,
-            reason=reason,
-            notice="A Slack approval button has been sent. Waiting for user response.",
-        )
+        return blocked_payload(tool.name, level=level, reason=reason, notice=notice)
 
     return mark_confirmation_gate(callback)
 

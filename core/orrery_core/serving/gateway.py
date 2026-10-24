@@ -25,8 +25,10 @@ pass an ``on_event`` callback to observe each runner event as it arrives.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -223,6 +225,12 @@ class ChannelAdapter(Protocol):
 # ── Gateway ──────────────────────────────────────────────────────────
 
 
+def _turn_lock_map() -> weakref.WeakValueDictionary[tuple[str, str], asyncio.Lock]:
+    # Weak values: a lock lives while a turn holds or awaits it, then goes, so
+    # the map holds only sessions with a turn in flight.
+    return weakref.WeakValueDictionary()
+
+
 class AgentGateway:
     """Shared turn pipeline: build the Runner once, run turns for any channel.
 
@@ -294,6 +302,7 @@ class AgentGateway:
         self._events_compaction_config = events_compaction_config
         self.root_agent = root_agent
         self.runner = self._build_runner(root_agent)
+        self._turn_locks = _turn_lock_map()
 
     def _build_runner(self, root_agent: Agent | Workflow) -> Runner:
         # Every gateway can carry attachments, so every gateway delivers them:
@@ -351,6 +360,7 @@ class AgentGateway:
         self.session_service = session_service
         self.resolver = session_resolver or MappedSessionResolver()
         self.verified_confirmation = verified_confirmation
+        self._turn_locks = _turn_lock_map()
         if verified_confirmation:
             ensure_pending_confirmation_store()
         return self
@@ -385,6 +395,7 @@ class AgentGateway:
         identity: CallerIdentity | None = None,
         attachments: Sequence[PreparedAttachment] = (),
         can_decide: bool = True,
+        on_turn_start: Callable[[], None] | None = None,
     ) -> OutboundReply:
         """Run one turn against an already-resolved session.
 
@@ -399,6 +410,10 @@ class AgentGateway:
 
         *attachments* are stored as placeholder lines after *text* and their
         content reaches the model for this turn only (see :mod:`.attachments`).
+
+        Turns in one session run one at a time; *on_turn_start* is called once
+        this one stops waiting for the previous and starts, so a caller with
+        its own time budget can start the clock there.
         """
         stored = message_text(text, attachments)
         message = types.Content(role="user", parts=[types.Part.from_text(text=stored)])
@@ -409,7 +424,6 @@ class AgentGateway:
         run_kwargs: dict[str, Any] = {}
         if streaming:
             run_kwargs["run_config"] = RunConfig(streaming_mode=StreamingMode.SSE)
-        reply = ""
         # Read once: replace_root_agent() may swap self.runner mid-turn, and this
         # turn must finish on the tree it started on.
         runner = self.runner
@@ -417,6 +431,52 @@ class AgentGateway:
         # those inside AgentTool specialists and to_thread workers, sees it.
         # Without one, an enclosing scope (service_scope for batch runs) stands.
         scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
+        async with self._turn_lock(user_id, session_id):
+            if on_turn_start is not None:
+                on_turn_start()
+            reply = await self._run_turn(
+                runner,
+                scope=scope,
+                user_id=user_id,
+                session_id=session_id,
+                message=message,
+                delta=delta,
+                attachments=attachments,
+                on_event=on_event,
+                run_kwargs=run_kwargs,
+            )
+        return OutboundReply(text=reply, session_id=session_id)
+
+    def _turn_lock(self, user_id: str, session_id: str) -> asyncio.Lock:
+        """The lock that serializes turns in one session.
+
+        Two turns in one session (a double send, two messages in a shared
+        thread) would otherwise run against the same state at once: each
+        turn's delta rewrites the actor and the confirmation decision, so one
+        turn could clear the "approve" the other is about to consume. The
+        second turn waits for the first instead. Per process: replicas share
+        sessions through the database, not this lock.
+        """
+        key = (user_id, session_id)
+        lock = self._turn_locks.get(key)
+        if lock is None:
+            lock = self._turn_locks[key] = asyncio.Lock()
+        return lock
+
+    async def _run_turn(
+        self,
+        runner: Runner,
+        *,
+        scope: contextlib.AbstractContextManager[Any],
+        user_id: str,
+        session_id: str,
+        message: types.Content,
+        delta: dict[str, Any],
+        attachments: Sequence[PreparedAttachment],
+        on_event: EventHook | None,
+        run_kwargs: dict[str, Any],
+    ) -> str:
+        reply = ""
         with scope, conversation_scope(session_id), attachment_scope(attachments):
             async for event in runner.run_async(
                 user_id=user_id,
@@ -431,7 +491,7 @@ class AgentGateway:
                 # aggregated event, so counting both would print the answer twice.
                 if getattr(event, "partial", None) is not True:
                     reply += extract_reply_text(event)
-        return OutboundReply(text=reply, session_id=session_id)
+        return reply
 
     def _turn_state_delta(
         self,

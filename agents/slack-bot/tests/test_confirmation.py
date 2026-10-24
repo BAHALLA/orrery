@@ -1,5 +1,7 @@
 """Tests for the Slack-aware confirmation callback."""
 
+import pytest
+
 from orrery_core import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, confirm, destructive
 from slack_bot.confirmation import (
     PendingConfirmation,
@@ -40,22 +42,38 @@ def _destructive_func():
 
 
 class TestSlackConfirmation:
-    def test_safe_tool_proceeds(self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+    @pytest.mark.asyncio
+    async def test_no_conversation_refuses_instead_of_guessing(
+        self, fake_tool, fake_ctx, store, fake_slack_client
+    ):
+        cb = slack_confirmation(store, fake_slack_client)
+        result = await cb(
+            tool=fake_tool("create_topic", _confirm_func), args={}, tool_context=fake_ctx()
+        )
+
+        assert result is not None and result["status"] == "confirmation_required"
+        fake_slack_client.chat_postMessage.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_safe_tool_proceeds(
+        self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
+    ):
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("safe_tool", _safe_func)
         ctx = fake_ctx()
 
-        result = cb(tool=tool, args={}, tool_context=ctx)
+        result = await cb(tool=tool, args={}, tool_context=ctx)
         assert result is None  # proceed
 
-    def test_confirm_tool_blocks_and_posts_buttons(
+    @pytest.mark.asyncio
+    async def test_confirm_tool_blocks_and_posts_buttons(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
-        result = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        result = await cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         assert result is not None
         assert result["status"] == "confirmation_required"
         # The pending lives in the shared store (not session state, which is
@@ -63,74 +81,79 @@ class TestSlackConfirmation:
         assert len(store._pending) == 1
         fake_slack_client.chat_postMessage.assert_called_once()
 
-    def test_destructive_tool_blocks_and_posts_buttons(
+    @pytest.mark.asyncio
+    async def test_destructive_tool_blocks_and_posts_buttons(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("delete_topic", _destructive_func)
         ctx = fake_ctx()
 
-        result = cb(tool=tool, args={"topic": "events"}, tool_context=ctx)
+        result = await cb(tool=tool, args={"topic": "events"}, tool_context=ctx)
         assert result is not None
         assert result["status"] == "confirmation_required"
         fake_slack_client.chat_postMessage.assert_called_once()
 
-    def test_approved_pending_proceeds_on_retry(
+    @pytest.mark.asyncio
+    async def test_approved_pending_proceeds_on_retry(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
         """Two-phase handshake: block → click marks approved → retry consumes."""
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
-        blocked = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        blocked = await cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         assert blocked["status"] == "confirmation_required"
         pending = next(iter(store._pending.values()))
         store.mark_approved(pending.action_id)
 
-        result = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        result = await cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         assert result is None  # proceed
         # Approval is one-shot: consumed from the store.
         assert len(store._pending) == 0
 
-    def test_unapproved_retry_stays_blocked(
+    @pytest.mark.asyncio
+    async def test_unapproved_retry_stays_blocked(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
         """A model re-call without a human decision must NOT pass (the old
         state-flag handshake let any retry through)."""
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
-        cb(tool=tool, args={"name": "test"}, tool_context=ctx)
-        result = cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        await cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        result = await cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         assert result is not None
         assert result["status"] == "confirmation_required"
 
-    def test_approval_is_args_hash_pinned(
+    @pytest.mark.asyncio
+    async def test_approval_is_args_hash_pinned(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
         """A retry with different args than were approved must re-prompt."""
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
-        cb(tool=tool, args={"name": "test"}, tool_context=ctx)
+        await cb(tool=tool, args={"name": "test"}, tool_context=ctx)
         pending = next(iter(store._pending.values()))
         store.mark_approved(pending.action_id)
 
-        result = cb(tool=tool, args={"name": "OTHER"}, tool_context=ctx)
+        result = await cb(tool=tool, args={"name": "OTHER"}, tool_context=ctx)
         assert result is not None
         assert result["status"] == "confirmation_required"
 
-    def test_pending_confirmation_stored(
+    @pytest.mark.asyncio
+    async def test_pending_confirmation_stored(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("delete_topic", _destructive_func)
         ctx = fake_ctx()
 
-        cb(tool=tool, args={"topic": "events"}, tool_context=ctx)
+        await cb(tool=tool, args={"topic": "events"}, tool_context=ctx)
         # One confirmation should be in the store
         assert len(store._pending) == 1
         pending = list(store._pending.values())[0]
@@ -138,15 +161,39 @@ class TestSlackConfirmation:
         assert channel_of(pending) == "C_TEST"
         assert pending.requester == "U_TEST"
 
-    def test_tool_without_func_proceeds(
+    @pytest.mark.asyncio
+    async def test_tool_without_func_proceeds(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("raw_tool", None)
         ctx = fake_ctx()
 
-        result = cb(tool=tool, args={}, tool_context=ctx)
+        result = await cb(tool=tool, args={}, tool_context=ctx)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_the_card_is_actually_sent_on_an_async_client(
+        self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
+    ):
+        """Bolt's AsyncApp client returns a coroutine; not awaiting it sent nothing."""
+        cb = slack_confirmation(store, fake_slack_client)
+        await cb(tool=fake_tool("create_topic", _confirm_func), args={}, tool_context=fake_ctx())
+
+        fake_slack_client.chat_postMessage.assert_awaited_once()
+        assert fake_slack_client.chat_postMessage.await_args.kwargs["channel"] == "C_TEST"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_post_says_so_instead_of_claiming_a_card_was_sent(
+        self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
+    ):
+        fake_slack_client.chat_postMessage.side_effect = RuntimeError("channel_not_found")
+        cb = slack_confirmation(store, fake_slack_client)
+        result = await cb(
+            tool=fake_tool("create_topic", _confirm_func), args={}, tool_context=fake_ctx()
+        )
+
+        assert result is not None and "could not be posted" in str(result)
 
 
 class TestConfirmationStore:
