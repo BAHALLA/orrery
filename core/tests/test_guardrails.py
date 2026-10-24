@@ -11,10 +11,10 @@ from hypothesis import strategies as st
 
 from orrery_core.security.confirmation_flow import conversation_scope
 from orrery_core.security.guardrails import (
-    _CONFIRMATION_TTL,
     ACTOR_STATE_KEY,
     CONFIRMATION_DECISION_STATE_KEY,
     CONFIRMATION_STRICT_STATE_KEY,
+    CONFIRMATION_TTL_SECONDS,
     _hash_args,
     _pending_confirmations,
     classify_decision,
@@ -326,7 +326,7 @@ def test_require_confirmation_expired_pending(fake_tool, fake_ctx):
 
     # Manually expire the pending state
     pending_key = "_guardrail_pending_danger_tool"
-    ctx.state[pending_key]["timestamp"] = time.time() - _CONFIRMATION_TTL - 10
+    ctx.state[pending_key]["timestamp"] = time.time() - CONFIRMATION_TTL_SECONDS - 10
 
     # New invocation, same args but expired: should block again
     ctx._invocation_context.invocation_id = "inv-2"
@@ -547,7 +547,9 @@ def test_strict_stale_approval_refused(fake_tool, fake_ctx):
     tool = _danger(fake_tool)
 
     callback(tool=tool, args={}, tool_context=ctx)
-    _stamp_decision(ctx, "approve", by="alice@example.com", ts=time.time() - _CONFIRMATION_TTL - 10)
+    _stamp_decision(
+        ctx, "approve", by="alice@example.com", ts=time.time() - CONFIRMATION_TTL_SECONDS - 10
+    )
 
     result = callback(tool=tool, args={}, tool_context=ctx)
     assert result is not None
@@ -767,7 +769,7 @@ def test_anyone_may_deny_out_of_band(fake_tool, fake_ctx):
 
 def test_an_expired_pending_cannot_be_approved_out_of_band(fake_tool, fake_ctx):
     from orrery_core.security.guardrails import (
-        _CONFIRMATION_TTL,
+        CONFIRMATION_TTL_SECONDS,
         OutOfBandDecisionError,
         decide_out_of_band,
     )
@@ -775,7 +777,7 @@ def test_an_expired_pending_cannot_be_approved_out_of_band(fake_tool, fake_ctx):
     callback = require_confirmation()
     callback(tool=_danger(fake_tool), args={}, tool_context=_strict_ctx(fake_ctx))
     pending = _alice_pending()
-    pending.created_at -= _CONFIRMATION_TTL + 1
+    pending.created_at -= CONFIRMATION_TTL_SECONDS + 1
 
     with pytest.raises(OutOfBandDecisionError):
         decide_out_of_band(pending.action_id, "approve", decider="alice@example.com")

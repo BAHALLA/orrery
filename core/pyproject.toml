@@ -6,11 +6,12 @@ requires-python = ">=3.14"
 dependencies = [
     # [db] pulls sqlalchemy, which ADK 2.0 moved out of the base package into
     # an extra; runner.py imports DatabaseSessionService unconditionally.
-    "google-adk[eval,db]>=2.12.0",
-    # ADK 2.2.0 transitively caps litellm at <1.86.0 (via
-    # google-cloud-aiplatform[evaluation]); the workspace-root
-    # override-dependencies in pyproject.toml lifts that cap. Keep this floor
-    # in lockstep with that override.
+    # Not [eval]: nothing here imports google.adk.evaluation, and its
+    # google-cloud-aiplatform[evaluation] caps litellm below this floor, which
+    # made the published wheel unresolvable (the workspace-root override never
+    # reaches package metadata). Evals get it from the root dev group.
+    "google-adk[db]>=2.12.0",
+    # Keep this floor in lockstep with the workspace-root override-dependencies.
     "litellm>=1.105.1",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.16.0",

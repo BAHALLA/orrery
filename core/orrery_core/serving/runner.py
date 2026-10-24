@@ -23,6 +23,7 @@ from google.adk.workflow import Workflow
 
 from ..agent.base import resolve_summarizer_model
 from ..concurrency import configure_default_executor
+from ..env import env_flag
 from ..observability.log import mask_dsn
 from ..observability.metrics import start_metrics_server_if_enabled, track_compaction_event
 from ..persistence.db import create_session_service
@@ -100,9 +101,6 @@ class _ObservedEventSummarizer(LlmEventSummarizer):
         return summary
 
 
-_TRUTHY = {"1", "true", "yes", "on"}
-
-
 class _Unset:
     """Sentinel for "argument not supplied".
 
@@ -175,8 +173,7 @@ def create_events_compaction_config(
     Returns ``None`` when disabled — that is exactly how ADK reads "no
     compaction", so callers pass the result straight to ``App`` without branching.
     """
-    raw_enabled = os.getenv("ORRERY_CONTEXT_COMPACTION", "").strip().lower()
-    if raw_enabled and raw_enabled not in _TRUTHY:
+    if not env_flag("ORRERY_CONTEXT_COMPACTION", default=True):
         return None
 
     resolved_threshold = (

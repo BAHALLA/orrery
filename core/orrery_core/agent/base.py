@@ -16,6 +16,7 @@ from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.base_toolset import BaseToolset
 
+from ..env import env_flag
 from ..observability.log import setup_logging
 from ..security.guardrails import (
     ACTOR_STATE_KEY,
@@ -310,8 +311,9 @@ def resolve_planner() -> BasePlanner | None:
         thinking_kwargs: dict[str, Any] = {}
         if budget := os.getenv("ORRERY_PLANNER_THINKING_BUDGET"):
             thinking_kwargs["thinking_budget"] = int(budget)
-        include = os.getenv("ORRERY_PLANNER_INCLUDE_THOUGHTS", "true").lower()
-        thinking_kwargs["include_thoughts"] = include in ("1", "true", "yes")
+        thinking_kwargs["include_thoughts"] = env_flag(
+            "ORRERY_PLANNER_INCLUDE_THOUGHTS", default=True
+        )
 
         logger.info("Using BuiltInPlanner with thinking_config=%s", thinking_kwargs)
         return BuiltInPlanner(thinking_config=types.ThinkingConfig(**thinking_kwargs))

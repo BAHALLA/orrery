@@ -76,6 +76,7 @@ from pathlib import Path
 
 from google.adk.plugins.base_plugin import BasePlugin
 
+from ..env import env_flag, env_int
 from ..security.auth import AuthPlugin
 from ..security.rbac import RolePolicy
 from .activity_plugin import ActivityPlugin
@@ -166,31 +167,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger("orrery.plugins")
-
-
-_TRUTHY = {"1", "true", "yes", "on"}
-
-
-def _env_flag(name: str, *, default: bool) -> bool:
-    """Read a boolean env flag; unset/empty falls back to *default*."""
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in _TRUTHY
-
-
-def _env_int(name: str, default: int) -> int:
-    """Read a non-negative integer env var; unset/empty falls back to *default*."""
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
-    if value < 0:
-        raise ValueError(f"{name} must be >= 0 (0 disables), got {value}")
-    return value
 
 
 def _resolve_autonomy_level(autonomy_level: str | None) -> str | None:
@@ -300,12 +276,7 @@ def default_plugins(
             disables. Enforced by ``ToolOutputCapPlugin``.
     """
     if enable_tracing is None:
-        enable_tracing = os.getenv("OTEL_TRACING_ENABLED", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        enable_tracing = env_flag("OTEL_TRACING_ENABLED", default=False)
     resilience = ResiliencePlugin(
         failure_threshold=circuit_breaker_threshold,
         recovery_timeout=circuit_breaker_timeout,
@@ -335,7 +306,7 @@ def default_plugins(
                 plugins.append(TracingPlugin())
 
     if enable_safety_screen is None:
-        enable_safety_screen = _env_flag("ORRERY_SAFETY_SCREEN", default=True)
+        enable_safety_screen = env_flag("ORRERY_SAFETY_SCREEN", default=True)
     if enable_safety_screen:
         plugins.append(SafetyScreenPlugin())
 
@@ -346,10 +317,10 @@ def default_plugins(
     # returns None, so the after-tool chain keeps running), and registering
     # it first means the audit log records the redacted values too.
     if enable_pii_redaction is None:
-        enable_pii_redaction = _env_flag("ORRERY_PII_REDACTION", default=True)
+        enable_pii_redaction = env_flag("ORRERY_PII_REDACTION", default=True)
     if enable_pii_redaction:
         if redact_ips is None:
-            redact_ips = _env_flag("ORRERY_REDACT_IPS", default=False)
+            redact_ips = env_flag("ORRERY_REDACT_IPS", default=False)
         plugins.append(PIIRedactionPlugin(redact_ips=redact_ips))
 
     # Audit before the gates: the attempt is recorded even when a gate below
@@ -392,19 +363,19 @@ def default_plugins(
     if calls := (
         max_tool_calls_per_run
         if max_tool_calls_per_run is not None
-        else _env_int("ORRERY_MAX_TOOL_CALLS_PER_RUN", DEFAULT_MAX_TOOL_CALLS_PER_RUN)
+        else env_int("ORRERY_MAX_TOOL_CALLS_PER_RUN", DEFAULT_MAX_TOOL_CALLS_PER_RUN)
     ):
         plugins.append(CallBudgetPlugin(max_calls=calls))
     if delegations := (
         max_delegations_per_run
         if max_delegations_per_run is not None
-        else _env_int("ORRERY_MAX_DELEGATIONS_PER_RUN", DEFAULT_MAX_DELEGATIONS_PER_RUN)
+        else env_int("ORRERY_MAX_DELEGATIONS_PER_RUN", DEFAULT_MAX_DELEGATIONS_PER_RUN)
     ):
         plugins.append(DelegationGuardPlugin(max_per_agent=delegations))
     if repeats := (
         max_identical_failures
         if max_identical_failures is not None
-        else _env_int("ORRERY_REPEAT_GUARD_MAX_FAILURES", DEFAULT_MAX_IDENTICAL_FAILURES)
+        else env_int("ORRERY_REPEAT_GUARD_MAX_FAILURES", DEFAULT_MAX_IDENTICAL_FAILURES)
     ):
         plugins.append(RepeatGuardPlugin(max_failures=repeats))
 
@@ -424,7 +395,7 @@ def default_plugins(
     run_bytes = (
         max_run_tool_bytes
         if max_run_tool_bytes is not None
-        else _env_int("ORRERY_MAX_RUN_TOOL_BYTES", DEFAULT_MAX_RUN_TOOL_BYTES)
+        else env_int("ORRERY_MAX_RUN_TOOL_BYTES", DEFAULT_MAX_RUN_TOOL_BYTES)
     )
     if max_tool_result_bytes > 0 or run_bytes > 0:
         plugins.append(

@@ -22,6 +22,8 @@ header, message metadata or session state.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -171,6 +173,34 @@ def as_principal(
         client_id=principal.client_id,
         acting_agent=principal.acting_agent,
     )
+
+
+def principal_key(auth: AuthContext) -> str:
+    """Who owns a machine caller's conversations: the whole principal, not the subject.
+
+    Two agents delegated by the same user share a subject (the user's). Keyed
+    on the subject alone, each could list, read and continue the other's tasks
+    and spend approvals raised in them. The kind keeps a service token whose
+    ``sub`` equals a user's apart from that user's agents. JSON, so no value can
+    forge a separator.
+    """
+    return json.dumps(
+        [auth.principal_kind, auth.client_id or "", auth.acting_agent or "", auth.subject],
+        separators=(",", ":"),
+    )
+
+
+def machine_session_prefix(auth: AuthContext) -> str:
+    """The session-id prefix a non-human caller owns on a subject-keyed store.
+
+    ADK keys sessions by ``user_id``, and a delegated agent's ``user_id`` is its
+    user's subject (so the user can approve what it raises). Without a second
+    key, every agent acting for alice could list, read and continue alice's
+    conversations and each other's. The prefix is that second key: derived
+    from :func:`principal_key`, so it is unforgeable and needs no storage.
+    """
+    digest = hashlib.sha256(principal_key(auth).encode()).hexdigest()
+    return f"m-{digest[:32]}-"
 
 
 def warn_if_unclassified(policy: PrincipalPolicy) -> None:

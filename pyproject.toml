@@ -69,6 +69,10 @@ google-chat-bot = { workspace = true }
 
 [dependency-groups]
 dev = [
+    # `make eval` (AgentEvaluator) and the eval test modules, which pytest
+    # imports at collection even when the marker deselects them. A dev-only
+    # need: orrery-core does not depend on it.
+    "google-adk[eval]>=2.12.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
@@ -91,7 +95,7 @@ members = ["core", "agents/*"]
 # The workspace root is an aggregator, not a distributable package.
 package = false
 environments = ["sys_platform == 'linux'", "sys_platform == 'darwin'"]
-# google-adk[eval] -> google-cloud-aiplatform[evaluation] hard-caps
+# google-adk[eval] (dev group only) -> google-cloud-aiplatform[evaluation] hard-caps
 # litellm at <1.86.0, which is incompatible with our litellm>=1.93.0 floor
 # (no version pair satisfies both). aiplatform's cap is conservative — its
 # evaluation path is only exercised by `make eval`. Override it so the
