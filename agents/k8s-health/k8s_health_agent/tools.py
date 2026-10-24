@@ -1,6 +1,7 @@
 """Kubernetes tools exposed to the k8s health agent."""
 
 import asyncio
+import json
 import logging
 import re
 from datetime import UTC
@@ -628,6 +629,24 @@ async def restart_deployment(name: str, namespace: str = "default") -> dict[str,
         return {"status": "error", "message": f"Failed to restart '{name}': {e.reason}"}
 
 
+_REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
+
+
+def _server_message(e: ApiException) -> str:
+    """The API server's own explanation (an admission denial, say), else the reason."""
+    try:
+        message = json.loads(e.body or "").get("message")
+    except ValueError, AttributeError:
+        message = None
+    return message if isinstance(message, str) and message else str(e.reason)
+
+
+def _without_hash(template: dict[str, Any]) -> dict[str, Any]:
+    """A serialized pod template minus the ReplicaSet's own pod-template-hash label."""
+    template.get("metadata", {}).get("labels", {}).pop("pod-template-hash", None)
+    return template
+
+
 @destructive("rolls back a deployment to the previous revision, which changes running pods")
 async def rollback_deployment(name: str, namespace: str = "default") -> dict[str, Any]:
     """Rolls back a deployment to its previous revision.
@@ -646,38 +665,82 @@ async def rollback_deployment(name: str, namespace: str = "default") -> dict[str
 
     try:
         apps = _apps_api()
-        # Read current revision
         d = await asyncio.to_thread(apps.read_namespaced_deployment, name, namespace)
-        annotations = (d.metadata.annotations if d.metadata else None) or {}
-        current_revision = annotations.get("deployment.kubernetes.io/revision", "unknown")
-
-        # Trigger rollback by patching rollbackTo (uses last ReplicaSet)
-        # In modern K8s, rollback is done via patching the deployment spec
-        # to match a previous ReplicaSet template. The simplest approach is
-        # to use the rollout undo equivalent: patch with revision annotation.
-        body = [
-            {
-                "op": "add",
-                "path": "/metadata/annotations/deployment.kubernetes.io~1rollback-to",
-                "value": "0",  # 0 = previous revision
+        meta = d.metadata or client.V1ObjectMeta()
+        spec = d.spec
+        if spec is not None and spec.paused:
+            return {
+                "status": "error",
+                "message": f"Deployment '{name}' is paused; resume it before rolling back.",
             }
-        ]
-        await asyncio.to_thread(
-            apps.patch_namespaced_deployment,
-            name,
-            namespace,
-            body,
+        # What `kubectl rollout undo` does: apps/v1 dropped `rollbackTo` (and
+        # ignores the old rollback-to annotation), so the previous revision's
+        # pod template is copied back from its ReplicaSet.
+        match = (spec.selector.match_labels if spec and spec.selector else None) or {}
+        selector = ",".join(f"{k}={v}" for k, v in sorted(match.items()))
+        replica_sets = await asyncio.to_thread(
+            apps.list_namespaced_replica_set, namespace, label_selector=selector
         )
+        revisions: list[tuple[int, Any]] = []
+        for rs in replica_sets.items:
+            rs_meta = rs.metadata or client.V1ObjectMeta()
+            if not any(o.uid == meta.uid for o in rs_meta.owner_references or []):
+                continue
+            revision = (rs_meta.annotations or {}).get(_REVISION_ANNOTATION, "")
+            if revision.isdecimal() and rs.spec is not None and rs.spec.template is not None:
+                revisions.append((int(revision), rs))
+        revisions.sort(key=lambda pair: pair[0])
+        if len(revisions) < 2:
+            return {
+                "status": "error",
+                "message": f"Deployment '{name}' has no previous revision to roll back to.",
+            }
+        (previous, rs), (current, _) = revisions[-2], revisions[-1]
+        template = _without_hash(apps.api_client.sanitize_for_serialization(rs.spec.template))
+        if spec is not None and template == _without_hash(
+            apps.api_client.sanitize_for_serialization(spec.template)
+        ):
+            return {
+                "status": "success",
+                "message": (
+                    f"Deployment '{name}' already runs the template of revision {previous}; "
+                    "nothing was changed."
+                ),
+            }
+        body: list[dict[str, Any]] = [
+            {"op": "replace", "path": "/spec/template", "value": template}
+        ]
+        if meta.resource_version:
+            # Refused if the deployment changed since it was read.
+            body.insert(
+                0,
+                {"op": "test", "path": "/metadata/resourceVersion", "value": meta.resource_version},
+            )
+        await asyncio.to_thread(apps.patch_namespaced_deployment, name, namespace, body)
         return {
             "status": "success",
             "message": (
-                f"Rollback triggered for deployment '{name}' "
-                f"from revision {current_revision} to previous."
+                f"Rolled back deployment '{name}' from revision {current} to the "
+                f"template of revision {previous}."
             ),
         }
     except ApiException as e:
+        detail = str(e.body or "")
+        # Only the resourceVersion test means "changed"; a 422 is also how a
+        # validation or admission policy refuses the old template.
+        if e.status == 409 or (e.status == 422 and "/metadata/resourceVersion" in detail):
+            return {
+                "status": "error",
+                "message": (
+                    f"Deployment '{name}' changed while the rollback was prepared; "
+                    "nothing was changed. Check its state, then ask again."
+                ),
+            }
         logger.exception("Failed to rollback deployment '%s'", name)
-        return {"status": "error", "message": f"Failed to rollback '{name}': {e.reason}"}
+        return {
+            "status": "error",
+            "message": f"Failed to rollback '{name}': {_server_message(e)}",
+        }
 
 
 @destructive("patches a deployment manifest, which can change any aspect of the workload")
