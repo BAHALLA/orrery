@@ -44,10 +44,11 @@ logger = logging.getLogger("orrery.audit")
 #: busy agent, and it copies infrastructure output into a store whose readership
 #: is usually much wider than the agent's own.
 #:
-#: What audit actually needs is the outcome, not the payload: the status is kept
-#: whatever the size, ordinary results (small status dicts) are kept in full for
-#: debugging, and anything larger is replaced by its measured size. The full
-#: result still reaches the model — this bounds the log, not the tool.
+#: What audit actually needs is the outcome, not the payload. In ``full`` mode
+#: (see :data:`AUDIT_RESPONSES_ENV`) the status is kept whatever the size,
+#: small results are kept whole for debugging, and anything larger is replaced
+#: by its measured size. The full result still reaches the model — this bounds
+#: the log, not the tool.
 MAX_AUDIT_RESPONSE_CHARS = 4096
 
 #: Env var choosing how much of a tool's result an audit entry records:
@@ -61,7 +62,11 @@ AUDIT_RESPONSES_ENV = "ORRERY_AUDIT_RESPONSES"
 AUDIT_RESPONSE_MODES = ("summary", "full", "none")
 #: Characters of a failed call's ``message``/``error`` kept in a summary.
 _SUMMARY_MESSAGE_CHARS = 200
-_SUCCESS_STATUSES = {"success", "ok"}
+#: The only status whose message a summary keeps: a tool's own failure. A
+#: gate's answer (``confirmation_required``, ``dry_run``, ``BLOCKED``, ...) is
+#: fully described by its status, and its message quotes the call's raw
+#: arguments, which ``tool_args`` records masked.
+_FAILURE_STATUS = "error"
 
 
 def resolve_audit_responses(mode: str | None = None) -> str:
@@ -246,8 +251,8 @@ def audit_event(event: str, **fields: Any) -> None:
 def _audit_response(tool_response: Any, mode: str = "full") -> Any:
     """The response as it should appear in the audit trail, per *mode*.
 
-    ``summary`` records the status, the measured size and, for a call that did
-    not succeed, a short ``message``/``error``. ``none`` records nothing. In
+    ``summary`` records the status, the measured size, an MCP ``is_error`` flag,
+    and for a tool's own failure (``status: error``) a short ``message``. ``none`` records nothing. In
     ``full`` mode small results (the overwhelming majority — status dicts, counts, short
     summaries) are kept verbatim so the trail stays useful for debugging.
     Anything over :data:`MAX_AUDIT_RESPONSE_CHARS` is replaced by its status and
@@ -262,7 +267,9 @@ def _audit_response(tool_response: Any, mode: str = "full") -> Any:
     if mode == "summary":
         status = tool_response.get("status", "unknown")
         summary: dict[str, Any] = {"status": status, "response_chars": volume}
-        if str(status).lower() not in _SUCCESS_STATUSES:
+        if _mcp_flagged_error(tool_response):
+            summary["is_error"] = True  # an MCP result carries no status
+        if str(status).lower() == _FAILURE_STATUS:
             reason = tool_response.get("message") or tool_response.get("error")
             if isinstance(reason, str):
                 summary["message"] = reason[:_SUMMARY_MESSAGE_CHARS]
@@ -277,6 +284,10 @@ def _audit_response(tool_response: Any, mode: str = "full") -> Any:
         ),
         "response_chars": volume,
     }
+
+
+def _mcp_flagged_error(response: dict[str, Any]) -> bool:
+    return response.get("isError") is True or response.get("is_error") is True
 
 
 _SENSITIVE_KEYS = {"password", "secret", "token", "api_key", "credential"}

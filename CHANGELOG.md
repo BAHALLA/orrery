@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Upgrade note.** `LOKI_URL` no longer defaults to `http://localhost:3100`:
 set it to keep the Loki tools (the shipped compose files and `.env.example`
-do). Unset, the observability specialist is not offered them at all.
+do). Unset, the observability specialist is not offered them at all, and a
+declarative agent (`ORRERY_AGENTS_CONFIG`) or stored catalog that names a Loki
+tool still gets it but every call answers "Loki is not configured".
 
 **Upgrade note.** Audit entries now record a tool result's status and size,
 not its contents (`ORRERY_AUDIT_RESPONSES=summary`). Set it to `full` for the
@@ -67,7 +69,8 @@ release are visible only to the person whose subject they are stored under.
   connection failures (Prometheus, Loki, Alertmanager) are now one WARNING
   line each.
 - LiteLLM's per-call INFO lines ("LiteLLM completion() model=...") are
-  silenced unless `LITELLM_LOG` is set, and "Using LiteLlm with model" is
+  silenced unless `LITELLM_LOG` is set (`LOG_LEVEL=DEBUG` alone does not
+  bring them back), and "Using LiteLlm with model" is
   DEBUG.
 - `orrery-core` installs outside this repository. It required
   `google-adk[eval]`, whose `google-cloud-aiplatform[evaluation]` caps

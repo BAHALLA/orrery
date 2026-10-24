@@ -57,25 +57,16 @@ async def test_loki_tools_refuse_without_loki_url(mock_get, monkeypatch, call):
     mock_get.assert_not_called()
 
 
-def test_the_agent_offers_loki_only_when_configured(monkeypatch):
-    import importlib
+def test_the_agent_offers_loki_only_when_configured():
+    from observability_agent.agent import build_root_agent, routing_hint
 
-    import observability_agent.agent as agent_mod
+    def tool_names(loki: bool) -> set[str]:
+        return {getattr(t, "__name__", "") for t in build_root_agent(loki=loki).tools}
 
-    def tool_names() -> set[str]:
-        return {getattr(t, "__name__", getattr(t, "name", "")) for t in agent_mod.root_agent.tools}
-
-    try:
-        monkeypatch.setattr(_tools_mod._config, "loki_url", None)
-        importlib.reload(agent_mod)
-        assert "query_loki_logs" not in tool_names()
-        assert "Loki" not in agent_mod.specialist.routing_hint
-
-        monkeypatch.setattr(_tools_mod._config, "loki_url", "http://loki:3100")
-        importlib.reload(agent_mod)
-        assert {"query_loki_logs", "query_loki_range"} <= tool_names()
-    finally:
-        importlib.reload(agent_mod)
+    assert "query_loki_logs" not in tool_names(False)
+    assert "Loki" not in routing_hint(loki=False)
+    assert {"query_loki_logs", "query_loki_range"} <= tool_names(True)
+    assert "Loki" in routing_hint(loki=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

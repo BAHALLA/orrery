@@ -29,4 +29,5 @@ def pytest_configure(config):
     # Loki is optional and its tools are offered only when LOKI_URL is set; agent
     # modules are built at import (collection), so the eval scenarios that use
     # them need it set here. HTTP is mocked; tests of the unset case patch it.
-    os.environ.setdefault("LOKI_URL", "http://localhost:3100")
+    if not os.environ.get("LOKI_URL"):
+        os.environ["LOKI_URL"] = "http://localhost:3100"

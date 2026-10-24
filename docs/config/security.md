@@ -297,14 +297,17 @@ outcome entry keeps of the *result* is set by `ORRERY_AUDIT_RESPONSES`:
 
 | Value | Recorded |
 |---|---|
-| `summary` (default) | `status`, `response_chars`, and for a call that did not succeed the first 200 characters of its `message`/`error` |
+| `summary` (default) | `status`, `response_chars`, `is_error` for an MCP error result, and for a failed call (`status: "error"`) the first 200 characters of its `message`/`error` |
 | `full` | The result itself when it is under 4096 characters (keys naming a credential masked), else `status` and size |
 | `none` | No result |
 
 A tool result is infrastructure output (alert payloads, log lines, index
 documents) that often names people, and an audit trail is usually kept longer
 and read more widely than a session, so the default keeps the outcome rather
-than the payload. Use `full` while debugging a tool.
+than the payload. A failure message is kept because it is what an operator
+needs, and it can quote up to 200 characters of backend text (an error body, a
+resource name). A gate's refusal is not copied: its message can repeat the
+refused arguments. Use `full` while debugging a tool.
 
 ### Gemini content-safety filters
 

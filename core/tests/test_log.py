@@ -179,15 +179,21 @@ def test_setup_logging_explicit_level_wins(monkeypatch):
 
 
 def test_litellm_per_call_lines_are_quiet_unless_asked(monkeypatch):
-    import logging
-
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    litellm = logging.getLogger("LiteLLM")
+    root = logging.getLogger()
+    saved = (litellm.level, root.level, root.handlers[:])
     monkeypatch.delenv("LITELLM_LOG", raising=False)
-    setup_logging()
-    assert not logging.getLogger("LiteLLM").isEnabledFor(logging.INFO)
-    assert logging.getLogger("LiteLLM").isEnabledFor(logging.WARNING)
+    try:
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        setup_logging()
+        # Not even at DEBUG: they are per-call noise, opted into by LITELLM_LOG.
+        assert not litellm.isEnabledFor(logging.INFO)
+        assert litellm.isEnabledFor(logging.WARNING)
 
-    logging.getLogger("LiteLLM").setLevel(logging.NOTSET)
-    monkeypatch.setenv("LITELLM_LOG", "INFO")
-    setup_logging()
-    assert logging.getLogger("LiteLLM").isEnabledFor(logging.INFO)
+        monkeypatch.setenv("LITELLM_LOG", "INFO")
+        setup_logging()  # relaxes them again, with no manual reset
+        assert litellm.isEnabledFor(logging.INFO)
+    finally:
+        litellm.setLevel(saved[0])
+        root.setLevel(saved[1])
+        root.handlers[:] = saved[2]

@@ -286,3 +286,25 @@ def test_an_unknown_mode_fails_at_construction(monkeypatch):
     monkeypatch.setenv("ORRERY_AUDIT_RESPONSES", "verbose")
     with pytest.raises(ValueError, match="ORRERY_AUDIT_RESPONSES"):
         audit_logger()
+
+
+def test_a_gate_message_quoting_raw_arguments_is_not_copied(caplog):
+    """Gate messages quote the call's arguments; ``tool_args`` records them masked."""
+    gate = {
+        "status": "confirmation_required",
+        "message": "Approve? Arguments: {'name': 'x', 'password': 'p@ss'}. Relay this.",
+    }
+    recorded = _audited(caplog, gate, responses="summary")
+    assert recorded == {
+        "status": "confirmation_required",
+        "response_chars": recorded["response_chars"],
+    }
+    assert "p@ss" not in json.dumps(recorded)
+
+
+def test_an_mcp_error_is_visible_in_a_summary(caplog):
+    recorded = _audited(
+        caplog, {"isError": True, "content": [{"text": "boom"}]}, responses="summary"
+    )
+    assert recorded["is_error"] is True
+    assert "boom" not in json.dumps(recorded)

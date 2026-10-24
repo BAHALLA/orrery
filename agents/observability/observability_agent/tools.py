@@ -269,9 +269,9 @@ async def query_loki_logs(
             params["start"] = start
         if end:
             params["end"] = end
-        if not _config.loki_url:
+        if not (loki := _config.loki_url):
             return dict(_LOKI_NOT_CONFIGURED)
-        resp = await _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
+        resp = await _http_get(loki, "/loki/api/v1/query_range", params)
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -303,9 +303,9 @@ async def get_loki_labels() -> dict[str, Any]:
         A dictionary with the list of label names.
     """
     try:
-        if not _config.loki_url:
+        if not (loki := _config.loki_url):
             return dict(_LOKI_NOT_CONFIGURED)
-        resp = await _http_get(_config.loki_url, "/loki/api/v1/labels")
+        resp = await _http_get(loki, "/loki/api/v1/labels")
         data = resp.json()
         if data.get("status") != "success":
             return {"status": "error", "message": "Failed to fetch Loki labels."}
@@ -328,9 +328,9 @@ async def get_loki_label_values(label: str) -> dict[str, Any]:
         return err
 
     try:
-        if not _config.loki_url:
+        if not (loki := _config.loki_url):
             return dict(_LOKI_NOT_CONFIGURED)
-        resp = await _http_get(_config.loki_url, f"/loki/api/v1/label/{label}/values")
+        resp = await _http_get(loki, f"/loki/api/v1/label/{label}/values")
         data = resp.json()
         if data.get("status") != "success":
             return {
@@ -632,9 +632,9 @@ async def query_loki_range(query: str, hours: int = 1, limit: int = 100) -> dict
             "start": start_ns,
             "end": end_ns,
         }
-        if not _config.loki_url:
+        if not (loki := _config.loki_url):
             return dict(_LOKI_NOT_CONFIGURED)
-        resp = await _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
+        resp = await _http_get(loki, "/loki/api/v1/query_range", params)
         data = resp.json()
         if data.get("status") != "success":
             return {
