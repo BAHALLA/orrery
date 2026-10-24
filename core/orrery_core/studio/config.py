@@ -45,8 +45,14 @@ class StudioConfig:
     max_runs_per_user: int = 20
     #: Bytes of captured ``content`` stored per run; past it, events carry none.
     max_content_bytes_per_run: int = 256 * 1024
-    #: Seconds a finished run is kept.
+    #: Seconds a finished run is kept in this replica's memory (it stays in
+    #: the store for ``run_retention_days``).
     retention_seconds: int = 3600
+    #: Days runs and their events are kept in the store, then purged.
+    run_retention_days: int = 14
+    #: ``ORRERY_STUDIO_MODELS``: the models a node may name (each runs alone,
+    #: without the fallback chain). Empty: nodes use the deployment's model.
+    models: frozenset[str] = frozenset()
     #: Runs in flight at once, per person and for the whole process.
     max_running_per_user: int = 2
     max_running: int = 8
@@ -76,6 +82,10 @@ class StudioConfig:
                 "ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN", cls.max_content_bytes_per_run
             ),
             retention_seconds=env_int("ORRERY_STUDIO_RUN_RETENTION_SECONDS", cls.retention_seconds),
+            run_retention_days=env_int("ORRERY_STUDIO_RUN_RETENTION_DAYS", cls.run_retention_days),
+            models=frozenset(
+                m.strip() for m in os.getenv("ORRERY_STUDIO_MODELS", "").split(",") if m.strip()
+            ),
             max_running_per_user=env_int(
                 "ORRERY_STUDIO_MAX_RUNNING_PER_USER", cls.max_running_per_user
             ),
@@ -104,6 +114,7 @@ class StudioConfig:
             "max_runs",
             "max_runs_per_user",
             "retention_seconds",
+            "run_retention_days",
             "max_running_per_user",
             "max_running",
         ):

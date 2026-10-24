@@ -447,6 +447,56 @@ Where the code differs from, or pins down, the design above:
   a flag in `/me` that the Studio is on, so the entry is hidden instead of
   showing "not enabled"; stored runs.
 
+### P0b as built
+
+- **Graph compilation.** A spec compiles to one ADK 2.x `Workflow`: each agent
+  node is a single-turn `LlmAgent`; routing, loop counters, edge screens,
+  `parallel` and the join's combine step are `FunctionNode`s (`route_<id>`,
+  `loop_<j>`, `screen_<j>`), and a `join` is ADK's `JoinNode` followed by a
+  step that writes each branch's answer as a `## <branch>` block, in edge
+  order. `plan_graph()` in `spec.py` checks the graph rules once and gives the
+  compiler its plan, so a spec that validates compiles.
+- **Labels are structured output**: a labelled node answers `{label, answer}`
+  through ADK's `output_schema` (with tools, ADK's `set_model_response` tool,
+  which the ledger does not count). An answer without a valid label fails the
+  run with a field-level message, rather than taking an arbitrary branch.
+  A label with no edge ends that branch; `POST /studio/validate` warns
+  (`label_ends_run`).
+- **Loop cap semantics**: `max_iterations: N` means the back edge is taken at
+  most N times. On the (N+1)th arrival `loop.iteration` says `stopped: true`
+  and the branch ends with the source's answer, so the run still succeeds.
+- **Parallel** branches are chains of agents between one `parallel` and one
+  `join` (2–6 branches); branches do not route, loop or fan out again. A
+  `map_reduce` template uses a fixed fan-out: the map width is the branch
+  count, not the data.
+- **Supervisor** children are `llm_agent` or `supervisor` nodes compiled to
+  `AgentTool`s (`n_<id>`), with plugins included so the run plugin traces them
+  and counts each call as a delegation; at most 3 levels, one parent each.
+- **Per-node models** come from `ORRERY_STUDIO_MODELS` and are resolved with
+  `resolve_model(name)`: one model, never the deployment's `FallbackLlm` chain.
+  `resolve_model()` with no name is unchanged.
+- **Storage** is SQLAlchemy Core over four new tables, created with
+  `create_all` (no migration of existing tables); the same SQL runs on SQLite
+  in CI. Compositions are shared by admins and versioned; `PUT` and `DELETE`
+  name the version they edit and get 409 with `current_version` otherwise.
+  Runs are owner-scoped. Each run is written as it goes by a per-run writer
+  (batched every 0.25 s, off the event loop), events before the run row, so a
+  reader that sees a run finished has all its events. Runs older than
+  `ORRERY_STUDIO_RUN_RETENTION_DAYS` (14) are purged hourly. Without
+  PostgreSQL, a bounded in-memory store keeps the same API.
+- **Replicas.** Reads (`GET` run, history, `/events`) work on any replica: a
+  stored run is replayed, or followed by polling (1 s) until it ends. Cancel
+  stays on the running replica; elsewhere it is a 409. A run whose replica
+  died reads as `failed` two minutes past its deadline.
+- **`spec_version` stays 1**: P0b only gave meaning to fields P0a parsed and
+  refused. `handoff`, `remote_a2a` and `human_approval` stay refused.
+- **For the console** (P1): `POST /studio/validate`, `capabilities` and
+  `budget_ceilings` in `/studio/schema`, each MCP tool's description and input
+  schema (as pinned) in `/studio/registry`, and `studio_available` in `/me`.
+  An MCP "try it" call is not built.
+- **Templates** are tested specs in `deploy/studio-demo/specs/`, one per
+  pattern; the demo spec moved there as `critic-loop.json` and now loops.
+
 ## Security
 
 | Risk | Control |

@@ -1,0 +1,58 @@
+{
+  "spec_version": 1,
+  "name": "question-router",
+  "description": "Classify a question, then send it to the node that handles that kind; anything off-topic ends at the classifier.",
+  "pattern": "router",
+  "budgets": {
+    "max_tokens": 40000,
+    "max_tool_calls": 8,
+    "timeout_s": 120
+  },
+  "nodes": [
+    {
+      "id": "triage",
+      "kind": "llm_agent",
+      "description": "Says what kind of question this is.",
+      "instruction": "Classify the question in your input: 'howto' for how to do something, 'concept' for what something is or why, 'off_topic' for anything not about software. Answer with the question, restated clearly.",
+      "output": {
+        "labels": [
+          "howto",
+          "concept",
+          "off_topic"
+        ]
+      }
+    },
+    {
+      "id": "howto",
+      "kind": "llm_agent",
+      "description": "Answers how-to questions with steps.",
+      "instruction": "Search Tirraflow for a guide to the task in your input and answer with numbered steps, citing the article URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "concept",
+      "kind": "llm_agent",
+      "description": "Explains concepts.",
+      "instruction": "Search Tirraflow for the concept in your input and explain it in two short paragraphs, citing the article URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "triage",
+      "to": "howto",
+      "when": "howto"
+    },
+    {
+      "from": "triage",
+      "to": "concept",
+      "when": "concept"
+    }
+  ]
+}

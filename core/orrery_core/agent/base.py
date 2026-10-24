@@ -15,6 +15,7 @@ from google.adk.models.base_llm import BaseLlm
 from google.adk.planners import BasePlanner
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.base_toolset import BaseToolset
+from pydantic import BaseModel
 
 from ..env import env_flag
 from ..observability.log import setup_logging
@@ -125,8 +126,13 @@ def load_agent_env(agent_file: str | None = None) -> None:
     setup_logging()
 
 
-def resolve_model() -> str | BaseLlm:
-    """Resolve the LLM model from environment variables.
+def resolve_model(model: str | None = None) -> str | BaseLlm:
+    """Resolve the LLM model from environment variables, or *model* exactly.
+
+    *model* (a Studio node's model from ``ORRERY_STUDIO_MODELS``) names one
+    model, run **without** ``MODEL_FALLBACK_CHAIN``, so that comparing two
+    models compares them: a bare name (``gemini-3.6-flash``) is a Gemini model
+    on ADK's native client, a ``provider/name`` one a LiteLLM model.
 
     Reads MODEL_PROVIDER and MODEL_NAME to determine which backend to use.
     For Gemini (the default), returns a plain model string.
@@ -143,7 +149,21 @@ def resolve_model() -> str | BaseLlm:
         A model string for Gemini or a LiteLlm instance for other providers —
         or a ``FallbackLlm`` over either when ``MODEL_FALLBACK_CHAIN`` is set.
     """
+    if model is not None:
+        return _single_model(model)
     return resolve_model_chain(_resolve_primary_model())
+
+
+def _single_model(name: str) -> str | BaseLlm:
+    """*name* as one model, never a fallback chain."""
+    name = name.strip()
+    if not name:
+        raise ValueError("a model name must not be empty")
+    if "/" not in name:
+        return name
+    from google.adk.models.lite_llm import LiteLlm
+
+    return LiteLlm(model=name)
 
 
 def _resolve_primary_model() -> str | BaseLlm:
@@ -437,6 +457,7 @@ def create_agent(
     on_model_error_callback: Callable | list[Callable] | None = None,
     output_key: str | None = None,
     mode: Literal["chat", "task", "single_turn"] | None = None,
+    output_schema: type[BaseModel] | None = None,
 ) -> Agent:
     """Create an ADK Agent with sensible defaults.
 
@@ -472,6 +493,8 @@ def create_agent(
         output_key: Session state key to store this agent's output.
             Useful for passing results between nodes in a graph Workflow
             (downstream nodes read it from session state).
+        output_schema: A Pydantic model the answer must parse as (structured
+            output). With tools, ADK adds its ``set_model_response`` tool.
         mode: ADK 2.0 delegation mode — 'chat' (conversational, keeps history),
             'task', or 'single_turn'. When None, ADK infers it: 'chat' as a
             sub-agent, 'single_turn' as a graph node. Set 'chat' explicitly on
@@ -513,5 +536,7 @@ def create_agent(
         kwargs["on_model_error_callback"] = on_model_error_callback
     if output_key:
         kwargs["output_key"] = output_key
+    if output_schema is not None:
+        kwargs["output_schema"] = output_schema
 
     return Agent(**kwargs)

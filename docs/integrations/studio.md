@@ -2,10 +2,11 @@
 
 The Studio runs a **composition**: local agents, remote [A2A](a2a.md) agents
 and [MCP servers](mcp.md), wired into a pattern, run apart from the live
-coordinator and traced step by step. This page covers P0a of
+coordinator and traced step by step. This page covers P0a and P0b of
 [AEP-031](../enhancements/aep-031-orrery-studio.md): the HTTP API, the
-endpoint registry, a sequential pipeline of `llm_agent` nodes, and the trace
-events, plus the P1 canvas in the web console ([The console](#the-console)).
+endpoint registry, the patterns (pipeline, router, loops, parallel branches,
+supervisors), per-node models, stored compositions and run history, and the
+trace events, plus the P1 canvas in the web console ([The console](#the-console)).
 
 A Studio run is **separate from** the live system, not **isolated from** it:
 
@@ -46,7 +47,9 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_RUNS` | `100` | Runs kept in memory; past it the oldest finished ones go. |
 | `ORRERY_STUDIO_MAX_RUNS_PER_USER` | `20` | Finished runs kept per person; past it that person's oldest go. |
 | `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN` | `262144` | Captured `content` one run may hold; past it events carry none. |
-| `ORRERY_STUDIO_RUN_RETENTION_SECONDS` | `3600` | A finished run is forgotten after this long. |
+| `ORRERY_STUDIO_RUN_RETENTION_SECONDS` | `3600` | How long the replica that ran a run keeps it in memory; after that it is read from the store. |
+| `ORRERY_STUDIO_RUN_RETENTION_DAYS` | `14` | Stored runs and their events are purged after this many days (checked hourly). |
+| `ORRERY_STUDIO_MODELS` | — | The models a node may name in `model` (comma-separated, e.g. `gemini-2.5-flash,anthropic/claude-sonnet-4-5`). Unset: nodes use the deployment's model and naming one is refused. |
 | `ORRERY_STUDIO_MAX_RUNNING_PER_USER` | `2` | Runs one person may have in flight; more is a 429. |
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
@@ -57,6 +60,14 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 
 `ORRERY_DAILY_TOKEN_BUDGET_PER_USER` applies to Studio runs too: every run
 charges the same per-process ledger as chat.
+
+**Storage.** With `DATABASE_URL` set to PostgreSQL, compositions and runs go
+to four new tables (`studio_compositions`, `studio_composition_versions`,
+`studio_runs`, `studio_run_events`), created at startup if missing; no
+existing table changes. An unreachable database fails startup, unless
+`ORRERY_DB_ALLOW_INMEMORY_FALLBACK=1` (the session store's rule). Without
+PostgreSQL both stay in memory, on each replica, bounded by
+`ORRERY_STUDIO_MAX_RUNS`.
 
 ## The registry
 
@@ -141,17 +152,17 @@ changes a tool between runs is caught.
 
 ## Compositions
 
-A composition is a JSON document (`spec_version: 1`). P0a runs one shape: a
-**pipeline** of `llm_agent` nodes, chained by edges. Each node gets the
-previous node's answer as its input (the first gets the run's input), and the
-last node's answer is the run's output.
+A composition is a JSON document (`spec_version: 1`): nodes, edges between
+them, a `pattern` (a label for the console; the edges decide what runs) and
+budgets. Each node gets the previous node's answer as its input (the first
+gets the run's input), and the run's output is the last answer.
 
 ```json
 {
   "spec_version": 1,
   "name": "release-notes",
-  "pattern": "pipeline",
-  "budgets": { "max_tokens": 60000, "max_tool_calls": 12, "max_remote_calls": 2, "timeout_s": 180 },
+  "pattern": "critic_loop",
+  "budgets": { "max_tokens": 120000, "max_tool_calls": 20, "max_remote_calls": 4, "timeout_s": 240 },
   "nodes": [
     { "id": "research", "kind": "llm_agent",
       "instruction": "Search Tirraflow for the topic and answer with short notes.",
@@ -160,16 +171,16 @@ last node's answer is the run's output.
       "instruction": "Send your input to the demo writer's draft tool; answer with its draft.",
       "tools": ["a2a:demo-writer.draft"] },
     { "id": "critic", "kind": "llm_agent",
-      "instruction": "Review the draft and give an improved version." }
+      "instruction": "Approve the draft, or reject it with what to change.",
+      "output": { "labels": ["approved", "rejected"] } }
   ],
   "edges": [
     { "from": "research", "to": "writer" },
-    { "from": "writer", "to": "critic" }
+    { "from": "writer", "to": "critic" },
+    { "from": "critic", "to": "writer", "when": "rejected", "max_iterations": 3 }
   ]
 }
 ```
-
-`deploy/studio-demo/release-notes.spec.json` is this spec in full.
 
 | Tool reference | What the node gets |
 |---|---|
@@ -177,14 +188,41 @@ last node's answer is the run's output.
 | `a2a:<entry>.<skill>` | A `GuardedRemoteA2aTool` named `a2a_<entry>_<skill>` (below). |
 | `catalog:<name>` | One of the deployment's own catalogue tools (`GET /studio/registry` lists them). Read-only ones only. |
 
-The format already describes later phases (`router`, `parallel`, `join`,
-`supervisor`, `human_approval`, `remote_a2a` nodes; `when`, `max_iterations`
-and `screen` on edges; per-node `model` and `output` labels). A spec using any
-of them parses, and is refused with a `not_supported_yet` error at that field.
-`GET /studio/schema` publishes the JSON Schema.
+`GET /studio/schema` publishes the JSON Schema. P0b kept `spec_version: 1`:
+every P0a spec still validates and runs the same way.
 
-Validation runs before anything else, and returns every problem at once, each
-with the path of the field that caused it:
+### Patterns
+
+| Building block | How |
+|---|---|
+| **Labels** | `"output": {"labels": ["a", "b"]}` on an `llm_agent` or `supervisor`: the node answers `{label, answer}` (structured output); the next node gets `answer`. |
+| **Routing** | Edges out of a labelled node carry `when: "<label>"`, one edge per label. Or put a `router` node right after it, and the `when` edges on the router. A label with no edge ends the run there, with that answer (`POST /studio/validate` warns). Each choice emits `route.decision`. |
+| **Loops** | A back edge with `when` and `max_iterations` (1–5). Each pass emits `loop.iteration`; at the cap the branch ends with the source's answer (`stopped: true`). A cycle without `max_iterations` is refused. |
+| **Parallel** | A `parallel` node with 2–6 outgoing edges, each branch a chain of `llm_agent` nodes, all meeting at one `join`. The branches run concurrently; the join's successor gets each branch's answer as a `## <branch id>` block, in edge order. |
+| **Supervisor** | A `supervisor` node lists `children` (`llm_agent` or `supervisor` ids, at most 3 levels). Each child is a tool the supervisor's model calls (an ADK `AgentTool`); each call counts as a delegation against `max_delegations`. Children have no edges; their `node.enter`/`node.exit` carry `parent`. |
+| **Per-node models** | `"model": "<name>"` on an `llm_agent` or `supervisor`, from `ORRERY_STUDIO_MODELS`. No fallback chain: a failing model fails the node. `run.end` totals tokens by model. |
+| **Screening** | `"screen": true` on an edge runs the injection screen over the text it carries. |
+
+The `pattern` values are `pipeline`, `router`, `critic_loop`,
+`fan_out_fan_in`, `supervisor`, `debate`, `map_reduce` and
+`plan_and_execute`; a spec whose edges do not fit its pattern is refused
+(`pattern_mismatch`: a `pipeline` has no labels, fan-out or loops, a
+`critic_loop` needs a loop, a `router` a `when` edge, `fan_out_fan_in` and
+`map_reduce` a parallel node and its join, `supervisor` a supervisor,
+`debate` parallel speakers or a loop). `handoff` and the `human_approval` and `remote_a2a` node
+kinds parse but are refused with `not_supported_yet`.
+
+**Templates.** `deploy/studio-demo/specs/` has one tested spec per pattern:
+`pipeline.json`, `router.json`, `critic-loop.json` (the demo; it was
+`release-notes.spec.json` in P0a), `fan-out-fan-in.json`, `supervisor.json`,
+`debate.json`, `map-reduce.json` (a fixed fan-out: the map width is the number
+of branches) and `plan-and-execute.json`. CI runs each with a stub model
+(`core/tests/test_studio_patterns.py`).
+
+### Validation
+
+Validation runs before anything else, never calls a model, and returns every
+problem at once, each with the path of the field that caused it:
 
 ```json
 {"detail": {"errors": [
@@ -197,13 +235,21 @@ with the path of the field that caused it:
 ]}}
 ```
 
-It refuses: duplicate ids; edges to unknown nodes; branches, joins, cycles,
-self-loops and unreachable nodes; more than one first node; tool references
-that are malformed, unknown, not `read_only` or not registered for the skill;
-budgets over the ceilings; unknown keys anywhere; and a `spec_version` newer
-than the server reads. It also refuses, per node, two tools that reach the
-model under the same name (`tool_name_collision`: `mcp:my-x.t` and `mcp:my_x.t`
-are both `mcp_my_x_t`, and a catalogue alias may match another tool's name),
+It refuses: duplicate ids; edges to unknown nodes, self-loops, duplicate edges
+and unreachable nodes; more than one first node; `when` on an unlabelled
+source, an unknown label, two edges for one label, or a labelled node's edge
+without `when`; a fan-out that is not a `parallel` node, or one with more than
+6 branches (`too_many_branches`); a join that does not close its parallel's
+branches; a cycle without `max_iterations` (`unbounded_cycle`), or
+`max_iterations` on an edge that is not a back edge; supervisor children that
+are not agents, have two parents, have edges, or nest deeper than 3
+(`too_deep`); a `model` not in `ORRERY_STUDIO_MODELS` (`model_not_allowed`);
+tool references that are malformed, unknown, not `read_only` or not registered
+for the skill; budgets over the ceilings; unknown keys anywhere; and a
+`spec_version` newer than the server reads. It also refuses, per node, two
+tools that reach the model under the same name (`tool_name_collision`:
+`mcp:my-x.t` and `mcp:my_x.t` are both `mcp_my_x_t`, and a catalogue alias may
+match another tool's name), a tool named like a supervisor's child (`n_<id>`),
 and an MCP tool whose model-facing name is over 64 characters
 (`tool_name_too_long`). Two nodes may each use the same tool.
 
@@ -252,17 +298,29 @@ response's usage), tool calls, delegations, remote calls, and the deadline.
 The first budget to run out emits `budget.hit` and ends the run as
 `budget_exhausted`; a tool call past a budget is refused before it runs.
 
-**Outcomes:** `succeeded`, `failed` (an error, or a model call that failed: the
-pipeline stops at that node), `cancelled`, `budget_exhausted`.
+**Outcomes:** `succeeded`, `failed` (an error, a model call that failed, or a
+labelled node that answered without one of its labels: the run stops at that
+node), `cancelled`, `budget_exhausted`.
 
 **Cancel** cancels the run's task: model and HTTP calls in flight stop and
 toolsets close. A synchronous tool already running in a worker thread cannot
 be interrupted and finishes in the background, harmlessly at L2. Remote tasks
 are not sent `tasks/cancel` in P0a.
 
-**Where runs live.** In memory, on the replica that started them, for
-`ORRERY_STUDIO_RUN_RETENTION_SECONDS`. A run is visible only to the person who
-started it; on another replica, or to anyone else, it is a 404.
+**Where runs live.** The replica that starts a run runs it, and writes it and
+its events to the store as it goes (every quarter second). A run is visible only
+to the person who started it: to anyone else it is a 404, on every replica.
+
+**Several replicas.** With PostgreSQL, any replica serves `GET /studio/runs`,
+`GET /studio/runs/{id}` and `/events`: a finished run is replayed from the
+store, and one still running elsewhere is followed there until it ends.
+**Cancel is local**: on another replica, `POST /studio/runs/{id}/cancel` for a
+run still going is a 409 `"this run is on another replica; only that replica
+can cancel it"`. Route a console's requests to one replica (sticky sessions)
+to cancel from anywhere. A run whose replica died stays `running` in the store
+until its deadline plus two minutes, then reads as `failed`
+(`"the replica running it stopped before it ended"`). Without PostgreSQL each replica knows
+only its own runs.
 
 ## API
 
@@ -270,19 +328,61 @@ All routes need a human admin's bearer token.
 
 | Route | Body / query | Answer |
 |---|---|---|
-| `POST /studio/runs` | `{"spec": {…}, "input": "…"}` (input 1–8192 chars) | 202 `{"run_id": "…"}`; 422 `{"detail": {"errors": [{loc, msg, code}]}}`; 429 when too many runs are in flight or the rate limit is hit |
+| `POST /studio/runs` | `{"spec": {…}, "input": "…"}` or `{"composition_id": "…", "version"?: 2, "input": "…"}` (input 1–8192 chars; exactly one of `spec` and `composition_id`) | 202 `{"run_id": "…"}`; 422 `{"detail": {"errors": [{loc, msg, code}]}}`; 404 for an unknown composition or version; 429 when too many runs are in flight or the rate limit is hit |
+| `GET /studio/runs` | `?composition_id=`, `?limit=` (default 50, at most 200) | `{"runs": [summary…]}`: the caller's own runs, newest first |
 | `GET /studio/runs/{id}` | | The run's summary (below) |
 | `GET /studio/runs/{id}/events` | `Last-Event-ID` header to resume | `text/event-stream`: every event so far, then each new one, until `run.end` |
-| `POST /studio/runs/{id}/cancel` | | The summary; `status` becomes `cancelled` once the task stops |
-| `GET /studio/schema` | | `{"spec_version": 1, "spec": <JSON Schema>, "events": <JSON Schema>}` |
-| `GET /studio/registry` | `?resolve=true` fetches every card first, concurrently, at most 5 s each (a slow one shows its error) | MCP servers and their tools, A2A entries with card status, usable catalogue tools. Never secrets or env var names |
+| `POST /studio/runs/{id}/cancel` | | The summary; `status` becomes `cancelled` once the task stops; 409 when another replica runs it |
+| `POST /studio/validate` | `{"spec": {…}}` | 200 `{"ok": true, "spec_digest": "…", "warnings": [{loc, msg, code}]}`, or the same 422 as a run. Never calls a model or a remote |
+| `GET /studio/compositions` | | `{"compositions": [{id, name, description, pattern, version, created_by, created_at, updated_by, updated_at}…]}` |
+| `POST /studio/compositions` | `{"spec": {…}}` | 201, the composition with `spec` and `versions`; 422 as a run |
+| `GET /studio/compositions/{id}` | `?version=` | The composition (latest, or that version) with `spec` and `versions` (every version number) |
+| `PUT /studio/compositions/{id}` | `{"spec": {…}, "version": <the version edited>}` | 200, the new version; 409 `{"detail": {"message", "current_version"}}` when someone saved since |
+| `DELETE /studio/compositions/{id}` | `?version=<latest>` | 204, every version gone; 409 as `PUT` |
+| `GET /studio/schema` | | `{"spec_version", "spec": <JSON Schema>, "events": <JSON Schema>, "capabilities", "budget_ceilings"}` (below) |
+| `GET /studio/registry` | `?resolve=true` fetches every card and lists every MCP server's tools first, concurrently, at most 5 s each (a slow one shows its error) | MCP servers and their tools, A2A entries with card status, usable catalogue tools. Never secrets or env var names |
+
+Compositions are shared by the deployment's admins (anyone may edit, and
+`updated_by` says who did); runs are their owner's alone. Every save makes a new
+version and keeps the old ones, so a run can name the one it ran. Saving
+validates the spec as a run would.
+
+`capabilities` says what this server runs, so a console offers only that:
+
+```json
+{"node_kinds": ["llm_agent", "router", "parallel", "join", "supervisor"],
+ "unsupported_node_kinds": {"remote_a2a": "P1; …", "human_approval": "P0c"},
+ "patterns": ["pipeline", "fan_out_fan_in", "router", "supervisor", "critic_loop",
+              "debate", "map_reduce", "plan_and_execute"],
+ "unsupported_patterns": {"handoff": "…"},
+ "routing": true, "loops": true, "parallel": true, "supervisor": true,
+ "edge_screen": true, "per_node_models": true,
+ "models": ["anthropic/claude-sonnet-4-5", "gemini-2.5-flash"],
+ "human_approval": false, "stored_compositions": true,
+ "limits": {"max_nodes": 30, "max_parallel_branches": 6, "max_supervisor_depth": 3,
+            "max_loop_iterations": 5, "max_input_chars": 8192}}
+```
+
+`budget_ceilings` is `{max_tokens, max_tool_calls, max_delegations,
+max_remote_calls, timeout_s}`, the `ORRERY_STUDIO_MAX_*` values: a spec's
+budgets may not exceed them, and a budget it leaves out is set to them.
+
+In the registry, each MCP tool has `description` and `input_schema` as the
+server stated them when the tool was pinned (the first run, or
+`?resolve=true`, that listed it), and `null` before; each server has an `error`
+when its tools could not be listed. There is no "try it" call yet.
+
+`GET /me` has `studio_available`: true only when the Studio is mounted and
+the caller is a human admin, so a console can show its Studio entry only then.
 
 The run summary:
 
 ```json
 {"run_id": "9d13…", "status": "succeeded", "spec_name": "release-notes",
- "spec_digest": "5815…", "created_at": 1792871739.6, "ended_at": 1792871752.1,
- "error": null, "totals": {…}, "event_count": 11, "dropped_events": 0}
+ "spec_digest": "5815…", "pattern": "critic_loop", "composition_id": "c-…",
+ "composition_version": 2, "created_at": 1792871739.6, "ended_at": 1792871752.1,
+ "error": null, "totals": {…}, "event_count": 11, "dropped_events": 0,
+ "cancellable": false}
 ```
 
 The SSE stream sends one frame per event, `id` being its `seq`, and a
@@ -299,7 +399,7 @@ Try it with a token for a human client:
 ```bash
 curl -s -X POST http://127.0.0.1:8000/studio/runs \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d "{\"spec\": $(cat deploy/studio-demo/release-notes.spec.json), \"input\": \"Kafka consumer lag\"}"
+  -d "{\"spec\": $(cat deploy/studio-demo/specs/critic-loop.json), \"input\": \"Kafka consumer lag\"}"
 curl -sN http://127.0.0.1:8000/studio/runs/$RUN_ID/events -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -311,9 +411,11 @@ Every event has `type`, `seq` (1, 2, … within the run), `run_id` and `ts`
 
 | `type` | Fields |
 |---|---|
-| `run.start` | `spec_name`, `spec_digest` (JCS SHA-256), `pattern`, `nodes` (ids in run order), `budgets` (resolved), `content`? |
-| `node.enter` | `node_id`, `kind`, `model` |
-| `node.exit` | `node_id`, `kind`, `model`, `tokens` `{input, output, total}`, `elapsed_ms`, `outcome` (`ok` · `failed` · `cancelled` · `budget_exhausted`), `content`? |
+| `run.start` | `spec_name`, `spec_digest` (JCS SHA-256), `pattern`, `nodes` (ids in graph order), `budgets` (resolved), `composition_id`, `composition_version`, `content`? |
+| `node.enter` | `node_id`, `kind`, `model`, `parent` (the supervisor, for a child) |
+| `node.exit` | `node_id`, `kind`, `model`, `parent`, `tokens` `{input, output, total}`, `elapsed_ms`, `outcome` (`ok` · `failed` · `cancelled` · `budget_exhausted`), `content`? |
+| `route.decision` | `node_id` (where the choice was made: the labelled node, or its `router`), `source` (the labelled node), `label`, `alternatives` (its labels), `to` (absent when no edge takes the label and the branch ends) |
+| `loop.iteration` | `edge` (`"critic->writer"`), `from_node`, `to_node`, `iteration` (1…cap), `cap`, `stopped` (true at the cap: the edge is not taken) |
 | `mcp.call` | `node_id`, `entry`, `tool`, `classification`, `outcome` (`success` · `failure` · `refused`), `status`, `elapsed_ms` |
 | `a2a.message` | `node_id`, `remote`, `skill`, `direction` (`outbound` · `inbound`), `method`, `task_id`, `context_id`, `task_state`, `states` (each state seen), `parts` `[{kind, size}]`, `elapsed_ms`, `status`, `card_digest`, `content`? |
 | `budget.hit` | `budget` (`max_tokens` · `max_tool_calls` · `max_delegations` · `max_remote_calls` · `timeout_s`), `limit`, `used` |
@@ -330,13 +432,19 @@ when the tool call returns. With `ORRERY_REDACT_IPS=true`, IP addresses are
 redacted too. A run holds at most `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN` of
 content; later events carry none.
 
+Router, loop, `parallel` and `join` nodes also get `node.enter` and
+`node.exit` (no model, no tokens), so a trace shows every step. Parallel
+branches' events interleave: each branch's `node.enter` comes before any of
+them exits.
+
 **At most 2000 events per run.** Past that, events are dropped (the last few
 slots are kept for `budget.hit` and `run.end`), and `run.end` says how many.
 
 ## The demo
 
-The `studio-demo` compose profile runs the release-notes pipeline with a remote
-agent built in another framework:
+The `studio-demo` compose profile runs the release-notes critic loop
+(`deploy/studio-demo/specs/critic-loop.json`) with a remote agent built in
+another framework:
 
 - `demo-writer`: a plain `a2a-sdk` agent, no LLM, deterministic
   (`deploy/studio-demo/writer/writer_agent.py`), served over **https** on the
@@ -368,9 +476,11 @@ then start a run as in [API](#api). `CLIENT=orrery-console` puts the client in
 the token's `azp`, which is what makes it a person here: the same token without
 it is a service and gets 403.
 
-CI runs the same pipeline end to end (`core/tests/test_studio_api.py`) with a
-stub model, the writer on a loopback socket over plain http, and a local MCP
-server.
+CI runs a pipeline end to end (`core/tests/test_studio_api.py`) with a stub
+model, the writer on a loopback socket over plain http, and a local MCP
+server; `test_studio_patterns.py` runs every pattern and template, and
+`test_studio_store.py` the store, run history and two replicas sharing one
+database.
 
 ## The console
 
@@ -488,7 +598,7 @@ uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browse
 
 ## Not yet
 
-- Other patterns, per-node models, stored compositions and replay (P0b).
+- `handoff`, `remote_a2a` nodes, a dynamic map width, and an MCP "try it" call.
 - Human approval, answering a remote's `input-required`, `acting` remotes and
   registry editing (P0c).
 - `tasks/cancel` to a remote when a run is cancelled.

@@ -1,0 +1,61 @@
+{
+  "spec_version": 1,
+  "name": "release-notes",
+  "description": "Research a topic on Tirraflow, have the remote writer draft notes, and send the draft back until the critic approves it (at most three rounds).",
+  "pattern": "critic_loop",
+  "budgets": {
+    "max_tokens": 120000,
+    "max_tool_calls": 20,
+    "max_remote_calls": 4,
+    "timeout_s": 240
+  },
+  "nodes": [
+    {
+      "id": "research",
+      "kind": "llm_agent",
+      "description": "Finds what Tirraflow says about the topic.",
+      "instruction": "Search Tirraflow for the topic in your input, read the best one or two articles, and answer with five to eight short factual notes, one per line, each citing the article URL. Start with a line '# <topic>'.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "writer",
+      "kind": "llm_agent",
+      "description": "Hands the notes to the remote writer agent.",
+      "instruction": "Send your input, unchanged, to the demo writer's draft tool, then answer with exactly the draft it returns.",
+      "tools": [
+        "a2a:demo-writer.draft"
+      ]
+    },
+    {
+      "id": "critic",
+      "kind": "llm_agent",
+      "description": "Approves the draft or sends it back.",
+      "instruction": "Review the draft in your input. Approve it when every claim cites a Tirraflow URL and nothing important is missing; answer with the final draft. Otherwise reject it, and answer with the notes the writer should draft from: the corrected facts, with their URLs, and what to change.",
+      "output": {
+        "labels": [
+          "approved",
+          "rejected"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "research",
+      "to": "writer"
+    },
+    {
+      "from": "writer",
+      "to": "critic"
+    },
+    {
+      "from": "critic",
+      "to": "writer",
+      "when": "rejected",
+      "max_iterations": 3
+    }
+  ]
+}

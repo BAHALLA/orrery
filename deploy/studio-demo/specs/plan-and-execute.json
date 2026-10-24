@@ -1,0 +1,78 @@
+{
+  "spec_version": 1,
+  "name": "plan-and-execute",
+  "description": "A planner writes the steps, an executor carries them out with helpers, and a reviewer sends the plan back for another try when it fell short (at most twice).",
+  "pattern": "plan_and_execute",
+  "budgets": {
+    "max_tokens": 150000,
+    "max_tool_calls": 30,
+    "max_delegations": 12,
+    "max_remote_calls": 4,
+    "timeout_s": 300
+  },
+  "nodes": [
+    {
+      "id": "planner",
+      "kind": "llm_agent",
+      "description": "Writes the plan.",
+      "instruction": "Write a numbered plan of at most four steps that answers the request in your input. If your input includes a reviewer's feedback, revise the plan to address it."
+    },
+    {
+      "id": "executor",
+      "kind": "supervisor",
+      "description": "Carries the plan out.",
+      "instruction": "Carry out each step of the plan in your input, using your helpers: the researcher for facts, the drafter for prose. Answer with the result of every step.",
+      "children": [
+        "researcher",
+        "drafter"
+      ]
+    },
+    {
+      "id": "researcher",
+      "kind": "llm_agent",
+      "description": "Finds facts on Tirraflow, with URLs.",
+      "instruction": "Search Tirraflow for what the request asks and answer with short factual notes, each citing the article URL.",
+      "tools": [
+        "mcp:tirraflow.search_articles",
+        "mcp:tirraflow.get_article"
+      ]
+    },
+    {
+      "id": "drafter",
+      "kind": "llm_agent",
+      "description": "Drafts text through the remote writer.",
+      "instruction": "Send the request, unchanged, to the demo writer's draft tool and answer with exactly the draft it returns.",
+      "tools": [
+        "a2a:demo-writer.draft"
+      ]
+    },
+    {
+      "id": "reviewer",
+      "kind": "llm_agent",
+      "description": "Checks the result against the request.",
+      "instruction": "Check the results in your input answer the plan's request. If they do, answer with the final result. If not, answer with the original request and what the plan missed.",
+      "output": {
+        "labels": [
+          "done",
+          "replan"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "planner",
+      "to": "executor"
+    },
+    {
+      "from": "executor",
+      "to": "reviewer"
+    },
+    {
+      "from": "reviewer",
+      "to": "planner",
+      "when": "replan",
+      "max_iterations": 2
+    }
+  ]
+}

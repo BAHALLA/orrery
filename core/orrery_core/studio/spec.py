@@ -11,10 +11,15 @@ Tools are referenced by id only, never by import path:
   declarative-agent catalogue: ``catalog:get_consumer_lag``,
   ``catalog:k8s.get_events``).
 
-The models describe every node kind the AEP plans (router, parallel/join,
-supervisor in P0b; human approval in P0c), so a console can be built against
-one schema. :func:`validate_spec` then refuses what this release cannot run,
-field by field, before any model call.
+The models describe every node kind the AEP plans, so a console can be built
+against one schema. P0b runs ``llm_agent``, ``router``, ``parallel``/``join``
+and ``supervisor`` nodes, labelled and looping edges, and per-node models;
+:func:`validate_spec` refuses the rest (``remote_a2a``, ``human_approval``,
+the ``handoff`` pattern) field by field, and checks the graph
+(:func:`plan_graph`), before any model call.
+
+The format is the one P0a published (``spec_version`` 1): P0b only lets
+through fields that were already in it, and adds ``output`` to supervisors.
 """
 
 from __future__ import annotations
@@ -24,7 +29,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from ..a2a.remote import jcs, safe_tool_name
 from ..security.guardrails import get_guard_level
@@ -94,6 +106,13 @@ class NodeOutput(BaseModel):
         min_length=2, max_length=10
     )
 
+    @field_validator("labels")
+    @classmethod
+    def _unique(cls, labels: list[str]) -> list[str]:
+        if len(set(labels)) != len(labels):
+            raise ValueError("labels must be unique")
+        return labels
+
 
 class _Node(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -108,9 +127,9 @@ class LlmAgentNode(_Node):
     kind: Literal["llm_agent"]
     instruction: str = Field(min_length=1, max_length=8000)
     tools: list[str] = Field(default_factory=list, max_length=20)
-    #: P0b: a model from ORRERY_STUDIO_MODELS, run without the fallback chain.
+    #: A model from ``ORRERY_STUDIO_MODELS``, run without the fallback chain.
     model: str | None = None
-    #: P0b: labels a router reads.
+    #: Labels the node's answer is classified as; its edges are taken on them.
     output: NodeOutput | None = None
 
 
@@ -141,13 +160,14 @@ class JoinNode(_Node):
 
 
 class SupervisorNode(_Node):
-    """An llm_agent whose children are its tools (P0b)."""
+    """An llm_agent whose children (llm_agent or supervisor nodes) are its tools."""
 
     kind: Literal["supervisor"]
     instruction: str = Field(min_length=1, max_length=8000)
     children: list[str] = Field(min_length=1, max_length=10)
     tools: list[str] = Field(default_factory=list, max_length=20)
     model: str | None = None
+    output: NodeOutput | None = None
 
 
 class HumanApprovalNode(_Node):
@@ -171,12 +191,10 @@ Node = Annotated[
 #: The phase that brings each node kind not runnable yet.
 UNSUPPORTED_KINDS = {
     "remote_a2a": "P1; use an llm_agent with an a2a: tool",
-    "router": "P0b",
-    "parallel": "P0b",
-    "join": "P0b",
-    "supervisor": "P0b",
     "human_approval": "P0c",
 }
+#: Patterns the console knows but the server cannot run yet.
+UNSUPPORTED_PATTERNS = {"handoff": "P1; a router between agents does the same"}
 
 
 class Edge(BaseModel):
@@ -184,11 +202,11 @@ class Edge(BaseModel):
 
     from_: str = Field(alias="from", pattern=_ID)
     to: str = Field(pattern=_ID)
-    #: P0b: the source's output label this edge is taken on.
+    #: The source's output label this edge is taken on.
     when: str | None = None
-    #: P0b: a back edge's iteration cap.
+    #: A back edge's cap: how many times the loop may go round.
     max_iterations: int | None = Field(default=None, ge=1, le=MAX_LOOP_ITERATIONS)
-    #: P0b: screen the text crossing this edge for prompt injection.
+    #: Screen the text crossing this edge for prompt injection.
     screen: bool = False
 
 
@@ -212,12 +230,32 @@ class CompositionSpec(BaseModel):
 
 
 class RunRequest(BaseModel):
-    """``POST /studio/runs``: a spec (P0a) and the run's input text."""
+    """``POST /studio/runs``: a spec, or a stored composition (and version), and the input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    spec: dict[str, Any] | None = None
+    composition_id: str | None = Field(default=None, min_length=1, max_length=64)
+    #: The composition's version; unset, its latest.
+    version: int | None = Field(default=None, ge=1)
+    input: str = Field(min_length=1, max_length=MAX_INPUT_CHARS)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> RunRequest:
+        if (self.spec is None) == (self.composition_id is None):
+            raise ValueError("give either spec or composition_id")
+        if self.version is not None and self.composition_id is None:
+            raise ValueError("version needs composition_id")
+        return self
+
+
+class CompositionWrite(BaseModel):
+    """``POST``/``PUT /studio/compositions``: the spec, and (PUT) the version it was edited from."""
 
     model_config = ConfigDict(extra="forbid")
 
     spec: dict[str, Any]
-    input: str = Field(min_length=1, max_length=MAX_INPUT_CHARS)
+    version: int | None = Field(default=None, ge=1)
 
 
 def spec_json_schema() -> dict[str, Any]:
@@ -339,6 +377,8 @@ class ValidationContext:
     #: Catalogue ref -> tool. Only read-only tools are usable.
     catalogue: Mapping[str, Any] = field(default_factory=dict)
     ceilings: BudgetCeilings = field(default_factory=BudgetCeilings)
+    #: ``ORRERY_STUDIO_MODELS``: the models a node may name.
+    models: frozenset[str] = frozenset()
 
 
 def _tool_error(ref: str, ctx: ValidationContext) -> str | None:
@@ -431,14 +471,14 @@ def _name_errors(i: int, tools: list[str], ctx: ValidationContext) -> list[SpecE
 
 
 def validate_spec(spec: CompositionSpec, ctx: ValidationContext) -> list[SpecError]:
-    """Every reason *spec* cannot run in this release (P0a), field by field."""
+    """Every reason *spec* cannot run in this release, field by field."""
     errors: list[SpecError] = []
-    if spec.pattern != "pipeline":
+    if spec.pattern in UNSUPPORTED_PATTERNS:
         errors.append(
             SpecError(
                 ("pattern",),
-                f"pattern {spec.pattern!r} is not supported yet (P0b); this release runs "
-                "'pipeline' only",
+                f"pattern {spec.pattern!r} is not supported yet "
+                f"({UNSUPPORTED_PATTERNS[spec.pattern]})",
                 "not_supported_yet",
             )
         )
@@ -448,7 +488,7 @@ def validate_spec(spec: CompositionSpec, ctx: ValidationContext) -> list[SpecErr
         if node.id in ids:
             errors.append(SpecError(("nodes", i, "id"), f"duplicate node id {node.id!r}"))
         ids.setdefault(node.id, i)
-        if not isinstance(node, LlmAgentNode):
+        if node.kind in UNSUPPORTED_KINDS:
             errors.append(
                 SpecError(
                     ("nodes", i, "kind"),
@@ -458,21 +498,16 @@ def validate_spec(spec: CompositionSpec, ctx: ValidationContext) -> list[SpecErr
                 )
             )
             continue
-        if node.model is not None:
+        if not isinstance(node, LlmAgentNode | SupervisorNode):
+            continue
+        if node.model is not None and node.model not in ctx.models:
             errors.append(
                 SpecError(
                     ("nodes", i, "model"),
-                    "per-node models are not supported yet (P0b); leave it unset to use "
-                    "the deployment's model",
-                    "not_supported_yet",
-                )
-            )
-        if node.output is not None:
-            errors.append(
-                SpecError(
-                    ("nodes", i, "output"),
-                    "output labels are not supported yet (P0b)",
-                    "not_supported_yet",
+                    f"model {node.model!r} is not in ORRERY_STUDIO_MODELS"
+                    + (f" ({', '.join(sorted(ctx.models))})" if ctx.models else " (empty)")
+                    + "; leave it unset to use the deployment's model",
+                    "model_not_allowed",
                 )
             )
         if len(set(node.tools)) != len(node.tools):
@@ -482,82 +517,505 @@ def validate_spec(spec: CompositionSpec, ctx: ValidationContext) -> list[SpecErr
                 errors.append(SpecError(("nodes", i, "tools", j), why, "unknown_tool"))
         if len(set(node.tools)) == len(node.tools):
             errors.extend(_name_errors(i, node.tools, ctx))
+            if isinstance(node, SupervisorNode):
+                errors.extend(_child_name_errors(i, node, ctx))
 
-    errors.extend(_check_pipeline(spec, ids))
+    if len(ids) == len(spec.nodes):
+        plan, graph_errors = plan_graph(spec)
+        errors.extend(graph_errors)
+        if plan is not None and not graph_errors:
+            errors.extend(_check_pattern(spec, plan))
     errors.extend(_check_budgets(spec, ctx.ceilings))
     return errors
 
 
-def _check_pipeline(spec: CompositionSpec, ids: Mapping[str, int]) -> list[SpecError]:
-    """The edges must form one chain through every node (P0a's only shape)."""
+def _child_name_errors(i: int, node: SupervisorNode, ctx: ValidationContext) -> list[SpecError]:
+    """A child reaches the supervisor's model as ``n_<id>``: it must not shadow a tool."""
+    names = {model_tool_name(ref, ctx) for ref in node.tools}
+    return [
+        SpecError(
+            ("nodes", i, "children", k),
+            f"child {child!r} reaches the model as {NODE_TOOL_PREFIX + child!r}, "
+            "the name of one of the node's tools",
+            "tool_name_collision",
+        )
+        for k, child in enumerate(node.children)
+        if NODE_TOOL_PREFIX + child in names
+    ]
+
+
+#: Compiled agents (and so a supervisor's child tools) are named ``n_<id>``.
+NODE_TOOL_PREFIX = "n_"
+
+
+# ── The graph ────────────────────────────────────────────────────────
+
+
+@dataclass
+class GraphPlan:
+    """What :func:`plan_graph` found in a valid spec; the compiler builds from it."""
+
+    start: str
+    #: Graph nodes (not supervisor children), breadth-first from the start.
+    order: list[str]
+    #: Supervisor id -> its children, as listed.
+    children: dict[str, list[str]]
+    #: Child id -> its supervisor.
+    parent: dict[str, str]
+    #: Edge indexes with ``max_iterations`` (each goes back to an earlier node).
+    back_edges: set[int]
+    #: Node id -> indexes of its outgoing edges.
+    out: dict[str, list[int]]
+    #: Join id -> the parallel node whose branches it closes.
+    join_of: dict[str, str]
+    #: Router id -> the labelled node before it.
+    router_source: dict[str, str]
+
+    def labels(self, spec: CompositionSpec, node_id: str) -> list[str] | None:
+        """The labels edges out of *node_id* are taken on (a router's: its source's)."""
+        by_id = {n.id: n for n in spec.nodes}
+        node = by_id[self.router_source.get(node_id, node_id)]
+        output = getattr(node, "output", None)
+        return list(output.labels) if output is not None else None
+
+
+def _labels_of(node: Any) -> list[str] | None:
+    output = getattr(node, "output", None)
+    return list(output.labels) if output is not None else None
+
+
+def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]]:
+    """Check the nodes and edges form a graph this release runs; the plan if they do.
+
+    - **Supervisors**: children are ``llm_agent`` or ``supervisor`` nodes, each
+      under one supervisor, never in an edge, without labels, at most
+      :data:`MAX_SUPERVISOR_DEPTH` supervisors deep.
+    - **Edges**: between graph nodes, no self-loops or duplicates. Only a
+      ``parallel`` node fans out (2 to :data:`MAX_PARALLEL_BRANCHES` plain
+      edges); a node with ``output.labels`` leaves on labelled edges (``when``)
+      or on one edge to a ``router``; any other node has at most one successor.
+    - **Loops**: an edge with ``max_iterations`` goes back to an earlier node
+      and is taken on a label. Without it, no cycle.
+    - **Fan-in**: each ``join`` closes exactly the branches of one ``parallel``
+      node, its branches neither route nor loop, and a node after it combines
+      them.
+    - one start node, every node reachable.
+    """
     errors: list[SpecError] = []
-    succ: dict[str, str] = {}
-    pred: dict[str, str] = {}
-    for j, edge in enumerate(spec.edges):
-        for end, name in (("from", edge.from_), ("to", edge.to)):
-            if name not in ids:
-                errors.append(SpecError(("edges", j, end), f"no node {name!r}"))
-        for attr, phase in (("when", "P0b"), ("max_iterations", "P0b")):
-            if getattr(edge, attr) is not None:
+    by_id = {n.id: n for n in spec.nodes}
+    index = {n.id: i for i, n in enumerate(spec.nodes)}
+
+    # Supervisors and their children.
+    children: dict[str, list[str]] = {}
+    parent: dict[str, str] = {}
+    for i, node in enumerate(spec.nodes):
+        if not isinstance(node, SupervisorNode):
+            continue
+        children[node.id] = []
+        for k, child in enumerate(node.children):
+            loc = ("nodes", i, "children", k)
+            target = by_id.get(child)
+            if target is None:
+                errors.append(SpecError(loc, f"no node {child!r}"))
+            elif child == node.id or child in children[node.id]:
+                errors.append(SpecError(loc, f"{child!r} is listed twice or is the node itself"))
+            elif not isinstance(target, LlmAgentNode | SupervisorNode):
                 errors.append(
                     SpecError(
-                        ("edges", j, attr),
-                        f"{attr} is not supported yet ({phase}): a pipeline has no "
-                        "conditional or looping edges",
-                        "not_supported_yet",
+                        loc,
+                        f"a supervisor's children are llm_agent or supervisor nodes; "
+                        f"{child!r} is a {target.kind}",
                     )
                 )
-        if edge.screen:
+            elif child in parent:
+                errors.append(SpecError(loc, f"{child!r} is already a child of {parent[child]!r}"))
+            else:
+                parent[child] = node.id
+                children[node.id].append(child)
+                if target.output is not None:
+                    errors.append(
+                        SpecError(
+                            ("nodes", index[child], "output"),
+                            f"{child!r} answers its supervisor, so it cannot have output labels",
+                        )
+                    )
+    for sup in children:
+        depth, cursor, seen = 1, sup, {sup}
+        while cursor in parent:
+            cursor = parent[cursor]
+            if cursor in seen:
+                errors.append(
+                    SpecError(("nodes", index[sup], "children"), "supervisors form a cycle")
+                )
+                break
+            seen.add(cursor)
+            depth += 1
+        if depth > MAX_SUPERVISOR_DEPTH:
             errors.append(
                 SpecError(
-                    ("edges", j, "screen"),
-                    "edge screening is not supported yet (P0b)",
-                    "not_supported_yet",
+                    ("nodes", index[sup], "children"),
+                    f"{sup!r} is {depth} supervisors deep; at most {MAX_SUPERVISOR_DEPTH}",
+                    "too_deep",
                 )
             )
+
+    graph_nodes = [n.id for n in spec.nodes if n.id not in parent]
+    out: dict[str, list[int]] = {n: [] for n in graph_nodes}
+    into: dict[str, list[int]] = {n: [] for n in graph_nodes}
+    seen_pairs: set[tuple[str, str]] = set()
+    for j, edge in enumerate(spec.edges):
+        bad = False
+        for end, name in (("from", edge.from_), ("to", edge.to)):
+            if name not in by_id:
+                errors.append(SpecError(("edges", j, end), f"no node {name!r}"))
+                bad = True
+            elif name in parent:
+                errors.append(
+                    SpecError(
+                        ("edges", j, end),
+                        f"{name!r} is a child of {parent[name]!r}: children are its tools, "
+                        "not steps of the graph",
+                    )
+                )
+                bad = True
+        if bad:
+            continue
         if edge.from_ == edge.to:
             errors.append(SpecError(("edges", j), "an edge cannot loop on one node"))
-        elif edge.from_ in succ:
+            continue
+        if (edge.from_, edge.to) in seen_pairs:
+            errors.append(SpecError(("edges", j), f"duplicate edge {edge.from_}->{edge.to}"))
+            continue
+        seen_pairs.add((edge.from_, edge.to))
+        out[edge.from_].append(j)
+        into[edge.to].append(j)
+    if errors:
+        return None, errors
+
+    back = {j for j, e in enumerate(spec.edges) if e.max_iterations is not None}
+
+    # Routers: one labelled node before each, nothing else after that node.
+    router_source: dict[str, str] = {}
+    for name in graph_nodes:
+        node = by_id[name]
+        if node.kind != "router":
+            continue
+        incoming = [j for j in into[name] if j not in back]
+        sources = [spec.edges[j].from_ for j in incoming]
+        if len(sources) != 1 or _labels_of(by_id[sources[0]]) is None:
             errors.append(
                 SpecError(
-                    ("edges", j, "from"),
-                    f"{edge.from_!r} already has a successor: a pipeline does not branch",
+                    ("nodes", index[name]),
+                    "a router follows exactly one node with output.labels; its edges are "
+                    "taken on that node's labels",
                 )
             )
-        elif edge.to in pred:
+            continue
+        if len(out[sources[0]]) != 1:
+            errors.append(
+                SpecError(
+                    ("nodes", index[sources[0]]),
+                    f"{sources[0]!r} goes to router {name!r}, so it can have no other edge",
+                )
+            )
+        router_source[name] = sources[0]
+
+    # Outgoing edges, by the kind of their source.
+    for name in graph_nodes:
+        node = by_id[name]
+        edges = out[name]
+        labels = (
+            _labels_of(by_id[router_source[name]]) if name in router_source else _labels_of(node)
+        )
+        to_router = len(edges) == 1 and by_id[spec.edges[edges[0]].to].kind == "router"
+        whens: set[str] = set()
+        for j in edges:
+            edge = spec.edges[j]
+            if edge.when is not None:
+                if labels is None:
+                    errors.append(
+                        SpecError(
+                            ("edges", j, "when"),
+                            f"{name!r} has no output.labels: only a labelled node (or a "
+                            "router after one) has edges taken on a label",
+                        )
+                    )
+                elif edge.when not in labels:
+                    errors.append(
+                        SpecError(
+                            ("edges", j, "when"),
+                            f"{edge.when!r} is not one of {name!r}'s labels {labels}",
+                        )
+                    )
+                elif edge.when in whens:
+                    errors.append(
+                        SpecError(
+                            ("edges", j, "when"),
+                            f"{name!r} already has an edge for {edge.when!r}: one per label",
+                        )
+                    )
+                whens.add(edge.when)
+            elif labels is not None and not (to_router and name not in router_source):
+                errors.append(
+                    SpecError(
+                        ("edges", j, "when"),
+                        f"{name!r} is labelled: each of its edges needs when (one of {labels})",
+                    )
+                )
+            if edge.max_iterations is not None and edge.when is None:
+                errors.append(
+                    SpecError(
+                        ("edges", j, "max_iterations"),
+                        "a loop edge is taken on a label: give it when as well",
+                    )
+                )
+        if node.kind == "parallel":
+            if not 2 <= len(edges) <= MAX_PARALLEL_BRANCHES:
+                errors.append(
+                    SpecError(
+                        ("nodes", index[name]),
+                        f"a parallel node fans out to 2 to {MAX_PARALLEL_BRANCHES} nodes; "
+                        f"{name!r} has {len(edges)}",
+                        "too_many_branches" if len(edges) > MAX_PARALLEL_BRANCHES else "invalid",
+                    )
+                )
+        elif labels is None and len(edges) > 1:
+            errors.append(
+                SpecError(
+                    ("edges", edges[1], "from"),
+                    f"{name!r} already has a successor: only a parallel node fans out, and "
+                    "only a labelled node branches",
+                )
+            )
+    if errors:
+        return None, errors
+
+    # No cycle without max_iterations; each max_iterations edge goes back.
+    forward: dict[str, list[str]] = {
+        n: [spec.edges[j].to for j in out[n] if j not in back] for n in graph_nodes
+    }
+    state: dict[str, int] = {}
+
+    def cyclic(n: str) -> bool:
+        state[n] = 1
+        for m in forward[n]:
+            if state.get(m) == 1 or (m not in state and cyclic(m)):
+                return True
+        state[n] = 2
+        return False
+
+    if any(n not in state and cyclic(n) for n in graph_nodes):
+        return None, [
+            SpecError(
+                ("edges",),
+                "the edges form a cycle without max_iterations: a loop needs an edge back "
+                f"with max_iterations (at most {MAX_LOOP_ITERATIONS})",
+                "unbounded_cycle",
+            )
+        ]
+
+    def reaches(a: str, b: str) -> bool:
+        stack, seen = [a], set()
+        while stack:
+            n = stack.pop()
+            if n == b:
+                return True
+            if n not in seen:
+                seen.add(n)
+                stack.extend(forward[n])
+        return False
+
+    for j in back:
+        edge = spec.edges[j]
+        if not reaches(edge.to, edge.from_):
+            errors.append(
+                SpecError(
+                    ("edges", j, "max_iterations"),
+                    f"max_iterations is for an edge back to an earlier node; {edge.to!r} does "
+                    f"not lead to {edge.from_!r}",
+                )
+            )
+
+    starts = [n for n in graph_nodes if not [j for j in into[n] if j not in back]]
+    if len(starts) != 1:
+        errors.append(
+            SpecError(
+                ("edges",),
+                f"a composition has exactly one first node; these have no incoming edge: "
+                f"{sorted(starts)}",
+            )
+        )
+        return None, errors
+    start = starts[0]
+    if by_id[start].kind in ("router", "join"):
+        errors.append(
+            SpecError(("nodes", index[start], "kind"), f"a {by_id[start].kind} cannot come first")
+        )
+
+    order = [start]
+    for n in order:
+        for j in out[n]:
+            if (m := spec.edges[j].to) not in order:
+                order.append(m)
+    for name in graph_nodes:
+        if name not in order:
+            errors.append(
+                SpecError(("nodes", index[name], "id"), f"{name!r} is not reachable from the start")
+            )
+    if errors:
+        return None, errors
+
+    # Fan-in: each join closes one parallel's branches.
+    join_of: dict[str, str] = {}
+    in_branch: set[str] = set()
+
+    def walk(n: str, par: str) -> str | None:
+        """Follow one branch of *par* from *n* to its join."""
+        while True:
+            node = by_id[n]
+            if node.kind == "join":
+                return n
+            in_branch.add(n)
+            if node.kind == "parallel":
+                inner = close(n)
+                if inner is None:
+                    return None
+                n = inner
+                continue
+            if node.kind == "router" or _labels_of(node) is not None:
+                errors.append(
+                    SpecError(
+                        ("nodes", index[n]),
+                        f"{n!r} is on a branch of parallel {par!r}: a branch neither routes "
+                        "nor loops (route after the join)",
+                    )
+                )
+                return None
+            nxt = [spec.edges[j].to for j in out[n]]
+            if len(nxt) != 1:
+                errors.append(
+                    SpecError(
+                        ("nodes", index[n]),
+                        f"a branch of parallel {par!r} ends at {n!r} without reaching a join",
+                    )
+                )
+                return None
+            n = nxt[0]
+
+    def close(par: str) -> str | None:
+        ends: set[str] = set()
+        joins: set[str] = set()
+        for j in out[par]:
+            first = spec.edges[j].to
+            before = by_id[first]
+            if before.kind == "join":
+                errors.append(
+                    SpecError(("edges", j), f"a branch of {par!r} needs a node before the join")
+                )
+                return None
+            found = walk(first, par)
+            if found is None:
+                return None
+            joins.add(found)
+            ends.update(spec.edges[k].from_ for k in into[found])
+        if len(joins) != 1:
+            errors.append(
+                SpecError(
+                    ("nodes", index[par]),
+                    f"the branches of {par!r} must meet at one join; they reach {sorted(joins)}",
+                )
+            )
+            return None
+        (join,) = joins
+        if join in join_of and join_of[join] != par:
+            errors.append(
+                SpecError(("nodes", index[join]), f"{join!r} already closes {join_of[join]!r}")
+            )
+            return None
+        if len(into[join]) != len(out[par]):
+            errors.append(
+                SpecError(
+                    ("nodes", index[join]),
+                    f"{join!r} waits for every incoming edge: it needs one from each of "
+                    f"{par!r}'s {len(out[par])} branches and nothing else",
+                )
+            )
+            return None
+        join_of[join] = par
+        nxt = out[join]
+        if len(nxt) != 1:
+            errors.append(
+                SpecError(
+                    ("nodes", index[join]),
+                    f"{join!r} needs one node after it to combine the branches",
+                )
+            )
+            return None
+        return spec.edges[nxt[0]].to
+
+    for name in order:
+        if by_id[name].kind == "parallel" and name not in in_branch:
+            close(name)
+    for name in graph_nodes:
+        if by_id[name].kind == "join" and name not in join_of and not errors:
+            errors.append(
+                SpecError(("nodes", index[name]), f"{name!r} does not close a parallel node")
+            )
+    for j in back:
+        target = spec.edges[j].to
+        if target in in_branch or target in join_of:
             errors.append(
                 SpecError(
                     ("edges", j, "to"),
-                    f"{edge.to!r} already has a predecessor: a pipeline does not join",
+                    f"a loop cannot go back into a parallel branch ({target!r})",
                 )
             )
-        else:
-            succ[edge.from_] = edge.to
-            pred[edge.to] = edge.from_
     if errors:
-        return errors
-    starts = [n for n in ids if n not in pred]
-    if len(starts) != 1:
-        return [
-            SpecError(
-                ("edges",),
-                "a pipeline has exactly one first node; these have no incoming edge: "
-                f"{sorted(starts)}"
-                if starts
-                else "the edges form a cycle, and cycles need max_iterations (P0b)",
-            )
-        ]
-    seen = [starts[0]]
-    while (nxt := succ.get(seen[-1])) is not None:
-        if nxt in seen:
-            return [SpecError(("edges",), "the edges form a cycle (P0b loops need max_iterations)")]
-        seen.append(nxt)
-    for name, i in ids.items():
-        if name not in seen:
-            errors.append(
-                SpecError(("nodes", i, "id"), f"{name!r} is not reachable from the start")
-            )
-    return errors
+        return None, errors
+    return (
+        GraphPlan(
+            start=start,
+            order=order,
+            children=children,
+            parent=parent,
+            back_edges=back,
+            out=out,
+            join_of=join_of,
+            router_source=router_source,
+        ),
+        [],
+    )
+
+
+#: What each pattern needs to be that pattern (``pattern`` is otherwise a hint).
+_PATTERN_NEEDS: dict[str, tuple[str, Callable[[CompositionSpec, GraphPlan], bool]]] = {
+    "router": ("a labelled edge (when)", lambda s, p: any(e.when for e in s.edges)),
+    "critic_loop": ("an edge with max_iterations", lambda s, p: bool(p.back_edges)),
+    "fan_out_fan_in": ("a parallel node and its join", lambda s, p: bool(p.join_of)),
+    "map_reduce": ("a parallel node and its join", lambda s, p: bool(p.join_of)),
+    "supervisor": ("a supervisor node", lambda s, p: bool(p.children)),
+    "debate": (
+        "parallel speakers or a loop between them",
+        lambda s, p: bool(p.join_of or p.back_edges),
+    ),
+    "pipeline": (
+        "no labels, fan-out or loops",
+        lambda s, p: not (p.join_of or p.back_edges or any(e.when for e in s.edges)),
+    ),
+}
+
+
+def _check_pattern(spec: CompositionSpec, plan: GraphPlan) -> list[SpecError]:
+    need = _PATTERN_NEEDS.get(spec.pattern)
+    if need is None or need[1](spec, plan):
+        return []
+    return [
+        SpecError(
+            ("pattern",),
+            f"pattern {spec.pattern!r} needs {need[0]}; set the pattern that matches the graph",
+            "pattern_mismatch",
+        )
+    ]
 
 
 def _check_budgets(spec: CompositionSpec, ceilings: BudgetCeilings) -> list[SpecError]:
@@ -576,11 +1034,10 @@ def _check_budgets(spec: CompositionSpec, ceilings: BudgetCeilings) -> list[Spec
     return errors
 
 
-def pipeline_order(spec: CompositionSpec) -> list[str]:
-    """Node ids in run order (valid specs only)."""
-    pred = {e.to for e in spec.edges}
-    succ = {e.from_: e.to for e in spec.edges}
-    order = [next(n.id for n in spec.nodes if n.id not in pred)]
-    while (nxt := succ.get(order[-1])) is not None:
-        order.append(nxt)
-    return order
+def graph_order(spec: CompositionSpec) -> list[str]:
+    """Node ids, graph nodes breadth-first from the start, then supervisor children."""
+    plan, _ = plan_graph(spec)
+    if plan is None:
+        return [n.id for n in spec.nodes]
+    rest = [n.id for n in spec.nodes if n.id not in plan.order]
+    return plan.order + rest

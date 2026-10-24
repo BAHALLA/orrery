@@ -381,6 +381,7 @@ class GuardedMcpToolset(McpToolset):
         private_allow: PrivateAllowlist | None = None,
         pin_store: dict[str, str] | None = None,
         verify: ssl.SSLContext | bool | None = None,
+        seen_store: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """*private_allow* narrows ``allow_private_network`` to listed hosts and
         networks (the Studio's ``ORRERY_A2A_PRIVATE_ALLOW``); ``None`` keeps the
@@ -390,7 +391,8 @@ class GuardedMcpToolset(McpToolset):
         given: the Studio builds a toolset per run, and a per-instance store
         would re-pin every run, never noticing a changed description.
         *verify* replaces the TLS settings built from the config's files (the
-        Studio's ``ORRERY_A2A_CA_FILE``)."""
+        Studio's ``ORRERY_A2A_CA_FILE``). *seen_store* records the description and
+        input schema of each tool as pinned."""
         self.server_config = config
         # Built now, so missing exchange settings fail startup, not a call.
         self._broker = (broker or default_broker()) if config.auth else None
@@ -408,6 +410,9 @@ class GuardedMcpToolset(McpToolset):
         self._reported_missing = False
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
         self._pinned: dict[str, str] = pin_store if pin_store is not None else {}
+        #: Tool name -> the description and input schema of the text that was
+        #: pinned, for an admin to read (the Studio's registry view). Optional.
+        self._seen = seen_store
         #: Tools already reported as withheld, so a refusal is logged once.
         self._withheld: set[str] = set()
 
@@ -484,6 +489,7 @@ class GuardedMcpToolset(McpToolset):
                     f"its description, schema or annotations (sha256 {digest}) differ from "
                     "the reviewed fingerprint pinned in the MCP config"
                 )
+            self._note_seen(tool.name, text)
             return None
         if tool.name not in self._pinned:
             logger.info(
@@ -499,7 +505,14 @@ class GuardedMcpToolset(McpToolset):
                 "Review the change on the server before restarting: a restart accepts "
                 "whatever it then serves as the new reviewed version"
             )
+        self._note_seen(tool.name, text)
         return None
+
+    def _note_seen(self, name: str, text: dict[str, Any]) -> None:
+        if self._seen is not None:
+            self._seen.setdefault(
+                name, {"description": text["description"], "input_schema": text["input"]}
+            )
 
 
 def _secret_env(var: str, *, what: str) -> str:
