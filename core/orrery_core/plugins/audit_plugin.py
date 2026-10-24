@@ -22,12 +22,15 @@ class AuditPlugin(BasePlugin):
 
     Args:
         log_path: Optional path to also write a local .jsonl file.
+        responses: How much of each result the outcome records: ``summary``
+            (default), ``full`` or ``none``; ``None`` reads
+            ``ORRERY_AUDIT_RESPONSES``.
     """
 
-    def __init__(self, log_path: str | Path | None = None) -> None:
+    def __init__(self, log_path: str | Path | None = None, *, responses: str | None = None) -> None:
         super().__init__(name="audit")
         self._attempt_callback = attempt_logger(log_path)
-        self._callback = audit_logger(log_path)
+        self._callback = audit_logger(log_path, responses=responses)
 
     async def before_tool_callback(
         self,

@@ -128,6 +128,10 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
+#: Third-party loggers that emit per-request lines at INFO.
+_CHATTY_LOGGERS = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
+
+
 def setup_logging(level: int | str | None = None) -> None:
     """Configure the root logger with structured JSON output to stdout.
 
@@ -155,5 +159,13 @@ def setup_logging(level: int | str | None = None) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JSONFormatter())
     root.addHandler(handler)
+    # LiteLLM logs a line per model call at INFO ("LiteLLM completion()
+    # model=..."), which buries the audit trail, so its loggers stay at WARNING
+    # even with LOG_LEVEL=DEBUG. Setting LITELLM_LOG (someone debugging the
+    # provider) makes them follow LOG_LEVEL instead.
+    for name in _CHATTY_LOGGERS:
+        logging.getLogger(name).setLevel(
+            logging.NOTSET if os.getenv("LITELLM_LOG") else max(logging.WARNING, root.level)
+        )
     if invalid is not None:
         logging.getLogger(__name__).warning("Unknown LOG_LEVEL %r; using INFO", invalid)

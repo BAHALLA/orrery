@@ -29,7 +29,7 @@ Place a `.env` file in `agents/observability/observability_agent/.env`:
 
 ```bash
 PROMETHEUS_URL=http://localhost:9090     # defaults to http://localhost:9090
-LOKI_URL=http://localhost:3100           # defaults to http://localhost:3100
+LOKI_URL=http://localhost:3100           # optional: unset = no Loki tools offered
 ALERTMANAGER_URL=http://localhost:9093   # defaults to http://localhost:9093
 ```
 
