@@ -87,6 +87,15 @@ def key_of(agent_name: str) -> str | None:
     return _KEYS.get(agent_name)
 
 
+# agent name -> the distribution that registered it; read by the admin inventory.
+_DISTRIBUTIONS: dict[str, str] = {}
+
+
+def distribution_of(agent_name: str) -> str | None:
+    """The installed package a discovered specialist came from, if known."""
+    return _DISTRIBUTIONS.get(agent_name)
+
+
 @dataclass(frozen=True)
 class HealthCheck:
     """A specialist's part of a health sweep ("is everything healthy?").
@@ -495,6 +504,8 @@ def discover_specialists(
         if record:
             record_source(spec.agent.name, entry.source)
             _KEYS[spec.agent.name] = key
+            if entry.distribution:
+                _DISTRIBUTIONS[spec.agent.name] = entry.distribution
     return selected
 
 

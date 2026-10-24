@@ -94,6 +94,50 @@ def test_admin_sees_the_inventory():
     assert {t["name"]: t["guard"] for t in agent["tools"]}["delete_pod"] == "destructive"
 
 
+def test_admin_sees_versions_model_and_the_gate(monkeypatch):
+    monkeypatch.setenv("ORRERY_DISABLED_SPECIALISTS", "docker")
+    body = _client().get("/admin/agents", headers=_bearer("admin")).json()
+
+    (agent,) = body["agents"]
+    assert agent["model"] == "gemini-x"
+    assert agent["gated"] is False  # a bare LlmAgent: create_agent() would add the gate
+    deployment = body["deployment"]
+    assert deployment["orrery_version"]  # orrery-core is installed in the workspace
+    assert deployment["adk_version"]
+    assert deployment["python_version"].count(".") == 2
+    assert deployment["model"] == "gemini-x"
+    assert deployment["disabled_specialists"] == "docker"
+    assert deployment["started_at"] <= time.time()
+
+
+def test_a_created_agent_reports_its_gate_package_and_version(monkeypatch):
+    from orrery_core import create_agent, registry
+
+    agent = create_agent(name="k8s_meta", description="K8s", instruction="x", tools=[scale])
+    monkeypatch.setitem(registry._SOURCES, "k8s_meta", "builtin")
+    monkeypatch.setitem(registry._KEYS, "k8s_meta", "k8s")
+    monkeypatch.setitem(registry._DISTRIBUTIONS, "k8s_meta", "orrery-core")
+    root = LlmAgent(name="root", model="gemini-x", tools=[AgentTool(agent=agent)])
+
+    (entry,) = agent_inventory(root)
+    assert (entry.key, entry.package, entry.gated) == ("k8s", "orrery-core", True)
+    assert entry.version and entry.model
+
+
+def test_a_fallback_chain_is_shown_link_by_link():
+    from orrery_core.serving.inventory import model_label
+
+    chain = MagicMock(
+        targets=[
+            MagicMock(model="gemini-a", targets=None),
+            MagicMock(model="gemini-b", targets=None),
+        ]
+    )
+    assert model_label(chain) == "gemini-a → gemini-b"
+    assert model_label("gemini-x") == "gemini-x"
+    assert model_label(None) == ""
+
+
 def test_anyone_else_is_refused():
     client = _client()
 

@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from "../api/client";
 import type {
   CatalogResponse,
   CatalogUpdate,
+  DeploymentInfo,
   InventoryAgent,
   MeResponse,
   SelfTestResponse,
@@ -20,6 +21,8 @@ export interface SystemController {
   runSelfTest: () => Promise<void>;
   /** Agent inventory for the admin view; null until loaded. */
   agents: InventoryAgent[] | null;
+  /** What is running (versions, model); null until loaded or from an older server. */
+  deployment: DeploymentInfo | null;
   agentsError: string | null;
   loadAgents: () => Promise<void>;
   /** The editable catalog (admin); null until loaded or when unsupported. */
@@ -98,12 +101,15 @@ export function useSystem(token: string | null): SystemController {
   }, [client, token]);
 
   const [agents, setAgents] = useState<InventoryAgent[] | null>(null);
+  const [deployment, setDeployment] = useState<DeploymentInfo | null>(null);
   const [agentsError, setAgentsError] = useState<string | null>(null);
 
   const loadAgents = useCallback(async () => {
     setAgentsError(null);
     try {
-      setAgents((await client.agents()).agents);
+      const res = await client.agents();
+      setAgents(res.agents);
+      setDeployment(res.deployment ?? null);
     } catch (err) {
       setAgentsError(describeApiError(err, "Could not load the agent inventory."));
     }
@@ -123,7 +129,10 @@ export function useSystem(token: string | null): SystemController {
     async (update: CatalogUpdate) => {
       try {
         setCatalog(await client.updateCatalog(update));
-        setAgents((await client.agents()).agents); // the tree being served changed
+        // The tree being served changed.
+        const res = await client.agents();
+        setAgents(res.agents);
+        setDeployment(res.deployment ?? null);
         return null;
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) void loadCatalog();
@@ -154,6 +163,7 @@ export function useSystem(token: string | null): SystemController {
     error,
     runSelfTest,
     agents,
+    deployment,
     agentsError,
     loadAgents,
     catalog,

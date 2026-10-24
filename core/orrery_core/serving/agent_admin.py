@@ -43,6 +43,9 @@ class AdminOptions:
     #: Declarative agents from ORRERY_AGENTS_CONFIG — managed in that file,
     #: read-only here. Their names are reserved.
     file_agents: list[str] = field(default_factory=list)
+    #: Names the application keeps for itself (its coordinator, its own tools):
+    #: ``build`` refuses a composed agent called one of them.
+    reserved_names: list[str] = field(default_factory=list)
 
 
 class AgentAdmin(Protocol):

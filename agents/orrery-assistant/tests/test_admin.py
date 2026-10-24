@@ -24,6 +24,8 @@ def test_options_list_every_specialist_and_the_tool_catalogue():
     refs = {t.ref: t for t in options.tools}
     assert refs["get_consumer_lag"].guard == "read"
     assert refs["scale_deployment"].guard == "confirm"
+    # What build() refuses as a composed agent's name, so the console can say so first.
+    assert {"orrery_chat_agent", "load_memory"} <= set(options.reserved_names)
 
 
 def test_switching_a_specialist_off_removes_it_from_tools_and_routing():

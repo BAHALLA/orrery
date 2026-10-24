@@ -144,6 +144,17 @@ def test_third_party_distributions_are_recorded_as_plugins(monkeypatch):
     assert source_of("kafka_b") == "builtin"  # normalised: kafka_health_agent == kafka-health-agent
 
 
+def test_the_registering_package_is_recorded():
+    from orrery_core.registry import distribution_of
+
+    discover_specialists(
+        loader=_eps(("kafka", _agent("kafka_dist", [])), dist="Kafka_Health.Agent")
+    )
+
+    assert distribution_of("kafka_dist") == "kafka-health-agent"
+    assert distribution_of("never_discovered") is None
+
+
 def test_the_real_workspace_registers_its_specialists(monkeypatch):
     """The installed entry points themselves — what the chat root uses."""
     keys = [s.key for s in discover_specialists(record=False)]

@@ -34,6 +34,8 @@ import asyncio
 import contextlib
 import logging
 import os
+import platform
+import time
 import uuid
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
@@ -67,7 +69,7 @@ from ..observability.audit import audit_event
 from ..observability.metrics import start_metrics_server_if_enabled
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
-from ..registry import key_of
+from ..registry import DISABLED_ENV, ENABLED_ENV, key_of
 from ..security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
@@ -96,7 +98,7 @@ from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage
-from .inventory import agent_inventory, specialist_entries
+from .inventory import agent_inventory, model_label, package_version, specialist_entries
 from .onboarding import (
     IntegrationProbe,
     check_model_connectivity,
@@ -270,10 +272,39 @@ class InventoryAgent(BaseModel):
     #: builtin | plugin | declarative | mcp
     source: str
     tools: list[InventoryTool]
+    #: The entry-point key; empty for declarative and MCP agents.
+    key: str = ""
+    #: The installed package that registered it, and its version.
+    package: str = ""
+    version: str = ""
+    #: The model it calls (``a → b`` for a fallback chain).
+    model: str = ""
+    #: Whether a confirmation gate guards its tools.
+    gated: bool = False
+
+
+class DeploymentInfo(BaseModel):
+    """What is running, for the admin view: versions, model, and selection."""
+
+    app_name: str
+    orrery_version: str
+    adk_version: str
+    python_version: str
+    #: The coordinator's model, as configured.
+    model: str
+    model_provider: str
+    autonomy_level: str | None
+    admin_editing: bool
+    #: ORRERY_SPECIALISTS / ORRERY_DISABLED_SPECIALISTS as set (empty: unset).
+    enabled_specialists: str
+    disabled_specialists: str
+    #: When this process started serving (epoch seconds).
+    started_at: float
 
 
 class AgentsResponse(BaseModel):
     agents: list[InventoryAgent]
+    deployment: DeploymentInfo | None = None
 
 
 class CatalogSpecialist(BaseModel):
@@ -299,6 +330,8 @@ class CatalogResponse(BaseModel):
     specialists: list[CatalogSpecialist]
     tools: list[CatalogTool]
     file_agents: list[str]
+    #: Names a composed agent may not take, so the console refuses them as typed.
+    reserved_names: list[str] = []
 
 
 class CatalogUpdate(BaseModel):
@@ -609,6 +642,8 @@ def create_app(
     # console polls on a timer and must not be throttled into failure. Parsed
     # here so a malformed limit or storage URI fails at startup, not on the
     # first request.
+    # Shown to admins next to the versions: how long this process has served.
+    started_at = time.time()
     limiter = RateLimiter(cfg.rate_limit_storage_uri)
     chat_limit = parse_rate(cfg.chat_rate_limit)
     selftest_limit = parse_rate(cfg.selftest_rate_limit)
@@ -1239,6 +1274,8 @@ def create_app(
         """
         if auth.role != "admin":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+        # The tree being served now — an admin edit swaps it.
+        root = gateway.root_agent
         return AgentsResponse(
             agents=[
                 InventoryAgent(
@@ -1248,10 +1285,27 @@ def create_app(
                     tools=[
                         InventoryTool(name=t.name, guard=t.guard, reason=t.reason) for t in a.tools
                     ],
+                    key=a.key,
+                    package=a.package,
+                    version=a.version,
+                    model=a.model,
+                    gated=a.gated,
                 )
-                # The tree being served now — an admin edit swaps it.
-                for a in agent_inventory(gateway.root_agent)
-            ]
+                for a in agent_inventory(root)
+            ],
+            deployment=DeploymentInfo(
+                app_name=app_name,
+                orrery_version=package_version("orrery-core"),
+                adk_version=package_version("google-adk"),
+                python_version=platform.python_version(),
+                model=model_label(getattr(root, "model", None)),
+                model_provider=os.getenv("MODEL_PROVIDER", "gemini"),
+                autonomy_level=_resolve_autonomy_level(None),
+                admin_editing=cfg.admin_editing,
+                enabled_specialists=os.getenv(ENABLED_ENV, "").strip(),
+                disabled_specialists=os.getenv(DISABLED_ENV, "").strip(),
+                started_at=started_at,
+            ),
         )
 
     def require_admin(auth: AuthContext) -> None:
@@ -1268,6 +1322,7 @@ def create_app(
             specialists=[CatalogSpecialist(**vars(o)) for o in options.specialists],
             tools=[CatalogTool(**vars(o)) for o in options.tools],
             file_agents=options.file_agents,
+            reserved_names=options.reserved_names,
         )
 
     @api.get("/admin/catalog", response_model=CatalogResponse)
