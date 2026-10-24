@@ -24,8 +24,10 @@ from orrery_core.studio.demo import certs
 from orrery_core.tools.mcp_network import (
     BlockedDestination,
     BlockedRemoteDestination,
+    EgressProxyRefused,
     GuardedHttpxTransport,
     GuardedTransport,
+    McpProxyRefused,
     McpResponseTooLarge,
     PrivateAllowlist,
     ResponseTooLarge,
@@ -97,7 +99,9 @@ def plain_site() -> Iterator[int]:
 class ConnectProxy:
     """A CONNECT-only proxy on loopback; every name resolves to 127.0.0.1."""
 
-    def __init__(self) -> None:
+    def __init__(self, refuse_with: int | None = None) -> None:
+        #: Answer every CONNECT with this status (403: not allowed, 407: auth).
+        self.refuse_with = refuse_with
         self.targets: list[str] = []
         self.refused: list[str] = []
         self._loop = asyncio.new_event_loop()
@@ -135,6 +139,14 @@ class ConnectProxy:
             writer.close()
             return
         self.targets.append(target)
+        if self.refuse_with is not None:
+            reason = {403: "Forbidden", 407: "Proxy Authentication Required"}[self.refuse_with]
+            writer.write(
+                f"HTTP/1.1 {self.refuse_with} {reason}\r\nContent-Length: 0\r\n\r\n".encode()
+            )
+            await writer.drain()
+            writer.close()
+            return
         _host, port = target.rsplit(":", 1)
         up_reader, up_writer = await asyncio.open_connection("127.0.0.1", int(port))
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
@@ -219,6 +231,23 @@ def test_loopback_goes_direct_never_through_the_proxy(plain_site, proxy):
     transport = GuardedHttpxTransport(allowed_origins={origin}, egress_proxy=proxy.url)
     assert _get(transport, f"http://127.0.0.1:{plain_site}/ok")[0] == 200
     assert proxy.targets == [] and proxy.refused == []
+
+
+def test_a_private_network_entry_goes_direct_by_hostname(plain_site, proxy):
+    """``w.corp`` may resolve into a listed CIDR: only a local lookup can tell,
+    so an entry that opts into the private network never uses the proxy."""
+    assert goes_direct("w.corp", PrivateAllowlist.parse("10.20.0.0/16"), allow_private=True)
+    assert not goes_direct("w.corp", PrivateAllowlist.parse("10.20.0.0/16"))
+    # End to end: a private-network entry, reached by name, with the full check.
+    origin = ("http", "localhost", plain_site)
+    transport = GuardedHttpxTransport(
+        allowed_origins={origin},
+        allow_private=True,
+        private_allow=PrivateAllowlist.parse("10.20.0.0/16"),
+        egress_proxy=proxy.url,
+    )
+    assert _get(transport, f"http://localhost:{plain_site}/ok")[0] == 200
+    assert proxy.targets == []
 
 
 def test_private_allowlisted_hosts_and_private_addresses_go_direct():
@@ -338,3 +367,65 @@ def test_timeouts_still_apply_through_the_proxy():
     for conn in held:
         conn.close()
     silent.close()
+
+
+@pytest.mark.parametrize("status", [403, 407])
+def test_a_proxy_refusal_says_the_proxy_refused(tls_site, status):
+    port, ca_file = tls_site
+    refusing = ConnectProxy(refuse_with=status).start()
+    try:
+        a2a = GuardedHttpxTransport(
+            allowed_origins={("https", HOST, port)}, egress_proxy=refusing.url, verify=_ctx(ca_file)
+        )
+        with pytest.raises(EgressProxyRefused) as caught:
+            _get(a2a, f"https://{HOST}:{port}/ok")
+        assert str(caught.value) == f"egress proxy refused CONNECT to {HOST}:{port} ({status})"
+        mcp = GuardedTransport(
+            url=f"https://{HOST}:{port}/mcp", egress_proxy=refusing.url, verify=_ctx(ca_file)
+        )
+        with pytest.raises(
+            McpProxyRefused, match=rf"refused CONNECT to {HOST}:{port} \({status}\)"
+        ):
+            _get(mcp, f"https://{HOST}:{port}/ok", lib=httpx)
+    finally:
+        refusing.stop()
+
+
+def test_a_card_behind_a_refusing_proxy_names_the_proxy(tls_site):
+    from orrery_core.a2a.remote import CardRefused, RemoteAgentEntry, RemoteCards, RemoteNetwork
+
+    port, ca_file = tls_site
+    refusing = ConnectProxy(refuse_with=403).start()
+    try:
+        entry = RemoteAgentEntry(
+            id="writer",
+            card_url=f"https://{HOST}:{port}/.well-known/agent-card.json",
+            skills=["draft"],
+        )
+        cards = RemoteCards(RemoteNetwork(ca_file=ca_file, egress_proxy=refusing.url))
+        with pytest.raises(CardRefused, match="egress proxy refused CONNECT"):
+            asyncio.run(cards.get(entry))
+    finally:
+        refusing.stop()
+
+
+def test_the_proxied_path_is_https_only_and_refuses_ipv6_literals(proxy):
+    plain = GuardedHttpxTransport(allowed_origins={("http", HOST, 80)}, egress_proxy=proxy.url)
+    with pytest.raises(BlockedRemoteDestination, match="only https goes through the egress proxy"):
+        _get(plain, f"http://{HOST}/ok")
+    v6 = GuardedHttpxTransport(
+        allowed_origins={("https", "2606:4700:4700::1111", 443)}, egress_proxy=proxy.url
+    )
+    with pytest.raises(BlockedRemoteDestination, match="IPv6 address cannot go through"):
+        _get(v6, "https://[2606:4700:4700::1111]/ok")
+    mcp = GuardedTransport(url=f"http://{HOST}/mcp", egress_proxy=proxy.url)
+    with pytest.raises(BlockedDestination, match="only https"):
+        _get(mcp, f"http://{HOST}/mcp", lib=httpx)
+    assert proxy.targets == [] and proxy.refused == []
+
+
+def test_a_bad_proxy_url_is_reported_without_its_credentials():
+    with pytest.raises(ValueError) as caught:
+        parse_egress_proxy("http://lab:s3cret@lab-egress:3128/path")
+    assert "s3cret" not in str(caught.value) and "lab:" not in str(caught.value)
+    assert "***@lab-egress:3128/path" in str(caught.value)

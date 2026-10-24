@@ -208,13 +208,26 @@ entries') then:
   **The proxy must enforce its own destination allowlist** (squid's
   `http_access` on `CONNECT` targets, for instance); Orrery's origin check
   limits what it asks for, the proxy what it reaches;
-- send **loopback, private literal addresses and hosts in
-  `ORRERY_A2A_PRIVATE_ALLOW`** direct, never through the proxy, with the full
-  address check;
+- send direct, never through the proxy, with the full address check:
+  **loopback, private literal addresses, hosts in `ORRERY_A2A_PRIVATE_ALLOW`,
+  and every request of a `private_network` entry** (an MCP entry with
+  `allow_private_network` likewise). A private entry's hostname may resolve
+  into a listed network (`w.corp` → `10.20.0.0/16`), which only a local lookup
+  can tell; the proxy would refuse it. The other side of that rule: a
+  `private_network` entry never uses the proxy, so it cannot reach a public
+  host behind one. Mark only internal services `private_network`;
+- send only **https** through the proxy, inside the tunnel. A plain request
+  would travel to the proxy in absolute form, headers and bearer token
+  included, so the transport refuses it. An **IPv6 literal** is refused on
+  the proxied path too (the HTTP library writes it unbracketed in the
+  `CONNECT` line): name the host;
+- report a refused tunnel as one: the proxy's `403` or `407` reads "egress
+  proxy refused CONNECT to host:port (403)", not as the remote's answer;
 - keep the byte caps, identity encoding and timeouts, which are applied around
   whichever connection is used.
 
-A bad value fails startup. Unset (the default), nothing changes.
+A bad value fails startup (the error masks any `user:password@` in it).
+Unset (the default), nothing changes.
 
 ## Consequences
 

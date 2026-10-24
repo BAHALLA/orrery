@@ -145,8 +145,12 @@ registry entries (MCP servers and A2A agents) then go through it with
 connection, and the origin checks still run on the hostname. The resolved-
 address check cannot run (the proxy resolves the name), so **the proxy must
 enforce its own destination allowlist**: allow `CONNECT` only to the hosts the
-registry names. Loopback, private literal addresses and hosts in
-`ORRERY_A2A_PRIVATE_ALLOW` always go direct, with the full check. Byte caps,
+registry names. Loopback, private literal addresses, hosts in
+`ORRERY_A2A_PRIVATE_ALLOW` and every `private_network` entry always go direct,
+with the full check (so a `private_network` entry cannot reach a public host
+behind the proxy). Only https goes through the proxy, and not to an IPv6
+literal (name the host). A refused tunnel reads "egress proxy refused CONNECT
+to host:port (403)" (or 407). Byte caps,
 identity encoding and timeouts apply either way. `HTTPS_PROXY` and friends are
 never used. ([ADR-008](../adr/008-consuming-remote-a2a-agents.md#amendment-an-explicit-egress-proxy))
 

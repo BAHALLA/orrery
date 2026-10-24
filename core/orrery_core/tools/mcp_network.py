@@ -99,23 +99,40 @@ def parse_egress_proxy(raw: str | None) -> str | None:
         or parts.query
         or parts.fragment
     ):
-        raise ValueError(f"{EGRESS_PROXY_ENV}: {raw!r} is not a proxy URL like http://host:3128")
+        raise ValueError(
+            f"{EGRESS_PROXY_ENV}: {_mask_userinfo(raw)!r} is not a proxy URL like http://host:3128"
+        )
     return raw
+
+
+def _mask_userinfo(raw: str) -> str:
+    """*raw* with any ``user:password@`` replaced: errors reach the logs."""
+    scheme, sep, rest = raw.partition("://")
+    if not sep:
+        scheme, rest = "", raw
+    authority, slash, tail = rest.partition("/")
+    if "@" in authority:
+        authority = "***@" + authority.rsplit("@", 1)[1]
+    return f"{scheme}{sep}{authority}{slash}{tail}"
 
 
 def egress_proxy_from_env() -> str | None:
     return parse_egress_proxy(os.getenv(EGRESS_PROXY_ENV))
 
 
-def goes_direct(host: str, private_allow: PrivateAllowlist | None) -> bool:
+def goes_direct(
+    host: str, private_allow: PrivateAllowlist | None, *, allow_private: bool = False
+) -> bool:
     """Whether a request to *host* bypasses the egress proxy.
 
-    Loopback, a private literal address, and a host or address in the
-    deployment's private allowlist: what the address check can still check.
-    Anything else goes through the proxy.
+    Loopback, a private literal address, a host or address in the deployment's
+    private allowlist, and any request of an entry that opts into the private
+    network (*allow_private*: its hostname may resolve into a listed network,
+    which only a local lookup can tell): what the address check can still
+    check. Anything else goes through the proxy.
     """
     host = host.lower()
-    if host in LOOPBACK_HOSTS:
+    if allow_private or host in LOOPBACK_HOSTS:
         return True
     if (ip := literal_ip(host)) is not None and not is_public(ip):
         return True
@@ -127,8 +144,45 @@ def _target(url: Any) -> Origin:
     return (url.scheme, host, url.port or _DEFAULT_PORTS.get(url.scheme, 0))
 
 
+def proxied_refusal(url: Any, allowed: Collection[Origin], *, label: str) -> str | None:
+    """Why a request may not go through the egress proxy; ``None`` when it may.
+
+    The origin check, plus: https only (a plain request would travel to the
+    proxy in absolute form, headers and bearer token included, instead of
+    inside a TLS tunnel), and no IPv6 literal (sent unbracketed in the
+    ``CONNECT`` line by the HTTP library; configure a hostname instead).
+    """
+    target = _target(url)
+    if (why := origin_refusal(target, allowed, label=label)) is not None:
+        return why
+    if target[0] != "https":
+        return (
+            f"{label} request to {_show(target)} refused: only https goes through the "
+            f"egress proxy ({EGRESS_PROXY_ENV}), inside a CONNECT tunnel"
+        )
+    if ":" in target[1]:
+        return (
+            f"{label} request to {_show(target)} refused: an IPv6 address cannot go "
+            f"through the egress proxy ({EGRESS_PROXY_ENV}); name the host instead"
+        )
+    return None
+
+
+def proxy_refusal_message(exc: Exception, url: Any) -> str:
+    """``ProxyError('403 Forbidden')`` as what it is: the proxy said no."""
+    target = _target(url)
+    detail = str(exc).strip() or type(exc).__name__
+    code = detail.split(" ", 1)[0]
+    shown = code if code.isdigit() else detail
+    return f"egress proxy refused CONNECT to {target[1]}:{target[2]} ({shown})"
+
+
 class BlockedDestination(httpx.ConnectError):  # ty: ignore[unsupported-base]
     """A request to a host or address this server's config does not allow."""
+
+
+class McpProxyRefused(httpx.ProxyError):  # ty: ignore[unsupported-base]
+    """The egress proxy refused the tunnel (a 403 or 407 to ``CONNECT``)."""
 
 
 class McpResponseTooLarge(httpx.ReadError):  # ty: ignore[unsupported-base]
@@ -473,11 +527,11 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
 
     async def handle_async_request(self, request: Any) -> Any:
         proxied = self._via_proxy is not None and not goes_direct(
-            request.url.host or "", self._private_allow
+            request.url.host or "", self._private_allow, allow_private=self._allow_private
         )
         try:
             if proxied:  # the proxy resolves the name: only the origin is checked here
-                why = origin_refusal(_target(request.url), {self._origin}, label="MCP")
+                why = proxied_refusal(request.url, {self._origin}, label="MCP")
             else:
                 why = await check_destination(
                     request.url,
@@ -494,7 +548,10 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         request.headers["Accept-Encoding"] = "identity"
         if proxied:
             assert self._via_proxy is not None  # nosec B101 - narrowed above
-            response = await self._via_proxy.handle_async_request(request)
+            try:
+                response = await self._via_proxy.handle_async_request(request)
+            except httpx.ProxyError as exc:
+                raise McpProxyRefused(proxy_refusal_message(exc, request.url)) from exc
         else:
             response = await super().handle_async_request(request)
         host = request.url.host
@@ -599,6 +656,10 @@ class BlockedRemoteDestination(httpx_std.ConnectError):
     """An ``httpx`` request to an origin or address the entry does not allow."""
 
 
+class EgressProxyRefused(httpx_std.ProxyError):
+    """The egress proxy refused the tunnel (a 403 or 407 to ``CONNECT``)."""
+
+
 class ResponseTooLarge(httpx_std.ReadError):
     """A response body past the transport's byte cap, refused while streaming."""
 
@@ -674,11 +735,11 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
 
     async def handle_async_request(self, request: httpx_std.Request) -> httpx_std.Response:
         proxied = self._via_proxy is not None and not goes_direct(
-            request.url.host or "", self._private_allow
+            request.url.host or "", self._private_allow, allow_private=self._allow_private
         )
         try:
             if proxied:  # the proxy resolves the name: only the origin is checked here
-                why = origin_refusal(_target(request.url), self.allowed_origins, label=self._label)
+                why = proxied_refusal(request.url, self.allowed_origins, label=self._label)
             else:
                 why = await check_destination(
                     request.url,
@@ -697,7 +758,12 @@ class GuardedHttpxTransport(httpx_std.AsyncHTTPTransport):
         request.headers["Accept-Encoding"] = "identity"
         if proxied:
             assert self._via_proxy is not None  # nosec B101 - narrowed above
-            response = await self._via_proxy.handle_async_request(request)
+            try:
+                response = await self._via_proxy.handle_async_request(request)
+            except httpx_std.ProxyError as exc:
+                why = proxy_refusal_message(exc, request.url)
+                logger.warning("%s", why)
+                raise EgressProxyRefused(why, request=request) from exc
         else:
             response = await super().handle_async_request(request)
         encoding = response.headers.get("content-encoding", "").strip().lower()
