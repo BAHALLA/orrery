@@ -7,28 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Upgrade note.** `LOKI_URL` no longer defaults to `http://localhost:3100`:
-set it to keep the Loki tools (the shipped compose files and `.env.example`
-do). Unset, the observability specialist is not offered them at all, and they
-leave the tool catalogue: a declarative agent (`ORRERY_AGENTS_CONFIG`) that names
-one fails startup with `unknown tool`, and a stored catalog that names one no
-longer builds, so it is skipped whole at startup. Set `LOKI_URL` or remove the
-tool.
+## [0.8.0] - 2026-10-24
 
-**Upgrade note.** Audit entries now record a tool result's status and size,
-not its contents (`ORRERY_AUDIT_RESPONSES=summary`). Set it to `full` for the
-previous behaviour.
+A cost and hygiene release. Daily token budgets cap what one caller, and the
+whole deployment, may spend on model calls. The audit log records a tool
+result's status and size rather than its contents. Agents calling the console
+are kept out of their user's conversations and memory, and A2A requests and
+tasks are bounded. Boolean environment variables are parsed strictly, so a
+typo can no longer turn a safety control off. The console signs out cleanly
+when the identity provider ends the session, and the observability specialist
+stops offering Loki where there is none.
 
-**Upgrade note.** Boolean environment variables (`AUTH_ENABLED`,
-`ORRERY_SAFETY_SCREEN`, `ORRERY_PII_REDACTION`, `ORRERY_A2A_ENABLED`, ...) now
-accept `1/true/yes/on` and `0/false/no/off` (any case, surrounding spaces
-ignored), and **any other value fails startup** naming the variable. Before,
-an unrecognised value read as `false`. A blank `AUTH_ENABLED=` now means the
-default (on); it used to turn authentication off.
+**Upgrade notes.**
 
-**Upgrade note.** With `ORRERY_HUMAN_CLIENTS` set, an agent or service calling
-the console's API starts fresh conversations: the ones it held before this
-release are visible only to the person whose subject they are stored under.
+- `LOKI_URL` no longer defaults to `http://localhost:3100`:
+  set it to keep the Loki tools (the shipped compose files and `.env.example`
+  do). Unset, the observability specialist is not offered them at all, and they
+  leave the tool catalogue: a declarative agent (`ORRERY_AGENTS_CONFIG`) that names
+  one fails startup with `unknown tool`, and a stored catalog that names one no
+  longer builds, so it is skipped whole at startup. Set `LOKI_URL` or remove the
+  tool.
+- Audit entries now record a tool result's status and size,
+  not its contents (`ORRERY_AUDIT_RESPONSES=summary`). Set it to `full` for the
+  previous behaviour.
+- Boolean environment variables (`AUTH_ENABLED`,
+  `ORRERY_SAFETY_SCREEN`, `ORRERY_PII_REDACTION`, `ORRERY_A2A_ENABLED`, ...) now
+  accept `1/true/yes/on` and `0/false/no/off` (any case, surrounding spaces
+  ignored), and **any other value fails startup** naming the variable. Before,
+  an unrecognised value read as `false`. A blank `AUTH_ENABLED=` now means the
+  default (on); it used to turn authentication off.
+- With `ORRERY_HUMAN_CLIENTS` set, an agent or service calling
+  the console's API starts fresh conversations: the ones it held before this
+  release are visible only to the person whose subject they are stored under.
 
 ### Added
 
@@ -106,7 +116,6 @@ release are visible only to the person whose subject they are stored under.
   the evaluation stack (pandas, aiplatform, ...).
 - The confirmation TTL is one constant (`CONFIRMATION_TTL_SECONDS`) shared by
   the gates, the stores and the A2A `expires_at`; two copies could disagree.
-
 - `/metrics` is served by the processes Prometheus scrapes. The HTTP front
   door (what the image and the Helm chart run), the persistent runner and the
   Google Chat bot start the metrics server when `ENABLE_METRICS_SERVER=true`,
@@ -1348,7 +1357,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/BAHALLA/orrery/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/BAHALLA/orrery/compare/v0.6.9...v0.7.0
 [0.6.9]: https://github.com/BAHALLA/orrery/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/BAHALLA/orrery/compare/v0.6.7...v0.6.8
