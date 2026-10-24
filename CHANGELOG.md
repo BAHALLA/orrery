@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Slack: approval cards are actually posted. The gate called the Bolt
+  `AsyncApp` client without awaiting it, so no card ever appeared while the
+  model told the user one had been sent, and no Slack-gated action could be
+  approved. A failed post now says so instead.
 - Slack: a guarded call's approval card always goes to the conversation that
   raised it. The target was one process-wide value each message overwrote, so
   with two turns in flight a card, and the scope its approval is matched in,
@@ -35,16 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Turns in one session run one at a time. Two at once (a double send, two
   messages in a shared thread) rewrote each other's actor and confirmation
   decision, so one turn could clear the approval the other was about to use.
-  Per process; turns in different sessions still run in parallel.
+  Per process; turns in different sessions still run in parallel. The Google
+  Chat bot's turn budget starts when its turn does, not while it waits.
 - Reconfiguring the blocking-tool executor shuts the replaced pool down
   instead of leaving its threads alive.
 
 ### Security
 
-- `patch_deployment` and `patch_statefulset` refuse patches that touch pod
-  privileges: host namespaces, `hostPath`, privileged mode, privilege
-  escalation, capabilities, `procMount` and the service account. These belong
-  in a reviewed manifest, not a patch an approver skims mid-incident.
+- `patch_deployment` and `patch_statefulset` change only what they are for:
+  container image, pull policy, resources and env, replicas, rollout
+  settings, labels and annotations. Anything else (security contexts,
+  volumes, host access, scheduling, the service account, command, a `null`
+  or `$patch` deletion) is refused; it belongs in a reviewed manifest, not a
+  patch an approver skims mid-incident.
 - Secret redaction (tool results and memory) also covers credentials in a URL
   (`postgres://user:pass@…`, `redis://:pass@…`), keeping the scheme and host,
   and Google API keys (`AIza…`).

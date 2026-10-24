@@ -441,7 +441,15 @@ class GoogleChatHandler:
             # specialists too; entered here, in the task that runs the agent.
             steps = progress_scope(tracker.sink) if tracker is not None else nullcontext()
             with tool_ledger_scope(ledger), steps:
-                async with asyncio.timeout(timeout) as budget:
+                # The budget starts when the turn does: a follow-up queued behind
+                # the thread's previous turn must not spend it waiting, then be
+                # told it "stopped while still reading".
+                async with asyncio.timeout(None) as budget:
+
+                    def start_clock() -> None:
+                        if timeout is not None:
+                            budget.reschedule(asyncio.get_running_loop().time() + timeout)
+
                     reply = await self.gateway.run_in_session(
                         user_id=user_id,
                         session_id=session_id,
@@ -449,6 +457,7 @@ class GoogleChatHandler:
                         state_delta=state_delta,
                         on_event=(tracker.consume if tracker is not None else None),
                         identity=_caller(user_id),
+                        on_turn_start=start_clock,
                     )
             response_text = tracker.collected_text if tracker is not None else reply.text
             logger.info("Agent run complete. Collected %d characters of text.", len(response_text))

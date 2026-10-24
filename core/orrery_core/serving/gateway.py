@@ -395,6 +395,7 @@ class AgentGateway:
         identity: CallerIdentity | None = None,
         attachments: Sequence[PreparedAttachment] = (),
         can_decide: bool = True,
+        on_turn_start: Callable[[], None] | None = None,
     ) -> OutboundReply:
         """Run one turn against an already-resolved session.
 
@@ -409,6 +410,10 @@ class AgentGateway:
 
         *attachments* are stored as placeholder lines after *text* and their
         content reaches the model for this turn only (see :mod:`.attachments`).
+
+        Turns in one session run one at a time; *on_turn_start* is called once
+        this one stops waiting for the previous and starts, so a caller with
+        its own time budget can start the clock there.
         """
         stored = message_text(text, attachments)
         message = types.Content(role="user", parts=[types.Part.from_text(text=stored)])
@@ -427,6 +432,8 @@ class AgentGateway:
         # Without one, an enclosing scope (service_scope for batch runs) stands.
         scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
         async with self._turn_lock(user_id, session_id):
+            if on_turn_start is not None:
+                on_turn_start()
             reply = await self._run_turn(
                 runner,
                 scope=scope,

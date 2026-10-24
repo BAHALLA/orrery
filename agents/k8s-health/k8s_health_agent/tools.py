@@ -47,53 +47,72 @@ def _validate_namespace(namespace: str) -> dict[str, Any] | None:
     return validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN)
 
 
-#: Pod-spec fields that widen what a workload may do to its node or the
-#: cluster. A patch tool exists for images, replicas, resources and env; these
-#: belong in a reviewed manifest, because an approver reading a nested patch
-#: mid-incident is not a security review. Refused at any depth, whatever the
-#: value, so "privileged: false" is refused too and the rule stays one line.
-_PRIVILEGE_FIELDS = frozenset(
-    {
-        "hostPID",
-        "hostIPC",
-        "hostNetwork",
-        "hostPath",
-        "privileged",
-        "allowPrivilegeEscalation",
-        "capabilities",
-        "procMount",
-        "serviceAccountName",
-        "serviceAccount",
-        "automountServiceAccountToken",
-    }
-)
+# What the patch tools may change, as a shape: a dict maps allowed keys to the
+# shape of their value; ``_ANY`` accepts any value below it; a one-item list
+# applies its shape to every element. Everything else is refused: pod and
+# container security contexts, volumes, host access, scheduling, the service
+# account, command and args. An allowlist, because a deny-list kept missing
+# fields (a pod-level runAsUser, hostPort, tolerations) and an approver
+# reading a nested patch mid-incident is not a security review.
+_ANY: object = object()
+_CONTAINER = {
+    "name": _ANY,
+    "image": _ANY,
+    "imagePullPolicy": _ANY,
+    "resources": _ANY,
+    "env": _ANY,
+}
+_META = {"labels": _ANY, "annotations": _ANY}
+_PATCH_SHAPE = {
+    "metadata": _META,
+    "spec": {
+        "replicas": _ANY,
+        "paused": _ANY,
+        "minReadySeconds": _ANY,
+        "revisionHistoryLimit": _ANY,
+        "progressDeadlineSeconds": _ANY,
+        "strategy": _ANY,
+        "updateStrategy": _ANY,
+        "template": {
+            "metadata": _META,
+            "spec": {"containers": [_CONTAINER], "initContainers": [_CONTAINER]},
+        },
+    },
+}
 
 
-def _refuse_privilege_changes(patch: dict[str, Any]) -> dict[str, Any] | None:
-    """An error naming every privilege field *patch* sets, or None."""
+def _refuse_out_of_scope(patch: dict[str, Any]) -> dict[str, Any] | None:
+    """An error naming every path *patch* may not change, or None."""
     found: list[str] = []
 
-    def walk(node: Any, path: str) -> None:
-        if isinstance(node, dict):
+    def walk(node: Any, shape: Any, path: str) -> None:
+        if node is None:
+            # null deletes the field in a strategic merge patch.
+            found.append(f"{path} (null)")
+        elif shape is _ANY:
+            return
+        elif isinstance(shape, dict) and isinstance(node, dict):
             for key, value in node.items():
                 here = f"{path}.{key}" if path else str(key)
-                if key in _PRIVILEGE_FIELDS:
+                if key not in shape:  # includes $patch and other directives
                     found.append(here)
                 else:
-                    walk(value, here)
-        elif isinstance(node, list):
+                    walk(value, shape[key], here)
+        elif isinstance(shape, list) and isinstance(node, list):
             for i, item in enumerate(node):
-                walk(item, f"{path}[{i}]")
+                walk(item, shape[0], f"{path}[{i}]")
+        else:
+            found.append(path)
 
-    walk(patch, "")
+    walk(patch, _PATCH_SHAPE, "")
     if not found:
         return None
     return {
         "status": "error",
         "message": (
-            f"Refused: the patch changes pod privileges ({', '.join(found)}). Host "
-            "access, privileged mode, capabilities and the service account are not "
-            "changed through this tool; apply a reviewed manifest instead."
+            f"Refused: this tool does not change {', '.join(found)}. It changes images, "
+            "pull policy, resources, env, replicas, rollout settings, labels and "
+            "annotations; apply a reviewed manifest for anything else."
         ),
     }
 
@@ -652,8 +671,8 @@ async def patch_deployment(
     Args:
         name: Deployment name.
         patch: The patch to apply as a dictionary (Strategic Merge Patch).
-            Host access, privileged mode, capabilities and the service account
-            are refused; this is for images, replicas, resources and env.
+            Only images, pull policy, resources, env, replicas, rollout
+            settings, labels and annotations; anything else is refused.
         namespace: Kubernetes namespace.
 
     Returns:
@@ -665,7 +684,7 @@ async def patch_deployment(
         return err
     if not isinstance(patch, dict):
         return {"status": "error", "message": "Patch must be a dictionary."}
-    if err := _refuse_privilege_changes(patch):
+    if err := _refuse_out_of_scope(patch):
         return err
 
     try:
@@ -689,8 +708,8 @@ async def patch_statefulset(
     Args:
         name: StatefulSet name.
         patch: The patch to apply as a dictionary (Strategic Merge Patch).
-            Host access, privileged mode, capabilities and the service account
-            are refused; this is for images, replicas, resources and env.
+            Only images, pull policy, resources, env, replicas, rollout
+            settings, labels and annotations; anything else is refused.
         namespace: Kubernetes namespace.
 
     Returns:
@@ -702,7 +721,7 @@ async def patch_statefulset(
         return err
     if not isinstance(patch, dict):
         return {"status": "error", "message": "Patch must be a dictionary."}
-    if err := _refuse_privilege_changes(patch):
+    if err := _refuse_out_of_scope(patch):
         return err
 
     try:

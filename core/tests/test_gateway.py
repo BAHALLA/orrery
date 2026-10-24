@@ -12,6 +12,7 @@ from orrery_core.security.confirmation_flow import (
     raise_pending,
 )
 from orrery_core.security.confirmation_store import ConfirmationStore
+from orrery_core.security.guardrails import CONFIRMATION_DECISION_STATE_KEY
 from orrery_core.serving.gateway import (
     AgentGateway,
     ExplicitSessionResolver,
@@ -94,6 +95,63 @@ async def test_turns_in_one_session_run_one_at_a_time():
     assert peak == {"s1": 1, "s2": 1}
     # Only sessions with a turn in flight keep a lock.
     assert len(gw._turn_locks) == 0
+
+
+@pytest.mark.asyncio
+async def test_on_turn_start_fires_when_the_turn_stops_waiting():
+    """A transport's time budget must not be spent queued behind the previous turn."""
+    import asyncio
+
+    gw, _ = _make_gateway()
+    log: list[str] = []
+
+    async def run_async(*, user_id, session_id, new_message, state_delta=None):
+        text = new_message.parts[0].text
+        await asyncio.sleep(0.02)
+        log.append(f"done {text}")
+        yield _event(text)
+
+    setattr(gw.runner, "run_async", run_async)  # noqa: B010 — a fake runner
+    await asyncio.gather(
+        gw.run_in_session(
+            user_id="u", session_id="s", text="a", on_turn_start=lambda: log.append("start a")
+        ),
+        gw.run_in_session(
+            user_id="u", session_id="s", text="b", on_turn_start=lambda: log.append("start b")
+        ),
+    )
+
+    assert log == ["start a", "done a", "start b", "done b"]
+
+
+@pytest.mark.asyncio
+async def test_a_queued_approve_is_stamped_when_it_arrived_not_when_it_runs():
+    """Stamped after the wait, an "approve" sent before an action existed, then
+    queued behind the turn that raised it, would pass the gate's freshness check."""
+    import asyncio
+    import time
+
+    gw, _ = _make_gateway()
+    gw.verified_confirmation = True
+    raised_at: list[float] = []
+    decisions: list[dict] = []
+
+    async def run_async(*, user_id, session_id, new_message, state_delta=None):
+        if new_message.parts[0].text == "scale it":
+            await asyncio.sleep(0.02)
+            raised_at.append(time.time())  # the pending action is created here
+        else:
+            decisions.append((state_delta or {})[CONFIRMATION_DECISION_STATE_KEY])
+        yield _event("ok")
+
+    setattr(gw.runner, "run_async", run_async)  # noqa: B010 — a fake runner
+    await asyncio.gather(
+        gw.run_in_session(user_id="u", session_id="s", text="scale it"),
+        gw.run_in_session(user_id="u", session_id="s", text="approve"),
+    )
+
+    assert decisions[0]["decision"] == "approve"
+    assert decisions[0]["timestamp"] < raised_at[0]
 
 
 @pytest.mark.asyncio

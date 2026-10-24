@@ -59,7 +59,8 @@ def store():
 @pytest.fixture
 def fake_slack_client():
     client = MagicMock()
-    client.chat_postMessage = MagicMock()
+    # Bolt's AsyncApp client: chat_postMessage is a coroutine function.
+    client.chat_postMessage = AsyncMock()
     return client
 
 

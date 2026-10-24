@@ -106,7 +106,7 @@ Kubernetes control-plane tooling via the official Python client. Uses in-cluster
 | `scale_deployment` | operator (`@confirm`) | Change replica count |
 | `restart_deployment` | admin (`@destructive`) | Rolling restart via annotation bump |
 | `rollback_deployment` | admin (`@destructive`) | Revert to a previous revision |
-| `patch_deployment`, `patch_statefulset` | admin (`@destructive`) | Apply a strategic merge patch (image tag, resources). Refuses host access, privileged mode, capabilities and service-account changes |
+| `patch_deployment`, `patch_statefulset` | admin (`@destructive`) | Apply a strategic merge patch (image tag, resources). Only images, pull policy, resources, env, replicas, rollout settings, labels and annotations; anything else (security contexts, volumes, host access, scheduling, the service account, command) is refused |
 
 **Operator-aware tools** — backed by `orrery_core.default_registry` (Strimzi + ECK built in; pluggable for others):
 

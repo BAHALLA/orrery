@@ -50,8 +50,10 @@ SECRET_VALUE_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), ("AKIA",)),
     # Credentials in a URL: postgres://user:pass@db, redis://:pass@cache. Only
     # the userinfo goes, so the scheme and host stay readable. Greedy up to the
-    # *last* "@" before the path, so a password holding "@" goes whole.
-    (re.compile(r"(?<=://)[^\s/@:]*:[^\s/]+(?=@)"), ("://",)),
+    # *last* "@" before the path, so a password holding "@" goes whole. Quotes,
+    # commas, "?" and "#" end it: otherwise "http://svc:8080" followed by any
+    # later "@" in a compact JSON log line would be read as one credential.
+    (re.compile(r"(?<=://)[^\s/@:?#\"'<>,]*:[^\s/?#\"'<>,]+(?=@)"), ("://",)),
     # Google API keys (Gemini, Maps, Firebase): "AIza" + 35 characters.
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{35}"), ("AIza",)),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), ("ghp_", "gho_", "ghu_", "ghs_", "ghr_")),

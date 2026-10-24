@@ -268,6 +268,16 @@ _SAMPLE_SECRETS = [
         # No password, nothing to hide.
         ("https://example.com:443/a?b=c", "https://example.com:443/a?b=c"),
         ("ssh://git@github.com/org/repo", "ssh://git@github.com/org/repo"),
+        # A port, then a later "@" in the same line, is not a credential.
+        (
+            '{"upstream":"http://svc:8080","user":"bob@example.com"}',
+            '{"upstream":"http://svc:8080","user":"bob@example.com"}',
+        ),
+        (
+            "GET http://localhost:9200?q=user@example.com",
+            "GET http://localhost:9200?q=user@example.com",
+        ),
+        ("url=http://a:80,next=b@c", "url=http://a:80,next=b@c"),
     ],
 )
 def test_url_credentials_are_redacted_and_the_host_kept(text, expected):
