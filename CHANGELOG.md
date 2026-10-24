@@ -39,6 +39,11 @@ stops offering Loki where there is none.
 - With `ORRERY_HUMAN_CLIENTS` set, an agent or service calling
   the console's API starts fresh conversations: the ones it held before this
   release are visible only to the person whose subject they are stored under.
+- A2A requests over 128 KiB (`ORRERY_A2A_MAX_BODY_BYTES`) or messages over
+  8192 characters (`ORRERY_A2A_MAX_MESSAGE_CHARS`) are now refused; raise the
+  limits if a client legitimately sends more.
+- `orrery-core` no longer depends on `google-adk[eval]`. A project that relied
+  on it for ADK's evaluation package (or its pandas/aiplatform) must add it.
 
 ### Added
 
