@@ -407,7 +407,7 @@ services:
   # ── Orrery Studio demo (use: docker compose --profile studio-demo up) ──
   #
   # AEP-031 P0a, API only: a research → writer → critic pipeline whose writer
-  # is a plain a2a-sdk agent (deploy/studio-demo/writer), reached over https
+  # is a plain a2a-sdk agent (orrery_core.studio.demo.writer), reached over https
   # with a certificate from a throwaway internal CA. See
   # docs/integrations/studio.md for the walkthrough. Binds :8000 like the
   # `demo` profile: run one or the other.
@@ -418,9 +418,12 @@ services:
     profiles: [studio-demo]
     # Root only to write into the fresh volume; the files go to appuser (1000).
     user: "0"
+    # Both demo helpers ship in the image (orrery_core.studio.demo): nothing
+    # mounted from the checkout but the registry.
     command:
       - python
-      - /demo/make_certs.py
+      - -m
+      - orrery_core.studio.demo.certs
       - --out
       - /certs
       - --ca-out
@@ -430,7 +433,6 @@ services:
       - --owner
       - "1000"
     volumes:
-      - ./deploy/studio-demo:/demo:ro
       - studio-demo-certs:/certs
       - studio-demo-ca:/ca
 
@@ -449,7 +451,8 @@ services:
     # No published port: only Orrery, on the compose network, reaches it.
     command:
       - python
-      - /demo/writer/writer_agent.py
+      - -m
+      - orrery_core.studio.demo.writer
       - --host
       - 0.0.0.0
       - --port
@@ -461,7 +464,6 @@ services:
       - --keyfile
       - /certs/writer-key.pem
     volumes:
-      - ./deploy/studio-demo:/demo:ro
       - studio-demo-certs:/certs:ro
 
   orrery-studio:

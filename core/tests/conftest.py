@@ -173,17 +173,11 @@ def serve_asgi():
 
 @pytest.fixture(scope="session")
 def writer_module():
-    """``deploy/studio-demo/writer/writer_agent.py``, the demo's plain a2a-sdk agent."""
-    import importlib.util
-    from pathlib import Path
-
+    """``orrery_core.studio.demo.writer``, the demo's plain a2a-sdk agent."""
     pytest.importorskip("a2a")
-    path = Path(__file__).resolve().parents[2] / "deploy/studio-demo/writer/writer_agent.py"
-    spec = importlib.util.spec_from_file_location("studio_demo_writer", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from orrery_core.studio.demo import writer
+
+    return writer
 
 
 @pytest.fixture(autouse=True)

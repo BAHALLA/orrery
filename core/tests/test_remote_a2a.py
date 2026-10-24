@@ -500,15 +500,48 @@ def test_input_required_returns_the_ids_to_resume_with(serve_asgi, writer_module
 
 
 def _make_certs_module():
-    import importlib.util
-    from pathlib import Path
+    from orrery_core.studio.demo import certs
 
-    path = Path(__file__).resolve().parents[2] / "deploy/studio-demo/make_certs.py"
-    spec = importlib.util.spec_from_file_location("studio_demo_make_certs", path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return certs
+
+
+def test_the_demo_helpers_run_from_the_installed_package(tmp_path):
+    """What a deployment runs with only the image: ``python -m``, no mounted files."""
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "orrery_core.studio.demo.certs",
+            "--out",
+            str(tmp_path / "certs"),
+            "--ca-out",
+            str(tmp_path / "ca"),
+            "--host",
+            "demo-writer.studio.internal",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,  # nothing importable from a checkout
+        check=True,
+    )
+    assert "wrote writer.pem" in out.stdout
+    assert sorted(p.name for p in (tmp_path / "certs").iterdir()) == [
+        "writer-key.pem",
+        "writer.pem",
+    ]
+    writer = subprocess.run(
+        [sys.executable, "-m", "orrery_core.studio.demo.writer", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        check=True,
+    )
+    assert "--public-url" in writer.stdout and "--certfile" in writer.stdout
 
 
 def test_demo_certs_are_kept_while_valid_and_renewed_otherwise(tmp_path):

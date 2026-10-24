@@ -1,8 +1,9 @@
 """Generate the Studio demo's internal CA and the writer's server certificate.
 
-Run by the ``studio-demo-certs`` compose service on every ``up``::
+Run from the image (the ``studio-demo-certs`` compose service does, on every
+``up``)::
 
-    python make_certs.py --out /certs --ca-out /ca \\
+    python -m orrery_core.studio.demo.certs --out /certs --ca-out /ca \\
         --host demo-writer.studio.internal --owner 1000
 
 Writes ``writer.pem`` and ``writer-key.pem`` to ``--out`` (only the writer

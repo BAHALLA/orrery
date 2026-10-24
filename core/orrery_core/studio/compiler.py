@@ -196,6 +196,7 @@ def registry_toolset(
         pin_store=pins.for_entry(entry_id),
         # Registry entries never name files: the deployment's CA bundle.
         verify=cards.network.ssl_context,
+        egress_proxy=cards.network.egress_proxy,
         seen_store=pins.seen_for_entry(entry_id),
     )
 

@@ -55,6 +55,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
 | `ORRERY_A2A_PRIVATE_ALLOW` | — | Hosts and CIDRs a `private_network` entry may reach (comma-separated). |
 | `ORRERY_A2A_CA_FILE` | — | One extra CA bundle trusted for outbound A2A (an internal CA). |
+| `ORRERY_STUDIO_EGRESS_PROXY` | — | A forward proxy (`http://host:port`) for public registry destinations, MCP and A2A, through `CONNECT` (below). Never read from `HTTPS_PROXY`. |
 | `ORRERY_STUDIO_SECRET_*` | — | Bearer tokens registry entries refer to by name. |
 | `ORRERY_REDACT_IPS` | `false` | Also redact IP addresses in captured `content`, as it does in logs. |
 
@@ -136,6 +137,25 @@ Link-local and metadata addresses are always refused. Loopback hosts may reach
 loopback; a host on the allowlist never may, whatever it resolves to. Redirects are never followed and proxy variables are ignored. A
 `private_network` entry whose host is a literal address not in the allowlist,
 or any `private_network` entry while the allowlist is empty, fails startup.
+
+**Behind an egress proxy.** Where the only way out is a forward proxy, set
+`ORRERY_STUDIO_EGRESS_PROXY=http://<proxy>:<port>`. Public destinations of
+registry entries (MCP servers and A2A agents) then go through it with
+`CONNECT`; TLS stays end to end and is verified by Orrery as on a direct
+connection, and the origin checks still run on the hostname. The resolved-
+address check cannot run (the proxy resolves the name), so **the proxy must
+enforce its own destination allowlist**: allow `CONNECT` only to the hosts the
+registry names. Loopback, private literal addresses, hosts in
+`ORRERY_A2A_PRIVATE_ALLOW` and every `private_network` entry always go direct,
+with the full check (so a `private_network` entry cannot reach a public host
+behind the proxy). With a proxy set, that direct path refuses public
+addresses: a `private_network` entry whose name resolves to a public address
+is refused, so public traffic always goes through the proxy and its
+allowlist. Only https goes through the proxy, and not to an IPv6
+literal (name the host). A refused tunnel reads "egress proxy refused CONNECT
+to host:port (403)" (or 407). Byte caps,
+identity encoding and timeouts apply either way. `HTTPS_PROXY` and friends are
+never used. ([ADR-008](../adr/008-consuming-remote-a2a-agents.md#amendment-an-explicit-egress-proxy))
 
 **Compressed responses are refused.** Every request asks for
 `Accept-Encoding: identity`, and a reply that comes back compressed anyway is
@@ -465,10 +485,10 @@ The `studio-demo` compose profile runs the release-notes critic loop
 another framework:
 
 - `demo-writer`: a plain `a2a-sdk` agent, no LLM, deterministic
-  (`deploy/studio-demo/writer/writer_agent.py`), served over **https** on the
+  (`orrery_core.studio.demo.writer`, in the image), served over **https** on the
   compose network only, as `demo-writer.studio.internal`;
 - `studio-demo-certs`: a one-shot job generating a throwaway internal CA and
-  the writer's certificate (`deploy/studio-demo/make_certs.py`). It keeps them
+  the writer's certificate (`orrery_core.studio.demo.certs`, in the image). It keeps them
   across restarts, and makes new ones when one is missing, expires within 7
   days or no longer matches the CA. The CA goes to its own volume: Orrery
   mounts only that one (`ORRERY_A2A_CA_FILE=/ca/ca.pem`) and never sees the
@@ -493,6 +513,22 @@ curl -s "http://127.0.0.1:8000/studio/registry?resolve=true" -H "Authorization: 
 then start a run as in [API](#api). `CLIENT=orrery-console` puts the client in
 the token's `azp`, which is what makes it a person here: the same token without
 it is a service and gets 403.
+
+**From the image alone.** Both helpers ship in the Orrery image, so another
+deployment needs no files from this repository. The certificate job and the
+writer:
+
+```bash
+python -m orrery_core.studio.demo.certs --out /certs --ca-out /ca \
+  --host demo-writer.studio.internal --owner 1000
+python -m orrery_core.studio.demo.writer --host 0.0.0.0 --port 8443 \
+  --public-url https://demo-writer.studio.internal:8443 \
+  --certfile /certs/writer.pem --keyfile /certs/writer-key.pem
+```
+
+Give Orrery `ORRERY_A2A_CA_FILE=/ca/ca.pem` and
+`ORRERY_A2A_PRIVATE_ALLOW=demo-writer.studio.internal`, and the registry
+entry for the writer (`deploy/studio-demo/registry.yaml` has one).
 
 CI runs a pipeline end to end (`core/tests/test_studio_api.py`) with a stub
 model, the writer on a loopback socket over plain http, and a local MCP
