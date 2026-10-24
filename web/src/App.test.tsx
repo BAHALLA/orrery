@@ -966,7 +966,11 @@ describe("resilience and safety posture", () => {
           return jsonResponse(catalogBody());
         }
         if (url.endsWith("/admin/catalog")) return jsonResponse(catalogBody());
-        if (url.endsWith("/admin/agents")) return jsonResponse({ agents: [] });
+        if (url.endsWith("/admin/agents")) {
+          // A real round trip: React renders the new catalog before this lands.
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return jsonResponse({ agents: [] });
+        }
         if (url.endsWith("/me")) {
           return jsonResponse({
             subject: "alice",
@@ -1028,9 +1032,17 @@ describe("resilience and safety posture", () => {
       "aria-checked",
       "false",
     );
+    // The admin edits the carried draft further before saving it.
+    await user.click(screen.getByRole("switch", { name: "Enable docker" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText(/saved as version 3/i)).toBeInTheDocument();
-    expect(puts[2]).toMatchObject({ version: 2, disabled_specialists: ["k8s"] });
+    expect(puts[2]).toMatchObject({ version: 2, disabled_specialists: ["k8s", "docker"] });
+    // Saved: the failed draft is gone, not re-applied over what was just saved.
+    expect(screen.getByRole("switch", { name: "Enable k8s" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.queryByText(/^Unsaved:/)).not.toBeInTheDocument();
   });
 
   it("shows what is running: versions, model, package and the approval gate", async () => {
@@ -1250,6 +1262,8 @@ describe("resilience and safety posture", () => {
     form = screen.getByRole("form", { name: "Agent editor" });
     expect(within(form).getByLabelText("Name")).toHaveValue("scaler_copy");
     await user.click(within(form).getByRole("button", { name: "Cancel" }));
+    // Closing the dialog hands focus back to what opened it.
+    expect(screen.getByRole("button", { name: "Duplicate agent scaler" })).toHaveFocus();
 
     // The save bar says what will change; the filter narrows to what's off.
     await user.click(screen.getByRole("switch", { name: "Enable k8s" }));

@@ -108,9 +108,12 @@ export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
         setCarried(null);
       }}
       onSave={async (update) => {
+        // Cleared first: a successful save remounts the dashboard *during*
+        // saveCatalog, and a draft from an earlier failure must not seed it.
+        setCarried(null);
         const error = await saveCatalog(update);
         setSaveError(error);
-        setCarried(error ? update : null);
+        if (error) setCarried(update);
         if (!error) setSavedVersion(update.version + 1);
       }}
     />
@@ -163,10 +166,10 @@ function Dashboard({
   const editable = catalog?.editing_enabled === true;
   const savedDisabled = catalog?.catalog.disabled_specialists ?? [];
   const savedAgents = catalog?.catalog.agents ?? [];
-  const [disabled, setDisabled] = useState<string[]>(
-    carried?.disabled_specialists ?? savedDisabled,
-  );
-  const [composed, setComposed] = useState<DeclarativeAgent[]>(carried?.agents ?? savedAgents);
+  // Only a draft written against an older version is carried onto this one.
+  const carry = carried && catalog && carried.version < catalog.catalog.version ? carried : null;
+  const [disabled, setDisabled] = useState<string[]>(carry?.disabled_specialists ?? savedDisabled);
+  const [composed, setComposed] = useState<DeclarativeAgent[]>(carry?.agents ?? savedAgents);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");

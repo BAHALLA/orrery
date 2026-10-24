@@ -78,10 +78,10 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
   // A modal keeps focus: Tab cycles inside it, and closing returns focus to
   // the button that opened it.
   const dialog = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    return () => opener?.focus?.();
-  }, []);
+  // Read during the first render: by the time an effect runs, autoFocus has
+  // already moved focus to the name field.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  useEffect(() => () => opener?.focus?.(), [opener]);
   const trapTab = (e: React.KeyboardEvent) => {
     if (e.key !== "Tab" || !dialog.current) return;
     const focusable = dialog.current.querySelectorAll<HTMLElement>(
