@@ -30,6 +30,9 @@ export interface AuthState {
 
 export const SESSION_ENDED = "Your sign-in session ended. Sign in again to continue.";
 
+/** How long an expired token may wait for a renew already in flight. */
+export const EXPIRY_GRACE_MS = 10_000;
+
 /** OAuth errors that mean the provider no longer honours this session. */
 const SESSION_REFUSALS = new Set(["invalid_grant", "login_required", "interaction_required"]);
 
@@ -88,11 +91,16 @@ export function useAuth(): AuthState {
   useEffect(() => {
     if (!isOidcEnabled) return;
     let cancelled = false;
+    // The token these handlers last saw, so a timer can tell whether a renew
+    // replaced it while it waited.
+    let current: string | null = null;
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 
     void (async () => {
       try {
         const user = hasAuthResponse() ? await completeSignIn() : await loadUser();
-        if (!cancelled) setToken(user?.access_token ?? null);
+        current = user?.access_token ?? null;
+        if (!cancelled) setToken(current);
       } catch (err) {
         if (!cancelled) {
           setToken(null);
@@ -106,34 +114,57 @@ export function useAuth(): AuthState {
     // Silent renew swaps the access token underneath us; without this the
     // console would keep sending the old one until the next full reload.
     const um = getUserManager();
-    const onLoaded = (user: { access_token: string }) => setToken(user.access_token);
-    const onUnloaded = () => setToken(null);
+    const onLoaded = (user: { access_token: string }) => {
+      current = user.access_token;
+      setToken(current);
+      setError(null);
+    };
+    const onUnloaded = () => {
+      current = null;
+      setToken(null);
+    };
     // The provider can end the session under us (idle timeout, an admin
     // logout, a laptop asleep past the SSO idle limit): the refresh is refused
     // and the access token then expires. Neither raises userUnloaded, so the
     // console kept a dead token and every call failed with 401 until a reload.
     const endSession = () => {
       if (cancelled) return;
+      current = null;
       setToken(null);
       setError(SESSION_ENDED);
-      void um?.removeUser();
     };
     const onRenewError = (err: Error) => {
       // A network blip leaves the current token usable until it expires,
-      // which onExpired handles; only a refusal means the session is gone.
-      if (isSessionRefusal(err)) endSession();
+      // which onExpired handles; only a refusal means the session is gone,
+      // and then its refresh token is useless too.
+      if (!isSessionRefusal(err)) return;
+      endSession();
+      void um?.removeUser();
+    };
+    const onExpired = () => {
+      // Waking from sleep fires the renew and the expiry together, and the
+      // renew usually wins a moment later. Wait for it rather than flash the
+      // sign-in panel; the stored user stays, so a renew still retrying can
+      // bring the session back.
+      const expired = current;
+      if (expired === null) return; // nothing was signed in (a reload with a stale record)
+      clearTimeout(expiryTimer);
+      expiryTimer = setTimeout(() => {
+        if (current === expired) endSession();
+      }, EXPIRY_GRACE_MS);
     };
     um?.events.addUserLoaded(onLoaded);
     um?.events.addUserUnloaded(onUnloaded);
     um?.events.addSilentRenewError(onRenewError);
-    um?.events.addAccessTokenExpired(endSession);
+    um?.events.addAccessTokenExpired(onExpired);
 
     return () => {
       cancelled = true;
       um?.events.removeUserLoaded(onLoaded);
       um?.events.removeUserUnloaded(onUnloaded);
       um?.events.removeSilentRenewError(onRenewError);
-      um?.events.removeAccessTokenExpired(endSession);
+      um?.events.removeAccessTokenExpired(onExpired);
+      clearTimeout(expiryTimer);
     };
   }, []);
 

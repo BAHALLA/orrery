@@ -43,6 +43,11 @@ release are visible only to the person whose subject they are stored under.
 
 ### Security
 
+- The shipped Keycloak realm no longer allows the password grant on the
+  public `orrery-console` client (`directAccessGrantsEnabled: false`). Nothing
+  used it, and it let anyone holding a password skip PKCE and the login page.
+  An existing Keycloak keeps its imported realm; turn it off there under the
+  client's capability config.
 - The audit log no longer copies tool results. A `get_active_alerts` entry
   carried the whole alert payload next to the caller's id, so infrastructure
   data and the people it names ended up in plaintext logs that outlive any
@@ -81,7 +86,9 @@ release are visible only to the person whose subject they are stored under.
   a laptop slept past the SSO idle timeout), the console kept the expired
   access token and every request failed with 401 until a reload. It now shows
   the sign-in panel with "Your sign-in session ended". A network failure
-  during a refresh keeps the session until the token actually expires.
+  during a refresh keeps the session, and an expired token waits 10 s for a
+  renew already in flight (waking from sleep fires both at once) before the
+  session ends.
 - The observability specialist no longer offers Loki tools without Loki.
   With no `LOKI_URL` it advertised four tools that could only fail, the model
   spent turns on them, and each failure logged a traceback at ERROR. Its
