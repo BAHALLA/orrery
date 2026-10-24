@@ -81,9 +81,26 @@ _PATCH_SHAPE = {
 }
 
 
+#: Legacy pod-template annotations that loosen a container's confinement
+#: (AppArmor, seccomp): annotations are otherwise free-form and allowed.
+_CONFINEMENT_ANNOTATIONS = (
+    "container.apparmor.security.beta.kubernetes.io/",
+    "seccomp.security.alpha.kubernetes.io/",
+)
+
+
 def _refuse_out_of_scope(patch: dict[str, Any]) -> dict[str, Any] | None:
     """An error naming every path *patch* may not change, or None."""
     found: list[str] = []
+    template_annotations = (
+        ((patch.get("spec") or {}).get("template") or {}).get("metadata") or {}
+    ).get("annotations")
+    if isinstance(template_annotations, dict):
+        found += [
+            f"spec.template.metadata.annotations.{key}"
+            for key in template_annotations
+            if str(key).startswith(_CONFINEMENT_ANNOTATIONS)
+        ]
 
     def walk(node: Any, shape: Any, path: str) -> None:
         if node is None:

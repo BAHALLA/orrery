@@ -1,0 +1,114 @@
+{{- /*
+Kubernetes access for the agent's ServiceAccount (values: rbac). The rules
+mirror the API calls the Kubernetes, Strimzi and ECK tools make; keep them in
+step when a tool starts calling something new.
+*/ -}}
+{{- if .Values.rbac.create }}
+{{- $profile := .Values.rbac.profile }}
+{{- if not (has $profile (list "read" "operate")) }}
+{{- fail (printf "rbac.profile must be read or operate, not %q" $profile) }}
+{{- end }}
+{{- $scope := .Values.rbac.scope }}
+{{- if not (has $scope (list "cluster" "namespaces")) }}
+{{- fail (printf "rbac.scope must be cluster or namespaces, not %q" $scope) }}
+{{- end }}
+{{- if and (eq $scope "namespaces") (empty .Values.rbac.namespaces) }}
+{{- fail "rbac.scope=namespaces needs at least one entry in rbac.namespaces" }}
+{{- end }}
+{{- $name := include "orrery-assistant.fullname" . }}
+{{- $sa := include "orrery-assistant.serviceAccountName" . }}
+{{- if eq $scope "cluster" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "orrery-assistant.labels" . | nindent 4 }}
+rules:
+  {{- include "orrery-assistant.rbacRules" (dict "Values" .Values "cluster" true) | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "orrery-assistant.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+{{- range $ns := .Values.rbac.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "orrery-assistant.labels" $ | nindent 4 }}
+rules:
+  {{- include "orrery-assistant.rbacRules" (dict "Values" $.Values "cluster" false) | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "orrery-assistant.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- with .Values.rbac.impersonate }}
+{{- if or .users .groups }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-impersonator
+  labels:
+    {{- include "orrery-assistant.labels" $ | nindent 4 }}
+rules:
+  {{- with .users }}
+  - apiGroups: [""]
+    resources: ["users"]
+    verbs: ["impersonate"]
+    resourceNames: {{ toJson . }}
+  {{- end }}
+  {{- with .groups }}
+  - apiGroups: [""]
+    resources: ["groups"]
+    verbs: ["impersonate"]
+    resourceNames: {{ toJson . }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-impersonator
+  labels:
+    {{- include "orrery-assistant.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-impersonator
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- end }}

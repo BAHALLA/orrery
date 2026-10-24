@@ -573,6 +573,24 @@ async def test_patches_outside_the_tools_scope_are_refused(tool, pod_spec, path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "annotation",
+    [
+        "container.apparmor.security.beta.kubernetes.io/app",
+        "seccomp.security.alpha.kubernetes.io/pod",
+    ],
+)
+async def test_confinement_annotations_are_refused(annotation):
+    """Annotations are free-form, but these two legacy keys unconfine a container."""
+    body = {"spec": {"template": {"metadata": {"annotations": {annotation: "unconfined"}}}}}
+    with patch("k8s_health_agent.tools._apps_api") as api:
+        result = await patch_deployment("web", patch=body)
+
+    assert result["status"] == "error" and annotation in result["message"]
+    api.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("tool", [patch_deployment, patch_statefulset])
 async def test_the_changes_the_tools_exist_for_still_go_through(tool):
     body = {

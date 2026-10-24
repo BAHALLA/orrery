@@ -127,3 +127,73 @@ true
 {{- .Values.mcp.existingConfigMap | default (printf "%s-mcp" (include "orrery-assistant.fullname" .)) -}}
 {{- end -}}
 
+
+{{/*
+The agent's RBAC rules. "cluster" adds the cluster-scoped reads a Role cannot
+grant (nodes, namespaces, CRDs, node metrics).
+*/}}
+{{- define "orrery-assistant.rbacRules" -}}
+{{- $rbac := .Values.rbac -}}
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "events", "services", "endpoints", "configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "replicasets", "daemonsets"]
+  verbs: ["get", "list"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+{{- if .cluster }}
+- apiGroups: [""]
+  resources: ["nodes", "namespaces"]
+  verbs: ["get", "list"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list"]
+{{- end }}
+{{- if $rbac.operators.strimzi }}
+- apiGroups: ["kafka.strimzi.io"]
+  resources:
+    - kafkas
+    - kafkanodepools
+    - kafkatopics
+    - kafkausers
+    - kafkaconnects
+    - kafkaconnectors
+    - kafkamirrormaker2s
+    - kafkarebalances
+  verbs: ["get", "list"]
+{{- end }}
+{{- if $rbac.operators.eck }}
+- apiGroups: ["elasticsearch.k8s.elastic.co"]
+  resources: ["elasticsearches"]
+  verbs: ["get", "list"]
+- apiGroups: ["kibana.k8s.elastic.co"]
+  resources: ["kibanas"]
+  verbs: ["get", "list"]
+{{- end }}
+{{- if eq $rbac.profile "operate" }}
+# The writes the mutating tools make: scale, restart, rollback and patch.
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  verbs: ["patch"]
+{{- if $rbac.operators.strimzi }}
+# Approving a rebalance and restarting a connector are annotations.
+- apiGroups: ["kafka.strimzi.io"]
+  resources: ["kafkarebalances", "kafkaconnectors"]
+  verbs: ["patch"]
+{{- end }}
+{{- end }}
+{{- with $rbac.extraRules }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}

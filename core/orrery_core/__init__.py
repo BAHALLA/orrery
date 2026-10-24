@@ -136,6 +136,7 @@ from .serving.gateway import InboundMessage as InboundMessage
 from .serving.gateway import MappedSessionResolver as MappedSessionResolver
 from .serving.gateway import OutboundReply as OutboundReply
 from .serving.gateway import SessionResolver as SessionResolver
+from .serving.gateway import TurnTimedOut as TurnTimedOut
 from .serving.health import HealthServer as HealthServer
 from .serving.runner import create_context_cache_config as create_context_cache_config
 from .serving.runner import create_events_compaction_config as create_events_compaction_config

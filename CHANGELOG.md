@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers an instruction template, and keeps with Ctrl/Cmd+Enter. Cards with a
   pending change are marked, and the save bar lists what the save will change.
 
+- `ORRERY_TURN_TIMEOUT_SECONDS` (default 900, `0` disables) bounds every turn
+  on every surface. A turn queued behind a wedged one in its session would
+  otherwise wait forever. A stopped turn is reported as possibly having
+  acted: HTTP 504 on `/chat`, a non-retryable `error` on `/chat/stream`, and
+  a message in Slack.
+- The Helm chart grants the agent's ServiceAccount Kubernetes access (`rbac`):
+  `read` (default) or `operate`, cluster-wide or per namespace, Strimzi and
+  ECK resources, optional impersonation rules and extra rules. Rules follow
+  the API calls the tools make; secrets are never granted. **Upgrade note:**
+  the chart now creates a ClusterRole and binding by default, which needs
+  cluster-admin to install; set `rbac.create: false` if you manage RBAC.
+
 ### Fixed
 
 - Slack: approval cards are actually posted. The gate called the Bolt
@@ -50,8 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container image, pull policy, resources and env, replicas, rollout
   settings, labels and annotations. Anything else (security contexts,
   volumes, host access, scheduling, the service account, command, a `null`
-  or `$patch` deletion) is refused; it belongs in a reviewed manifest, not a
-  patch an approver skims mid-incident.
+  or `$patch` deletion, the legacy AppArmor and seccomp template
+  annotations) is refused; it belongs in a reviewed manifest, not a patch an
+  approver skims mid-incident.
 - Secret redaction (tool results and memory) also covers credentials in a URL
   (`postgres://user:pass@…`, `redis://:pass@…`), keeping the scheme and host,
   and Google API keys (`AIza…`).

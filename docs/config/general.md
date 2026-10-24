@@ -244,6 +244,7 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ORRERY_MAX_WORKER_THREADS` | 8 per CPU of the cgroup quota, 8–64 | Size of the thread pool blocking tool calls run on. The default reads the container's CPU limit, not the host's core count. |
+| `ORRERY_TURN_TIMEOUT_SECONDS` | `900` | Wall-clock ceiling for one turn on every surface; `0` disables. Tools and model calls have their own timeouts, so this only stops something wedged. A stopped turn is reported as "may already have acted" (HTTP 504 on `/chat`, an `error` event on `/chat/stream`). Kept above the Google Chat bot's own 600 s budget, whose notice lists what changed. |
 | `LOG_LEVEL` | `INFO` | Log level for the JSON logs on stdout (`DEBUG`, `INFO`, `WARNING`, …). |
 
 ## HTTP front door

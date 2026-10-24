@@ -40,7 +40,7 @@ from google.adk.events import Event
 
 from ..plugins.progress_plugin import progress_scope
 from .events import extract_reply_text
-from .gateway import EventHook, InboundMessage, OutboundReply
+from .gateway import EventHook, InboundMessage, OutboundReply, TurnTimedOut
 
 logger = logging.getLogger("orrery.serving.sse")
 
@@ -53,6 +53,13 @@ KEEPALIVE = b": keepalive\n\n"
 #: carry provider error bodies, hostnames or tool output, none of which belong
 #: in a browser. The traceback goes to the server log.
 TURN_FAILED_MESSAGE = "The agent hit an error while handling this message. Please try again."
+
+#: Shown when the gateway's turn deadline stopped the turn. Not "try again":
+#: it may have been stopped mid-tool, after a change already went through.
+TURN_TIMED_OUT_MESSAGE = (
+    "This took too long and was stopped. Some actions may already have run, "
+    "so check the current state before asking again."
+)
 
 # Strong references to running turns. asyncio keeps only a weak reference to a
 # task, so a turn whose client disconnected — nobody awaiting it any more —
@@ -125,6 +132,8 @@ async def stream_turn(
                     msg, session_id=session_id, on_event=on_event, streaming=True
                 )
             queue.put_nowait(("message", {"session_id": session_id, "text": reply.text}))
+        except TurnTimedOut:
+            queue.put_nowait(("error", {"message": TURN_TIMED_OUT_MESSAGE, "retryable": False}))
         except Exception:
             logger.exception("Streaming turn failed (session %s)", session_id)
             queue.put_nowait(("error", {"message": TURN_FAILED_MESSAGE, "retryable": True}))

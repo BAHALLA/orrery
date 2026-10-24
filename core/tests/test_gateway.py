@@ -155,6 +155,59 @@ async def test_a_queued_approve_is_stamped_when_it_arrived_not_when_it_runs():
 
 
 @pytest.mark.asyncio
+async def test_a_wedged_turn_is_stopped_and_frees_its_session():
+    """Without a deadline a hung turn would also hold its session's lock forever."""
+    import asyncio
+
+    from orrery_core.serving.gateway import TurnTimedOut
+
+    gw, _ = _make_gateway()
+    gw.turn_timeout = 0.05
+    calls = 0
+
+    async def run_async(*, user_id, session_id, new_message, state_delta=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.sleep(10)  # wedged
+        yield _event("next turn ran")
+
+    setattr(gw.runner, "run_async", run_async)  # noqa: B010 — a fake runner
+    with pytest.raises(TurnTimedOut):
+        await gw.run_in_session(user_id="u1", session_id="s1", text="hang")
+
+    reply = await gw.run_in_session(user_id="u1", session_id="s1", text="again")
+    assert reply.text == "next turn ran"
+
+
+@pytest.mark.asyncio
+async def test_a_tools_own_timeout_is_not_reported_as_the_turn_deadline():
+    from orrery_core.serving.gateway import TurnTimedOut
+
+    gw, _ = _make_gateway()
+
+    async def run_async(*, user_id, session_id, new_message, state_delta=None):
+        raise TimeoutError("kafka admin call timed out")
+        yield
+
+    setattr(gw.runner, "run_async", run_async)  # noqa: B010 — a fake runner
+    with pytest.raises(TimeoutError) as caught:
+        await gw.run_in_session(user_id="u1", session_id="s1", text="x")
+    assert not isinstance(caught.value, TurnTimedOut)
+
+
+def test_turn_timeout_comes_from_the_env(monkeypatch):
+    from orrery_core.serving.gateway import TURN_TIMEOUT_ENV
+
+    monkeypatch.setenv(TURN_TIMEOUT_ENV, "120")
+    assert _make_gateway()[0].turn_timeout == 120
+    monkeypatch.setenv(TURN_TIMEOUT_ENV, "0")
+    assert _make_gateway()[0].turn_timeout is None
+    monkeypatch.delenv(TURN_TIMEOUT_ENV)
+    assert _make_gateway()[0].turn_timeout == 900
+
+
+@pytest.mark.asyncio
 async def test_different_sessions_still_run_in_parallel():
     import asyncio
 
