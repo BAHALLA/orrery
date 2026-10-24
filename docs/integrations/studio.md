@@ -213,8 +213,10 @@ The `pattern` values are `pipeline`, `router`, `critic_loop`,
 kinds parse but are refused with `not_supported_yet`.
 
 **Templates.** `deploy/studio-demo/specs/` has one tested spec per pattern:
-`pipeline.json`, `router.json`, `critic-loop.json` (the demo; it was
-`release-notes.spec.json` in P0a), `fan-out-fan-in.json`, `supervisor.json`,
+`pipeline.json` (P0a's `release-notes.spec.json`, unchanged; the console's
+release-notes template is a copy, and `web/src/studio/validate.test.ts` holds
+them equal), `router.json`, `critic-loop.json` (the compose demo: that
+pipeline with the critic sending drafts back), `fan-out-fan-in.json`, `supervisor.json`,
 `debate.json`, `map-reduce.json` (a fixed fan-out: the map width is the number
 of branches) and `plan-and-execute.json`. CI runs each with a stub model
 (`core/tests/test_studio_patterns.py`).

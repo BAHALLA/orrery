@@ -24,7 +24,7 @@ const agent = (id: string, instruction: string, extra: Record<string, unknown> =
   ...extra,
 });
 
-/** `deploy/studio-demo/release-notes.spec.json`, verbatim (a test holds them equal). */
+/** `deploy/studio-demo/specs/pipeline.json`, verbatim (a test holds them equal). */
 export const RELEASE_NOTES: CompositionSpec = {
   spec_version: 1,
   name: "release-notes",

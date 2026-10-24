@@ -1,6 +1,6 @@
 {
   "spec_version": 1,
-  "name": "release-notes-pipeline",
+  "name": "release-notes",
   "description": "Research a topic on Tirraflow, have the remote writer draft notes, then critique them.",
   "pattern": "pipeline",
   "budgets": {

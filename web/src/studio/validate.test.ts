@@ -13,23 +13,22 @@ import {
   validate,
   validateAgainstSchema,
 } from "./validate";
-// A copy of deploy/studio-demo/release-notes.spec.json: the image's build
+// A copy of deploy/studio-demo/specs/pipeline.json (the P0a demo pipeline,
+// the console's release-notes template): the image's build
 // context is web/ alone, so tests (type-checked by `npm run build`) can't
 // import from deploy/. The test below keeps the two identical.
 import demoSpec from "./fixtures/release-notes.spec.json";
 
 /**
  * The deploy copy, read at test time. A glob, not an import: it type-checks
- * and resolves to nothing where deploy/ is absent (the Docker build) or the
- * file has moved, instead of failing to compile.
+ * where deploy/ is absent (the Docker build, which runs no tests) instead of
+ * failing to compile. Where the tests run (CI, `make test-web`), the test
+ * below fails if it finds nothing, so a moved file cannot pass by skipping.
  */
-const deployCopies = import.meta.glob<unknown>(
-  "../../../deploy/studio-demo/release-notes.spec.json",
-  {
-    eager: true,
-    import: "default",
-  },
-);
+const deployCopies = import.meta.glob<unknown>("../../../deploy/studio-demo/specs/pipeline.json", {
+  eager: true,
+  import: "default",
+});
 
 // The real published schema, dumped from the server (GET /studio/schema).
 const SPEC_SCHEMA = (schema as { spec: JsonSchema }).spec;
@@ -48,14 +47,11 @@ describe("templates", () => {
     expect(RELEASE_NOTES).toEqual(demoSpec);
   });
 
-  // When the demo spec moves (P0b's deploy/studio-demo/specs/), point the glob
-  // above at the new file rather than letting this skip.
-  it.skipIf(Object.keys(deployCopies).length === 0)(
-    "the fixture is the deploy copy of the demo spec, unchanged",
-    () => {
-      expect(Object.values(deployCopies)).toEqual([demoSpec]);
-    },
-  );
+  // If the deploy file moves, point the glob above at it: this fails, not skips.
+  it("the fixture is the deploy copy of the demo pipeline, unchanged", () => {
+    expect(Object.keys(deployCopies)).toHaveLength(1);
+    expect(Object.values(deployCopies)).toEqual([demoSpec]);
+  });
 
   it("enable what P0a runs and mark the rest as needing P0b", () => {
     const enabled = TEMPLATES.filter((t) => templateNeeds(t, P0A) === null).map((t) => t.id);
