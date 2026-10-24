@@ -13,7 +13,7 @@ mcp:
     read_only: [search_articles, get_article]
 
 a2a:
-  # The plain a2a-sdk writer (writer/writer_agent.py), on the compose network.
+  # The plain a2a-sdk writer (orrery_core.studio.demo.writer), on the compose network.
   # Its card is pinned on first use; set card_sha256 (GET /studio/registry
   # ?resolve=true shows the digest) to pin it from config instead.
   - id: demo-writer

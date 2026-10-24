@@ -7,9 +7,9 @@ shown (and tested) with a remote agent built in another framework.
 Each non-empty line of the request becomes a bullet; a line starting with
 ``#`` becomes the title. The reply is one text artifact.
 
-Run it::
+Run it from the image::
 
-    python writer_agent.py --host 0.0.0.0 --port 8443 \\
+    python -m orrery_core.studio.demo.writer --host 0.0.0.0 --port 8443 \\
         --public-url https://demo-writer.studio.internal \\
         --certfile /certs/writer.pem --keyfile /certs/writer-key.pem
 
