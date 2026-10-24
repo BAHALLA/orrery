@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -1204,7 +1205,12 @@ describe("resilience and safety posture", () => {
     );
     localStorage.setItem(storageKeys.token, makeToken({ sub: "alice", roles: ["admin"] }));
     const user = userEvent.setup();
-    render(<App />);
+    // As main.tsx renders it: StrictMode runs effect cleanups on mount in dev.
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
 
     await user.click(await screen.findByRole("button", { name: /^agents$/i }));
     expect(
@@ -1261,6 +1267,7 @@ describe("resilience and safety posture", () => {
     await user.click(screen.getByRole("button", { name: "Duplicate agent scaler" }));
     form = screen.getByRole("form", { name: "Agent editor" });
     expect(within(form).getByLabelText("Name")).toHaveValue("scaler_copy");
+    expect(within(form).getByLabelText("Name")).toHaveFocus();
     await user.click(within(form).getByRole("button", { name: "Cancel" }));
     // Closing the dialog hands focus back to what opened it.
     expect(screen.getByRole("button", { name: "Duplicate agent scaler" })).toHaveFocus();

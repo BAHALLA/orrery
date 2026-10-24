@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogResponse, DeclarativeAgent } from "../api/types";
 import { guardCounts, INSTRUCTION_TEMPLATE, nameProblem, toolsBySpecialist } from "./agentDraft";
 import { guardDot, guardLabel } from "./guards";
@@ -72,7 +72,9 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
 
   const submit = () => {
     setTouched(true);
-    if (ready) onDone({ ...draft, description: draft.description.trim() });
+    if (!ready) return;
+    onDone({ ...draft, description: draft.description.trim() });
+    opener?.focus?.();
   };
 
   // A modal keeps focus: Tab cycles inside it, and closing returns focus to
@@ -80,8 +82,13 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
   const dialog = useRef<HTMLDivElement>(null);
   // Read during the first render: by the time an effect runs, autoFocus has
   // already moved focus to the name field.
+  // Returned by the close paths, not an unmount cleanup: StrictMode runs
+  // cleanups on mount in development, which would pull focus out at once.
   const [opener] = useState(() => document.activeElement as HTMLElement | null);
-  useEffect(() => () => opener?.focus?.(), [opener]);
+  const cancel = useCallback(() => {
+    onCancel();
+    opener?.focus?.();
+  }, [onCancel, opener]);
   const trapTab = (e: React.KeyboardEvent) => {
     if (e.key !== "Tab" || !dialog.current) return;
     const focusable = dialog.current.querySelectorAll<HTMLElement>(
@@ -101,11 +108,11 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") cancel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, onCancel]);
+  }, [active, cancel]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-sm sm:items-center">
@@ -129,7 +136,7 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
           <button
             type="button"
             aria-label="Close"
-            onClick={onCancel}
+            onClick={cancel}
             className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             <CloseIcon />
@@ -312,7 +319,7 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
             </p>
             <button
               type="button"
-              onClick={onCancel}
+              onClick={cancel}
               className="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             >
               Cancel
