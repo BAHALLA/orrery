@@ -209,7 +209,7 @@ export const Sidebar = memo(function Sidebar({
               title="Compose agents, remote A2A agents and MCP tools, and run them apart from the live system"
             >
               <StudioIcon /> Studio
-              <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold tracking-wide text-slate-500 uppercase dark:bg-slate-800 dark:text-slate-400">
+              <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold tracking-wide text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
                 preview
               </span>
             </button>

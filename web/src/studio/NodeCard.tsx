@@ -133,7 +133,7 @@ export const NodeCard = memo(function NodeCard({ data, selected }: NodeProps<Stu
         className={`mt-2.5 flex items-center gap-2 border-t px-3 py-1.5 font-mono text-[11px] tabular-nums ${
           run && status !== "pending"
             ? "border-slate-100 text-slate-600 dark:border-slate-800 dark:text-slate-300"
-            : "border-transparent text-slate-400 dark:text-slate-500"
+            : "border-transparent text-slate-500 dark:text-slate-400"
         }`}
       >
         {run && status !== "pending" ? (

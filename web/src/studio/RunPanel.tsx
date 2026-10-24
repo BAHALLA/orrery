@@ -283,7 +283,7 @@ function RunDetail({
       {view.order.length ? (
         <section aria-labelledby="studio-node-runs">
           <h3 id="studio-node-runs" className={sectionTitle}>
-            Nodes
+            Nodes in this run
           </h3>
           <ol className="mt-1.5 flex flex-col">
             {view.order.map((id, i) => {
@@ -293,7 +293,7 @@ function RunDetail({
               const live = n.status === "active" && n.enteredAt ? (now - n.enteredAt) * 1000 : null;
               return (
                 <li key={id} className="flex items-center gap-2 py-1 text-xs">
-                  <span className="w-4 text-right font-mono text-[10px] text-slate-400">
+                  <span className="w-4 text-right font-mono text-[10px] text-slate-500 dark:text-slate-400">
                     {i + 1}
                   </span>
                   <span
@@ -466,7 +466,7 @@ function Timeline({ view }: { view: RunView }) {
                 }`}
               />
               <div className="flex items-baseline gap-2">
-                <span className="w-12 shrink-0 font-mono text-[10px] text-slate-400 tabular-nums">
+                <span className="w-12 shrink-0 font-mono text-[10px] text-slate-500 tabular-nums dark:text-slate-400">
                   +{(e.ts - t0 || 0).toFixed(1)}s
                 </span>
                 <span

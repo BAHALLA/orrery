@@ -1,17 +1,14 @@
-/* The Studio's stylesheet, loaded with its lazy chunk only.
+/* The Studio's stylesheet, loaded with its lazy chunk only: React Flow's
+   stylesheet (imported just before this file) themed with the console's
+   tokens. The Tailwind utilities the Studio's files use are built into the
+   console's own stylesheet: a second utilities bundle would re-emit classes
+   the console also uses (bg-brand-50, ...) after the console's dark: variants
+   and override them once this file loads.
 
-   1. Tailwind utilities for the files in src/studio, which the console's own
-      stylesheet skips (`@source not` in styles/index.css): same theme
-      (styles/tokens.css), same cascade layers, no second preflight.
-   2. React Flow's stylesheet (imported just before this file) themed with the
-      console's tokens. React Flow reads these variables
-   (the `-default` ones are its fallbacks), so both themes follow data-theme on
-   <html> like the rest of the console. Positions and sizes are set by React
-   Flow through the CSSOM, which the CSP's `style-src 'self'` allows. */
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/utilities.css" layer(utilities) source(none);
-@import "../styles/tokens.css";
-@source "./";
+   React Flow reads these variables (the `-default` ones are its fallbacks), so
+   both themes follow data-theme on <html> like the rest of the console.
+   Positions and sizes are set by React Flow through the CSSOM, which the
+   CSP's `style-src 'self'` allows. */
 
 .studio-flow {
   --xy-background-color: transparent;
@@ -65,7 +62,10 @@
   outline-offset: 4px;
 }
 .studio-flow .react-flow__attribution a {
-  color: #64748b;
+  color: #475569;
+}
+[data-theme="dark"] .studio-flow .react-flow__attribution a {
+  color: #94a3b8;
 }
 
 /* Edge states while a run plays: data flowing into the active node, a path

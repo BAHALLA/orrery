@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ORRERY_REDACT_IPS`. Validation refuses tools that would reach a node's
   model under one name (`tool_name_collision`) or over 64 characters
   (`tool_name_too_long`). See [Studio](docs/integrations/studio.md).
+- **Orrery Studio console, P1 (preview, admins only).** A *Studio* view in
+  the web console, loaded on first open: a React Flow canvas with a palette
+  (kinds the server cannot run yet shown as *coming in P0b/P0c*), drag,
+  connect and delete, a per-node inspector with tools from the registry,
+  live validation against `/studio/schema` with server 422s mapped onto
+  nodes and fields, keyboard access, pattern templates (pipeline and
+  release-notes run; the rest marked *needs P0b*) and a deterministic tidy
+  layout. A run panel plays the SSE stream onto the graph (reconnecting with
+  `Last-Event-ID`), with budgets, a timeline, totals, cancel and a clear
+  `budget.hit`. A2A and MCP inspectors, in-tab run history with a side-by-side
+  compare, and JSON export and import. See
+  [Studio](docs/integrations/studio.md#the-console).
 - **Calling remote A2A agents ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).**
   `GuardedRemoteA2aTool` sends one text request to a registered remote and
   returns its reply as a tool result, so the safety screen, PII redaction,

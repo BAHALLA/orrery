@@ -304,7 +304,7 @@ export function NodeInspector({
               key={e.id}
               className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300"
             >
-              <span className="text-slate-400">from</span>
+              <span className="text-slate-500 dark:text-slate-400">from</span>
               <span className="font-mono">{e.source}</span>
             </li>
           ))}
@@ -313,7 +313,7 @@ export function NodeInspector({
               key={e.id}
               className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-200"
             >
-              <span className="text-slate-400">to</span>
+              <span className="text-slate-500 dark:text-slate-400">to</span>
               <span className="font-mono">{e.target}</span>
               {e.data?.spec.when ? (
                 <span className="text-slate-500">when {e.data.spec.when}</span>

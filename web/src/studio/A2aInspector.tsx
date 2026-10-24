@@ -275,7 +275,9 @@ function Exchange({
         <span className="font-mono font-semibold text-slate-800 dark:text-slate-100">
           {x.nodeId}
         </span>
-        <span className="text-slate-400">{out ? `+${(out.ts - t0).toFixed(1)}s` : ""}</span>
+        <span className="text-slate-500 dark:text-slate-400">
+          {out ? `+${(out.ts - t0).toFixed(1)}s` : ""}
+        </span>
         <span className="font-mono font-semibold text-violet-700 dark:text-violet-300">
           {x.remote}.{x.skill}
         </span>

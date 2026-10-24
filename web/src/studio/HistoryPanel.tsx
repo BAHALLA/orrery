@@ -19,7 +19,7 @@ function value(row: CompareRow, v: number | null): string {
 
 function delta(row: CompareRow): { text: string; tone: string } {
   if (row.delta === null || row.delta === 0)
-    return { text: row.delta === 0 ? "=" : "", tone: "text-slate-400" };
+    return { text: row.delta === 0 ? "=" : "", tone: "text-slate-500 dark:text-slate-400" };
   const sign = row.delta > 0 ? "+" : "−";
   const abs = Math.abs(row.delta);
   return {
@@ -47,7 +47,10 @@ export function HistoryPanel({
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id].slice(-2)));
   const [a, b] = picked
     .map((id) => records.find((r) => r.runId === id))
-    .filter((r): r is RunRecord => !!r);
+    .filter((r): r is RunRecord => !!r)
+    // A is the earlier run, B the later, whichever was ticked first: B − A then
+    // reads as "what changed since".
+    .sort((x, y) => x.startedAt - y.startedAt);
   const compared = a && b ? compareRuns(a.view, b.view) : null;
 
   if (!records.length) {
@@ -135,13 +138,19 @@ export function HistoryPanel({
                 <th scope="col" className="py-1 text-left font-medium">
                   &nbsp;
                 </th>
-                <th scope="col" className="py-1 text-right font-medium">
-                  A · {a.spec.name}
+                <th scope="col" className="py-1 pl-3 text-right align-bottom font-medium">
+                  A
+                  <span className="block font-mono tracking-normal normal-case">
+                    {a.runId.slice(0, 8)}
+                  </span>
                 </th>
-                <th scope="col" className="py-1 text-right font-medium">
-                  B · {b.spec.name}
+                <th scope="col" className="py-1 pl-3 text-right align-bottom font-medium">
+                  B
+                  <span className="block font-mono tracking-normal normal-case">
+                    {b.runId.slice(0, 8)}
+                  </span>
                 </th>
-                <th scope="col" className="py-1 text-right font-medium">
+                <th scope="col" className="py-1 pl-3 text-right align-bottom font-medium">
                   B − A
                 </th>
               </tr>
@@ -164,13 +173,13 @@ export function HistoryPanel({
                     >
                       {row.label}
                     </th>
-                    <td className="py-1 text-right text-slate-800 dark:text-slate-200">
+                    <td className="py-1 pl-3 text-right text-slate-800 dark:text-slate-200">
                       {value(row, row.a)}
                     </td>
-                    <td className="py-1 text-right text-slate-800 dark:text-slate-200">
+                    <td className="py-1 pl-3 text-right text-slate-800 dark:text-slate-200">
                       {value(row, row.b)}
                     </td>
-                    <td className={`py-1 text-right ${d.tone}`}>{d.text}</td>
+                    <td className={`py-1 pl-3 text-right ${d.tone}`}>{d.text}</td>
                   </tr>
                 );
               })}

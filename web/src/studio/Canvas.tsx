@@ -220,7 +220,7 @@ export function Canvas({
         deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         ariaLabelConfig={ariaLabels}
         fitView
-        fitViewOptions={{ padding: 0.25, maxZoom: 1.1 }}
+        fitViewOptions={{ padding: 0.08, maxZoom: 1.1 }}
         minZoom={0.3}
         maxZoom={1.75}
         defaultEdgeOptions={{ type: "smoothstep" }}

@@ -5,7 +5,7 @@ and [MCP servers](mcp.md), wired into a pattern, run apart from the live
 coordinator and traced step by step. This page covers P0a of
 [AEP-031](../enhancements/aep-031-orrery-studio.md): the HTTP API, the
 endpoint registry, a sequential pipeline of `llm_agent` nodes, and the trace
-events. There is no canvas yet; that is P1.
+events, plus the P1 canvas in the web console ([The console](#the-console)).
 
 A Studio run is **separate from** the live system, not **isolated from** it:
 
@@ -372,6 +372,91 @@ CI runs the same pipeline end to end (`core/tests/test_studio_api.py`) with a
 stub model, the writer on a loopback socket over plain http, and a local MCP
 server.
 
+## The console
+
+Admins see a **Studio** entry (marked *preview*) in the console's sidebar.
+The view is a lazy chunk: the chat console does not load React Flow or the
+Studio's code until someone opens it. On a deployment without the Studio
+(`/studio/schema` answers 404 or 403), the view says so and does nothing else.
+
+**Compose.** The canvas starts empty, with the release-notes demo and the
+pattern gallery one click away.
+
+- **Palette.** Drag a node kind onto the canvas, or focus it and press Enter
+  to append it after the last node. Kinds the server cannot run yet are shown
+  but disabled, labelled *coming in P0b* or *coming in P0c*. *Remote agent* is
+  a shorthand: it adds an `llm_agent` with one `a2a:` tool, which is all the
+  spec has for it.
+- **Edges.** Drag from a node's right handle to another node's left handle.
+  Delete or Backspace removes the selected nodes or edges.
+- **Inspector.** Edit a node's id (edges follow a rename), description,
+  instruction and tools. Tools are picked from the registry: MCP tools, remote
+  skills and catalogue tools. Anything not classified read-only is shown but
+  cannot be added, since runs are L2. The model field is disabled: per-node
+  models come in P0b.
+- **Patterns.** Pipeline and release-notes run today. Router, fan-out,
+  supervisor, critic loop, debate, map-reduce, handoff and plan-execute are
+  in the gallery, marked *needs P0b*: you can look at them but not load them.
+- **Tidy** lays the graph out again: columns follow the edges, so the layout
+  is the same for the same spec. Loading a pattern or importing a spec can be
+  undone from the banner it shows.
+- **Validation** runs as you edit. It checks the spec against the JSON Schema
+  from `GET /studio/schema` and against this release's rules (one pipeline
+  path, kinds, tool references against the registry). Problems are marked on
+  the node, the field and the edge, and listed under the composition
+  inspector. The server still decides: a 422 from `POST /studio/runs` is
+  mapped by `loc` onto the same nodes and fields, and stays pinned until that
+  part of the spec changes.
+- **Keyboard.** Tab moves through nodes and edges on the canvas; Enter selects
+  one and opens it in the inspector; Delete removes it; arrow keys move a
+  selected node. The panels are WAI-ARIA tabs (arrow keys, Home, End), and
+  dialogs trap focus and close on Escape.
+
+**Run.** The *Run* tab takes the input (Ctrl+Enter starts the run) and plays
+the event stream:
+
+- the active node is haloed, nodes that have finished show tokens and latency,
+  and the edge into the active node is drawn as live;
+- budgets fill as events come in, the timeline lists every event, and totals
+  (tokens per model, tool calls, remote calls, delegations, wall time) arrive
+  with `run.end`;
+- a `budget.hit` is shown as its own card, naming the budget and its limit,
+  and marks the node that was running;
+- if the stream drops, it reconnects (0.5 s, then 1, 2, 4 and 8 s) with
+  `Last-Event-ID`, and events already seen are ignored, so nothing is played
+  twice;
+- *Cancel run* calls `POST /studio/runs/{id}/cancel`. The canvas is locked
+  while a run is live.
+
+**A2A.** For each remote call in the run: the request (method, parts and
+sizes), the task's states (`submitted → working → completed`, or where it
+stopped), and the reply. With content capture on, the reply event arrives when
+the tool call returns, so other events can come in between; the tab pairs each
+reply with the oldest open request from the same node to the same skill. Below
+that, each registered remote: its card's skills (those the registry allows, and
+those it does not), the pinned digest and how it was pinned, and any card
+error. *Fetch cards* calls `GET /studio/registry?resolve=true`.
+
+**MCP.** Each registry server, its transport and network, and its tools with
+their classification, and the MCP calls made in the run. There is no try-it
+call yet.
+
+**History.** The runs of this browser tab, newest first (the last 20, in
+memory only). *Show* puts a past run back on the canvas with the spec it ran
+(undoable from the banner) and opens it in the *Run* tab. Tick two runs to
+compare them: A is the earlier, and the table gives totals and per-node tokens
+and latency, with B − A.
+
+**Export and import.** *Export* copies or downloads the spec as JSON
+(`<name>.studio.json`). *Import* takes pasted JSON or a file. It rejects what
+is not a spec and loads the rest, with problems marked as usual. There is no
+ADK Python export yet.
+
+On a narrow screen the canvas is read-only (tap a node to inspect it); the
+inspector and the run panel work the same. Everything runs under the
+console's CSP (`script-src 'self'; style-src 'self'`): React Flow sets
+positions and sizes through the CSSOM, which that policy allows.
+
 ## Not yet
 
 - Other patterns, per-node models, stored compositions and replay (P0b).
@@ -379,4 +464,6 @@ server.
   registry editing (P0c).
 - `tasks/cancel` to a remote when a run is cancelled.
 - Auth for registry MCP entries (only `ORRERY_STUDIO_SECRET_*` will be allowed).
-- The canvas and inspectors in the web console (P1).
+- In the console: a validate-only call (validation before a run is the
+  client's own), an MCP try-it call and tool schemas, ADK Python export,
+  history that outlives the tab, and editing on a phone.

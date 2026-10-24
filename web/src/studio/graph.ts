@@ -38,7 +38,7 @@ export interface StudioGraph {
 }
 
 /** Grid of the auto-layout: column (rank) width and row height, in flow units. */
-export const COLUMN = 300;
+export const COLUMN = 280;
 export const ROW = 170;
 
 const ID_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;
