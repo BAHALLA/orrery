@@ -405,6 +405,8 @@ Where the code differs from, or pins down, the design above:
 - **Captured content** honours `ORRERY_REDACT_IPS`. A remote reply's content
   is taken after the safety screen: its inbound `a2a.message` is held until the
   tool call returns, then sent with the screened reply, before the node exits.
+  Held events are keyed by the function-call id, so parallel calls from one
+  node keep their own replies.
 - **A tool call past a budget** is refused before it runs with the existing
   `CALL_BUDGET_EXHAUSTED` status, which the circuit breaker already treats as
   neutral, and the run then ends.

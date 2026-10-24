@@ -197,3 +197,53 @@ def test_a_run_cancelled_before_its_first_step_ends_cancelled():
     assert run.status == "cancelled" and run.finished
     assert run.events[-1]["type"] == "run.end" and run.events[-1]["outcome"] == "cancelled"
     assert service.running("alice") == 0
+
+
+def test_parallel_remote_calls_of_one_node_keep_their_own_replies():
+    """Two calls from one node, finishing in the other order, with capture on."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from orrery_core.a2a.remote import RemoteExchange
+    from orrery_core.studio.compiler import CompiledComposition, NodeInfo
+    from orrery_core.studio.config import StudioConfig
+    from orrery_core.studio.ledger import CompositionLedger
+    from orrery_core.studio.registry import StudioRegistry
+    from orrery_core.studio.runner import StudioRun, StudioService
+    from orrery_core.studio.spec import parse_spec
+
+    async def scenario() -> list[dict[str, Any]]:
+        spec = parse_spec(_one_node_spec())
+        run = StudioRun(
+            run_id="r", owner="me", spec=spec, spec_digest="d", input="x", capture_content=True
+        )
+        compiled = CompiledComposition(
+            workflow=cast(Any, None),
+            nodes={"n_only": NodeInfo(node_id="only", kind="llm_agent", model="stub")},
+            mcp_tools={},
+            order=["only"],
+        )
+        ledger = CompositionLedger(spec.budgets.resolved(StudioConfig().ceilings))
+        plugin = StudioRunPlugin(run, ledger, compiled)
+        service = StudioService(
+            config=StudioConfig(), registry=StudioRegistry(), cards=cast(Any, None)
+        )
+        for call_id in ("call-a", "call-b"):
+            service._on_exchange(
+                run,
+                "only",
+                RemoteExchange(remote="w", skill="s", direction="inbound", call_id=call_id),
+                plugin,
+            )
+        tool = SimpleNamespace(name="a2a_w_s", delegates_remotely=True)
+        for call_id, reply in (("call-b", "reply B"), ("call-a", "reply A")):
+            await plugin.after_tool_callback(
+                tool=tool,
+                tool_args={},
+                tool_context=SimpleNamespace(agent_name="n_only", function_call_id=call_id),
+                result={"status": "success", "reply": reply},
+            )
+        return run.events
+
+    events = asyncio.run(scenario())
+    assert [e["content"] for e in events] == ["reply B", "reply A"]

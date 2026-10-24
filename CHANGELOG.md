@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ORRERY_DAILY_TOKEN_BUDGET_PER_USER`. It takes an optional `token_ledger`.
 - `is_machine_session()` also covers Studio sessions (`s-` prefix): they are
   never written to long-term memory.
+- MCP over HTTP refuses compressed responses (`Accept-Encoding: identity`)
+  and caps each response body, or each SSE event, at
+  `ORRERY_MCP_MAX_RESPONSE_BYTES` (default 8 MiB) while it streams.
 
 ## [0.9.1] - 2026-10-24
 

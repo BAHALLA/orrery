@@ -346,7 +346,9 @@ agent built in another framework:
   across restarts, and makes new ones when one is missing, expires within 7
   days or no longer matches the CA. The CA goes to its own volume: Orrery
   mounts only that one (`ORRERY_A2A_CA_FILE=/ca/ca.pem`) and never sees the
-  writer's key. The registry never names files;
+  writer's key. After a renewal (or a changed host name, which also renews),
+  restart both `demo-writer` and `orrery-studio`: each reads its files once,
+  at startup. The registry never names files;
 - `orrery-studio`: Orrery with the Studio on, the demo registry
   (`deploy/studio-demo/registry.yaml`: Tirraflow's public MCP server and the
   writer), and the writer's host in `ORRERY_A2A_PRIVATE_ALLOW`.

@@ -238,6 +238,7 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | `ORRERY_CATALOG_POLL_SECONDS` | `15` | How often each replica checks for catalog edits made through another one. |
 | `ORRERY_SHUTDOWN_GRACE_SECONDS` | `30` | On shutdown, how long turns whose clients left may finish, after uvicorn's `--timeout-graceful-shutdown` (15 in the image) has waited for connected ones. Keep the sum under the pod's termination grace period minus its preStop sleep. |
 | `ORRERY_MCP_CONFIG` | unset | YAML file of [MCP servers](../integrations/mcp.md) to expose as gated specialists. Needs the `[mcp]` extra. |
+| `ORRERY_MCP_MAX_RESPONSE_BYTES` | `8388608` | Most bytes one MCP HTTP response (or one SSE event) may hold; compressed responses are refused. Also applies to Studio registry MCP entries. |
 
 ## Process
 

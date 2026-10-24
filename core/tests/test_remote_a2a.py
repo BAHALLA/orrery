@@ -521,6 +521,8 @@ def test_demo_certs_are_kept_while_valid_and_renewed_otherwise(tmp_path):
     assert sorted(p.name for p in writer.iterdir()) == ["writer-key.pem", "writer.pem"]
     assert [p.name for p in ca.iterdir()] == ["ca.pem"]  # the CA volume holds no key
     assert certs.renewal_reason(writer, ca) is None
+    assert certs.renewal_reason(writer, ca, host="localhost") is None
+    assert "not other.internal" in certs.renewal_reason(writer, ca, host="other.internal")
     soon = dt.datetime.now(dt.UTC) + dt.timedelta(days=25)
     assert "expires" in certs.renewal_reason(writer, ca, now=soon)
     certs.make(tmp_path / "other", "localhost")  # a different CA

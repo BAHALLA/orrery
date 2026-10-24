@@ -564,6 +564,9 @@ class RemoteExchange:
     #: The message text. Callers redact and trim it before showing it anywhere.
     text: str | None = None
     card_digest: str | None = None
+    #: The model's function-call id for the tool call that made this exchange,
+    #: so a trace can pair a reply with its request when calls run in parallel.
+    call_id: str | None = None
 
 
 ExchangeObserver = Callable[[RemoteExchange], None]
@@ -693,12 +696,18 @@ class GuardedRemoteA2aTool(BaseTool):
                 "invalid_request", f"`request` is limited to {MAX_REQUEST_CHARS} characters"
             )
         started = time.monotonic()
+        raw_id = getattr(tool_context, "function_call_id", None)
+        call_id = raw_id if isinstance(raw_id, str) and raw_id else None
         try:
             pinned = await self._cards.get(self.entry)
         except CardRefused as exc:
             self._observe(
                 RemoteExchange(
-                    remote=self.entry.id, skill=self.skill, direction="outbound", status="refused"
+                    remote=self.entry.id,
+                    skill=self.skill,
+                    direction="outbound",
+                    status="refused",
+                    call_id=call_id,
                 )
             )
             return self._error("card_refused", str(exc))
@@ -713,6 +722,7 @@ class GuardedRemoteA2aTool(BaseTool):
                 parts=[PartInfo("text", len(request))],
                 text=request,
                 card_digest=pinned.digest,
+                call_id=call_id,
             )
         )
         try:
@@ -742,6 +752,7 @@ class GuardedRemoteA2aTool(BaseTool):
                 status=result["status"],
                 text=result.get("reply") or None,
                 card_digest=pinned.digest,
+                call_id=call_id,
             )
         )
         audit_event(

@@ -80,6 +80,89 @@ class BlockedDestination(httpx.ConnectError):  # ty: ignore[unsupported-base]
     """A request to a host or address this server's config does not allow."""
 
 
+class McpResponseTooLarge(httpx.ReadError):  # ty: ignore[unsupported-base]
+    """An MCP response (or one SSE event) past the byte cap, refused while streaming."""
+
+
+class McpRefusedEncoding(httpx.DecodingError):  # ty: ignore[unsupported-base]
+    """A compressed MCP response: refused, since the byte cap counts wire bytes."""
+
+
+#: Env var: the most bytes one MCP response body, or one event of an SSE
+#: stream, may hold (default :data:`DEFAULT_MCP_MAX_RESPONSE_BYTES`).
+MCP_MAX_RESPONSE_BYTES_ENV = "ORRERY_MCP_MAX_RESPONSE_BYTES"
+DEFAULT_MCP_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+def mcp_max_response_bytes() -> int:
+    raw = os.getenv(MCP_MAX_RESPONSE_BYTES_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MCP_MAX_RESPONSE_BYTES
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValueError(f"{MCP_MAX_RESPONSE_BYTES_ENV} must be a positive number of bytes")
+    return int(raw)
+
+
+#: What ends one server-sent event (a blank line, in any of SSE's line endings).
+_SSE_BOUNDARY = re.compile(rb"\r\n\r\n|\n\n|\r\r")
+
+
+class _ByteCap:
+    """Counts a body's bytes against *cap*: the whole body, or each SSE event.
+
+    A long-lived SSE stream (MCP's SSE transport, a streamable-HTTP GET) has
+    no natural end, so it is held to *cap* per event, not in total.
+    """
+
+    def __init__(self, cap: int, *, per_event: bool) -> None:
+        self.cap = cap
+        self.per_event = per_event
+        self.pending = 0
+        self._tail = b""
+
+    def add(self, chunk: bytes) -> bool:
+        """Count *chunk*; ``False`` once the body (or the current event) is past the cap."""
+        if not self.per_event:
+            self.pending += len(chunk)
+            return self.pending <= self.cap
+        # Scan from the carried tail, so a boundary split across chunks is found;
+        # the tail's bytes are already in ``pending``.
+        combined = self._tail + chunk
+        offset = len(self._tail)
+        start = 0
+        within = True
+        while (match := _SSE_BOUNDARY.search(combined, start)) is not None:
+            event_bytes = self.pending + max(0, match.end() - max(start, offset))
+            within = within and event_bytes <= self.cap
+            self.pending = 0
+            start = match.end()
+            offset = max(offset, start)
+        self.pending += len(combined) - max(start, offset)
+        self._tail = combined[-3:]
+        return within and self.pending <= self.cap
+
+
+class _McpCappedStream(httpx.AsyncByteStream):  # ty: ignore[unsupported-base]
+    def __init__(self, inner: Any, counter: _ByteCap, request: Any) -> None:
+        self._inner = inner
+        self._counter = counter
+        self._request = request
+
+    async def __aiter__(self) -> Any:
+        async for chunk in self._inner:
+            if not self._counter.add(chunk):
+                unit = "an event of " if self._counter.per_event else ""
+                raise McpResponseTooLarge(
+                    f"{unit}the response from MCP server {self._request.url.host} exceeds "
+                    f"{self._counter.cap} bytes ({MCP_MAX_RESPONSE_BYTES_ENV})",
+                    request=self._request,
+                )
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 # IPv6 ranges that carry an IPv4 address in their low 32 bits. Python's
 # ``ipaddress`` calls the NAT64 and IPv4-compatible ranges global, so without
 # unwrapping, ``64:ff9b::a9fe:a9fe`` (169.254.169.254 through a DNS64/NAT64
@@ -305,7 +388,14 @@ async def check_destination(
 
 
 class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base]
-    """An HTTP transport pinned to one origin, refusing non-public addresses."""
+    """An HTTP transport pinned to one origin, refusing non-public addresses.
+
+    Bodies are capped while they stream, before the SDK parses them: a plain
+    response at *max_response_bytes* in total, an SSE stream at that much per
+    event. Compression is refused as for A2A (``Accept-Encoding: identity``,
+    and an encoded response fails), since a cap on wire bytes would not bound
+    what httpx decodes.
+    """
 
     def __init__(
         self,
@@ -313,12 +403,16 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         url: str,
         allow_private_network: bool = False,
         private_allow: PrivateAllowlist | None = None,
+        max_response_bytes: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._origin = origin_of(url)
         self._allow_private = allow_private_network
         self._private_allow = private_allow
+        self._max_bytes = (
+            max_response_bytes if max_response_bytes is not None else mcp_max_response_bytes()
+        )
 
     async def handle_async_request(self, request: Any) -> Any:
         try:
@@ -334,7 +428,30 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
             raise httpx.ConnectError(f"MCP server {host} did not resolve: {exc}") from exc
         if why is not None:
             raise BlockedDestination(why, request=request)
-        return await super().handle_async_request(request)
+        request.headers["Accept-Encoding"] = "identity"
+        response = await super().handle_async_request(request)
+        host = request.url.host
+        encoding = response.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "identity"):
+            await response.aclose()
+            raise McpRefusedEncoding(
+                f"the response from MCP server {host} is {encoding}-encoded; compressed "
+                "responses are refused (the byte cap counts what arrives)",
+                request=request,
+            )
+        sse = response.headers.get("content-type", "").lower().startswith("text/event-stream")
+        declared = response.headers.get("content-length", "")
+        if not sse and declared.isdigit() and int(declared) > self._max_bytes:
+            await response.aclose()
+            raise McpResponseTooLarge(
+                f"the response from MCP server {host} declares {declared} bytes, over the "
+                f"{self._max_bytes}-byte cap ({MCP_MAX_RESPONSE_BYTES_ENV})",
+                request=request,
+            )
+        response.stream = _McpCappedStream(
+            response.stream, _ByteCap(self._max_bytes, per_event=sse), request
+        )
+        return response
 
 
 def ssl_context(
@@ -358,13 +475,18 @@ def client_factory(
     allow_private_network: bool = False,
     verify: ssl.SSLContext | bool = True,
     private_allow: PrivateAllowlist | None = None,
+    max_response_bytes: int | None = None,
 ) -> Callable[..., Any]:
     """An ``httpx_client_factory`` for ADK's MCP connection params.
+
+    *max_response_bytes* defaults to ``ORRERY_MCP_MAX_RESPONSE_BYTES`` (8 MiB),
+    read here, so a bad value fails when the server is configured.
 
     Same signature as the SDK's default factory. Redirects stay off: the SDK
     follows the ones within the origin itself, and the transport refuses the
     rest anyway.
     """
+    cap = max_response_bytes if max_response_bytes is not None else mcp_max_response_bytes()
 
     def factory(
         headers: dict[str, str] | None = None,
@@ -376,6 +498,7 @@ def client_factory(
                 url=url,
                 allow_private_network=allow_private_network,
                 private_allow=private_allow,
+                max_response_bytes=cap,
                 verify=verify,
             ),
             "follow_redirects": False,

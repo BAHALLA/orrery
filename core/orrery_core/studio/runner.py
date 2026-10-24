@@ -211,20 +211,30 @@ class StudioRunPlugin(BasePlugin):
         #: error handler answers it with an apology, which would otherwise pass
         #: for the node's output and let the run "succeed".
         self.failure: tuple[str, str] | None = None
-        #: node id -> inbound ``a2a.message`` events held until ``after_tool``,
-        #: so their content is the reply *after* the safety screen and PII
-        #: redaction (capture on only).
-        self.pending_inbound: dict[str, list[A2aMessage]] = {}
+        #: ``(node id, function-call id)`` -> the inbound ``a2a.message`` held
+        #: until that call's ``after_tool``, so its content is the reply *after*
+        #: the safety screen and PII redaction (capture on only). Keyed by the
+        #: call, not the node: a node's parallel calls finish in any order.
+        self.pending_inbound: dict[tuple[str, str | None], A2aMessage] = {}
 
-    def hold_inbound(self, event: A2aMessage) -> None:
-        self.pending_inbound.setdefault(event.node_id, []).append(event)
+    def hold_inbound(self, event: A2aMessage, call_id: str | None) -> None:
+        key = (event.node_id, call_id)
+        if (earlier := self.pending_inbound.pop(key, None)) is not None:
+            self._run.emit(earlier)  # no call id to pair it by: sent without content
+        self.pending_inbound[key] = event
 
-    def _flush_inbound(self, node_id: str, reply: str | None = None) -> None:
-        """Emit the node's held inbound events: the first with *reply* as content."""
-        for event in self.pending_inbound.pop(node_id, []):
+    def _flush_inbound(
+        self, node_id: str, call_id: str | None = None, reply: str | None = None
+    ) -> None:
+        """Emit the held event of one call with *reply* as its content."""
+        if (event := self.pending_inbound.pop((node_id, call_id), None)) is not None:
             event.content = self._run.capture(reply)
-            reply = None
             self._run.emit(event)
+
+    def _flush_node(self, node_id: str) -> None:
+        """Emit, without content, what a node's calls left held (a call that never returned)."""
+        for key in [k for k in self.pending_inbound if k[0] == node_id]:
+            self._run.emit(self.pending_inbound.pop(key))
 
     # ── nodes ──
     async def before_agent_callback(self, *, agent: Any, callback_context: Any) -> None:
@@ -251,7 +261,7 @@ class StudioRunPlugin(BasePlugin):
         started = self._entered.pop(agent_name, None)
         if info is None or started is None:
             return
-        self._flush_inbound(info.node_id)  # an exchange whose tool never finished
+        self._flush_node(info.node_id)  # an exchange whose tool never finished
         self._run.emit(
             NodeExit(
                 node_id=info.node_id,
@@ -334,7 +344,11 @@ class StudioRunPlugin(BasePlugin):
             node = self._compiled.nodes.get(str(getattr(tool_context, "agent_name", "") or ""))
             if node is not None:
                 reply = result.get("reply") if isinstance(result, dict) else None
-                self._flush_inbound(node.node_id, reply if isinstance(reply, str) else None)
+                self._flush_inbound(
+                    node.node_id,
+                    _function_call_id(tool_context),
+                    reply if isinstance(reply, str) else None,
+                )
             return None
         info = self._mcp_info(tool, tool_context)
         if info is None:
@@ -388,6 +402,11 @@ class StudioSpentGate(BasePlugin):
                 role="model", parts=[types.Part.from_text(text="The run's budget is spent.")]
             )
         )
+
+
+def _function_call_id(tool_context: Any) -> str | None:
+    raw = getattr(tool_context, "function_call_id", None)
+    return raw if isinstance(raw, str) and raw else None
 
 
 def _call_key(tool: Any, tool_context: Any) -> str:
@@ -584,7 +603,7 @@ class StudioService:
             content=None if inbound else run.capture(exchange.text),
         )
         if inbound and run.capture_content and plugin is not None:
-            plugin.hold_inbound(event)
+            plugin.hold_inbound(event, exchange.call_id)
         else:
             run.emit(event)
 

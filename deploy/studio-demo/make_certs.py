@@ -13,8 +13,10 @@ else can be issued from it.
 
 Existing files are kept while they are usable, so restarting the profile
 does not change the writer's certificate. They are regenerated when one is
-missing, when either certificate expires within ``RENEW_BEFORE``, or when the
-writer's certificate was not issued by the CA beside it.
+missing, when either certificate expires within ``RENEW_BEFORE``, when the
+writer's certificate does not name ``--host``, or when it was not issued by
+the CA beside it. After a renewal both ``demo-writer`` and ``orrery-studio``
+must restart: each reads its files once, at startup.
 
 A throwaway CA for a local demo. Do not reuse it for anything else.
 """
@@ -113,7 +115,9 @@ def make(out: Path, host: str, days: int = 30, *, ca_out: Path | None = None) ->
     key_path.chmod(0o600)
 
 
-def renewal_reason(out: Path, ca_out: Path, now: dt.datetime | None = None) -> str | None:
+def renewal_reason(
+    out: Path, ca_out: Path, now: dt.datetime | None = None, *, host: str | None = None
+) -> str | None:
     """Why the files in ``out``/``ca_out`` must be regenerated, or ``None`` to keep them."""
     now = now or dt.datetime.now(dt.UTC)
     paths = (ca_out / CA_FILE, out / CERT_FILE, out / KEY_FILE)
@@ -128,6 +132,15 @@ def renewal_reason(out: Path, ca_out: Path, now: dt.datetime | None = None) -> s
     for label, certificate in (("the CA", ca), ("the writer's certificate", cert)):
         if certificate.not_valid_after_utc - now < RENEW_BEFORE:
             return f"{label} expires {certificate.not_valid_after_utc:%Y-%m-%d}"
+    if host is not None:
+        try:
+            names = cert.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value.get_values_for_type(x509.DNSName)
+        except x509.ExtensionNotFound:
+            names = []
+        if host not in names:
+            return f"the writer's certificate names {names}, not {host}"
     try:
         cert.verify_directly_issued_by(ca)
     except ValueError, TypeError, InvalidSignature:
@@ -144,7 +157,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
     ca_out = args.ca_out or args.out
-    reason = renewal_reason(args.out, ca_out)
+    reason = renewal_reason(args.out, ca_out, host=args.host)
     if reason is None:
         print(f"certificates in {args.out} and {ca_out} are valid; keeping them")
         return
@@ -154,6 +167,7 @@ def main() -> None:
         for name in (CERT_FILE, KEY_FILE):
             os.chown(args.out / name, args.owner, args.owner)
     print(f"wrote {CERT_FILE}, {KEY_FILE} to {args.out} and {CA_FILE} to {ca_out} for {args.host}")
+    print("restart demo-writer and orrery-studio to load them")
 
 
 if __name__ == "__main__":
