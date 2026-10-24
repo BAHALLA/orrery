@@ -251,6 +251,8 @@ export interface CatalogResponse {
   }[];
   /** Agents from ORRERY_AGENTS_CONFIG: fixed here, names reserved. */
   file_agents: string[];
+  /** Names the application keeps for itself. Older servers omit it. */
+  reserved_names?: string[];
 }
 
 export interface CatalogUpdate {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ageLabel,
+  copyName,
   describeChanges,
   draftChanges,
   guardCounts,
@@ -21,8 +22,21 @@ describe("nameProblem", () => {
     expect(nameProblem("Scaler", new Set())).toMatch(/lowercase/i);
     expect(nameProblem("a", new Set())).toMatch(/lowercase/i);
     expect(nameProblem("9lives", new Set())).toMatch(/lowercase/i);
-    expect(nameProblem("k8s_health_agent", new Set(["k8s_health_agent"]))).toMatch(/exists/);
+    expect(nameProblem("k8s_health_agent", new Set(["k8s_health_agent"]))).toMatch(/taken/);
     expect(nameProblem("capacity_planner", new Set(["k8s_health_agent"]))).toBeNull();
+  });
+});
+
+describe("copyName", () => {
+  it("numbers copies and keeps the suffix within the name limit", () => {
+    expect(copyName("scaler", new Set())).toBe("scaler_copy");
+    expect(copyName("scaler", new Set(["scaler_copy"]))).toBe("scaler_copy_2");
+    const long = `a${"b".repeat(40)}`; // 41 characters, the most a name may have
+    expect(copyName(long, new Set())).toMatch(/_copy$/);
+    expect(copyName(long, new Set())).toHaveLength(41);
+    const taken = new Set([copyName(long, new Set())]);
+    for (let n = 2; n < 120; n++) taken.add(copyName(long, taken));
+    for (const name of taken) expect(name).toMatch(/^[a-z][a-z0-9_]{1,40}$/);
   });
 });
 

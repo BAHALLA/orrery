@@ -71,6 +71,7 @@ class ChatAgentAdmin:
             ],
             tools=tools,
             file_agents=[a.name for a in self._file_agents],
+            reserved_names=list(chat.RESERVED_AGENT_NAMES),
         )
 
     def build(self, catalog: AgentCatalog) -> Any:

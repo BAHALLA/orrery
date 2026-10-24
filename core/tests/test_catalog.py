@@ -84,6 +84,7 @@ class _Admin:
         return AdminOptions(
             specialists=[SpecialistOption("k8s", "k8s_a", "Kubernetes", "builtin")],
             tools=[ToolOption("t", "k8s", "read")],
+            reserved_names=["coordinator"],
         )
 
     def build(self, catalog: AgentCatalog) -> Any:
@@ -324,6 +325,8 @@ def test_admin_edits_and_the_live_inventory_follows():
         state = client.get("/admin/catalog", headers=admin).json()
         assert state["editing_enabled"] is True and state["catalog"]["version"] == 0
         assert [s["key"] for s in state["specialists"]] == ["k8s"]
+        # The console refuses these as typed, rather than on save.
+        assert state["reserved_names"] == ["coordinator"]
 
         put = client.put(
             "/admin/catalog", headers=admin, json={"version": 0, "disabled_specialists": ["docker"]}

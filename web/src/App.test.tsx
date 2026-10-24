@@ -951,7 +951,9 @@ describe("resilience and safety posture", () => {
         const url = String(input);
         if (url.endsWith("/admin/catalog") && init?.method === "PUT") {
           puts.push(JSON.parse(String(init.body)));
-          if (puts.length > 1) {
+          if (puts.length === 2) {
+            // Someone else saved meanwhile: the store is now at version 2.
+            version = 2;
             return new Response(
               JSON.stringify({
                 detail:
@@ -960,7 +962,7 @@ describe("resilience and safety posture", () => {
               { status: 409 },
             );
           }
-          version = 1;
+          version += 1;
           return jsonResponse(catalogBody());
         }
         if (url.endsWith("/admin/catalog")) return jsonResponse(catalogBody());
@@ -1018,6 +1020,17 @@ describe("resilience and safety posture", () => {
     await user.click(screen.getByRole("switch", { name: "Enable k8s" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/changed since you loaded it/i);
+
+    // The reload brings version 2, and the admin's draft survives it: saving
+    // again applies it on top of what the other admin saved.
+    expect(await screen.findByText("turns off when saved")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Enable k8s" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText(/saved as version 3/i)).toBeInTheDocument();
+    expect(puts[2]).toMatchObject({ version: 2, disabled_specialists: ["k8s"] });
   });
 
   it("shows what is running: versions, model, package and the approval gate", async () => {
@@ -1091,7 +1104,7 @@ describe("resilience and safety posture", () => {
     const deployment = await screen.findByRole("region", { name: "Deployment" });
     expect(within(deployment).getByText("Orrery").nextSibling).toHaveTextContent("0.8.0");
     expect(within(deployment).getByText("ADK").nextSibling).toHaveTextContent("2.12.0");
-    expect(within(deployment).getByText("Up since").nextSibling).toHaveTextContent("2h");
+    expect(within(deployment).getByText("Up for").nextSibling).toHaveTextContent("2h");
     expect(within(deployment).getByText("Selected by env").nextSibling).toHaveTextContent(
       "not docker",
     );
@@ -1146,6 +1159,7 @@ describe("resilience and safety posture", () => {
         { ref: "delete_topic", specialist: "kafka", guard: "destructive", reason: "deletes" },
       ],
       file_agents: [],
+      reserved_names: ["load_memory"],
     };
     vi.stubGlobal(
       "fetch",
@@ -1200,14 +1214,28 @@ describe("resilience and safety posture", () => {
     expect(within(form).getByText(/1 destructive/)).toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Remove delete_topic" })).toBeInTheDocument();
 
+    // Enter in the filter filters; it doesn't keep a half-written agent.
+    await user.type(within(form).getByLabelText("Filter tools"), "{Enter}");
+    expect(screen.getByRole("form", { name: "Agent editor" })).toBeInTheDocument();
+
+    // A name the coordinator keeps for itself is refused as typed.
+    await user.type(within(form).getByLabelText("Name"), "load_memory");
+    await user.tab();
+    expect(within(form).getByText(/load_memory is already taken/)).toBeInTheDocument();
+
+    // So is a description under the server's 10-character floor.
+    await user.type(within(form).getByLabelText(/^Description/), "Kafka");
+    expect(within(form).getByText(/description needs at least 10 characters/)).toBeInTheDocument();
+
     // A name already in use is refused before anything is queued.
+    await user.clear(within(form).getByLabelText("Name"));
     await user.type(within(form).getByLabelText("Name"), "scaler");
-    await user.type(within(form).getByLabelText(/^Description/), "Kafka helper");
+    await user.type(within(form).getByLabelText(/^Description/), " helper");
     await user.click(within(form).getByRole("button", { name: "Start from a template" }));
     expect((within(form).getByLabelText("Instruction") as HTMLTextAreaElement).value).toContain(
       "## How to work",
     );
-    expect(within(form).getByText(/already exists/)).toBeInTheDocument();
+    expect(within(form).getByText(/scaler is already taken/)).toBeInTheDocument();
     expect(within(form).getByRole("button", { name: "Keep agent" })).toBeDisabled();
 
     // Spaces become underscores as you type, and the rename makes it valid.
@@ -1226,7 +1254,8 @@ describe("resilience and safety posture", () => {
     // The save bar says what will change; the filter narrows to what's off.
     await user.click(screen.getByRole("switch", { name: "Enable k8s" }));
     expect(screen.getByText(/turn off k8s · add topic_janitor/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "off" }));
+    await user.click(screen.getByRole("button", { name: "off" }));
+    expect(screen.getByRole("button", { name: "off" })).toHaveAttribute("aria-pressed", "true");
     const list = screen.getByRole("list", { name: "Agents" });
     expect(within(list).getByText("k8s_health_agent")).toBeInTheDocument();
     expect(within(list).queryByText("kafka_health_agent")).not.toBeInTheDocument();

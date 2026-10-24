@@ -9,8 +9,19 @@ export function nameProblem(name: string, taken: ReadonlySet<string>): string | 
   if (!AGENT_NAME.test(name)) {
     return "Lowercase letters, digits and underscores, starting with a letter (2–41 characters).";
   }
-  if (taken.has(name)) return `An agent called ${name} already exists.`;
+  if (taken.has(name)) return `${name} is already taken.`;
   return null;
+}
+
+/** `name_copy`, `name_copy_2`, ...: the first one no agent has, within the name limit. */
+export function copyName(name: string, taken: ReadonlySet<string>): string {
+  // Trim the original, not the result, so the suffix survives the 41-character limit.
+  const fit = (suffix: string) => `${name.slice(0, 41 - suffix.length)}${suffix}`;
+  if (!taken.has(fit("_copy"))) return fit("_copy");
+  for (let n = 2; ; n++) {
+    const next = fit(`_copy_${n}`);
+    if (!taken.has(next)) return next;
+  }
 }
 
 export interface DraftChanges {

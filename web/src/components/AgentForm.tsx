@@ -23,14 +23,20 @@ const input =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none dark:border-slate-700 dark:bg-slate-950";
 
 const MAX_DESCRIPTION = 200;
+/** The server's floor for a description and an instruction (`DeclarativeAgentConfig`). */
+const MIN_TEXT = 10;
+
+const tooShort = (text: string, what: string) =>
+  text.trim().length < MIN_TEXT ? `${what} needs at least ${MIN_TEXT} characters.` : null;
 
 /**
  * Compose a declarative agent from existing tools, in a dialog over the
  * dashboard: the form needs more room than a card, and the agent list behind
  * it is what the operator is editing, so it stays in view.
  *
- * It checks what the server would refuse (the name rule, a name in use, no
- * tools) as the admin types, so "Keep agent" never queues a draft that the
+ * It checks what the server would refuse (the name rule, a name in use or
+ * reserved, a description or instruction under 10 characters, no tools) as
+ * the admin types, so "Keep agent" never queues a draft that the
  * save then rejects with a 422.
  */
 export function AgentForm({ active, initial, tools, taken, specialist, onDone, onCancel }: Props) {
@@ -60,11 +66,36 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
 
   const problem = nameProblem(draft.name, taken);
   const counts = guardCounts(draft.tools, tools);
-  const ready = !problem && draft.description.trim() && draft.instruction.trim() && selected.size;
+  const descriptionProblem = tooShort(draft.description, "The description");
+  const instructionProblem = tooShort(draft.instruction, "The instruction");
+  const ready = !problem && !descriptionProblem && !instructionProblem && selected.size > 0;
 
   const submit = () => {
     setTouched(true);
     if (ready) onDone({ ...draft, description: draft.description.trim() });
+  };
+
+  // A modal keeps focus: Tab cycles inside it, and closing returns focus to
+  // the button that opened it.
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    return () => opener?.focus?.();
+  }, []);
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab" || !dialog.current) return;
+    const focusable = dialog.current.querySelectorAll<HTMLElement>(
+      "button:not([disabled]), input:not([disabled]), textarea, [tabindex]:not([tabindex='-1'])",
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last?.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first?.focus();
+    }
   };
 
   useEffect(() => {
@@ -79,6 +110,8 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/40 p-4 backdrop-blur-sm sm:items-center">
       <div
+        ref={dialog}
+        onKeyDown={trapTab}
         role="dialog"
         aria-modal="true"
         aria-labelledby="agent-form-title"
@@ -130,7 +163,7 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
                 placeholder="capacity_planner"
                 aria-invalid={touched && problem !== null}
                 aria-describedby="agent-name-help"
-                autoFocus={!initial.name}
+                autoFocus
                 required
               />
               <p
@@ -154,10 +187,20 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
                 maxLength={MAX_DESCRIPTION}
                 onChange={(e) => set({ description: e.target.value })}
                 placeholder="Forecasts disk and CPU headroom for a namespace"
+                aria-invalid={touched && descriptionProblem !== null}
+                aria-describedby="agent-description-help"
                 required
               />
-              <p className="mt-1 text-right font-normal text-slate-500 tabular-nums">
-                {draft.description.length}/{MAX_DESCRIPTION}
+              <p
+                id="agent-description-help"
+                className={`mt-1 flex justify-between gap-2 font-normal ${
+                  touched && descriptionProblem ? "text-crit-fg" : "text-slate-500"
+                }`}
+              >
+                <span>{touched && descriptionProblem ? descriptionProblem : ""}</span>
+                <span className="tabular-nums">
+                  {draft.description.length}/{MAX_DESCRIPTION}
+                </span>
               </p>
             </div>
           </div>
@@ -182,8 +225,17 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
               value={draft.instruction}
               onChange={(e) => set({ instruction: e.target.value })}
               placeholder="What this agent is for, and how it should work."
+              aria-invalid={touched && instructionProblem !== null}
+              aria-describedby={
+                touched && instructionProblem ? "agent-instruction-help" : undefined
+              }
               required
             />
+            {touched && instructionProblem ? (
+              <p id="agent-instruction-help" className="mt-1 font-normal text-crit-fg">
+                {instructionProblem}
+              </p>
+            ) : null}
           </div>
 
           <fieldset className="text-xs font-medium text-slate-600 dark:text-slate-300">
@@ -222,6 +274,11 @@ export function AgentForm({ active, initial, tools, taken, specialist, onDone, o
                 className={`${input} pl-8`}
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
+                // Enter here filters; it must not keep the agent. Ctrl/⌘+Enter
+                // still reaches the form's own handler.
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) e.preventDefault();
+                }}
                 placeholder="Filter by tool or specialist…"
                 aria-label="Filter tools"
               />

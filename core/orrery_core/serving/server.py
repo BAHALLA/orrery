@@ -330,6 +330,8 @@ class CatalogResponse(BaseModel):
     specialists: list[CatalogSpecialist]
     tools: list[CatalogTool]
     file_agents: list[str]
+    #: Names a composed agent may not take, so the console refuses them as typed.
+    reserved_names: list[str] = []
 
 
 class CatalogUpdate(BaseModel):
@@ -1320,6 +1322,7 @@ def create_app(
             specialists=[CatalogSpecialist(**vars(o)) for o in options.specialists],
             tools=[CatalogTool(**vars(o)) for o in options.tools],
             file_agents=options.file_agents,
+            reserved_names=options.reserved_names,
         )
 
     @api.get("/admin/catalog", response_model=CatalogResponse)

@@ -9,7 +9,7 @@ import type {
 } from "../api/types";
 import type { SystemController } from "../system/useSystem";
 import { AgentForm } from "./AgentForm";
-import { ageLabel, describeChanges, draftChanges, guardCounts } from "./agentDraft";
+import { ageLabel, copyName, describeChanges, draftChanges, guardCounts } from "./agentDraft";
 import { GUARD_ORDER, guardChip, guardDot, guardLabel, guardTitle } from "./guards";
 import { AlertIcon, PlusIcon, SearchIcon, ShieldIcon } from "./icons";
 
@@ -63,6 +63,9 @@ export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
   const catalog = system.catalog?.catalog ? system.catalog : null;
   const [savedVersion, setSavedVersion] = useState<number | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The draft of a save that failed. A conflict reloads the catalog, and the new
+  // version remounts the dashboard: without this the admin's edits would vanish.
+  const [carried, setCarried] = useState<CatalogUpdate | null>(null);
 
   useEffect(() => {
     if (agents === null) void loadAgents();
@@ -98,11 +101,16 @@ export function AgentsDashboard({ system, active, onDirtyChange }: Props) {
       active={active}
       onDirtyChange={onDirtyChange}
       savedVersion={savedVersion}
+      carried={carried}
       saveError={saveError}
-      onDiscard={() => setSaveError(null)}
+      onDiscard={() => {
+        setSaveError(null);
+        setCarried(null);
+      }}
       onSave={async (update) => {
         const error = await saveCatalog(update);
         setSaveError(error);
+        setCarried(error ? update : null);
         if (!error) setSavedVersion(update.version + 1);
       }}
     />
@@ -136,6 +144,7 @@ function Dashboard({
   active,
   onDirtyChange,
   savedVersion,
+  carried,
   saveError,
   onDiscard,
   onSave,
@@ -146,6 +155,7 @@ function Dashboard({
   active: boolean;
   onDirtyChange: (dirty: boolean) => void;
   savedVersion: number | null;
+  carried: CatalogUpdate | null;
   saveError: string | null;
   onDiscard: () => void;
   onSave: (update: CatalogUpdate) => Promise<void>;
@@ -153,8 +163,10 @@ function Dashboard({
   const editable = catalog?.editing_enabled === true;
   const savedDisabled = catalog?.catalog.disabled_specialists ?? [];
   const savedAgents = catalog?.catalog.agents ?? [];
-  const [disabled, setDisabled] = useState<string[]>(savedDisabled);
-  const [composed, setComposed] = useState<DeclarativeAgent[]>(savedAgents);
+  const [disabled, setDisabled] = useState<string[]>(
+    carried?.disabled_specialists ?? savedDisabled,
+  );
+  const [composed, setComposed] = useState<DeclarativeAgent[]>(carried?.agents ?? savedAgents);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
@@ -221,8 +233,11 @@ function Dashboard({
     new Set(
       [
         ...cards.map((c) => c.name),
-        ...agents.map((a) => a.name),
+        // While editing, the draft decides which composed agents exist: one
+        // removed in it frees its name, though the server still serves it.
+        ...agents.filter((a) => !(editable && a.source === "declarative")).map((a) => a.name),
         ...(catalog?.file_agents ?? []),
+        ...(catalog?.reserved_names ?? []),
         ...composed.map((a) => a.name),
       ].filter((n) => n !== except),
     );
@@ -339,7 +354,7 @@ function Dashboard({
               </ul>
               {editable ? (
                 <div
-                  role="radiogroup"
+                  role="group"
                   aria-label="Show agents"
                   className="inline-flex rounded-lg border border-slate-300 p-0.5 text-xs dark:border-slate-700"
                 >
@@ -347,8 +362,7 @@ function Dashboard({
                     <button
                       key={s}
                       type="button"
-                      role="radio"
-                      aria-checked={show === s}
+                      aria-pressed={show === s}
                       onClick={() => setShow(s)}
                       className={`rounded-md px-2.5 py-1 font-medium capitalize ${
                         show === s
@@ -535,16 +549,6 @@ function Dashboard({
   );
 }
 
-/** `name_copy`, `name_copy_2`, ...: the first one no agent has. */
-function copyName(name: string, taken: ReadonlySet<string>): string {
-  const base = `${name}_copy`.slice(0, 41);
-  if (!taken.has(base)) return base;
-  for (let n = 2; ; n++) {
-    const next = `${base.slice(0, 38)}_${n}`;
-    if (!taken.has(next)) return next;
-  }
-}
-
 function DeploymentPanel({
   deployment,
   catalog,
@@ -561,7 +565,7 @@ function DeploymentPanel({
     rows.push(["ADK", deployment.adk_version || "unknown"]);
     rows.push(["Python", deployment.python_version]);
     rows.push([
-      "Up since",
+      "Up for",
       ageLabel(deployment.started_at).replace(" ago", ""),
       new Date(deployment.started_at * 1000).toLocaleString(),
     ]);
@@ -716,16 +720,17 @@ function AgentCard({
           {meta.model ? <Meta label="model" value={meta.model} /> : null}
           {guarded && meta.gated !== undefined ? (
             <div className="inline-flex items-center gap-1">
+              <dt className="sr-only">gate</dt>
               {meta.gated ? (
-                <>
+                <dd className="inline-flex items-center gap-1">
                   <ShieldIcon size={12} className="text-ok-fg" />
-                  <span>approval gate on</span>
-                </>
+                  approval gate on
+                </dd>
               ) : (
-                <>
-                  <AlertIcon size={12} className="text-crit-fg" />
-                  <span className="text-crit-fg">no approval gate</span>
-                </>
+                <dd className="inline-flex items-center gap-1 text-crit-fg">
+                  <AlertIcon size={12} />
+                  no approval gate
+                </dd>
               )}
             </div>
           ) : null}
