@@ -28,6 +28,17 @@ export interface AuthState {
   signOut: () => void;
 }
 
+export const SESSION_ENDED = "Your sign-in session ended. Sign in again to continue.";
+
+/** OAuth errors that mean the provider no longer honours this session. */
+const SESSION_REFUSALS = new Set(["invalid_grant", "login_required", "interaction_required"]);
+
+/** True when a silent-renew failure is the provider refusing, not the network. */
+export function isSessionRefusal(err: unknown): boolean {
+  const code = (err as { error?: unknown } | null)?.error;
+  return typeof code === "string" && SESSION_REFUSALS.has(code);
+}
+
 function readStoredToken(): string | null {
   try {
     return localStorage.getItem(storageKeys.token);
@@ -97,13 +108,32 @@ export function useAuth(): AuthState {
     const um = getUserManager();
     const onLoaded = (user: { access_token: string }) => setToken(user.access_token);
     const onUnloaded = () => setToken(null);
+    // The provider can end the session under us (idle timeout, an admin
+    // logout, a laptop asleep past the SSO idle limit): the refresh is refused
+    // and the access token then expires. Neither raises userUnloaded, so the
+    // console kept a dead token and every call failed with 401 until a reload.
+    const endSession = () => {
+      if (cancelled) return;
+      setToken(null);
+      setError(SESSION_ENDED);
+      void um?.removeUser();
+    };
+    const onRenewError = (err: Error) => {
+      // A network blip leaves the current token usable until it expires,
+      // which onExpired handles; only a refusal means the session is gone.
+      if (isSessionRefusal(err)) endSession();
+    };
     um?.events.addUserLoaded(onLoaded);
     um?.events.addUserUnloaded(onUnloaded);
+    um?.events.addSilentRenewError(onRenewError);
+    um?.events.addAccessTokenExpired(endSession);
 
     return () => {
       cancelled = true;
       um?.events.removeUserLoaded(onLoaded);
       um?.events.removeUserUnloaded(onUnloaded);
+      um?.events.removeSilentRenewError(onRenewError);
+      um?.events.removeAccessTokenExpired(endSession);
     };
   }, []);
 

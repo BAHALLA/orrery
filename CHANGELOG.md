@@ -76,6 +76,12 @@ release are visible only to the person whose subject they are stored under.
 
 ### Fixed
 
+- The console signs out cleanly when the identity provider ends the session.
+  When Keycloak refused the silent refresh ("Session not active", e.g. after
+  a laptop slept past the SSO idle timeout), the console kept the expired
+  access token and every request failed with 401 until a reload. It now shows
+  the sign-in panel with "Your sign-in session ended". A network failure
+  during a refresh keeps the session until the token actually expires.
 - The observability specialist no longer offers Loki tools without Loki.
   With no `LOKI_URL` it advertised four tools that could only fail, the model
   spent turns on them, and each failure logged a traceback at ERROR. Its
