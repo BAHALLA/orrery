@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-25
+
+**Orrery Studio** (preview, admins only, off by default): compose LLM agents,
+remote A2A agents and MCP tools on a canvas in the console, in named patterns
+(pipeline, router, critic loop, fan-out/fan-in, supervisor, debate,
+map-reduce, plan-and-execute), run them apart from the live agents, and watch
+every node, route, A2A task and MCP call as it happens
+([AEP-031](docs/enhancements/aep-031-orrery-studio.md)). Orrery can now call
+remote A2A agents, always as guarded tools that see only the request
+([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).
+
+Upgrade notes:
+- Nothing changes until `ORRERY_STUDIO_ENABLED=true`, which also requires
+  `ORRERY_HUMAN_CLIENTS` (the server refuses to start without it). See
+  [docs/integrations/studio.md](docs/integrations/studio.md) for the registry
+  and the other settings.
+- **Behaviour change for every MCP server over HTTP**, chat's
+  `ORRERY_MCP_CONFIG` included: responses must be uncompressed (Orrery sends
+  `Accept-Encoding: identity` and refuses an encoded body), and a single
+  response, or SSE event, over `ORRERY_MCP_MAX_RESPONSE_BYTES` (default
+  8 MiB) is refused.
+- With a database, four new `studio_*` tables are created at startup; no
+  existing table changes.
+
 ### Added
 
 - **Orrery Studio, P0a (preview, API only; [AEP-031](docs/enhancements/aep-031-orrery-studio.md)).**
@@ -1583,6 +1607,7 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/BAHALLA/orrery/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/BAHALLA/orrery/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.9.0
