@@ -12,8 +12,10 @@ Checks:
 2. 1920x1080: wide, so left to right, zoom 1.
 3. Drag a node at 1440, widen the window to 1920: the hand-placed positions
    survive the direction flip (no relayout), and Tidy then lays it out again.
-4. 1280x800: a 6-node pipeline import overflows even at the minimum zoom
-   (0.75); the first node is in view, not cut off by centring.
+4. 1280x800: a graph loaded over another one is fitted to its own measured
+   nodes (a 2-node then a 3-node pipeline: every node in the pane, equal
+   margins); a 6-node pipeline import overflows even at the minimum zoom
+   (0.75), and the first node is in view, not cut off by centring.
 5. No Content-Security-Policy violation anywhere.
 
 Run from the repo root (``make web-build`` first; Google Chrome, or pass
@@ -93,16 +95,19 @@ REGISTRY = {
     "catalog": [],
 }
 
-SIX = {
-    "spec_version": 1,
-    "name": "six-steps",
-    "pattern": "pipeline",
-    "nodes": [
-        {"id": f"step_{i}", "kind": "llm_agent", "instruction": f"Step {i}.", "tools": []}
-        for i in range(1, 7)
-    ],
-    "edges": [{"from": f"step_{i}", "to": f"step_{i + 1}"} for i in range(1, 6)],
-}
+
+def pipeline(n: int, name: str) -> dict:
+    """A spec of `n` llm_agent nodes in a line: `<name>_1` → … → `<name>_<n>`."""
+    return {
+        "spec_version": 1,
+        "name": name,
+        "pattern": "pipeline",
+        "nodes": [
+            {"id": f"{name}_{i}", "kind": "llm_agent", "instruction": f"Step {i}.", "tools": []}
+            for i in range(1, n + 1)
+        ],
+        "edges": [{"from": f"{name}_{i}", "to": f"{name}_{i + 1}"} for i in range(1, n)],
+    }
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -159,7 +164,7 @@ class Handler(SimpleHTTPRequestHandler):
             return None
         if path == "/studio/registry":
             return self._json(REGISTRY)
-        if not (WEB / "dist" / path.lstrip("/")).is_file():
+        if not (Path(self.directory) / path.lstrip("/")).is_file():
             self.path = "/index.html"  # the console's own routes
         return super().do_GET()
 
@@ -228,6 +233,25 @@ async def open_studio(browser, base: str, width: int, height: int, csp: list[str
     return page
 
 
+async def load(page: Page, spec: dict) -> None:
+    await page.get_by_role("button", name="Import", exact=True).click()
+    await page.get_by_label("Paste a spec").fill(json.dumps(spec))
+    await page.get_by_role("button", name="Load onto the canvas").click()
+    await settle(page)
+
+
+def margins(c: dict) -> dict[str, float]:
+    """Space between the graph's outer nodes and the pane's edges, in pixels."""
+    boxes = c["nodes"].values()
+    pane = c["pane"]
+    return {
+        "left": min(b["left"] for b in boxes) - pane["left"],
+        "right": pane["right"] - max(b["right"] for b in boxes),
+        "top": min(b["top"] for b in boxes) - pane["top"],
+        "bottom": pane["bottom"] - max(b["bottom"] for b in boxes),
+    }
+
+
 async def settle(page: Page) -> None:
     await page.wait_for_timeout(600)  # the 200 ms fit animation, and a frame or two
 
@@ -289,12 +313,34 @@ async def main() -> int:
             check(c["zoom"] == 1, f"fits at zoom 1 (got {c['zoom']})")
             await page.context.close()
 
-            print("1280x800: a 6-node import overflows")
+            print("1280x800: a graph loaded over another is fitted to its own nodes")
             page = await open_studio(browser, base, 1280, 800, csp)
-            await page.get_by_role("button", name="Import").click()
-            await page.get_by_label("Paste a spec").fill(json.dumps(SIX))
-            await page.get_by_role("button", name="Load onto the canvas").click()
-            await settle(page)
+            await load(page, pipeline(2, "a"))
+            await load(page, pipeline(3, "b"))
+            c = await canvas(page)
+            m = margins(c)
+            check(sorted(c["nodes"]) == ["b_1", "b_2", "b_3"], "the second graph is on the canvas")
+            check(min(m.values()) >= 0, f"every node inside the pane {m}")
+            check(
+                abs(m["left"] - m["right"]) <= 2 and abs(m["top"] - m["bottom"]) <= 2,
+                "centred: equal margins",
+            )
+
+            # Again with the undo banner already up: the pane keeps its size,
+            # so only waiting for the new nodes' sizes gets this one right.
+            await load(page, pipeline(2, "c"))
+            c = await canvas(page)
+            m = margins(c)
+            check(sorted(c["nodes"]) == ["c_1", "c_2"], "a third graph is on the canvas")
+            check(
+                min(m.values()) >= 0
+                and abs(m["left"] - m["right"]) <= 2
+                and abs(m["top"] - m["bottom"]) <= 2,
+                f"centred too {m}",
+            )
+
+            print("1280x800: a 6-node import overflows")
+            await load(page, pipeline(6, "step"))
             c = await canvas(page)
             first = c["nodes"]["step_1"]
             check(c["zoom"] == 0.75, f"clamped at zoom 0.75 (got {c['zoom']})")

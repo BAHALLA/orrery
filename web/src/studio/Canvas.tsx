@@ -7,12 +7,12 @@ import {
   ReactFlow,
   applyEdgeChanges,
   applyNodeChanges,
-  useNodesInitialized,
   useReactFlow,
   useStore,
   type Connection,
   type EdgeChange,
   type NodeChange,
+  type ReactFlowState,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./studio.css";
@@ -122,16 +122,37 @@ export function Canvas({
   // direction) is fitted once its nodes are measured. React Flow's fitView
   // centres even when the graph overflows at its minimum zoom, cutting off
   // the first node; fitTo starts it at the margin instead.
-  const measured = useNodesInitialized();
+  //
+  // In the commit that swaps graphs, a value selected during render still
+  // describes the old nodes, while the store already holds the new, unmeasured
+  // ones. So the effect reads the store itself, skips the fit until every
+  // current node has a size, and `measured` (which flips false, then true
+  // once React Flow has measured them) runs it again.
+  //
+  // The view then stays fitted while the pane changes size (the undo banner
+  // a load brings, a window resize) until the person pans or zooms.
+  const measured = useStore(allMeasured);
   const pane = useStore((s) => ({ width: s.width, height: s.height }), shallowSize);
-  const fitted = useRef(0);
+  const fitted = useRef({ signal: 0, pane: "" });
+  const userMoved = useRef(false);
   useEffect(() => {
-    if (!fitSignal || fitted.current === fitSignal || !measured) return;
-    if (!pane.width || !pane.height || !graph.nodes.length) return;
-    fitted.current = fitSignal;
-    const viewport = fitTo(flow.getNodesBounds(flow.getNodes()), pane, FIT_TO);
-    void flow.setViewport(viewport, { duration: 200 });
-  }, [fitSignal, measured, pane, flow, graph.nodes.length]);
+    if (!fitSignal || !measured || !pane.width || !pane.height) return;
+    const paneKey = `${pane.width}x${pane.height}`;
+    const done = fitted.current.signal === fitSignal;
+    if (done && (fitted.current.pane === paneKey || userMoved.current)) return;
+    const current = flow.getNodes();
+    const ids = new Set(graph.nodes.map((n) => n.id));
+    if (
+      !current.length ||
+      current.length !== ids.size ||
+      current.some((n) => !ids.has(n.id) || !n.measured?.width || !n.measured.height)
+    ) {
+      return;
+    }
+    fitted.current = { signal: fitSignal, pane: paneKey };
+    userMoved.current = false;
+    void flow.setViewport(fitTo(flow.getNodesBounds(current), pane, FIT_TO), { duration: 200 });
+  }, [fitSignal, measured, pane, flow, graph.nodes]);
 
   const nodes = useMemo<StudioNode[]>(
     () =>
@@ -271,6 +292,10 @@ export function Canvas({
         deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         ariaLabelConfig={ariaLabels}
         fitViewOptions={FIT}
+        // A pan or zoom by the person (an event; a fit has none) ends auto-fitting.
+        onMoveStart={(event) => {
+          if (event) userMoved.current = true;
+        }}
         minZoom={0.3}
         maxZoom={1.75}
         defaultEdgeOptions={{ type: "smoothstep" }}
@@ -296,6 +321,15 @@ export function Canvas({
       ) : null}
     </div>
   );
+}
+
+/** Every node in React Flow's store has a measured size (and there is one). */
+function allMeasured(s: ReactFlowState): boolean {
+  if (!s.nodeLookup.size) return false;
+  for (const n of s.nodeLookup.values()) {
+    if (!n.measured.width || !n.measured.height) return false;
+  }
+  return true;
 }
 
 function shallowSize(

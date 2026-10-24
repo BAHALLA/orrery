@@ -406,7 +406,8 @@ pattern gallery one click away.
   follow the edges, so the layout is the same for the same spec. A loaded
   pattern, import or past run is fitted to the view, never below 75% zoom;
   a graph too big even then starts at its first node, and the rest is a pan
-  away. Loading a
+  away. The view stays fitted as the canvas changes size (a banner, a window
+  resize) until you pan or zoom. Loading a
   pattern or importing a spec can be undone from the banner it shows.
 - **Validation** runs as you edit. It checks the spec against the JSON Schema
   from `GET /studio/schema` and against this release's rules (one pipeline
@@ -477,8 +478,8 @@ jsdom, which has no layout, so the fit and the layout direction are covered by
 a smoke script instead: Chrome against the built console, with the server's
 CSP and canned `/studio/*` answers (no server or model needed). It checks the
 direction at 1440×900 and 1920×1080, that a dragged graph survives a resize,
-that an oversized import starts at its first node, and that nothing breaks
-the CSP.
+that a graph loaded over another is fitted to its own nodes, that an
+oversized import starts at its first node, and that nothing breaks the CSP.
 
 ```bash
 make web-build
