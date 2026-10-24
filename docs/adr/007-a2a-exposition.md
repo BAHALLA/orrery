@@ -62,7 +62,7 @@ A thin, custom A2A adapter on the a2a-sdk (1.x, `orrery-core[a2a]`) whose
 - `contextId` is minted by the server and bound to the principal: a client
   cannot pick, guess or reuse another caller's context.
 - `taskId` is one turn. Tasks live in a task store scoped by owner (the
-  verified subject), so `GetTask` / `ListTasks` / `CancelTask` reveal nothing
+  caller's whole principal key), so `GetTask` / `ListTasks` / `CancelTask` reveal nothing
   across callers (spec §13.1). Postgres when `DATABASE_URL` is set, and
   required when replicated.
 
@@ -105,7 +105,11 @@ Where the shipped code differs from the decision above, and why:
   acting agent and subject (two agents delegated by one user share a subject).
   Any id a client sends reaches only its own conversation, the derivation needs no table and works on any replica, and
   the prefix keeps it out of the console's id space.
-- **Task store.** In memory, scoped by the same principal key. The server refuses to start with A2A
+- **Task store.** In memory, scoped by the same principal key, and bounded
+  (`BoundedTaskStore`: a task idle for an hour is dropped, at most 10 000 are
+  kept), since the SDK's own store never evicts. Request bodies are capped on
+  the stream before the SDK parses them, and a message is capped at the
+  console's 8192 characters. The server refuses to start with A2A
   on and `ORRERY_MULTI_REPLICA` set until a shared store exists. The SDK's SQL
   store needs extras that pull MySQL drivers; a Postgres-only store is a
   follow-up.
@@ -115,13 +119,13 @@ Where the shipped code differs from the decision above, and why:
   as its own deployment and host needs no code (the same image, its own
   release); the Helm values for that are a follow-up.
 - **Not yet:** `traceparent` span links, card signing.
-- **Known gap: A2A threads live under the user's id.** The ADK `user_id` is
-  the subject so the person can approve, which also means the console sees
-  them: `GET /sessions` lists a user's agents' `a2a-*` threads, and a
-  delegated token issued for the *console* audience could continue one through
-  `POST /chat`. Only an IdP that mints delegated console tokens is exposed.
-  Fix: refuse delegated principals on the console, or keep A2A sessions out
-  of console lookups.
+- **A2A threads live under the user's id**, so the person can approve. The
+  console keeps machine principals apart the same way A2A does: a non-human
+  caller there sees and continues only sessions minted under its own
+  `m-` prefix (derived from its principal key), never its user's threads, an
+  `a2a-*` one, or another agent's. The person still sees all of them. Long-term
+  memory, keyed by the user too, neither stores a machine principal's turns
+  nor answers its recalls.
 
 ## Consequences
 

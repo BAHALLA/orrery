@@ -11,7 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 `ORRERY_SAFETY_SCREEN`, `ORRERY_PII_REDACTION`, `ORRERY_A2A_ENABLED`, ...) now
 accept `1/true/yes/on` and `0/false/no/off` (any case, surrounding spaces
 ignored), and **any other value fails startup** naming the variable. Before,
-an unrecognised value read as `false`.
+an unrecognised value read as `false`. A blank `AUTH_ENABLED=` now means the
+default (on); it used to turn authentication off.
+
+**Upgrade note.** With `ORRERY_HUMAN_CLIENTS` set, an agent or service calling
+the console's API starts fresh conversations: the ones it held before this
+release are visible only to the person whose subject they are stored under.
 
 ### Security
 
@@ -21,13 +26,20 @@ an unrecognised value read as `false`.
   read, delete and continue that user's conversations and every other agent's,
   and spend an approval raised in one of them. A person still sees everything
   stored under their subject, including what their agents did.
+- Long-term memory no longer mixes people and agents. Memory is keyed by the
+  user, so a delegated agent's `load_memory` could recall every conversation
+  its user ever had, and its own turns (model output, possibly steered by what
+  it read) were saved as the user's history. A machine principal's sessions
+  (console `m-*`, A2A `a2a-*`) are no longer saved, and recall from them
+  returns nothing.
 - `AUTH_ENABLED=on` (or `"true "` with a stray space) no longer turns
   authentication **off**; the same fail-open applied to every default-on flag,
   e.g. a typo in `ORRERY_SAFETY_SCREEN` disabled the injection screen. Every
   boolean variable is now read by one parser (`orrery_core.env`).
-- A2A requests are bounded: a body over `ORRERY_A2A_MAX_BODY_BYTES` (256 KiB)
+- A2A requests are bounded: a body over `ORRERY_A2A_MAX_BODY_BYTES` (128 KiB)
   is refused with `413` before the SDK parses it, and a message over
-  `ORRERY_A2A_MAX_MESSAGE_CHARS` (8192, the console's bound) is rejected.
+  `ORRERY_A2A_MAX_MESSAGE_CHARS` (8192, the console's bound) is rejected
+  without being kept in the task's history.
 - The A2A task store forgets tasks idle for `ORRERY_A2A_TASK_IDLE_TTL_SECONDS`
   (1 h) and keeps at most `ORRERY_A2A_MAX_TASKS` (10 000). It used to keep
   every task, history and reply for the life of the process.

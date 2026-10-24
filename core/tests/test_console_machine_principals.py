@@ -9,6 +9,7 @@ the user messages it was shown, which is how a test sees whose thread it is in.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -49,9 +50,7 @@ class _EchoLlm(BaseLlm):
         )
 
 
-@pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+def _make_client():
     with patch(
         "orrery_core.serving.server.create_session_service",
         return_value=InMemorySessionService(),
@@ -62,7 +61,13 @@ def client(monkeypatch: pytest.MonkeyPatch):
             plugins=[],
             config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET)),
         )
-    with TestClient(app) as test_client:
+    return TestClient(app)
+
+
+@pytest.fixture
+def client(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+    with _make_client() as test_client:
         yield test_client
 
 
@@ -78,6 +83,8 @@ def _bearer(claims: dict) -> dict:
 ALICE = _bearer({"azp": "orrery-console"})
 AGENT_X = _bearer({"azp": "partner", "act": {"sub": "agent-x"}})
 AGENT_Y = _bearer({"azp": "partner", "act": {"sub": "agent-y"}})
+#: Not a listed human client and no ``act``: a service sharing alice's subject.
+SERVICE = _bearer({"azp": "cron"})
 
 
 def _say(client: TestClient, headers: dict, text: str, session_id: str | None = None) -> dict:
@@ -131,3 +138,74 @@ def test_the_user_still_sees_what_their_agents_did(client):
 
     assert {x_sid, own} <= _listed(client, ALICE)
     assert client.get(f"/session/{x_sid}", headers=ALICE).status_code == 200
+
+
+def test_a_service_sharing_the_users_subject_is_kept_out_too(client):
+    sid = _say(client, ALICE, "secret plan")["session_id"]
+
+    assert sid not in _listed(client, SERVICE)
+    assert client.get(f"/session/{sid}", headers=SERVICE).status_code == 404
+    assert _say(client, SERVICE, "hi", sid)["session_id"] != sid
+
+
+def test_the_streamed_turn_is_isolated_the_same_way(client):
+    sid = _say(client, ALICE, "secret plan")["session_id"]
+
+    res = client.post(
+        "/chat/stream", headers=AGENT_X, json={"message": "what did she say?", "session_id": sid}
+    )
+    assert res.status_code == 200, res.text
+    frames = [
+        json.loads(line[len("data: ") :])
+        for line in res.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    sessions = {f["session_id"] for f in frames if "session_id" in f}
+    assert sessions and sid not in sessions
+    assert "secret plan" not in res.text
+
+
+def test_an_agent_does_not_see_its_users_pending_action(client):
+    from orrery_core.security.confirmation_store import ConfirmationStore, PendingConfirmation
+    from orrery_core.security.guardrails import _pending_confirmations
+
+    sid = _say(client, ALICE, "scale it")["session_id"]
+    x_sid = _say(client, AGENT_X, "scale it too")["session_id"]
+    store = ConfirmationStore()
+    _pending_confirmations.configure(store)
+    try:
+        store.add(
+            PendingConfirmation(
+                action_id="act-1",
+                tool_name="scale_deployment",
+                requester="alice",
+                scope_key="alice",
+                session_id=sid,
+                args={"replicas": 0},
+            )
+        )
+        assert client.get("/confirmations/pending", headers=AGENT_X).json()["pending"] is None
+        assert client.get("/confirmations/pending", headers=ALICE).json()["pending"] is not None
+
+        store.add(
+            PendingConfirmation(
+                action_id="act-2",
+                tool_name="restart_pod",
+                requester="alice",
+                scope_key="alice",
+                session_id=x_sid,
+            )
+        )
+        mine = client.get("/confirmations/pending", headers=AGENT_X).json()["pending"]
+        assert mine["action_id"] == "act-2"
+    finally:
+        _pending_confirmations.configure(None)
+
+
+def test_legacy_mode_keeps_every_token_without_act_a_person(monkeypatch):
+    # ORRERY_HUMAN_CLIENTS unset: the pre-ADR-006 console, unchanged.
+    monkeypatch.delenv("ORRERY_HUMAN_CLIENTS", raising=False)
+    with _make_client() as client:
+        sid = _say(client, ALICE, "secret plan")["session_id"]
+        assert sid in _listed(client, SERVICE)
+        assert _say(client, SERVICE, "and?", sid)["session_id"] == sid

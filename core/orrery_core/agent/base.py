@@ -231,8 +231,7 @@ def resolve_safety_config() -> Any | None:
 
     Returns ``None`` when disabled or when the provider is not Gemini.
     """
-    enabled = os.getenv("GEMINI_SAFETY_FILTERS", "").strip().lower()
-    if enabled in ("0", "false", "no", "off"):
+    if not env_flag("GEMINI_SAFETY_FILTERS", default=True):
         return None
     if os.getenv("MODEL_PROVIDER", "gemini").lower() != "gemini":
         return None
@@ -351,7 +350,7 @@ def resolve_cost_labels() -> dict[str, str]:
     them, so they are safe to attach whatever the backend. ``ORRERY_COST_LABELS=
     false`` turns them off.
     """
-    if os.getenv("ORRERY_COST_LABELS", "").strip().lower() in ("0", "false", "no", "off"):
+    if not env_flag("ORRERY_COST_LABELS", default=True):
         return {}
     try:
         version = importlib.metadata.version("orrery-core")

@@ -42,6 +42,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..observability.log import mask_dsn
+from ..security.confirmation_flow import current_conversation_session
+from ..security.principal import is_machine_session
 from ..security.redaction import REDACTED, SECRET_VALUE_PATTERNS
 from .db import (
     DatabaseUnavailableError,
@@ -149,6 +151,12 @@ class SecureMemoryService(BaseMemoryService):
         """Redact, trim, then delegate to the inner service."""
         if not session.events:
             return
+        if is_machine_session(session.id):
+            # Memory is keyed by the user, which an agent acting for them
+            # shares. Its turns are model output, possibly steered by whatever
+            # it read; stored, they would come back as the user's own history.
+            logger.debug("Not saving machine-principal session %s to memory", session.id)
+            return
 
         # Build a shallow copy of the session with redacted + trimmed events
         redacted_events = self._redact_events(session.events)
@@ -176,6 +184,8 @@ class SecureMemoryService(BaseMemoryService):
         custom_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Redact events then delegate to the inner service."""
+        if is_machine_session(session_id):
+            return
         redacted = self._redact_events(events)
         trimmed = self._trim_events(redacted)
         await self._inner.add_events_to_memory(
@@ -193,7 +203,14 @@ class SecureMemoryService(BaseMemoryService):
         user_id: str,
         query: str,
     ) -> SearchMemoryResponse:
-        """Delegate search to the inner service (already user-scoped)."""
+        """Delegate search to the inner service (already user-scoped).
+
+        A turn in a non-human principal's conversation recalls nothing: the
+        store is keyed by the user, so an agent acting for alice would
+        otherwise read every conversation alice ever had, on any surface.
+        """
+        if is_machine_session(current_conversation_session()):
+            return SearchMemoryResponse()
         return await self._inner.search_memory(
             app_name=app_name,
             user_id=user_id,

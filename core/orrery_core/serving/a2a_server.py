@@ -69,7 +69,7 @@ from a2a.utils.constants import (
 )
 from a2a.utils.errors import TaskNotCancelableError
 from fastapi import FastAPI
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
@@ -85,7 +85,12 @@ from ..security.auth import (
 )
 from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_scope
 from ..security.identity import CallerIdentity
-from ..security.principal import PrincipalPolicy, as_principal, principal_key
+from ..security.principal import (
+    A2A_SESSION_PREFIX,
+    PrincipalPolicy,
+    as_principal,
+    principal_key,
+)
 from .a2a_config import (
     A2A_PATH,
     DEFAULT_MAX_MESSAGE_CHARS,
@@ -112,7 +117,7 @@ def session_id_for(owner: str, context_id: str) -> str:
     one of that user's own conversations by sending its id as a ``contextId``.
     """
     digest = hashlib.sha256(f"{owner}\0{context_id}".encode()).hexdigest()
-    return f"a2a-{digest[:32]}"
+    return f"{A2A_SESSION_PREFIX}{digest[:32]}"
 
 
 class _VerifiedUser(User):
@@ -206,6 +211,9 @@ class BoundedTaskStore(TaskStore):
                 del self._touched[oldest]
                 evicted.append(oldest)
         for owner, task_id in evicted:
+            with self._lock:
+                if (owner, task_id) in self._touched:
+                    continue  # saved again since it was picked: keep it
             await self._inner.delete(task_id, _EvictionContext(owner=owner))
 
     async def get(self, task_id: str, context: ServerCallContext) -> Task | None:
@@ -287,36 +295,29 @@ class OrreryAgentExecutor(AgentExecutor):
         if not task_id or not context_id:
             raise RuntimeError("A2A request context has no task or context id")
         updater = TaskUpdater(event_queue, task_id, context_id)
-        if context.current_task is None:
-            # a2a-sdk 1.x: a new task's first event must be the Task itself.
-            history = [context.message] if context.message else []
-            await event_queue.enqueue_event(
-                new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=history)
-            )
-
         text = _text_of(context)
+        refusal = None
         if text is None:
-            await updater.reject(
-                updater.new_agent_message([new_text_part("Only text parts are accepted.")])
-            )
-            return
-        if len(text) > self.max_message_chars:
+            refusal = "Only text parts are accepted."
+        elif len(text) > self.max_message_chars:
             # The console's bound: every character is stored, screened and
             # re-sent to the model on every later turn of the conversation.
             audit_event("a2a_turn_refused", subject=auth.subject, reason="message_too_long")
-            await updater.reject(
-                updater.new_agent_message(
-                    [new_text_part(f"Messages are limited to {self.max_message_chars} characters.")]
-                )
-            )
-            return
-        if self._in_flight[owner] >= self.max_tasks_in_flight:
+            refusal = f"Messages are limited to {self.max_message_chars} characters."
+        elif self._in_flight[owner] >= self.max_tasks_in_flight:
             audit_event("a2a_turn_refused", subject=auth.subject, reason="too_many_in_flight")
-            await updater.reject(
-                updater.new_agent_message(
-                    [new_text_part("Too many tasks in flight for this caller; retry later.")]
-                )
+            refusal = "Too many tasks in flight for this caller; retry later."
+
+        if context.current_task is None:
+            # a2a-sdk 1.x: a new task's first event must be the Task itself.
+            # A refused message is left out of its history, so a rejected task
+            # holds none of what it was rejected for.
+            history = [context.message] if context.message and refusal is None else []
+            await event_queue.enqueue_event(
+                new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=history)
             )
+        if refusal is not None or text is None:
+            await updater.reject(updater.new_agent_message([new_text_part(refusal or "")]))
             return
 
         self._in_flight[owner] += 1
@@ -550,10 +551,13 @@ def mount_a2a(
         # The SDK reads the whole body with no bound, and Content-Length is
         # optional (chunked), so the cap is enforced on the stream itself.
         body = bytearray()
-        async for chunk in request.stream():
-            body += chunk
-            if len(body) > config.max_body_bytes:
-                return _too_large()
+        try:
+            async for chunk in request.stream():
+                body += chunk
+                if len(body) > config.max_body_bytes:
+                    return _too_large()
+        except ClientDisconnect:
+            return Response(status_code=400)  # nobody is left to read it
         replay = _replay_receive(bytes(body))
         bounded = Request(request.scope, receive=replay)
         bounded.scope[_AUTH_SCOPE_KEY] = auth

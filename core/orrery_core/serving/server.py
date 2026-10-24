@@ -612,7 +612,9 @@ def create_app(
     limiter = RateLimiter(cfg.rate_limit_storage_uri)
     chat_limit = parse_rate(cfg.chat_rate_limit)
     selftest_limit = parse_rate(cfg.selftest_rate_limit)
-    if cfg.rate_limit_storage_uri.startswith("memory://") and os.getenv(MULTI_REPLICA_ENV):
+    if cfg.rate_limit_storage_uri.startswith("memory://") and env_flag(
+        MULTI_REPLICA_ENV, default=False
+    ):
         logger.warning(
             "Rate limits are counted per replica (ORRERY_RATE_LIMIT_STORAGE_URI=memory://): "
             "with N replicas a caller gets N times the configured limit."

@@ -42,6 +42,11 @@ SERVICE_CLIENTS_ENV = "ORRERY_SERVICE_CLIENTS"
 
 _ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
 
+#: Session-id prefix of a console conversation held by a non-human principal.
+MACHINE_SESSION_PREFIX = "m-"
+#: Session-id prefix of an A2A conversation (``a2a_server.session_id_for``).
+A2A_SESSION_PREFIX = "a2a-"
+
 
 class PrincipalKind(StrEnum):
     HUMAN = "human"
@@ -200,7 +205,17 @@ def machine_session_prefix(auth: AuthContext) -> str:
     from :func:`principal_key`, so it is unforgeable and needs no storage.
     """
     digest = hashlib.sha256(principal_key(auth).encode()).hexdigest()
-    return f"m-{digest[:32]}-"
+    return f"{MACHINE_SESSION_PREFIX}{digest[:32]}-"
+
+
+def is_machine_session(session_id: str | None) -> bool:
+    """Whether *session_id* was minted for a non-human principal.
+
+    Both prefixes are minted server-side only: no transport lets a caller
+    choose a session id, and ADK's own ids are UUIDs, which start with a hex
+    digit and have their first dash at position 8, so they match neither.
+    """
+    return bool(session_id) and session_id.startswith((MACHINE_SESSION_PREFIX, A2A_SESSION_PREFIX))
 
 
 def warn_if_unclassified(policy: PrincipalPolicy) -> None:

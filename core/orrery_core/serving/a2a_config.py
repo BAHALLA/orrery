@@ -59,7 +59,9 @@ class A2AConfig:
     #: Characters one message may carry; a longer one is rejected.
     max_message_chars: int = DEFAULT_MAX_MESSAGE_CHARS
     #: Bytes one JSON-RPC request body may carry, checked before it is parsed.
-    max_body_bytes: int = 256 * 1024
+    #: A maximal message fits with its JSON-RPC framing even fully escaped
+    #: (8192 chars, at worst 12 bytes each as a ``\uXXXX`` surrogate pair).
+    max_body_bytes: int = 128 * 1024
     #: Tasks the in-memory store keeps; past it the least recently touched go.
     max_tasks: int = 10_000
     #: Seconds an untouched task is kept.

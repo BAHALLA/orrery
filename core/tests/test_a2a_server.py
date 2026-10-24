@@ -218,8 +218,11 @@ def test_an_overlong_message_is_rejected_before_the_turn(turns):
     r = TestClient(_app(max_message_chars=10)).post(
         "/a2a", json=_send("x" * 11), headers=_headers()
     )
-    assert _result(r)["status"]["state"] == "TASK_STATE_REJECTED"
+    task = _result(r)
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
     assert turns == []
+    # The task keeps none of what it was rejected for.
+    assert "x" * 11 not in json.dumps(task)
 
 
 def test_a_declared_oversized_body_is_refused_before_auth(turns):
