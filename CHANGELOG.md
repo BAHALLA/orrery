@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `rollback_deployment` actually rolls back. It set the `rollback-to`
+  annotation, which `apps/v1` ignores, and reported success while nothing
+  changed. It now does what `kubectl rollout undo` does: copies the previous
+  revision's pod template back from its ReplicaSet, refused if the deployment
+  changed since it was read. A paused deployment, or one with no previous
+  revision, is refused with nothing changed.
+
 ## [0.9.0] - 2026-10-24
 
 A console and hardening release. The **Agents** tab shows what is running

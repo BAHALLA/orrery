@@ -471,29 +471,124 @@ def test_restart_deployment_has_destructive_guardrail():
 # ── Rollback Deployment ───────────────────────────────────────────────
 
 
+def _deployment(*, revision: str = "3", paused: bool = False):
+    from kubernetes import client as k8s
+
+    return k8s.V1Deployment(
+        metadata=k8s.V1ObjectMeta(
+            name="web",
+            uid="dep-uid",
+            resource_version="42",
+            annotations={"deployment.kubernetes.io/revision": revision},
+        ),
+        spec=k8s.V1DeploymentSpec(
+            paused=paused,
+            selector=k8s.V1LabelSelector(match_labels={"app": "web"}),
+            template=_template("web:3"),
+        ),
+    )
+
+
+def _template(image: str, *, hash_label: str | None = None):
+    from kubernetes import client as k8s
+
+    labels = {"app": "web"} | ({"pod-template-hash": hash_label} if hash_label else {})
+    return k8s.V1PodTemplateSpec(
+        metadata=k8s.V1ObjectMeta(labels=labels),
+        spec=k8s.V1PodSpec(containers=[k8s.V1Container(name="web", image=image)]),
+    )
+
+
+def _replica_set(revision: str, image: str, *, owner: str = "dep-uid"):
+    from kubernetes import client as k8s
+
+    return k8s.V1ReplicaSet(
+        metadata=k8s.V1ObjectMeta(
+            name=f"web-{revision}",
+            annotations={"deployment.kubernetes.io/revision": revision},
+            owner_references=[
+                k8s.V1OwnerReference(
+                    api_version="apps/v1", kind="Deployment", name="web", uid=owner
+                )
+            ],
+        ),
+        spec=k8s.V1ReplicaSetSpec(
+            selector=k8s.V1LabelSelector(match_labels={"app": "web"}),
+            template=_template(image, hash_label=f"h{revision}"),
+        ),
+    )
+
+
+def _rollback_api(mock_api, deployment, replica_sets):
+    from kubernetes import client as k8s
+
+    api = mock_api.return_value
+    api.api_client = k8s.ApiClient()
+    api.read_namespaced_deployment.return_value = deployment
+    api.list_namespaced_replica_set.return_value = k8s.V1ReplicaSetList(items=replica_sets)
+    return api
+
+
 @pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
-async def test_rollback_deployment_success(mock_api):
-    deploy = MagicMock()
-    deploy.metadata.annotations = {"deployment.kubernetes.io/revision": "5"}
-    mock_api.return_value.read_namespaced_deployment.return_value = deploy
+async def test_rollback_restores_the_previous_revisions_template(mock_api):
+    """The old rollback-to annotation is ignored by apps/v1: nothing rolled back."""
+    api = _rollback_api(
+        mock_api,
+        _deployment(),
+        [
+            _replica_set("3", "web:3"),
+            _replica_set("1", "web:1"),
+            _replica_set("2", "web:2"),
+            _replica_set("9", "other:9", owner="someone-else"),
+        ],
+    )
+
+    result = await rollback_deployment("web", namespace="shop")
+
+    assert result["status"] == "success"
+    assert "revision 3" in result["message"] and "revision 2" in result["message"]
+    api.list_namespaced_replica_set.assert_called_once_with("shop", label_selector="app=web")
+    name, namespace, body = api.patch_namespaced_deployment.call_args.args
+    assert (name, namespace) == ("web", "shop")
+    assert body[0] == {"op": "test", "path": "/metadata/resourceVersion", "value": "42"}
+    assert body[1]["op"] == "replace" and body[1]["path"] == "/spec/template"
+    template = body[1]["value"]
+    assert template["spec"]["containers"][0]["image"] == "web:2"
+    assert template["metadata"]["labels"] == {"app": "web"}  # the RS's hash is dropped
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_rollback_without_a_previous_revision_changes_nothing(mock_api):
+    api = _rollback_api(mock_api, _deployment(revision="1"), [_replica_set("1", "web:1")])
 
     result = await rollback_deployment("web")
-    assert result["status"] == "success"
-    assert "Rollback triggered" in result["message"]
-    assert "revision 5" in result["message"]
-    mock_api.return_value.patch_namespaced_deployment.assert_called_once()
+
+    assert result["status"] == "error" and "no previous revision" in result["message"]
+    api.patch_namespaced_deployment.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("k8s_health_agent.tools._apps_api")
+async def test_a_paused_deployment_is_not_rolled_back(mock_api):
+    api = _rollback_api(mock_api, _deployment(paused=True), [])
+
+    result = await rollback_deployment("web")
+
+    assert result["status"] == "error" and "paused" in result["message"]
+    api.patch_namespaced_deployment.assert_not_called()
 
 
 @pytest.mark.asyncio
 @patch("k8s_health_agent.tools._apps_api")
 async def test_rollback_deployment_api_error(mock_api):
-    deploy = MagicMock()
-    deploy.metadata.annotations = {}
-    mock_api.return_value.read_namespaced_deployment.return_value = deploy
-    mock_api.return_value.patch_namespaced_deployment.side_effect = _api_exception("Not Found")
+    api = _rollback_api(
+        mock_api, _deployment(), [_replica_set("3", "web:3"), _replica_set("2", "web:2")]
+    )
+    api.patch_namespaced_deployment.side_effect = _api_exception("Conflict")
 
-    result = await rollback_deployment("gone")
+    result = await rollback_deployment("web")
     assert result["status"] == "error"
 
 
