@@ -154,6 +154,16 @@ export const AgentsIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** Orrery Studio: three nodes wired into a pattern. */
+export const StudioIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5" cy="12" r="2.5" />
+    <circle cx="19" cy="6" r="2.5" />
+    <circle cx="19" cy="18" r="2.5" />
+    <path d="M7.5 12h4l5-5M11.5 12l5 5" />
+  </Icon>
+);
+
 export const SearchIcon = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="11" cy="11" r="6.5" />

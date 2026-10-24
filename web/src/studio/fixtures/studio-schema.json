@@ -1,0 +1,1135 @@
+{
+  "spec_version": 1,
+  "spec": {
+    "$defs": {
+      "Budgets": {
+        "additionalProperties": false,
+        "description": "Whole-run limits (the composition ledger). Unset: the deployment's ceiling.",
+        "properties": {
+          "max_tokens": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Tokens"
+          },
+          "max_tool_calls": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Tool Calls"
+          },
+          "max_delegations": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Delegations"
+          },
+          "max_remote_calls": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Remote Calls"
+          },
+          "timeout_s": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeout S"
+          }
+        },
+        "title": "Budgets",
+        "type": "object"
+      },
+      "Edge": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "From",
+            "type": "string"
+          },
+          "to": {
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "To",
+            "type": "string"
+          },
+          "when": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "When"
+          },
+          "max_iterations": {
+            "anyOf": [
+              {
+                "maximum": 5,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Iterations"
+          },
+          "screen": {
+            "default": false,
+            "title": "Screen",
+            "type": "boolean"
+          }
+        },
+        "required": ["from", "to"],
+        "title": "Edge",
+        "type": "object"
+      },
+      "HumanApprovalNode": {
+        "additionalProperties": false,
+        "description": "Pauses the run until a human admin approves (P0c).",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "human_approval",
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": ["id", "kind", "prompt"],
+        "title": "HumanApprovalNode",
+        "type": "object"
+      },
+      "JoinNode": {
+        "additionalProperties": false,
+        "description": "Waits for every incoming branch (P0b).",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "join",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": ["id", "kind"],
+        "title": "JoinNode",
+        "type": "object"
+      },
+      "LlmAgentNode": {
+        "additionalProperties": false,
+        "description": "An Orrery agent (``create_agent()``): instruction, tools, optional model.",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "llm_agent",
+            "title": "Kind",
+            "type": "string"
+          },
+          "instruction": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Tools",
+            "type": "array"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NodeOutput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": ["id", "kind", "instruction"],
+        "title": "LlmAgentNode",
+        "type": "object"
+      },
+      "NodeOutput": {
+        "additionalProperties": false,
+        "description": "What a node's answer is classified as, for labelled edges (P0b).",
+        "properties": {
+          "labels": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9_]{0,30}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 2,
+            "title": "Labels",
+            "type": "array"
+          }
+        },
+        "required": ["labels"],
+        "title": "NodeOutput",
+        "type": "object"
+      },
+      "ParallelNode": {
+        "additionalProperties": false,
+        "description": "Fans out to the nodes its edges name (P0b).",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "parallel",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": ["id", "kind"],
+        "title": "ParallelNode",
+        "type": "object"
+      },
+      "RemoteA2aNode": {
+        "additionalProperties": false,
+        "description": "Console shorthand: an llm_agent holding one remote skill and told to forward (P1).",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "remote_a2a",
+            "title": "Kind",
+            "type": "string"
+          },
+          "remote": {
+            "description": "<entry>.<skill>",
+            "title": "Remote",
+            "type": "string"
+          },
+          "instruction": {
+            "default": "",
+            "maxLength": 8000,
+            "title": "Instruction",
+            "type": "string"
+          }
+        },
+        "required": ["id", "kind", "remote"],
+        "title": "RemoteA2aNode",
+        "type": "object"
+      },
+      "RouterNode": {
+        "additionalProperties": false,
+        "description": "Reads the previous node's output label and picks an outgoing edge (P0b).",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "router",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": ["id", "kind"],
+        "title": "RouterNode",
+        "type": "object"
+      },
+      "SupervisorNode": {
+        "additionalProperties": false,
+        "description": "An llm_agent whose children are its tools (P0b).",
+        "properties": {
+          "id": {
+            "description": "Unique in the spec; the compiled agent is n_<id>.",
+            "pattern": "^[a-z][a-z0-9_]{0,30}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "const": "supervisor",
+            "title": "Kind",
+            "type": "string"
+          },
+          "instruction": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Children",
+            "type": "array"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Tools",
+            "type": "array"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          }
+        },
+        "required": ["id", "kind", "instruction", "children"],
+        "title": "SupervisorNode",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "A composition: nodes, edges, budgets. See the module docstring.",
+    "properties": {
+      "spec_version": {
+        "maximum": 1,
+        "minimum": 1,
+        "title": "Spec Version",
+        "type": "integer"
+      },
+      "name": {
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+        "title": "Name",
+        "type": "string"
+      },
+      "description": {
+        "default": "",
+        "maxLength": 1000,
+        "title": "Description",
+        "type": "string"
+      },
+      "pattern": {
+        "default": "pipeline",
+        "enum": [
+          "pipeline",
+          "fan_out_fan_in",
+          "router",
+          "supervisor",
+          "critic_loop",
+          "debate",
+          "map_reduce",
+          "handoff",
+          "plan_and_execute"
+        ],
+        "title": "Pattern",
+        "type": "string"
+      },
+      "budgets": {
+        "$ref": "#/$defs/Budgets"
+      },
+      "nodes": {
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "human_approval": "#/$defs/HumanApprovalNode",
+              "join": "#/$defs/JoinNode",
+              "llm_agent": "#/$defs/LlmAgentNode",
+              "parallel": "#/$defs/ParallelNode",
+              "remote_a2a": "#/$defs/RemoteA2aNode",
+              "router": "#/$defs/RouterNode",
+              "supervisor": "#/$defs/SupervisorNode"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LlmAgentNode"
+            },
+            {
+              "$ref": "#/$defs/RemoteA2aNode"
+            },
+            {
+              "$ref": "#/$defs/RouterNode"
+            },
+            {
+              "$ref": "#/$defs/ParallelNode"
+            },
+            {
+              "$ref": "#/$defs/JoinNode"
+            },
+            {
+              "$ref": "#/$defs/SupervisorNode"
+            },
+            {
+              "$ref": "#/$defs/HumanApprovalNode"
+            }
+          ]
+        },
+        "maxItems": 30,
+        "minItems": 1,
+        "title": "Nodes",
+        "type": "array"
+      },
+      "edges": {
+        "items": {
+          "$ref": "#/$defs/Edge"
+        },
+        "maxItems": 90,
+        "title": "Edges",
+        "type": "array"
+      }
+    },
+    "required": ["spec_version", "name", "nodes"],
+    "title": "CompositionSpec",
+    "type": "object"
+  },
+  "events": {
+    "$defs": {
+      "A2aMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "a2a.message",
+            "default": "a2a.message",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "remote": {
+            "title": "Remote",
+            "type": "string"
+          },
+          "skill": {
+            "title": "Skill",
+            "type": "string"
+          },
+          "direction": {
+            "enum": ["outbound", "inbound"],
+            "title": "Direction",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Id"
+          },
+          "context_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Context Id"
+          },
+          "task_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task State"
+          },
+          "states": {
+            "items": {
+              "type": "string"
+            },
+            "title": "States",
+            "type": "array"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/$defs/PartSummary"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Elapsed Ms"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "card_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Card Digest"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          }
+        },
+        "required": ["node_id", "remote", "skill", "direction", "method"],
+        "title": "A2aMessage",
+        "type": "object"
+      },
+      "BudgetHit": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "budget.hit",
+            "default": "budget.hit",
+            "title": "Type",
+            "type": "string"
+          },
+          "budget": {
+            "enum": [
+              "max_tokens",
+              "max_tool_calls",
+              "max_delegations",
+              "max_remote_calls",
+              "timeout_s"
+            ],
+            "title": "Budget",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": ["budget", "limit", "used"],
+        "title": "BudgetHit",
+        "type": "object"
+      },
+      "McpCall": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "mcp.call",
+            "default": "mcp.call",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "entry": {
+            "title": "Entry",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          },
+          "classification": {
+            "title": "Classification",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Elapsed Ms"
+          }
+        },
+        "required": ["node_id", "entry", "tool", "classification", "outcome"],
+        "title": "McpCall",
+        "type": "object"
+      },
+      "NodeEnter": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "node.enter",
+            "default": "node.enter",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": ["node_id", "kind", "model"],
+        "title": "NodeEnter",
+        "type": "object"
+      },
+      "NodeExit": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "node.exit",
+            "default": "node.exit",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "tokens": {
+            "$ref": "#/$defs/TokenCount"
+          },
+          "elapsed_ms": {
+            "title": "Elapsed Ms",
+            "type": "integer"
+          },
+          "outcome": {
+            "enum": ["ok", "failed", "cancelled", "budget_exhausted"],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          }
+        },
+        "required": ["node_id", "kind", "model", "tokens", "elapsed_ms", "outcome"],
+        "title": "NodeExit",
+        "type": "object"
+      },
+      "PartSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": ["kind", "size"],
+        "title": "PartSummary",
+        "type": "object"
+      },
+      "RunEnd": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "run.end",
+            "default": "run.end",
+            "title": "Type",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": ["succeeded", "failed", "cancelled", "budget_exhausted"],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "totals": {
+            "$ref": "#/$defs/Totals"
+          },
+          "dropped_events": {
+            "default": 0,
+            "title": "Dropped Events",
+            "type": "integer"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          }
+        },
+        "required": ["outcome", "totals"],
+        "title": "RunEnd",
+        "type": "object"
+      },
+      "RunStart": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "run.start",
+            "default": "run.start",
+            "title": "Type",
+            "type": "string"
+          },
+          "spec_name": {
+            "title": "Spec Name",
+            "type": "string"
+          },
+          "spec_digest": {
+            "title": "Spec Digest",
+            "type": "string"
+          },
+          "pattern": {
+            "title": "Pattern",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "budgets": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Budgets",
+            "type": "object"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          }
+        },
+        "required": ["spec_name", "spec_digest", "pattern", "nodes", "budgets"],
+        "title": "RunStart",
+        "type": "object"
+      },
+      "TokenCount": {
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "default": 0,
+            "title": "Input",
+            "type": "integer"
+          },
+          "output": {
+            "default": 0,
+            "title": "Output",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "TokenCount",
+        "type": "object"
+      },
+      "Totals": {
+        "additionalProperties": false,
+        "properties": {
+          "tokens": {
+            "$ref": "#/$defs/TokenCount"
+          },
+          "tokens_by_model": {
+            "additionalProperties": {
+              "$ref": "#/$defs/TokenCount"
+            },
+            "title": "Tokens By Model",
+            "type": "object"
+          },
+          "tool_calls": {
+            "default": 0,
+            "title": "Tool Calls",
+            "type": "integer"
+          },
+          "delegations": {
+            "default": 0,
+            "title": "Delegations",
+            "type": "integer"
+          },
+          "remote_calls": {
+            "default": 0,
+            "title": "Remote Calls",
+            "type": "integer"
+          },
+          "wall_ms": {
+            "default": 0,
+            "title": "Wall Ms",
+            "type": "integer"
+          }
+        },
+        "title": "Totals",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "a2a.message": "#/$defs/A2aMessage",
+        "budget.hit": "#/$defs/BudgetHit",
+        "mcp.call": "#/$defs/McpCall",
+        "node.enter": "#/$defs/NodeEnter",
+        "node.exit": "#/$defs/NodeExit",
+        "run.end": "#/$defs/RunEnd",
+        "run.start": "#/$defs/RunStart"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/RunStart"
+      },
+      {
+        "$ref": "#/$defs/RunEnd"
+      },
+      {
+        "$ref": "#/$defs/NodeEnter"
+      },
+      {
+        "$ref": "#/$defs/NodeExit"
+      },
+      {
+        "$ref": "#/$defs/A2aMessage"
+      },
+      {
+        "$ref": "#/$defs/McpCall"
+      },
+      {
+        "$ref": "#/$defs/BudgetHit"
+      }
+    ]
+  }
+}

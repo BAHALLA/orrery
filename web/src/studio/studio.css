@@ -1,0 +1,112 @@
+/* The Studio's stylesheet, loaded with its lazy chunk only.
+
+   1. Tailwind utilities for the files in src/studio, which the console's own
+      stylesheet skips (`@source not` in styles/index.css): same theme
+      (styles/tokens.css), same cascade layers, no second preflight.
+   2. React Flow's stylesheet (imported just before this file) themed with the
+      console's tokens. React Flow reads these variables
+   (the `-default` ones are its fallbacks), so both themes follow data-theme on
+   <html> like the rest of the console. Positions and sizes are set by React
+   Flow through the CSSOM, which the CSP's `style-src 'self'` allows. */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@import "../styles/tokens.css";
+@source "./";
+
+.studio-flow {
+  --xy-background-color: transparent;
+  --xy-background-pattern-dots-color: #cbd5e1;
+  --xy-edge-stroke: #94a3b8;
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: oklch(0.51 0.21 275);
+  --xy-connectionline-stroke: oklch(0.58 0.2 275);
+  --xy-connectionline-stroke-width: 2;
+  --xy-node-border-radius: 0.75rem;
+  --xy-node-boxshadow-selected: none;
+  --xy-selection-background-color: oklch(0.58 0.2 275 / 0.08);
+  --xy-selection-border: 1px dashed oklch(0.58 0.2 275 / 0.7);
+  --xy-controls-button-background-color: #ffffff;
+  --xy-controls-button-background-color-hover: #f1f5f9;
+  --xy-controls-button-color: #334155;
+  --xy-controls-button-border-color: #e2e8f0;
+  --xy-controls-box-shadow: 0 1px 3px rgb(15 23 42 / 0.12);
+  --xy-minimap-background-color: #ffffff;
+  --xy-minimap-mask-background-color: rgb(241 245 249 / 0.7);
+  --xy-minimap-node-background-color: #cbd5e1;
+  --xy-edge-label-background-color: #ffffff;
+  --xy-edge-label-color: #334155;
+  --xy-attribution-background-color: transparent;
+}
+[data-theme="dark"] .studio-flow {
+  --xy-background-pattern-dots-color: #334155;
+  --xy-edge-stroke: #64748b;
+  --xy-edge-stroke-selected: oklch(0.78 0.12 275);
+  --xy-connectionline-stroke: oklch(0.68 0.16 275);
+  --xy-controls-button-background-color: #0f172a;
+  --xy-controls-button-background-color-hover: #1e293b;
+  --xy-controls-button-color: #cbd5e1;
+  --xy-controls-button-border-color: #1e293b;
+  --xy-minimap-background-color: #0f172a;
+  --xy-minimap-mask-background-color: rgb(2 6 23 / 0.6);
+  --xy-minimap-node-background-color: #334155;
+  --xy-edge-label-background-color: #0f172a;
+  --xy-edge-label-color: #cbd5e1;
+}
+
+/* Custom nodes draw their own card. */
+.studio-flow .react-flow__node-studio {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0.75rem;
+}
+.studio-flow .react-flow__node-studio:focus-visible {
+  outline: 2px solid oklch(0.58 0.2 275);
+  outline-offset: 4px;
+}
+.studio-flow .react-flow__attribution a {
+  color: #64748b;
+}
+
+/* Edge states while a run plays: data flowing into the active node, a path
+   already taken, a path refused. */
+.studio-flow .react-flow__edge.studio-edge-live path.react-flow__edge-path {
+  stroke: var(--status-running-solid);
+  stroke-width: 2.25;
+}
+.studio-flow .react-flow__edge.studio-edge-done path.react-flow__edge-path {
+  stroke: var(--status-ok-solid);
+  stroke-width: 2;
+}
+.studio-flow .react-flow__edge.studio-edge-issue path.react-flow__edge-path {
+  stroke: var(--status-crit-solid);
+  stroke-dasharray: 4 3;
+}
+.studio-flow .react-flow__edge.studio-edge-child path.react-flow__edge-path {
+  stroke-dasharray: 2 4;
+}
+
+/* The halo around the running node. */
+.studio-halo {
+  opacity: 0;
+  animation: studio-halo 1.8s ease-out infinite;
+}
+@keyframes studio-halo {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-halo {
+    animation: none;
+    opacity: 0.4;
+  }
+  .studio-flow .react-flow__edge.animated path {
+    animation: none;
+  }
+}

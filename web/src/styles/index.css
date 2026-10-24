@@ -1,11 +1,11 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* Dark mode is driven by `data-theme` on <html>, which src/theme/theme.ts sets
-   from the viewer's choice (light / dark / system) before first render. The
-   "system" choice tracks prefers-color-scheme live, so the default behaviour is
-   unchanged from when the console simply followed the OS. */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* The theme (dark variant, colour and font tokens) is shared with the Studio's
+   lazily loaded stylesheet (src/studio/studio.css), which builds the utilities
+   its own files use, so none of them weigh on the chat console's first load. */
+@import "./tokens.css";
+@source not "../studio";
 
 /* Self-hosted variable fonts (public/fonts, SIL OFL 1.1 — licences alongside).
    Same-origin, so the CSP's `font-src 'self'` allows them; latin + latin-ext
@@ -115,63 +115,6 @@
   --status-refused-bg: #1e293b;
   --status-refused-border: #475569;
   --status-refused-solid: #94a3b8;
-}
-
-/* Exposed as Tailwind colours: text-ok-fg, bg-warn-bg, border-crit-border,
-   bg-refused-solid… `inline` so the utilities read the variables at use time
-   and follow the theme switch. */
-@theme inline {
-  --color-ok-fg: var(--status-ok-fg);
-  --color-ok-bg: var(--status-ok-bg);
-  --color-ok-border: var(--status-ok-border);
-  --color-ok-solid: var(--status-ok-solid);
-  --color-warn-fg: var(--status-warn-fg);
-  --color-warn-bg: var(--status-warn-bg);
-  --color-warn-border: var(--status-warn-border);
-  --color-warn-solid: var(--status-warn-solid);
-  --color-crit-fg: var(--status-crit-fg);
-  --color-crit-bg: var(--status-crit-bg);
-  --color-crit-border: var(--status-crit-border);
-  --color-crit-solid: var(--status-crit-solid);
-  --color-guarded-fg: var(--status-guarded-fg);
-  --color-guarded-bg: var(--status-guarded-bg);
-  --color-guarded-border: var(--status-guarded-border);
-  --color-guarded-solid: var(--status-guarded-solid);
-  --color-running-fg: var(--status-running-fg);
-  --color-running-bg: var(--status-running-bg);
-  --color-running-border: var(--status-running-border);
-  --color-running-solid: var(--status-running-solid);
-  --color-refused-fg: var(--status-refused-fg);
-  --color-refused-bg: var(--status-refused-bg);
-  --color-refused-border: var(--status-refused-border);
-  --color-refused-solid: var(--status-refused-solid);
-}
-
-@theme {
-  --font-sans:
-    "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
-  --font-mono:
-    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo,
-    Consolas, monospace;
-
-  /* Brand: a deep orbit-indigo for actions and focus, with the mark's sun
-     amber reserved for the logo and the "live" signal — never for status, so
-     it can't be mistaken for a "degraded" warning. */
-  --color-brand-50: oklch(0.97 0.02 275);
-  --color-brand-100: oklch(0.93 0.04 275);
-  --color-brand-200: oklch(0.87 0.08 275);
-  --color-brand-300: oklch(0.78 0.12 275);
-  --color-brand-400: oklch(0.68 0.16 275);
-  --color-brand-500: oklch(0.58 0.2 275);
-  --color-brand-600: oklch(0.51 0.21 275);
-  --color-brand-700: oklch(0.45 0.19 275);
-  --color-brand-800: oklch(0.38 0.15 275);
-  --color-brand-900: oklch(0.32 0.11 275);
-  --color-brand-950: oklch(0.23 0.08 275);
-  --color-sun: #f5b32b;
-
-  --animate-orbit: orbit 1.6s linear infinite;
 }
 
 @keyframes orbit {
