@@ -37,11 +37,11 @@ import os
 import platform
 import time
 import uuid
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
@@ -86,6 +86,7 @@ from ..security.principal import (
     machine_session_prefix,
     warn_if_unclassified,
 )
+from ..studio.config import StudioConfig
 from .a2a_config import A2A_ENABLED_ENV, A2AConfig
 from .agent_admin import AgentAdmin
 from .attachments import (
@@ -177,6 +178,8 @@ class ServerConfig:
     attachments: AttachmentLimits = field(default_factory=AttachmentLimits)
     #: Agents exposed over A2A (ADR-007): ``ORRERY_A2A_*``.
     a2a: A2AConfig = field(default_factory=A2AConfig)
+    #: Orrery Studio (AEP-031): ``ORRERY_STUDIO_*``. Off by default.
+    studio: StudioConfig = field(default_factory=StudioConfig)
 
     @property
     def serve_docs(self) -> bool:
@@ -224,6 +227,8 @@ class ServerConfig:
           ``ORRERY_ATTACHMENT_IMAGES=false`` for a model without vision.
         - ``ORRERY_A2A_*`` — expose the coordinator over A2A (see
           :class:`~.a2a_config.A2AConfig`). Off by default.
+        - ``ORRERY_STUDIO_*`` — the Studio's ``/studio`` API (see
+          :class:`~orrery_core.studio.config.StudioConfig`). Off by default.
         """
         cors = os.getenv("ORRERY_CORS_ORIGINS", "")
         docs = os.getenv("ORRERY_DOCS_ENABLED", "").strip()
@@ -247,6 +252,7 @@ class ServerConfig:
             console=ConsoleConfig.from_env(),
             attachments=AttachmentLimits.from_env(),
             a2a=A2AConfig.from_env(),
+            studio=StudioConfig.from_env(),
         )
 
 
@@ -545,6 +551,8 @@ def create_app(
     integration_probes: Sequence[IntegrationProbe] | None = None,
     agent_admin: AgentAdmin | None = None,
     catalog_store: CatalogStore | None = None,
+    studio_catalogue: Callable[[], Mapping[str, Any]] | None = None,
+    studio_model: Callable[[], Any] | None = None,
 ) -> FastAPI:
     """Build a FastAPI app that serves *root_agent* over authenticated HTTP.
 
@@ -585,6 +593,11 @@ def create_app(
         integration_probes: Read-only reachability checks surfaced by the
             self-test. Supplied by the caller because core has no dependency on
             any agent package — see ``orrery_assistant/app.py``.
+        studio_catalogue: The tools a Studio composition may reference as
+            ``catalog:<ref>`` (ref -> tool; only read-only ones are usable).
+            Supplied by the application, like *agent_admin*.
+        studio_model: Builds the model Studio nodes run on; ``None`` uses
+            ``resolve_model()`` (the deployment's model and fallbacks).
     """
     probes = list(integration_probes or [])
     cfg = config or ServerConfig.from_env()
@@ -605,6 +618,13 @@ def create_app(
     _require_shared_state_when_replicated(cfg)
     if cfg.a2a.enabled:
         cfg.a2a.validate(auth_enabled=cfg.auth_enabled)
+    if cfg.studio.enabled:
+        cfg.studio.validate(
+            auth_enabled=cfg.auth_enabled,
+            human_clients_configured=principal_policy.human_clients is not None,
+        )
+    # Set once the Studio is mounted (below); the lifespan cancels its runs.
+    studio_service: Any = None
     cfg.console.validate(cfg.jwt.issuer if cfg.auth_enabled else None)
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
@@ -675,6 +695,8 @@ def create_app(
             # connected requests. What it cannot see are turns whose clients
             # left (they run in their own tasks): those get the grace here.
             await drain_turns(cfg.shutdown_grace_seconds)
+            if studio_service is not None:
+                await studio_service.shutdown()
             if catalog is not None:
                 await catalog.stop()
 
@@ -1443,6 +1465,26 @@ def create_app(
             name=app_name,
             description=getattr(root_agent, "description", "") or app_name,
         )
+
+    if cfg.studio.enabled:
+        # Imported only here: the Studio needs the `[a2a]` and `[mcp]` extras.
+        from ..a2a.remote import RemoteCards, RemoteNetwork
+        from ..studio.api import mount_studio
+        from ..studio.registry import load_registry
+        from ..studio.runner import StudioService
+
+        network = RemoteNetwork.from_env()
+        studio_service = StudioService(
+            config=cfg.studio,
+            # A missing or invalid registry fails startup, like ORRERY_MCP_CONFIG.
+            registry=load_registry(cfg.studio.registry_path, network=network),
+            cards=RemoteCards(network),
+            catalogue=studio_catalogue,
+            model_factory=studio_model,
+            caller_identity=caller_identity,
+        )
+        mount_studio(api, service=studio_service, auth_dependency=auth_dependency, limiter=limiter)
+        logger.info("Orrery Studio enabled at /studio")
 
     # Mount the web console last so the explicit API routes above always win
     # over the catch-all static mount at "/".

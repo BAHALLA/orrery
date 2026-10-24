@@ -95,9 +95,9 @@ KEY_ALLOWLIST = frozenset({"next_page_token", "page_token", "continue_token", "r
 _MAX_DEPTH = 32
 
 
-def _redact_text(text: str, *, redact_ips: bool) -> tuple[str, int]:
+def _redact_text(text: str, *, redact_ips: bool, redact_emails: bool = False) -> tuple[str, int]:
     """Return *text* with secret shapes replaced, plus the replacement count."""
-    return redact_text(text, redact_ips=redact_ips)
+    return redact_text(text, redact_ips=redact_ips, redact_emails=redact_emails)
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -105,7 +105,9 @@ def _is_sensitive_key(key: str) -> bool:
     return normalized not in KEY_ALLOWLIST and bool(SENSITIVE_KEY_PATTERN.search(normalized))
 
 
-def redact_structure(obj: Any, *, redact_ips: bool = False, _depth: int = 0) -> int:
+def redact_structure(
+    obj: Any, *, redact_ips: bool = False, redact_emails: bool = False, _depth: int = 0
+) -> int:
     """Redact secrets in *obj* **in place**; return replacements made.
 
     Walks dicts, lists, and the attributes of ordinary objects — the last of those
@@ -125,33 +127,43 @@ def redact_structure(obj: Any, *, redact_ips: bool = False, _depth: int = 0) -> 
                 obj[key] = REDACTED
                 count += 1
             elif isinstance(value, str):
-                redacted, n = _redact_text(value, redact_ips=redact_ips)
+                redacted, n = _redact_text(
+                    value, redact_ips=redact_ips, redact_emails=redact_emails
+                )
                 if n:
                     obj[key] = redacted
                     count += n
             else:
-                count += redact_structure(value, redact_ips=redact_ips, _depth=_depth + 1)
+                count += redact_structure(
+                    value, redact_ips=redact_ips, redact_emails=redact_emails, _depth=_depth + 1
+                )
     elif isinstance(obj, list):
         for i, item in enumerate(obj):
             if isinstance(item, str):
-                redacted, n = _redact_text(item, redact_ips=redact_ips)
+                redacted, n = _redact_text(item, redact_ips=redact_ips, redact_emails=redact_emails)
                 if n:
                     obj[i] = redacted
                     count += n
             else:
-                count += redact_structure(item, redact_ips=redact_ips, _depth=_depth + 1)
+                count += redact_structure(
+                    item, redact_ips=redact_ips, redact_emails=redact_emails, _depth=_depth + 1
+                )
     elif (attributes := mutable_attributes(obj)) is not None:
         for name, value in list(attributes.items()):
             if _is_sensitive_key(name) and value not in (None, ""):
                 setattr(obj, name, REDACTED)
                 count += 1
             elif isinstance(value, str):
-                redacted, n = _redact_text(value, redact_ips=redact_ips)
+                redacted, n = _redact_text(
+                    value, redact_ips=redact_ips, redact_emails=redact_emails
+                )
                 if n:
                     setattr(obj, name, redacted)
                     count += n
             else:
-                count += redact_structure(value, redact_ips=redact_ips, _depth=_depth + 1)
+                count += redact_structure(
+                    value, redact_ips=redact_ips, redact_emails=redact_emails, _depth=_depth + 1
+                )
     return count
 
 
@@ -172,6 +184,9 @@ class PIIRedactionPlugin(BasePlugin):
     ) -> Any:
         # A bare string cannot be mutated, so the only way to scrub one is to
         # return the replacement — see _redact_immutable_result.
+        # A tool that relays a third party's text (a remote A2A agent) asks for
+        # contact details to go too: a person's address is not the evidence.
+        emails = getattr(tool, "redact_contact_details", False) is True
         if isinstance(result, (str, bytes)):
             return _redact_immutable_result(result, tool=tool, redact_ips=self._redact_ips)
 
@@ -180,9 +195,11 @@ class PIIRedactionPlugin(BasePlugin):
         # Mutating in a worker thread is safe for the same reason it is safe
         # here — nothing else touches the result until this callback returns.
         if text_volume(result, OFFLOAD_THRESHOLD_CHARS) >= OFFLOAD_THRESHOLD_CHARS:
-            count = await asyncio.to_thread(redact_structure, result, redact_ips=self._redact_ips)
+            count = await asyncio.to_thread(
+                redact_structure, result, redact_ips=self._redact_ips, redact_emails=emails
+            )
         else:
-            count = redact_structure(result, redact_ips=self._redact_ips)
+            count = redact_structure(result, redact_ips=self._redact_ips, redact_emails=emails)
         if count:
             logger.warning("redacted %d secret value(s) from '%s' result", count, tool.name)
         return None

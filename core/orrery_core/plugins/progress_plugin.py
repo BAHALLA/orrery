@@ -36,12 +36,12 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
 from google.adk.plugins.base_plugin import BasePlugin
-from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
 from ..reliability.resilience import ToolOutcome, classify_tool_outcome
 from ..security.guardrails import is_guarded
+from .delegation_guard_plugin import is_delegation
 
 logger = logging.getLogger("orrery.plugins.progress")
 
@@ -160,7 +160,7 @@ class ProgressPlugin(BasePlugin):
             phase=phase,
             agent=str(getattr(tool_context, "agent_name", "") or ""),
             tool=tool.name,
-            delegation=isinstance(tool, AgentTool),
+            delegation=is_delegation(tool),
             guarded=is_guarded(tool),
         )
 

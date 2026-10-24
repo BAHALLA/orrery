@@ -122,3 +122,75 @@ def _isolate_plugin_env(monkeypatch):
     """Make plugin composition independent of the developer's `.env`."""
     for name in _PLUGIN_COMPOSITION_ENV:
         monkeypatch.delenv(name, raising=False)
+
+
+# ── Local servers on loopback (Studio / remote A2A tests) ────────────
+
+
+@pytest.fixture
+def serve_asgi():
+    """Serve ASGI apps on 127.0.0.1 in a thread; returns ``serve(app) -> base_url``.
+
+    Real sockets, real HTTP: the guarded transports resolve and connect as in
+    production (loopback to loopback is allowed without any allowlist).
+    """
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    servers: list[tuple[uvicorn.Server, threading.Thread]] = []
+
+    def serve(app=None, *, factory=None) -> str:
+        """Serve *app*, or ``factory(base_url)`` for an app that needs its URL (a card)."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        base_url = f"http://127.0.0.1:{port}"
+        if factory is not None:
+            app = factory(base_url)
+        assert app is not None, "serve() needs an app or a factory"
+        server = uvicorn.Server(
+            uvicorn.Config(app, log_level="warning", lifespan="on", access_log=False)
+        )
+        thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not server.started:
+            if time.monotonic() > deadline:
+                raise RuntimeError("test server did not start")
+            time.sleep(0.02)
+        servers.append((server, thread))
+        return base_url
+
+    yield serve
+    for server, thread in servers:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def writer_module():
+    """``deploy/studio-demo/writer/writer_agent.py``, the demo's plain a2a-sdk agent."""
+    import importlib.util
+    from pathlib import Path
+
+    pytest.importorskip("a2a")
+    path = Path(__file__).resolve().parents[2] / "deploy/studio-demo/writer/writer_agent.py"
+    spec = importlib.util.spec_from_file_location("studio_demo_writer", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_token_ledgers():
+    """The per-process token ledger is shared by design; not across tests."""
+    from orrery_core.plugins.token_budget_plugin import reset_shared_usage_ledgers
+
+    reset_shared_usage_ledgers()
+    yield
+    reset_shared_usage_ledgers()

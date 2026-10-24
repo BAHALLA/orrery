@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Orrery Studio, P0a (preview, API only; [AEP-031](docs/enhancements/aep-031-orrery-studio.md)).**
+  With `ORRERY_STUDIO_ENABLED=true`, human admins run a composition: a
+  pipeline of `llm_agent` nodes using registered MCP tools (`mcp:<entry>.<tool>`),
+  remote A2A agents (`a2a:<entry>.<skill>`) and read-only catalogue tools
+  (`catalog:<name>`). Each run gets its own gateway and plugins, at L2, in
+  memory, with a whole-run ledger (tokens, tool calls, delegations, remote
+  calls, deadline), and streams typed trace events over SSE (`run.*`,
+  `node.*`, `mcp.call`, `a2a.message`, `budget.hit`; no content unless
+  `ORRERY_STUDIO_CAPTURE_CONTENT=true`, then redacted and cut to 2 KB).
+  Routes: `POST /studio/runs`, `GET /studio/runs/{id}`, `GET
+  /studio/runs/{id}/events`, `POST /studio/runs/{id}/cancel`, `GET
+  /studio/schema`, `GET /studio/registry`. Endpoints come only from the
+  `ORRERY_STUDIO_REGISTRY` YAML; secrets only from `ORRERY_STUDIO_SECRET_*`.
+  Startup fails with the Studio on and `ORRERY_HUMAN_CLIENTS` unset; a service
+  token with the admin role gets 403. See [Studio](docs/integrations/studio.md).
+- **Calling remote A2A agents ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).**
+  `GuardedRemoteA2aTool` sends one text request to a registered remote and
+  returns its reply as a tool result, so the safety screen, PII redaction,
+  RBAC, autonomy, audit and budgets apply. The remote never sees the session.
+  Cards are pinned by a JCS SHA-256 of their trust fields; `acting` remotes
+  are refused for now. The caller's token is never forwarded.
+- A network guard for `httpx` shared with the MCP one: a set of allowed
+  origins, public addresses only unless `private_network` and
+  `ORRERY_A2A_PRIVATE_ALLOW`, link-local and metadata always refused, no
+  redirects or proxies, bytes capped while streaming. `ORRERY_A2A_CA_FILE`
+  adds one CA bundle for an internal CA.
+- `studio-demo` compose profile: a plain `a2a-sdk` writer agent over https
+  with a generated internal CA, an example registry and the
+  research → writer → critic spec (`deploy/studio-demo/`).
+- `make dev-token CLIENT=<azp>` (and `scripts/dev_token.py --client`) mints a
+  token for a named client, so it can count as a person under
+  `ORRERY_HUMAN_CLIENTS`.
+
+### Changed
+
+- `DelegationGuardPlugin` and `ProgressPlugin` count a tool marked
+  `delegates_remotely` as a delegation, like an `AgentTool`.
+- `PIIRedactionPlugin` also redacts email addresses in results of tools marked
+  `redact_contact_details` (remote A2A replies). Other tools are unchanged.
+- `default_plugins()` shares one daily token ledger per process (per storage
+  URI), so building plugins again does not reset
+  `ORRERY_DAILY_TOKEN_BUDGET_PER_USER`. It takes an optional `token_ledger`.
+- `is_machine_session()` also covers Studio sessions (`s-` prefix): they are
+  never written to long-term memory.
+
 ## [0.9.1] - 2026-10-24
 
 A fix release. `rollback_deployment` actually rolls back (it reported success

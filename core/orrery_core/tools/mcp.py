@@ -74,6 +74,7 @@ from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
 from ..security.token_exchange import CredentialUnavailable, TokenBroker, default_broker
 from .mcp_network import (
     LOOPBACK_HOSTS,
+    PrivateAllowlist,
     client_factory,
     is_public,
     literal_ip,
@@ -371,12 +372,21 @@ class GuardedMcpToolset(McpToolset):
     which keep them.
     """
 
-    def __init__(self, config: McpServerConfig, *, broker: TokenBroker | None = None) -> None:
+    def __init__(
+        self,
+        config: McpServerConfig,
+        *,
+        broker: TokenBroker | None = None,
+        private_allow: PrivateAllowlist | None = None,
+    ) -> None:
+        """*private_allow* narrows ``allow_private_network`` to listed hosts and
+        networks (the Studio's ``ORRERY_A2A_PRIVATE_ALLOW``); ``None`` keeps the
+        MCP config's meaning, any private address."""
         self.server_config = config
         # Built now, so missing exchange settings fail startup, not a call.
         self._broker = (broker or default_broker()) if config.auth else None
         super().__init__(
-            connection_params=_connection_params(config),
+            connection_params=_connection_params(config, private_allow=private_allow),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
             tool_list_cache_ttl_seconds=config.tool_list_cache_seconds or None,
@@ -489,7 +499,7 @@ def _secret_env(var: str, *, what: str) -> str:
 
 
 def _connection_params(
-    config: McpServerConfig,
+    config: McpServerConfig, *, private_allow: PrivateAllowlist | None = None
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {
@@ -512,6 +522,7 @@ def _connection_params(
         url=config.url or "",
         allow_private_network=config.allow_private_network,
         verify=ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
+        private_allow=private_allow,
     )
     if config.transport == "sse":
         # The SSE stream idles between calls, so its read timeout cannot be the

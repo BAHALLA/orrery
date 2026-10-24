@@ -293,11 +293,11 @@ _dev-jwt-secret:
 		echo "▶ Generated dev JWT secret at $(DEV_JWT_SECRET_FILE)"; \
 	fi
 
-dev-token: _dev-jwt-secret ## Mint a local JWT (ROLE=viewer|operator|admin, default admin)
+dev-token: _dev-jwt-secret ## Mint a local JWT (ROLE=viewer|operator|admin, default admin; CLIENT=<azp>)
 	@JWT_AUDIENCE=$(DEV_JWT_AUDIENCE) \
 	JWT_ISSUER=$(DEV_JWT_ISSUER) \
 		uv run python scripts/dev_token.py \
-			--role $(or $(ROLE),admin) \
+			--role $(or $(ROLE),admin) $(if $(CLIENT),--client $(CLIENT),) \
 			--secret-file $(DEV_JWT_SECRET_FILE)
 
 dev-token-reset: ## Regenerate the dev JWT secret (invalidates existing tokens)

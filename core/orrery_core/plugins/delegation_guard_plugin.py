@@ -54,6 +54,16 @@ DELEGATION_REFUSED_STATUS = "DELEGATION_BUDGET_EXHAUSTED"
 DEFAULT_MAX_DELEGATIONS_PER_RUN = 4
 
 
+def is_delegation(tool: Any) -> bool:
+    """Whether a call of *tool* hands the task to another agent.
+
+    An ``AgentTool`` specialist, or a tool marked ``delegates_remotely`` (a
+    remote A2A agent, ADR-008): both answer with fresh prose every time, so
+    both can be argued with in a loop.
+    """
+    return isinstance(tool, AgentTool) or getattr(tool, "delegates_remotely", False) is True
+
+
 class DelegationGuardPlugin(BasePlugin):
     """Refuse an ``AgentTool`` call past ``max_per_agent`` in one run.
 
@@ -73,7 +83,7 @@ class DelegationGuardPlugin(BasePlugin):
         tool_args: dict[str, Any],
         tool_context: ToolContext,
     ) -> dict[str, Any] | None:
-        if self._max <= 0 or not isinstance(tool, AgentTool):
+        if self._max <= 0 or not is_delegation(tool):
             return None
         run = run_key(tool_context)
         if not run:
