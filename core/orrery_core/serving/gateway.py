@@ -237,6 +237,14 @@ TURN_TIMEOUT_ENV = "ORRERY_TURN_TIMEOUT_SECONDS"
 DEFAULT_TURN_TIMEOUT_SECONDS = 900
 
 
+#: Shown when the turn deadline stopped a turn. Not "try again": it may have
+#: been stopped mid-tool, after a change already went through.
+TURN_TIMED_OUT_MESSAGE = (
+    "This took too long and was stopped. Some actions may already have run, "
+    "so check the current state before asking again."
+)
+
+
 class TurnTimedOut(TimeoutError):
     """A turn ran past the gateway's deadline and was stopped.
 
@@ -341,7 +349,11 @@ class AgentGateway:
         self.root_agent = root_agent
         self.runner = self._build_runner(root_agent)
         self._turn_locks = _turn_lock_map()
-        self.turn_timeout = turn_timeout if turn_timeout is not None else turn_timeout_from_env()
+        if turn_timeout is None:
+            turn_timeout = turn_timeout_from_env()
+        # 0 disables, as it does in the env var: asyncio.timeout(0) would stop
+        # every turn at its first await.
+        self.turn_timeout = turn_timeout or None
 
     def _build_runner(self, root_agent: Agent | Workflow) -> Runner:
         # Every gateway can carry attachments, so every gateway delivers them:

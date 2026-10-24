@@ -207,6 +207,13 @@ def test_turn_timeout_comes_from_the_env(monkeypatch):
     assert _make_gateway()[0].turn_timeout == 900
 
 
+def test_a_zero_turn_timeout_disables_it_in_the_constructor_too():
+    """asyncio.timeout(0) would stop every turn at its first await."""
+    with patch("orrery_core.serving.gateway.App"), patch("orrery_core.serving.gateway.Runner"):
+        gw = AgentGateway(app_name="t", root_agent=MagicMock(), turn_timeout=0)
+    assert gw.turn_timeout is None
+
+
 @pytest.mark.asyncio
 async def test_different_sessions_still_run_in_parallel():
     import asyncio

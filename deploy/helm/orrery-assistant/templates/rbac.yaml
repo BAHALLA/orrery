@@ -17,12 +17,18 @@ step when a tool starts calling something new.
 {{- end }}
 {{- $name := include "orrery-assistant.fullname" . }}
 {{- $sa := include "orrery-assistant.serviceAccountName" . }}
+{{- if eq $sa "default" }}
+{{- fail "rbac.create would grant the namespace's default ServiceAccount, and so every pod that sets none; set serviceAccount.create=true or serviceAccount.name, or rbac.create=false" }}
+{{- end }}
+{{- /* Cluster-scoped names carry the namespace: one release name installed
+in two namespaces must not fight over one ClusterRole. */}}
+{{- $clusterName := printf "%s-%s" .Release.Namespace $name | trunc 50 | trimSuffix "-" }}
 {{- if eq $scope "cluster" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ $name }}
+  name: {{ $clusterName }}
   labels:
     {{- include "orrery-assistant.labels" . | nindent 4 }}
 rules:
@@ -31,13 +37,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ $name }}
+  name: {{ $clusterName }}
   labels:
     {{- include "orrery-assistant.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ $name }}
+  name: {{ $clusterName }}
 subjects:
   - kind: ServiceAccount
     name: {{ $sa }}
@@ -78,7 +84,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ $name }}-impersonator
+  name: {{ $clusterName }}-impersonator
   labels:
     {{- include "orrery-assistant.labels" $ | nindent 4 }}
 rules:
@@ -98,13 +104,13 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ $name }}-impersonator
+  name: {{ $clusterName }}-impersonator
   labels:
     {{- include "orrery-assistant.labels" $ | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ $name }}-impersonator
+  name: {{ $clusterName }}-impersonator
 subjects:
   - kind: ServiceAccount
     name: {{ $sa }}

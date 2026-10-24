@@ -28,14 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ORRERY_TURN_TIMEOUT_SECONDS` (default 900, `0` disables) bounds every turn
   on every surface. A turn queued behind a wedged one in its session would
   otherwise wait forever. A stopped turn is reported as possibly having
-  acted: HTTP 504 on `/chat`, a non-retryable `error` on `/chat/stream`, and
-  a message in Slack.
+  acted: HTTP 504 on `/chat`, a non-retryable `error` on `/chat/stream`, a
+  message in Slack and the CLI, a failed A2A task, and Google Chat's notice
+  of what the turn already changed.
 - The Helm chart grants the agent's ServiceAccount Kubernetes access (`rbac`):
   `read` (default) or `operate`, cluster-wide or per namespace, Strimzi and
   ECK resources, optional impersonation rules and extra rules. Rules follow
   the API calls the tools make; secrets are never granted. **Upgrade note:**
   the chart now creates a ClusterRole and binding by default, which needs
   cluster-admin to install; set `rbac.create: false` if you manage RBAC.
+  It refuses to bind the namespace's `default` ServiceAccount: with
+  `serviceAccount.create: false`, set `serviceAccount.name`.
 
 ### Fixed
 

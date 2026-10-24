@@ -38,9 +38,13 @@ rbac:
   ##          connector annotations. Pair it with ORRERY_AUTONOMY_LEVEL L3/L4.
   profile: read
   ## cluster:    one ClusterRole + ClusterRoleBinding.
-  ## namespaces: a Role + RoleBinding in each of `namespaces`. Cluster-scoped
-  ##             reads (nodes, namespaces, CRDs, node metrics) are then
-  ##             unavailable and those tools report a 403.
+  ## namespaces: a Role + RoleBinding in each of `namespaces`. Anything
+  ##             cluster-wide then answers 403: nodes, namespaces, CRDs, node
+  ##             metrics, and every "all namespaces" list, which is the default
+  ##             of the Strimzi and ECK list tools (ask for a namespace by
+  ##             name). The triage sweep's Kubernetes check lists nodes, so it
+  ##             reports an error each run; prefer `cluster` with `profile:
+  ##             read` if you run triage.
   scope: cluster
   namespaces: []
   operators:

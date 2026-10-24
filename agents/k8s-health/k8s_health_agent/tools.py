@@ -86,6 +86,7 @@ _PATCH_SHAPE = {
 _CONFINEMENT_ANNOTATIONS = (
     "container.apparmor.security.beta.kubernetes.io/",
     "seccomp.security.alpha.kubernetes.io/",
+    "container.seccomp.security.alpha.kubernetes.io/",
 )
 
 

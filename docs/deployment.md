@@ -185,10 +185,18 @@ rbac:
 
 `read` is the default: the agent can diagnose but the cluster refuses its
 writes, whatever the in-app gates decide. Choose `operate` together with
-`ORRERY_AUTONOMY_LEVEL` L3 or L4. With `scope: namespaces`, cluster-scoped
-reads (nodes, namespaces, CRDs, node metrics) are unavailable. Installing a
-ClusterRole needs cluster-admin; set `rbac.create: false` to manage RBAC
-yourself.
+`ORRERY_AUTONOMY_LEVEL` L3 or L4. With `scope: namespaces`, anything
+cluster-wide answers 403: nodes, namespaces, CRDs, node metrics, and every
+"all namespaces" list (the default of the Strimzi and ECK list tools, so ask
+for a namespace by name). The triage sweep's Kubernetes check lists nodes, so
+under `namespaces` it reports an error every run.
+
+Cluster-scoped objects are named `<namespace>-<fullname>`, so one release name
+can be installed in several namespaces. Installing a ClusterRole needs
+cluster-admin; set `rbac.create: false` to manage RBAC yourself. The chart
+refuses to bind the namespace's `default` ServiceAccount (it would grant every
+pod that sets none): with `serviceAccount.create: false`, name an account in
+`serviceAccount.name`.
 
 ---
 

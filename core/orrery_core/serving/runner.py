@@ -28,7 +28,7 @@ from ..observability.log import mask_dsn
 from ..observability.metrics import start_metrics_server_if_enabled, track_compaction_event
 from ..persistence.db import create_session_service
 from ..security.rbac import set_user_role
-from .gateway import AgentGateway
+from .gateway import TURN_TIMED_OUT_MESSAGE, AgentGateway, TurnTimedOut
 from .health import HealthServer
 
 logger = logging.getLogger("orrery.runner")
@@ -349,12 +349,16 @@ async def run_persistent(
             print(f"\n--- New session: {session.id} ---\n")
             continue
 
-        reply = await gateway.run_in_session(
-            user_id=user_id,
-            session_id=session.id,
-            text=user_input,
-            state_delta=admin_delta,
-        )
+        try:
+            reply = await gateway.run_in_session(
+                user_id=user_id,
+                session_id=session.id,
+                text=user_input,
+                state_delta=admin_delta,
+            )
+        except TurnTimedOut:
+            print(f"\nAgent: {TURN_TIMED_OUT_MESSAGE}\n")
+            continue
         response_text = reply.text
 
         if response_text:
