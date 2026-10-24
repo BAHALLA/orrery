@@ -1485,6 +1485,7 @@ def create_app(
         # Imported only here: the Studio needs the `[a2a]` and `[mcp]` extras.
         from ..a2a.remote import RemoteCards, RemoteNetwork
         from ..studio.api import mount_studio
+        from ..studio.models import model_lookup
         from ..studio.registry import load_registry
         from ..studio.runner import StudioService
         from ..studio.store import create_studio_store
@@ -1497,7 +1498,9 @@ def create_app(
             cards=RemoteCards(network),
             catalogue=studio_catalogue,
             model_factory=studio_model,
-            model_for=studio_model_for,
+            # Every allowlisted model is built now: a bad name or a missing
+            # key fails startup, not a run.
+            model_for=studio_model_for or model_lookup(cfg.studio.models),
             caller_identity=caller_identity,
             store=studio_store
             or create_studio_store(cfg.database_url, max_runs=cfg.studio.max_runs),

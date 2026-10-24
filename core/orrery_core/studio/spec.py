@@ -570,6 +570,13 @@ class GraphPlan:
     join_of: dict[str, str]
     #: Router id -> the labelled node before it.
     router_source: dict[str, str]
+    #: Back edge index -> the nodes of its loop (its target to its source).
+    loop_body: dict[int, frozenset[str]] = field(default_factory=dict)
+
+    def inner_loops(self, j: int) -> list[int]:
+        """The loops strictly inside loop *j*: taking *j* again re-enters them."""
+        body = self.loop_body[j]
+        return [k for k, other in self.loop_body.items() if k != j and other < body]
 
     def labels(self, spec: CompositionSpec, node_id: str) -> list[str] | None:
         """The labels edges out of *node_id* are taken on (a router's: its source's)."""
@@ -595,10 +602,11 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
       edges); a node with ``output.labels`` leaves on labelled edges (``when``)
       or on one edge to a ``router``; any other node has at most one successor.
     - **Loops**: an edge with ``max_iterations`` goes back to an earlier node
-      and is taken on a label. Without it, no cycle.
+      and is taken on a label. Without it, no cycle. A loop never contains a
+      ``parallel`` or ``join`` node (a join does not start over).
     - **Fan-in**: each ``join`` closes exactly the branches of one ``parallel``
-      node, its branches neither route nor loop, and a node after it combines
-      them.
+      node, its branches neither route, loop nor fan out again, and a node
+      after it combines them.
     - one start node, every node reachable.
     """
     errors: list[SpecError] = []
@@ -825,6 +833,7 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
                 stack.extend(forward[n])
         return False
 
+    loop_body: dict[int, frozenset[str]] = {}
     for j in back:
         edge = spec.edges[j]
         if not reaches(edge.to, edge.from_):
@@ -833,6 +842,21 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
                     ("edges", j, "max_iterations"),
                     f"max_iterations is for an edge back to an earlier node; {edge.to!r} does "
                     f"not lead to {edge.from_!r}",
+                )
+            )
+            continue
+        body = frozenset(n for n in graph_nodes if reaches(edge.to, n) and reaches(n, edge.from_))
+        loop_body[j] = body
+        # A join does not start over when its section is entered again: it
+        # would fire on the earlier round's answers. Loop inside a branch's
+        # neighbours instead, or around the whole run in two compositions.
+        if fan := sorted(n for n in body if by_id[n].kind in ("parallel", "join")):
+            errors.append(
+                SpecError(
+                    ("edges", j),
+                    f"a loop cannot contain a parallel section ({', '.join(fan)}): loop "
+                    "before the parallel node or after its join",
+                    "loop_around_parallel",
                 )
             )
 
@@ -877,11 +901,14 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
                 return n
             in_branch.add(n)
             if node.kind == "parallel":
-                inner = close(n)
-                if inner is None:
-                    return None
-                n = inner
-                continue
+                errors.append(
+                    SpecError(
+                        ("nodes", index[n]),
+                        f"{n!r} is on a branch of parallel {par!r}: a branch does not fan "
+                        "out again (give the outer parallel more branches)",
+                    )
+                )
+                return None
             if node.kind == "router" or _labels_of(node) is not None:
                 errors.append(
                     SpecError(
@@ -961,15 +988,6 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
             errors.append(
                 SpecError(("nodes", index[name]), f"{name!r} does not close a parallel node")
             )
-    for j in back:
-        target = spec.edges[j].to
-        if target in in_branch or target in join_of:
-            errors.append(
-                SpecError(
-                    ("edges", j, "to"),
-                    f"a loop cannot go back into a parallel branch ({target!r})",
-                )
-            )
     if errors:
         return None, errors
     return (
@@ -982,6 +1000,7 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
             out=out,
             join_of=join_of,
             router_source=router_source,
+            loop_body=loop_body,
         ),
         [],
     )

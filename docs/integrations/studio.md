@@ -49,7 +49,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN` | `262144` | Captured `content` one run may hold; past it events carry none. |
 | `ORRERY_STUDIO_RUN_RETENTION_SECONDS` | `3600` | How long the replica that ran a run keeps it in memory; after that it is read from the store. |
 | `ORRERY_STUDIO_RUN_RETENTION_DAYS` | `14` | Stored runs and their events are purged after this many days (checked hourly). |
-| `ORRERY_STUDIO_MODELS` | — | The models a node may name in `model` (comma-separated, e.g. `gemini-2.5-flash,anthropic/claude-sonnet-4-5`). Unset: nodes use the deployment's model and naming one is refused. |
+| `ORRERY_STUDIO_MODELS` | — | The models a node may name in `model` (comma-separated, e.g. `gemini-2.5-flash,anthropic/claude-sonnet-4-5`). Unset: nodes use the deployment's model and naming one is refused. Each is built at startup: a bad name, a LiteLLM model without `litellm` installed, or a missing provider key (`GOOGLE_API_KEY` or Vertex AI for Gemini; LiteLLM's own check otherwise) fails startup. |
 | `ORRERY_STUDIO_MAX_RUNNING_PER_USER` | `2` | Runs one person may have in flight; more is a 429. |
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
@@ -197,10 +197,10 @@ every P0a spec still validates and runs the same way.
 |---|---|
 | **Labels** | `"output": {"labels": ["a", "b"]}` on an `llm_agent` or `supervisor`: the node answers `{label, answer}` (structured output); the next node gets `answer`. |
 | **Routing** | Edges out of a labelled node carry `when: "<label>"`, one edge per label. Or put a `router` node right after it, and the `when` edges on the router. A label with no edge ends the run there, with that answer (`POST /studio/validate` warns). Each choice emits `route.decision`. |
-| **Loops** | A back edge with `when` and `max_iterations` (1–5). Each pass emits `loop.iteration`; at the cap the branch ends with the source's answer (`stopped: true`). A cycle without `max_iterations` is refused. |
-| **Parallel** | A `parallel` node with 2–6 outgoing edges, each branch a chain of `llm_agent` nodes, all meeting at one `join`. The branches run concurrently; the join's successor gets each branch's answer as a `## <branch id>` block, in edge order. |
+| **Loops** | A back edge with `when` and `max_iterations` (1–5). Each pass emits `loop.iteration`; at the cap the edge is not taken (`stopped: true`) and the branch ends with the answer the source was judging (in a critic loop, the last draft, not the rejection). A loop nested in another counts per entry: each time the outer edge is taken, the inner one starts from zero. A cycle without `max_iterations` is refused, and so is a loop containing a `parallel` or `join` node (`loop_around_parallel`): a join does not start over. |
+| **Parallel** | A `parallel` node with 2–6 outgoing edges, each branch a chain of `llm_agent` nodes (no routing, loops or nested fan-out), all meeting at one `join`. The branches run concurrently; the join's successor gets each branch's answer as a `## <branch id>` block, in edge order. |
 | **Supervisor** | A `supervisor` node lists `children` (`llm_agent` or `supervisor` ids, at most 3 levels). Each child is a tool the supervisor's model calls (an ADK `AgentTool`); each call counts as a delegation against `max_delegations`. Children have no edges; their `node.enter`/`node.exit` carry `parent`. |
-| **Per-node models** | `"model": "<name>"` on an `llm_agent` or `supervisor`, from `ORRERY_STUDIO_MODELS`. No fallback chain: a failing model fails the node. `run.end` totals tokens by model. |
+| **Per-node models** | `"model": "<name>"` on an `llm_agent` or `supervisor`, from `ORRERY_STUDIO_MODELS`. No fallback chain: a failing model fails the node. Gemini's safety filters follow the node's model, not `MODEL_PROVIDER`. `run.end` totals tokens by model. |
 | **Screening** | `"screen": true` on an edge runs the injection screen over the text it carries. |
 
 The `pattern` values are `pipeline`, `router`, `critic_loop`,
@@ -240,7 +240,8 @@ and unreachable nodes; more than one first node; `when` on an unlabelled
 source, an unknown label, two edges for one label, or a labelled node's edge
 without `when`; a fan-out that is not a `parallel` node, or one with more than
 6 branches (`too_many_branches`); a join that does not close its parallel's
-branches; a cycle without `max_iterations` (`unbounded_cycle`), or
+branches, or a branch that fans out again; a loop around a parallel section
+(`loop_around_parallel`); a cycle without `max_iterations` (`unbounded_cycle`), or
 `max_iterations` on an edge that is not a back edge; supervisor children that
 are not agents, have two parents, have edges, or nest deeper than 3
 (`too_deep`); a `model` not in `ORRERY_STUDIO_MODELS` (`model_not_allowed`);
@@ -308,12 +309,18 @@ be interrupted and finishes in the background, harmlessly at L2. Remote tasks
 are not sent `tasks/cancel` in P0a.
 
 **Where runs live.** The replica that starts a run runs it, and writes it and
-its events to the store as it goes (every quarter second). A run is visible only
+its events to the store as it goes (every quarter second), each batch in one
+transaction with the run's row. A failed write is sent again with backoff (up
+to 5 s apart; a stored event is not written twice), and the last one is tried
+8 times before the run is left to read as lost. A run is visible only
 to the person who started it: to anyone else it is a 404, on every replica.
 
 **Several replicas.** With PostgreSQL, any replica serves `GET /studio/runs`,
 `GET /studio/runs/{id}` and `/events`: a finished run is replayed from the
-store, and one still running elsewhere is followed there until it ends.
+store, and one still running elsewhere is followed there until it ends, by
+polling the store every second, slowing to every 5 seconds while nothing
+happens. A person may follow at most 4 such runs at once; a fifth stream is a
+429.
 **Cancel is local**: on another replica, `POST /studio/runs/{id}/cancel` for a
 run still going is a 409 `"this run is on another replica; only that replica
 can cancel it"`. Route a console's requests to one replica (sticky sessions)
@@ -344,8 +351,10 @@ All routes need a human admin's bearer token.
 
 Compositions are shared by the deployment's admins (anyone may edit, and
 `updated_by` says who did); runs are their owner's alone. Every save makes a new
-version and keeps the old ones, so a run can name the one it ran. Saving
-validates the spec as a run would.
+version and keeps the latest 50, so a run can name the one it ran. Saving
+validates the spec as a run would. Saves and deletes are limited to 30 a
+minute per person, and `?resolve=true` on the registry to 6 a minute (429 with
+`Retry-After`).
 
 `capabilities` says what this server runs, so a console offers only that:
 
@@ -433,7 +442,10 @@ redacted too. A run holds at most `ORRERY_STUDIO_MAX_CONTENT_BYTES_PER_RUN` of
 content; later events carry none.
 
 Router, loop, `parallel` and `join` nodes also get `node.enter` and
-`node.exit` (no model, no tokens), so a trace shows every step. Parallel
+`node.exit` (no model, no tokens), so a trace shows every step. Each entry of
+a node is its own enter/exit pair with its own tokens: two calls of one
+supervisor child at once are two pairs, and a node a loop runs again counts
+from zero each time. Parallel
 branches' events interleave: each branch's `node.enter` comes before any of
 them exits.
 

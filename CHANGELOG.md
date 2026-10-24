@@ -56,7 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `capabilities` and `budget_ceilings` in `/studio/schema`, MCP tool schemas
   in `/studio/registry`, and `studio_available` in `/me`. Tested templates for
   eight patterns are in `deploy/studio-demo/specs/`; the demo spec moved there
-  as `critic-loop.json`. `spec_version` stays 1.
+  as `critic-loop.json`. `spec_version` stays 1. A loop may not contain a
+  parallel section (`loop_around_parallel`), and a branch may not fan out
+  again; nested loops count per entry, and a loop that stops at its cap ends
+  with the last draft. Allowlisted models are built at startup (a bad name or
+  missing key fails it), and Gemini safety filters follow each agent's model
+  rather than `MODEL_PROVIDER`. Run persistence writes events and the run row
+  in one transaction and retries with backoff; `?resolve=true` on the registry
+  and composition writes are rate-limited, and following runs on other
+  replicas is capped and backs off.
 - **Calling remote A2A agents ([ADR-008](docs/adr/008-consuming-remote-a2a-agents.md)).**
   `GuardedRemoteA2aTool` sends one text request to a registered remote and
   returns its reply as a tool result, so the safety screen, PII redaction,

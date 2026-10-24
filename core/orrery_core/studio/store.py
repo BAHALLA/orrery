@@ -36,6 +36,8 @@ logger = logging.getLogger("orrery.studio")
 #: deadline is reported as lost.
 LOST_GRACE_SECONDS = 120.0
 LOST_ERROR = "the replica running it stopped before it ended"
+#: Versions kept per composition; saving past it drops the oldest.
+MAX_COMPOSITION_VERSIONS = 50
 
 
 class CompositionConflict(Exception):
@@ -153,7 +155,13 @@ class StudioStore(Protocol):
 
     def save_run(self, run: RunRecord) -> None: ...
 
-    def append_events(self, run_id: str, events: list[dict[str, Any]]) -> None: ...
+    def append_events(self, run_id: str, events: list[dict[str, Any]]) -> None:
+        """Add *events*; one already stored (same ``seq``) is skipped, so a retry is safe."""
+        ...
+
+    def write_run(self, run: RunRecord, events: list[dict[str, Any]]) -> None:
+        """*events* and the run's row together (one transaction): all or nothing."""
+        ...
 
     def get_run(self, run_id: str) -> RunRecord | None: ...
 
@@ -241,6 +249,7 @@ class InMemoryStudioStore:
                 updated_at=time.time(),
             )
             versions.append(record)
+            del versions[:-MAX_COMPOSITION_VERSIONS]
             return record
 
     def delete_composition(self, cid: str, *, expected_version: int) -> None:
@@ -265,8 +274,20 @@ class InMemoryStudioStore:
 
     def append_events(self, run_id: str, events: list[dict[str, Any]]) -> None:
         with self._lock:
-            if run_id in self._runs:
-                self._events.setdefault(run_id, []).extend(dict(e) for e in events)
+            self._append(run_id, events)
+
+    def _append(self, run_id: str, events: list[dict[str, Any]]) -> None:
+        if run_id not in self._runs:
+            return
+        stored = self._events.setdefault(run_id, [])
+        last = stored[-1].get("seq", 0) if stored else 0
+        stored.extend(dict(e) for e in events if e.get("seq", 0) > last)
+
+    def write_run(self, run: RunRecord, events: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._runs.setdefault(run.run_id, run)
+            self._append(run.run_id, events)
+        self.save_run(run)
 
     def get_run(self, run_id: str) -> RunRecord | None:
         with self._lock:
@@ -302,6 +323,8 @@ class InMemoryStudioStore:
 
 
 _metadata = sa.MetaData()
+#: ``pg_advisory_xact_lock`` key serialising the Studio's ``create_all``.
+_DDL_LOCK_KEY = 0x0_57D1_0031
 _compositions = sa.Table(
     "studio_compositions",
     _metadata,
@@ -368,8 +391,19 @@ class SqlStudioStore:
             )
         else:  # SQLite: the tests (and nothing else)
             self._engine = sa.create_engine(db_url, future=True)
-        _metadata.create_all(self._engine)
+        self._create_tables()
         logger.info("Studio store ready (%s)", self._engine.dialect.name)
+
+    def _create_tables(self) -> None:
+        """``create_all``, once at a time: replicas booting together would race."""
+        if self._engine.dialect.name != "postgresql":
+            _metadata.create_all(self._engine)
+            return
+        with self._engine.begin() as conn:
+            # Held to the end of the transaction; the others wait, then find
+            # the tables there.
+            conn.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": _DDL_LOCK_KEY})
+            _metadata.create_all(conn)
 
     # ── compositions ──
     def _record(self, row: Any, document: str) -> CompositionRecord:
@@ -488,6 +522,12 @@ class SqlStudioStore:
                     created_at=now,
                 )
             )
+            conn.execute(
+                sa.delete(_versions).where(
+                    _versions.c.composition_id == cid,
+                    _versions.c.version <= expected_version + 1 - MAX_COMPOSITION_VERSIONS,
+                )
+            )
         record = self.get_composition(cid)
         assert record is not None
         return record
@@ -507,27 +547,49 @@ class SqlStudioStore:
             conn.execute(sa.delete(_versions).where(_versions.c.composition_id == cid))
 
     # ── runs ──
-    def save_run(self, run: RunRecord) -> None:
+    @staticmethod
+    def _save(conn: Any, run: RunRecord) -> None:
         values = asdict(run)
         values["totals"] = json.dumps(run.totals) if run.totals is not None else None
-        with self._engine.begin() as conn:
-            result = conn.execute(
-                sa.update(_runs).where(_runs.c.run_id == run.run_id).values(**values)
-            )
-            if result.rowcount == 0:
-                conn.execute(sa.insert(_runs).values(**values))
+        result = conn.execute(sa.update(_runs).where(_runs.c.run_id == run.run_id).values(**values))
+        if result.rowcount == 0:
+            conn.execute(sa.insert(_runs).values(**values))
 
-    def append_events(self, run_id: str, events: list[dict[str, Any]]) -> None:
+    @staticmethod
+    def _append(conn: Any, run_id: str, events: list[dict[str, Any]]) -> None:
         if not events:
             return
-        with self._engine.begin() as conn:
+        # Idempotent: a batch whose commit was in doubt is sent again whole.
+        seqs = [int(e["seq"]) for e in events]
+        stored = set(
             conn.execute(
-                sa.insert(_events),
-                [
-                    {"run_id": run_id, "seq": int(e["seq"]), "document": json.dumps(e)}
-                    for e in events
-                ],
-            )
+                sa.select(_events.c.seq).where(
+                    _events.c.run_id == run_id,
+                    _events.c.seq >= min(seqs),
+                    _events.c.seq <= max(seqs),
+                )
+            ).scalars()
+        )
+        rows = [
+            {"run_id": run_id, "seq": seq, "document": json.dumps(e)}
+            for seq, e in zip(seqs, events, strict=True)
+            if seq not in stored
+        ]
+        if rows:
+            conn.execute(sa.insert(_events), rows)
+
+    def save_run(self, run: RunRecord) -> None:
+        with self._engine.begin() as conn:
+            self._save(conn, run)
+
+    def append_events(self, run_id: str, events: list[dict[str, Any]]) -> None:
+        with self._engine.begin() as conn:
+            self._append(conn, run_id, events)
+
+    def write_run(self, run: RunRecord, events: list[dict[str, Any]]) -> None:
+        with self._engine.begin() as conn:
+            self._append(conn, run.run_id, events)
+            self._save(conn, run)
 
     @staticmethod
     def _run(row: Any) -> RunRecord:

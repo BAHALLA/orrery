@@ -307,3 +307,233 @@ def test_the_service_purges_runs_past_retention(principals, stub):
         assert service.purge(now=time.time() + 3600) == 0
         assert service.purge(now=time.time() + 2 * 86400) == 1
         assert service.store.get_run(run_id) is None
+
+
+# ── Review follow-ups ────────────────────────────────────────────────
+
+
+def test_concurrent_edits_of_one_version_have_one_winner(store):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    created = store.create_composition({"name": "x"}, actor="a")
+    barrier = threading.Barrier(16)
+
+    def edit(i: int) -> str:
+        barrier.wait()
+        try:
+            store.update_composition(created.id, {"name": f"e{i}"}, expected_version=1, actor="u")
+        except CompositionConflict as exc:
+            return f"conflict@{exc.current_version}"
+        return "ok"
+
+    with ThreadPoolExecutor(16) as pool:
+        results = list(pool.map(edit, range(16)))
+    assert results.count("ok") == 1
+    assert sorted(set(results)) == ["conflict@2", "ok"]
+    assert store.composition_versions(created.id) == [1, 2]
+
+
+def test_a_composition_keeps_its_latest_versions(store, monkeypatch):
+    from orrery_core.studio import store as store_module
+
+    monkeypatch.setattr(store_module, "MAX_COMPOSITION_VERSIONS", 3)
+    record = store.create_composition({"name": "v1"}, actor="a")
+    for version in range(1, 6):
+        record = store.update_composition(
+            record.id, {"name": f"v{version + 1}"}, expected_version=version, actor="a"
+        )
+    assert store.composition_versions(record.id) == [4, 5, 6]
+    assert store.get_composition(record.id, 1) is None
+    assert store.get_composition(record.id).spec == {"name": "v6"}
+
+
+def test_a_batch_sent_again_is_stored_once(store):
+    run_id = uuid.uuid4().hex
+    batch = [{"seq": 1, "type": "run.start"}, {"seq": 2, "type": "node.enter"}]
+    store.write_run(_run(run_id, status="running", ended_at=None), batch)
+    # The commit was in doubt: the same batch again, with the next one.
+    store.write_run(_run(run_id), [*batch, {"seq": 3, "type": "run.end"}])
+    assert [e["seq"] for e in store.events(run_id)] == [1, 2, 3]
+    assert store.get_run(run_id).status == "succeeded"
+
+
+def test_replicas_booting_together_create_the_tables_once(postgres_url):
+    import threading
+
+    import sqlalchemy as sa
+
+    from orrery_core.persistence.db import to_sync_url
+
+    engine = sa.create_engine(to_sync_url(postgres_url))
+    with engine.begin() as conn:
+        for table in (
+            "studio_run_events",
+            "studio_runs",
+            "studio_composition_versions",
+            "studio_compositions",
+        ):
+            conn.execute(sa.text(f"DROP TABLE IF EXISTS {table}"))
+    errors: list[str] = []
+    go = threading.Barrier(6)
+
+    def boot() -> None:
+        go.wait()
+        try:
+            SqlStudioStore(db_url=postgres_url)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=boot) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+
+class FlakyStore(InMemoryStudioStore):
+    """Fails ``write_run``: *before* commit, or *after* it (a commit in doubt)."""
+
+    def __init__(self, plan: list[str]) -> None:
+        super().__init__()
+        self.plan = plan  # "before", "after" or "ok", one per write; then "ok"
+        self.attempts = 0
+
+    def write_run(self, run, events):  # type: ignore[override]
+        self.attempts += 1
+        step = self.plan.pop(0) if self.plan else "ok"
+        if step == "before":
+            raise OSError("connection reset")
+        super().write_run(run, events)
+        if step == "after":
+            raise OSError("connection lost before the commit was acknowledged")
+
+
+@pytest.fixture
+def fast_persist(monkeypatch):
+    from orrery_core.studio import runner
+
+    monkeypatch.setattr(runner, "PERSIST_INTERVAL", 0.01)
+    monkeypatch.setattr(runner, "PERSIST_MAX_BACKOFF", 0.05)
+
+
+def _stored(app, run_id: str, timeout: float = 10.0) -> RunRecord:
+    store = app.state.studio.store
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        record = store.get_run(run_id)
+        if record is not None and record.finished and not app.state.studio._persisters:
+            return record
+        time.sleep(0.02)
+    raise AssertionError("the run was not stored")
+
+
+def test_transient_store_errors_do_not_stop_a_runs_persistence(principals, stub, fast_persist):
+    stub.delay = {"first": 0.2}
+    store = FlakyStore(["before", "after", "before", "after"])
+    app = make_app(stub, store=store)
+    with TestClient(app) as client:
+        run_id = start(client, SPEC)
+        finish(client, run_id)
+        record = _stored(app, run_id)
+        local = events(client, run_id)
+    assert record.status == "succeeded" and store.attempts > 4
+    stored = store.events(run_id)
+    assert [e["seq"] for e in stored] == [e["seq"] for e in local]  # each once, in order
+
+
+def test_the_last_write_is_retried_then_given_up(principals, stub, fast_persist, monkeypatch):
+    from orrery_core.studio import runner
+
+    monkeypatch.setattr(runner, "PERSIST_FINAL_ATTEMPTS", 3)
+    store = FlakyStore(["before"] * 1000)
+    app = make_app(stub, store=store)
+    with TestClient(app) as client:
+        run_id = start(client, SPEC)
+        finish(client, run_id)
+        deadline = time.monotonic() + 10
+        while app.state.studio._persisters:  # the writer ends, and is let go
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+    assert store.get_run(run_id) is None
+    assert 3 <= store.attempts < 1000
+
+
+def test_an_event_during_a_write_is_written_without_waiting(monkeypatch):
+    """The persister's lost wake-up: an event emitted while a write was in a
+    thread used to wait for the next one (or 15 s)."""
+    import asyncio
+
+    from orrery_core.a2a.remote import RemoteCards, RemoteNetwork
+    from orrery_core.studio import runner
+    from orrery_core.studio.config import StudioConfig
+    from orrery_core.studio.events import NodeEnter
+    from orrery_core.studio.registry import StudioRegistry
+    from orrery_core.studio.spec import parse_spec
+
+    class SlowStore(InMemoryStudioStore):
+        def write_run(self, run, events):  # type: ignore[override]
+            time.sleep(0.2)
+            super().write_run(run, events)
+
+    store = SlowStore()
+    service = runner.StudioService(
+        config=StudioConfig(enabled=True),
+        registry=StudioRegistry(),
+        cards=RemoteCards(RemoteNetwork.from_env()),
+        store=store,
+    )
+    spec = parse_spec(
+        {
+            "spec_version": 1,
+            "name": "t",
+            "nodes": [{"id": "a", "kind": "llm_agent", "instruction": "x"}],
+        }
+    )
+
+    async def scenario() -> float:
+        run = runner.StudioRun(run_id="r1", owner="o", spec=spec, spec_digest="d", input="x")
+        run.emit(NodeEnter(node_id="a", kind="llm_agent", model="m"))
+        writer = asyncio.create_task(service._persist(run))
+        await asyncio.sleep(0.1)  # the first write is in its thread
+        run.emit(NodeEnter(node_id="b", kind="llm_agent", model="m"))
+        started = time.monotonic()
+        while len(store.events("r1")) < 2:
+            await asyncio.sleep(0.01)
+            if time.monotonic() - started > 5:
+                break
+        took = time.monotonic() - started
+        writer.cancel()
+        return took
+
+    assert asyncio.run(scenario()) < 2.0
+
+
+def test_following_runs_on_other_replicas_is_capped_per_person(
+    principals, stub, tmp_path, monkeypatch
+):
+    import threading
+
+    from orrery_core.studio import runner
+
+    monkeypatch.setattr(runner, "MAX_FOLLOWS_PER_USER", 1)
+    monkeypatch.setattr("orrery_core.studio.api.MAX_FOLLOWS_PER_USER", 1)
+    stub.delay = {"first": 2.0}
+    a, b = _replicas(stub, tmp_path / "shared.db")
+    with TestClient(a) as one, TestClient(b) as two:
+        run_id = start(one, SPEC)
+        deadline = time.monotonic() + 10
+        while two.get(f"/studio/runs/{run_id}", headers=ADMIN).status_code != 200:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        first = threading.Thread(target=events, args=(two, run_id))
+        first.start()
+        while b.state.studio.following("alice") == 0:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        res = two.get(f"/studio/runs/{run_id}/events", headers=ADMIN)
+        assert res.status_code == 429
+        first.join()
+        assert b.state.studio.following("alice") == 0  # released when it ended
+        finish(one, run_id)

@@ -352,6 +352,68 @@ def test_a_loop_ends_when_the_label_moves_on(principals, stub):
     assert [e["label"] for e in trace if e["type"] == "route.decision"] == ["rejected", "approved"]
 
 
+def test_at_its_cap_a_loop_ends_with_the_last_draft(principals, stub):
+    # Not the critic's rejection: the answer it was judging.
+    stub.script["writer"] = lambda n, _t: f"draft {n}"
+    stub.script["critic"] = lambda n, _t: {"label": "rejected", "answer": f"redo {n}"}
+    with TestClient(make_app(stub, capture_content=True)) as client:
+        summary, trace = run(client, critic_loop(2))
+    assert summary["status"] == "succeeded"
+    assert trace[-1]["content"] == "draft 3"
+    assert [e["stopped"] for e in trace if e["type"] == "loop.iteration"][-1] is True
+
+
+def test_each_entry_of_a_looped_node_counts_its_own_tokens(principals, stub):
+    stub.script["critic"] = lambda n, _t: {
+        "label": "approved" if n == 3 else "rejected",
+        "answer": f"verdict {n}",
+    }
+    with TestClient(make_app(stub)) as client:
+        summary, trace = run(client, critic_loop(5))
+    assert summary["status"] == "succeeded"
+    exits = [e for e in trace if e["type"] == "node.exit" and e["node_id"] == "writer"]
+    assert [e["tokens"]["total"] for e in exits] == [15, 15, 15]  # not 15, 30, 45
+
+
+def test_an_inner_loop_starts_over_each_time_an_outer_one_is_taken(principals, stub):
+    # w -> c1 (loops back to w, at most 2); c1 -> x -> c2 (loops back to w, at most 1)
+    spec = spec_of(
+        [
+            node("w"),
+            node("c1", output={"labels": ["revise", "done"]}),
+            node("x"),
+            node("c2", output={"labels": ["revise", "done"]}),
+        ],
+        [
+            {"from": "w", "to": "c1"},
+            {"from": "c1", "to": "w", "when": "revise", "max_iterations": 2},
+            {"from": "c1", "to": "x", "when": "done"},
+            {"from": "x", "to": "c2"},
+            {"from": "c2", "to": "w", "when": "revise", "max_iterations": 1},
+        ],
+        "critic_loop",
+    )
+    labels = iter(["revise", "revise", "done", "revise", "done"])
+    stub.script["c1"] = lambda n, _t: {"label": next(labels), "answer": f"c1 {n}"}
+    stub.script["c2"] = lambda n, _t: {
+        "label": "revise" if n == 1 else "done",
+        "answer": f"c2 {n}",
+    }
+    with TestClient(make_app(stub)) as client:
+        summary, trace = run(client, spec)
+    assert summary["status"] == "succeeded", summary
+    loops = [
+        (e["edge"], e["iteration"], e["stopped"]) for e in trace if e["type"] == "loop.iteration"
+    ]
+    assert loops == [
+        ("c1->w", 1, False),
+        ("c1->w", 2, False),
+        ("c2->w", 1, False),
+        ("c1->w", 1, False),  # counted from zero again: c2's edge re-entered c1's loop
+    ]
+    assert entered(trace) == ["w", "c1"] * 3 + ["x", "c2"] + ["w", "c1"] * 2 + ["x", "c2"]
+
+
 # ── Fan-out / fan-in ─────────────────────────────────────────────────
 
 
@@ -406,6 +468,17 @@ def test_the_join_lays_out_the_branches_in_order(principals, stub):
     assert text.index("## kafka") < text.index("## k8s") < text.index("## db")
 
 
+def test_the_budget_counts_every_branch_together(principals, stub):
+    # Each branch alone is within the budget; all three are not.
+    spec = {**FAN, "budgets": {"max_tokens": 50}}
+    with TestClient(make_app(stub)) as client:
+        summary, trace = run(client, spec)
+    assert summary["status"] == "budget_exhausted", summary
+    [hit] = [e for e in trace if e["type"] == "budget.hit"]
+    assert hit["budget"] == "max_tokens" and hit["used"] > 50
+    assert "report" not in entered(trace)
+
+
 # ── Supervisor ───────────────────────────────────────────────────────
 
 
@@ -438,6 +511,29 @@ def test_a_supervisor_delegates_to_its_children_and_each_counts(principals, stub
         ("searcher", "lead"),
     ]
     assert entered(trace)[0] == "lead"
+
+
+def test_two_calls_of_one_child_at_once_are_two_entries(principals, stub):
+    spec = spec_of(
+        [
+            {"id": "boss", "kind": "supervisor", "instruction": "Lead.", "children": ["kid"]},
+            node("kid"),
+        ],
+        [],
+        "supervisor",
+    )
+    stub.script["boss"] = lambda _n, _t: [
+        ("n_kid", {"request": "one"}),
+        ("n_kid", {"request": "two"}),
+    ]
+    stub.delay = {"kid": 0.2}
+    with TestClient(make_app(stub)) as client:
+        summary, trace = run(client, spec)
+    assert summary["status"] == "succeeded", summary
+    kid = [e for e in trace if e.get("node_id") == "kid"]
+    assert sorted(e["type"] for e in kid) == ["node.enter", "node.enter", "node.exit", "node.exit"]
+    assert [e["tokens"]["total"] for e in kid if e["type"] == "node.exit"] == [15, 15]
+    assert summary["totals"]["delegations"] == 2
 
 
 def test_delegations_are_held_to_the_budget(principals, stub):
@@ -489,37 +585,86 @@ def test_supervisors_nest(principals, stub):
 
 
 def test_a_node_runs_on_its_own_model_without_the_fallback_chain(principals, stub, monkeypatch):
+    # The real path: the allowlisted name is built at startup by resolve_model()
+    # and ADK's model registry; only Gemini's network call is replaced.
+    from google.adk.models.google_llm import Gemini
+
+    monkeypatch.setenv("MODEL_PROVIDER", "anthropic")  # the deployment is not Gemini
+    monkeypatch.setenv("MODEL_NAME", "anthropic/claude-deploy")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("MODEL_FALLBACK_CHAIN", "gemini-fallback")
-    built: list[str] = []
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    seen: list[tuple[str, bool]] = []
 
-    def model_for(name: str) -> Any:
-        built.append(name)
-        other = GraphStub(model=name)
-        # Shared, not copied (pydantic copies containers it validates).
-        other.script, other.calls, other.inputs, other.delay = (
-            stub.script,
-            stub.calls,
-            stub.inputs,
-            {},
-        )
-        return other
+    async def generate(self, llm_request, stream=False):
+        config = llm_request.config
+        seen.append((self.model, bool(config and config.safety_settings)))
+        async for response in stub.generate_content_async(llm_request, stream):
+            yield response
 
+    monkeypatch.setattr(Gemini, "generate_content_async", generate)
     spec = spec_of(
-        [node("cheap"), node("smart", model="stub-b")],
+        [node("cheap"), node("smart", model="gemini-studio-x")],
         [{"from": "cheap", "to": "smart"}],
         "pipeline",
     )
-    with TestClient(make_app(stub, model_for=model_for, models=frozenset({"stub-b"}))) as client:
+    with TestClient(make_app(stub, models=frozenset({"gemini-studio-x"}))) as client:
         summary, trace = run(client, spec)
     assert summary["status"] == "succeeded", summary
-    assert built == ["stub-b"]
-    assert [(c[0], c[1]) for c in stub.calls] == [("cheap", "stub-a"), ("smart", "stub-b")]
+    # One call on the named model, and it kept Gemini's safety filters
+    # although MODEL_PROVIDER names another provider.
+    assert seen == [("gemini-studio-x", True)]
+    assert [c[0] for c in stub.calls] == ["cheap", "smart"]
     assert {e["node_id"]: e["model"] for e in trace if e["type"] == "node.enter"} == {
         "cheap": "stub-a",
-        "smart": "stub-b",
+        "smart": "gemini-studio-x",
     }
     by_model = summary["totals"]["tokens_by_model"]
-    assert set(by_model) == {"stub-a", "stub-b"} and by_model["stub-b"]["total"] == 15
+    assert set(by_model) == {"stub-a", "gemini-studio-x"}
+    assert by_model["gemini-studio-x"]["total"] == 15
+
+
+@pytest.mark.parametrize(
+    ("models", "env", "message"),
+    [
+        ({"anthropic/claude-x"}, {}, "needs ANTHROPIC_API_KEY"),
+        ({"gemini-x"}, {}, "needs GOOGLE_API_KEY"),
+        ({"gemini-x"}, {"GOOGLE_GENAI_USE_VERTEXAI": "true"}, None),
+        ({"anthropic/claude-x"}, {"ANTHROPIC_API_KEY": "k"}, None),
+    ],
+)
+def test_allowlisted_models_are_built_at_startup(
+    principals, stub, monkeypatch, models, env, message
+):
+    for key in (
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    if message is None:
+        make_app(stub, models=frozenset(models))
+        return
+    with pytest.raises(ValueError, match=message):
+        make_app(stub, models=frozenset(models))
+
+
+def test_a_missing_litellm_fails_startup(principals, stub, monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_litellm(name, *args, **kwargs):
+        if name.startswith("litellm") or name.endswith("lite_llm"):
+            raise ImportError("No module named 'litellm'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_litellm)
+    with pytest.raises(ValueError, match="LiteLLM, which is not installed"):
+        make_app(stub, models=frozenset({"openai/gpt-x"}))
 
 
 def test_a_model_off_the_allowlist_is_refused_before_any_call(principals, stub):

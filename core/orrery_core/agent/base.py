@@ -239,7 +239,7 @@ _SAFETY_THRESHOLDS = frozenset(
 )
 
 
-def resolve_safety_config() -> Any | None:
+def resolve_safety_config(*, gemini: bool | None = None) -> Any | None:
     """Build a ``GenerateContentConfig`` with Gemini content-safety filters.
 
     Applied by ``create_agent()`` to Gemini models only (LiteLLM-routed
@@ -249,11 +249,18 @@ def resolve_safety_config() -> Any | None:
     about killing pods and destroying volumes all day, so the aggressive
     thresholds trip on legitimate operations chatter).
 
-    Returns ``None`` when disabled or when the provider is not Gemini.
+    *gemini* says whether the model at hand is a Gemini one; unset, it is
+    read from ``MODEL_PROVIDER`` (the deployment's model). A Studio node may
+    name a Gemini model on a deployment that runs another provider, and still
+    gets the filters.
+
+    Returns ``None`` when disabled or when the model is not Gemini.
     """
     if not env_flag("GEMINI_SAFETY_FILTERS", default=True):
         return None
-    if os.getenv("MODEL_PROVIDER", "gemini").lower() != "gemini":
+    if gemini is None:
+        gemini = os.getenv("MODEL_PROVIDER", "gemini").lower() == "gemini"
+    if not gemini:
         return None
 
     from google.genai import types
@@ -396,7 +403,9 @@ def _generate_content_config(model: Any) -> Any | None:
     * Billing labels (AEP-015) for a Gemini model — see :func:`resolve_cost_labels`.
     """
     gemini = is_gemini_model(model)
-    safety = resolve_safety_config() if gemini else None
+    # Decided by the model itself, not MODEL_PROVIDER: a per-node model may
+    # be Gemini on a deployment that runs another provider.
+    safety = resolve_safety_config(gemini=True) if gemini else None
     retry = resolve_retry_options()
     labels = resolve_cost_labels() if gemini else {}
     if safety is None and retry is None and not labels:

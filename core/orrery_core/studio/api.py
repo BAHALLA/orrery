@@ -60,7 +60,7 @@ from ..security.principal import PrincipalKind
 from ..serving.rate_limit import RateLimiter, parse_rate
 from .compiler import registry_toolset
 from .events import events_json_schema
-from .runner import RunElsewhere, StudioService, TooManyRuns
+from .runner import MAX_FOLLOWS_PER_USER, RunElsewhere, StudioService, TooManyRuns
 from .spec import (
     MAX_INPUT_CHARS,
     MAX_LOOP_ITERATIONS,
@@ -79,13 +79,17 @@ from .spec import (
     errors_from_validation,
     spec_json_schema,
 )
-from .store import CompositionConflict, CompositionNotFound
+from .store import CompositionConflict, CompositionNotFound, RunRecord
 
 #: Seconds between SSE keepalive comments.
 KEEPALIVE_SECONDS = 15.0
 
 #: Seconds one card fetch (or MCP tool listing) may take on ``?resolve=true``.
 RESOLVE_TIMEOUT = 5.0
+#: ``GET /studio/registry?resolve=true`` per person (each reaches every server).
+RESOLVE_RATE = "6/minute"
+#: Composition saves and deletes per person.
+COMPOSITION_WRITE_RATE = "30/minute"
 
 #: Every node kind the format describes.
 NODE_KINDS = [
@@ -184,6 +188,8 @@ def mount_studio(
     limiter: RateLimiter,
 ) -> None:
     rate = parse_rate(service.config.rate_limit)
+    resolve_rate = parse_rate(RESOLVE_RATE)
+    write_rate = parse_rate(COMPOSITION_WRITE_RATE)
 
     async def studio_admin(auth: AuthContext = Depends(auth_dependency)) -> AuthContext:  # noqa: B008
         if auth.role != "admin":
@@ -202,7 +208,7 @@ def mount_studio(
         return auth
 
     async def own_run(run_id: str, auth: AuthContext) -> Any:
-        run = await asyncio.to_thread(service.lookup, run_id, auth.subject)
+        run = await service.lookup(run_id, auth.subject)
         if run is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such run")
         return run
@@ -269,9 +275,7 @@ def mount_studio(
         auth: AuthContext = Depends(studio_admin),  # noqa: B008
     ) -> Any:
         limit = max(1, min(limit, 200))
-        runs = await asyncio.to_thread(
-            service.history, auth.subject, composition_id=composition_id, limit=limit
-        )
+        runs = await service.history(auth.subject, composition_id=composition_id, limit=limit)
         return {"runs": runs}
 
     @api.get("/studio/runs/{run_id}")
@@ -297,14 +301,28 @@ def mount_studio(
         run = await own_run(run_id, auth)
         raw = request.headers.get("last-event-id", "").strip()
         after = int(raw) if raw.isdigit() else 0
+        # Following a run on another replica polls the store: a few per person.
+        follows = isinstance(run, RunRecord) and not run.finished
+        if follows and service.following(auth.subject) >= MAX_FOLLOWS_PER_USER:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"at most {MAX_FOLLOWS_PER_USER} runs on other replicas followed at once",
+            )
 
         async def frames() -> AsyncIterator[str]:
-            async for event in service.stream(run, after):
-                if event is None:
-                    yield ": keepalive\n\n"
-                    continue
-                data = json.dumps(event, separators=(",", ":"))
-                yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {data}\n\n"
+            # Counted while it streams (a response never started holds nothing).
+            if follows:
+                service.start_follow(auth.subject)
+            try:
+                async for event in service.stream(run, after):
+                    if event is None:
+                        yield ": keepalive\n\n"
+                        continue
+                    data = json.dumps(event, separators=(",", ":"))
+                    yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {data}\n\n"
+            finally:
+                if follows:
+                    service.end_follow(auth.subject)
 
         return StreamingResponse(
             frames(),
@@ -323,6 +341,7 @@ def mount_studio(
         request: Request,
         auth: AuthContext = Depends(studio_admin),  # noqa: B008
     ) -> Any:
+        limiter.hit(write_rate, f"studio-write:{auth.subject}")
         try:
             write = CompositionWrite.model_validate(await json_body(request))
             if write.version is not None:
@@ -365,6 +384,7 @@ def mount_studio(
         request: Request,
         auth: AuthContext = Depends(studio_admin),  # noqa: B008
     ) -> Any:
+        limiter.hit(write_rate, f"studio-write:{auth.subject}")
         try:
             write = CompositionWrite.model_validate(await json_body(request))
             if write.version is None:
@@ -408,6 +428,7 @@ def mount_studio(
         version: int,
         auth: AuthContext = Depends(studio_admin),  # noqa: B008
     ) -> Response:
+        limiter.hit(write_rate, f"studio-write:{auth.subject}")
         try:
             await asyncio.to_thread(service.store.delete_composition, cid, expected_version=version)
         except CompositionNotFound:
@@ -453,6 +474,8 @@ def mount_studio(
         reg = service.registry
         catalogue = service.catalogue()
         if resolve:
+            # Each resolve reaches every registered server: limited per person.
+            limiter.hit(resolve_rate, f"studio-resolve:{auth.subject}")
 
             async def fetch(entry: Any) -> None:
                 # A refusal or a timeout is reported in the entry's card status.

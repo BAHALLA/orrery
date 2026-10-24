@@ -640,11 +640,53 @@ def test_a_branch_does_not_route():
     assert any("neither routes nor loops" in e["msg"] for e in _errors(raw))
 
 
-def test_a_loop_cannot_go_back_into_a_branch():
+@pytest.mark.parametrize("target", ["b0", "fan", "start"])
+def test_a_loop_cannot_contain_a_parallel_section(target):
+    # A join does not start over: entered again, it would fire on the earlier
+    # round's answers (seen as nodes after it running twice per round).
     raw = _fan(2)
     raw["nodes"][-1] = _labelled("end", "done", "again")
-    raw["edges"].append({"from": "end", "to": "b0", "when": "again", "max_iterations": 2})
-    assert any("back into a parallel branch" in e["msg"] for e in _errors(raw))
+    raw["edges"].append({"from": "end", "to": target, "when": "again", "max_iterations": 2})
+    [error] = _errors(raw)
+    assert error["code"] == "loop_around_parallel" and error["loc"] == ["edges", 6]
+
+
+def test_a_loop_after_the_join_is_fine():
+    raw = _fan(2)
+    raw["nodes"][-1] = _labelled("end", "done", "again")
+    raw["nodes"].insert(-1, _node("draft"))
+    raw["edges"][-1] = {"from": "meet", "to": "draft"}
+    raw["edges"].append({"from": "draft", "to": "end"})
+    raw["edges"].append({"from": "end", "to": "draft", "when": "again", "max_iterations": 2})
+    assert _errors(raw) == []
+
+
+def test_a_branch_does_not_fan_out_again():
+    raw = _graph(
+        [
+            {"id": "outer", "kind": "parallel"},
+            {"id": "inner", "kind": "parallel"},
+            _node("x"),
+            _node("y"),
+            {"id": "inner_join", "kind": "join"},
+            _node("z"),
+            {"id": "outer_join", "kind": "join"},
+            _node("end"),
+        ],
+        [
+            {"from": "outer", "to": "inner"},
+            {"from": "inner", "to": "x"},
+            {"from": "inner", "to": "y"},
+            {"from": "x", "to": "inner_join"},
+            {"from": "y", "to": "inner_join"},
+            {"from": "inner_join", "to": "outer_join"},
+            {"from": "outer", "to": "z"},
+            {"from": "z", "to": "outer_join"},
+            {"from": "outer_join", "to": "end"},
+        ],
+        "fan_out_fan_in",
+    )
+    assert any("does not fan out again" in e["msg"] for e in _errors(raw))
 
 
 def _supervisor(node_id: str, *children: str) -> dict[str, Any]:

@@ -66,6 +66,7 @@ from .registry import StudioRegistry
 from .spec import (
     NODE_TOOL_PREFIX,
     CompositionSpec,
+    GraphPlan,
     LlmAgentNode,
     SupervisorNode,
     graph_order,
@@ -124,6 +125,8 @@ class Trace(Protocol):
     def emit_event(self, event: Any) -> None: ...
 
     def record_output(self, node_id: str, text: str) -> None: ...
+
+    def answer_of(self, node_id: str) -> str | None: ...
 
 
 class RouteFailed(Exception):
@@ -204,15 +207,36 @@ class _NoTrace:
     def record_output(self, node_id: str, text: str) -> None:
         return None
 
+    def answer_of(self, node_id: str) -> str | None:
+        return None
+
 
 def _safe(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower())
 
 
+def _judged_by(spec: CompositionSpec, plan: GraphPlan, source: str) -> str | None:
+    """The node whose answer *source* (a labelled node, or its router) takes in."""
+    labelled = plan.router_source.get(source, source)
+    before = [
+        spec.edges[k].from_
+        for outs in plan.out.values()
+        for k in outs
+        if spec.edges[k].to == labelled and k not in plan.back_edges
+    ]
+    if len(before) != 1:
+        return None
+    return plan.router_source.get(before[0], before[0])
+
+
+#: The structured-output model of a labelled node is ``Labelled_<node id>``.
+LABELLED_PREFIX = "Labelled_"
+
+
 def label_schema(node_id: str, labels: list[str]) -> type[BaseModel]:
     """The structured output of a labelled node: one of *labels*, and the answer."""
     return create_model(
-        f"Labelled_{node_id}",
+        f"{LABELLED_PREFIX}{node_id}",
         label=(Literal[tuple(labels)], Field(description="One of the labels.")),  # ty: ignore[invalid-type-form]
         answer=(str, Field(description="The text the next step gets.")),
     )
@@ -379,26 +403,40 @@ def compile_spec(
 
         return FunctionNode(func=route, name=name)
 
+    # Each loop counts per entry: taking an outer loop's edge again starts
+    # the loops inside it over.
+    loop_counts = dict.fromkeys(plan.back_edges, 0)
+
     def loop_node(j: int) -> FunctionNode:
         edge = spec.edges[j]
         cap = edge.max_iterations or 1
-        state = {"count": 0}
+        state = loop_counts
+        inner = plan.inner_loops(j)
+        judged = _judged_by(spec, plan, edge.from_)
 
         def loop(ctx: Context, node_input: Any) -> Any:
-            state["count"] += 1
-            stopped = state["count"] > cap
+            state[j] += 1
+            count = state[j]
+            stopped = count > cap
+            if not stopped:
+                for k in inner:
+                    state[k] = 0
             sink.emit_event(
                 LoopIteration(
                     edge=f"{edge.from_}->{edge.to}",
                     from_node=edge.from_,
                     to_node=edge.to,
-                    iteration=min(state["count"], cap),
+                    iteration=min(count, cap),
                     cap=cap,
                     stopped=stopped,
                 )
             )
-            # No edge for "stop": the branch ends, with the source's answer.
             ctx.route = "stop" if stopped else "continue"
+            if stopped and judged is not None and (text := sink.answer_of(judged)) is not None:
+                # No edge for "stop": the branch ends. Its answer is what the
+                # source was judging (the last draft), not its verdict.
+                sink.record_output(judged, text)
+                return text
             return node_input
 
         return FunctionNode(func=loop, name=f"loop_{j}")

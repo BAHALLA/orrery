@@ -14,6 +14,7 @@ from ..env import env_flag, env_int
 STUDIO_ENABLED_ENV = "ORRERY_STUDIO_ENABLED"
 STUDIO_REGISTRY_ENV = "ORRERY_STUDIO_REGISTRY"
 STUDIO_CAPTURE_CONTENT_ENV = "ORRERY_STUDIO_CAPTURE_CONTENT"
+STUDIO_MODELS_ENV = "ORRERY_STUDIO_MODELS"
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,7 @@ class StudioConfig:
             retention_seconds=env_int("ORRERY_STUDIO_RUN_RETENTION_SECONDS", cls.retention_seconds),
             run_retention_days=env_int("ORRERY_STUDIO_RUN_RETENTION_DAYS", cls.run_retention_days),
             models=frozenset(
-                m.strip() for m in os.getenv("ORRERY_STUDIO_MODELS", "").split(",") if m.strip()
+                m.strip() for m in os.getenv(STUDIO_MODELS_ENV, "").split(",") if m.strip()
             ),
             max_running_per_user=env_int(
                 "ORRERY_STUDIO_MAX_RUNNING_PER_USER", cls.max_running_per_user

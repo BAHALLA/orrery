@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import logging
 import time
 import uuid
@@ -55,7 +54,14 @@ from ..security.auth import AUTH_STATE_KEY, AuthContext
 from ..security.identity import CallerIdentity
 from ..security.principal import STUDIO_SESSION_PREFIX
 from ..serving.gateway import AgentGateway, TurnTimedOut
-from .compiler import CompiledComposition, McpPins, RouteFailed, compile_spec
+from .compiler import (
+    LABELLED_PREFIX,
+    CompiledComposition,
+    McpPins,
+    NodeInfo,
+    RouteFailed,
+    compile_spec,
+)
 from .config import StudioConfig
 from .events import (
     ALWAYS_KEPT,
@@ -229,6 +235,11 @@ class StudioRun:
         )
 
 
+def _entry_key(agent_name: str, context: Any) -> tuple[str, str]:
+    """One entry of a node: its agent and the invocation running it."""
+    return agent_name, str(getattr(context, "invocation_id", "") or "")
+
+
 class StudioRunPlugin(BasePlugin):
     """Trace events and the composition ledger for one run. Fresh per run."""
 
@@ -249,9 +260,15 @@ class StudioRunPlugin(BasePlugin):
         )
         #: The answer of the graph node that finished last: the run's output.
         self._output: str | None = None
-        self._entered: dict[str, float] = {}
-        self._tokens: dict[str, TokenCount] = {}
-        self._last_text: dict[str, str] = {}
+        # Keyed by (agent name, invocation id): each call of a supervisor's
+        # child is its own invocation, so two at once are told apart, and a
+        # node entered again (a loop) counts from zero.
+        self._entered: dict[tuple[str, str], float] = {}
+        self._tokens: dict[tuple[str, str], TokenCount] = {}
+        self._last_text: dict[tuple[str, str], str] = {}
+        #: Graph node id -> its latest answer (a loop that stops at its cap
+        #: ends with the answer its source was judging).
+        self._answers: dict[str, str] = {}
         self._tool_started: dict[str, float] = {}
         #: ``(agent name, error type)`` of the first failed model call. The
         #: error handler answers it with an apology, which would otherwise pass
@@ -273,6 +290,10 @@ class StudioRunPlugin(BasePlugin):
 
     def record_output(self, node_id: str, text: str) -> None:
         self._output = text
+        self._answers[node_id] = text
+
+    def answer_of(self, node_id: str) -> str | None:
+        return self._answers.get(node_id)
 
     def hold_inbound(self, event: A2aMessage, call_id: str | None) -> None:
         key = (event.node_id, call_id)
@@ -298,7 +319,10 @@ class StudioRunPlugin(BasePlugin):
         info = self._compiled.nodes.get(agent.name)
         if info is None:
             return None
-        self._entered[agent.name] = time.monotonic()
+        key = _entry_key(agent.name, callback_context)
+        self._entered[key] = time.monotonic()
+        self._tokens[key] = TokenCount()
+        self._last_text.pop(key, None)
         self._run.emit(
             NodeEnter(node_id=info.node_id, kind=info.kind, model=info.model, parent=info.parent)
         )
@@ -313,20 +337,22 @@ class StudioRunPlugin(BasePlugin):
             return None
         failed = self.failure is not None and self.failure[0] == agent.name
         info = self._compiled.nodes.get(agent.name)
+        key = _entry_key(agent.name, callback_context)
         # A labelled node's answer is set again by its route node, without the label.
         if (
             not failed
             and info is not None
             and info.parent is None
-            and (text := self._last_text.get(agent.name)) is not None
+            and (text := self._last_text.get(key)) is not None
         ):
             self._output = text
-        self._exit(agent.name, "failed" if failed else "ok")
+            self._answers[info.node_id] = text
+        self._exit(key, "failed" if failed else "ok")
         return None
 
-    def _exit(self, agent_name: str, outcome: NodeOutcome) -> None:
-        info = self._compiled.nodes.get(agent_name)
-        started = self._entered.pop(agent_name, None)
+    def _exit(self, key: tuple[str, str], outcome: NodeOutcome) -> None:
+        info = self._compiled.nodes.get(key[0])
+        started = self._entered.pop(key, None)
         if info is None or started is None:
             return
         self._flush_node(info.node_id)  # an exchange whose tool never finished
@@ -335,25 +361,20 @@ class StudioRunPlugin(BasePlugin):
                 node_id=info.node_id,
                 kind=info.kind,
                 model=info.model,
-                tokens=self._tokens.get(agent_name, TokenCount()),
+                tokens=self._tokens.pop(key, TokenCount()),
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 outcome=outcome,
                 parent=info.parent,
-                content=self._run.capture(self._last_text.get(agent_name)),
+                content=self._run.capture(self._last_text.pop(key, None)),
             )
         )
 
-    def open_labelled_node(self) -> tuple[str, list[str]] | None:
-        """A labelled node still running (its structured answer did not parse)."""
-        for name in self._entered:
-            info = self._compiled.nodes.get(name)
-            if info is not None and info.labels:
-                return info.node_id, list(info.labels)
-        return None
+    def labelled_nodes(self) -> list[NodeInfo]:
+        return [info for info in self._compiled.nodes.values() if info.labels]
 
     def close_open_nodes(self, outcome: NodeOutcome) -> None:
-        for name in list(self._entered):
-            self._exit(name, outcome)
+        for key in list(self._entered):
+            self._exit(key, outcome)
 
     def last_output(self) -> str | None:
         return self._output
@@ -369,7 +390,7 @@ class StudioRunPlugin(BasePlugin):
             prompt = int(getattr(usage, "prompt_token_count", 0) or 0)
             output = int(getattr(usage, "candidates_token_count", 0) or 0)
             total = int(getattr(usage, "total_token_count", 0) or 0) or prompt + output
-            node = self._tokens.setdefault(name, TokenCount())
+            node = self._tokens.setdefault(_entry_key(name, callback_context), TokenCount())
             node.input += prompt
             node.output += output
             node.total += total
@@ -380,7 +401,7 @@ class StudioRunPlugin(BasePlugin):
         if content is not None and content.parts:
             text = "".join(p.text for p in content.parts if p.text and p.thought is not True)
             if text:
-                self._last_text[name] = text
+                self._last_text[_entry_key(name, callback_context)] = text
         return None
 
     async def on_model_error_callback(
@@ -524,8 +545,18 @@ class RunElsewhere(Exception):
 
 #: Seconds between store writes of a run in flight (events are batched).
 PERSIST_INTERVAL = 0.25
-#: Seconds between store reads when following a run on another replica.
+#: Seconds a run waits for its MCP sessions to close.
+CLOSE_TIMEOUT = 10.0
+#: Longest wait between attempts after a failed write.
+PERSIST_MAX_BACKOFF = 5.0
+#: Attempts at a finished run's last write before giving up.
+PERSIST_FINAL_ATTEMPTS = 8
+#: Seconds between store reads when following a run on another replica;
+#: while nothing new comes, the wait grows to :data:`FOLLOW_MAX_INTERVAL`.
 FOLLOW_INTERVAL = 1.0
+FOLLOW_MAX_INTERVAL = 5.0
+#: Runs on other replicas one person may follow at once (each polls the store).
+MAX_FOLLOWS_PER_USER = 4
 #: Seconds between retention purges.
 PURGE_INTERVAL = 3600.0
 
@@ -564,6 +595,8 @@ class StudioService:
         #: Registry MCP entry -> why its tools could not be listed (``?resolve=true``).
         self.mcp_errors: dict[str, str] = {}
         self._purger: asyncio.Task[None] | None = None
+        #: Subject -> streams following a run on another replica.
+        self._follows: dict[str, int] = {}
 
     def catalogue(self) -> Mapping[str, Any]:
         return self._catalogue()
@@ -682,9 +715,9 @@ class StudioService:
         )
         run.task = asyncio.create_task(self._execute(run, auth), name=f"studio-{run.run_id}")
         run.task.add_done_callback(lambda task: self._finalise(run, task, auth))
-        self._persisters[run.run_id] = asyncio.create_task(
-            self._persist(run), name=f"studio-persist-{run.run_id}"
-        )
+        writer = asyncio.create_task(self._persist(run), name=f"studio-persist-{run.run_id}")
+        self._persisters[run.run_id] = writer
+        writer.add_done_callback(lambda _t: self._persisters.pop(run.run_id, None))
         return run
 
     def _finalise(self, run: StudioRun, task: asyncio.Task[None], auth: AuthContext) -> None:
@@ -706,26 +739,43 @@ class StudioService:
         audit_event("studio_run_ended", subject=auth.subject, run_id=run.run_id, outcome=outcome)
 
     async def _persist(self, run: StudioRun) -> None:
-        """Write the run and its new events to the store until it ends (batched)."""
+        """Write the run and its new events to the store until it ends (batched).
+
+        Each write is one transaction (events and row), and a failed one is
+        sent again, whole, with backoff: the append skips what is stored, so a
+        commit in doubt is harmless. The last write is tried
+        :data:`PERSIST_FINAL_ATTEMPTS` times before giving up.
+        """
         timeout_s = run.spec.budgets.resolved(self.config.ceilings).timeout_s
         sent = 0
         first = True
-        warned = False
+        failures = 0
         while True:
             finished = run.finished
             batch = run.events[sent:]
             if batch or first or finished:
                 record = run.record(self.replica, timeout_s)
                 try:
-                    await asyncio.to_thread(self._write, record, batch)
-                    sent += len(batch)
-                    first = False
+                    await asyncio.to_thread(self.store.write_run, record, batch)
                 except Exception:  # noqa: BLE001 - the run goes on; this replica still serves it
-                    if not warned:
+                    failures += 1
+                    if failures == 1:
                         logger.warning("Writing Studio run %s failed", run.run_id, exc_info=True)
-                        warned = True
-                    if finished:
+                    if finished and failures >= PERSIST_FINAL_ATTEMPTS:
+                        logger.error(
+                            "Gave up writing Studio run %s after %d attempts; other replicas "
+                            "will report it lost",
+                            run.run_id,
+                            failures,
+                        )
                         return
+                    await asyncio.sleep(min(PERSIST_INTERVAL * 2**failures, PERSIST_MAX_BACKOFF))
+                    continue
+                if failures:
+                    logger.info("Writing Studio run %s recovered", run.run_id)
+                failures = 0
+                sent += len(batch)
+                first = False
             if finished and sent >= len(run.events):
                 return
             # Events that came in during the write are not waited for: no
@@ -734,36 +784,32 @@ class StudioService:
                 await run.wait(15.0)
             await asyncio.sleep(PERSIST_INTERVAL)
 
-    def _write(self, record: RunRecord, events: list[dict[str, Any]]) -> None:
-        # The run's row after its events: a reader that sees it finished has
-        # every event already. (The first write creates the row, with none.)
-        if self.store.get_run(record.run_id) is None:
-            self.store.save_run(dataclasses.replace(record, status="running"))
-        self.store.append_events(record.run_id, events)
-        self.store.save_run(record)
-
     def get(self, run_id: str, owner: str) -> StudioRun | None:
         """The run, if it is on this replica and *owner* started it."""
         run = self._runs.get(run_id)
         return run if run is not None and run.owner == owner else None
 
-    def lookup(self, run_id: str, owner: str) -> StudioRun | RunRecord | None:
+    async def lookup(self, run_id: str, owner: str) -> StudioRun | RunRecord | None:
         """The run here, else as stored (any replica's); anyone else's is unknown."""
         if (run := self.get(run_id, owner)) is not None:
             return run
-        stored = self.store.get_run(run_id)
+        stored = await asyncio.to_thread(self.store.get_run, run_id)
         if stored is None or stored.owner != owner:
             return None
         return stored.view()
 
-    def history(
+    async def history(
         self, owner: str, *, composition_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """*owner*'s runs, newest first: this replica's and the stored ones."""
-        stored = {
-            r.run_id: r.view().summary() | {"cancellable": False}
-            for r in self.store.list_runs(owner, composition_id=composition_id, limit=limit)
-        }
+        """*owner*'s runs, newest first: this replica's and the stored ones.
+
+        Only the store query leaves the event loop: the in-memory runs change
+        on the loop, so they are read there.
+        """
+        records = await asyncio.to_thread(
+            self.store.list_runs, owner, composition_id=composition_id, limit=limit
+        )
+        stored = {r.run_id: r.view().summary() | {"cancellable": False} for r in records}
         for run in self._runs.values():
             if run.owner == owner and (
                 composition_id is None or run.composition_id == composition_id
@@ -931,7 +977,7 @@ class StudioService:
             outcome, node_outcome = "cancelled", "cancelled"
         except Exception as exc:  # noqa: BLE001 - a failed run is an outcome, not a crash
             route_failed = _route_failure(exc)
-            unlabelled = plugin.open_labelled_node() if _caused_by_validation(exc) else None
+            unlabelled = _unlabelled_node(exc, plugin)
             if route_failed is not None:
                 error = str(route_failed)
             elif unlabelled is not None:
@@ -947,8 +993,10 @@ class StudioService:
         finally:
             if compiled is not None:
                 # Shielded: a cancelled run still closes its MCP sessions.
+                # Bounded: a server that never answers its close does not
+                # keep the run (and its person's slot) open.
                 with contextlib.suppress(Exception, asyncio.CancelledError):
-                    await asyncio.shield(compiled.close())
+                    await asyncio.wait_for(asyncio.shield(compiled.close()), CLOSE_TIMEOUT)
             output = plugin.last_output()
             plugin.close_open_nodes(node_outcome)
             if outcome == "budget_exhausted" and ledger.exhausted is not None:
@@ -991,16 +1039,28 @@ class StudioService:
                 yield event
             if run.finished and sent >= len(run.events):
                 return
-            if sent < len(run.events):
-                continue  # arrived while the consumer held a yield
             await run.wait(15.0)
             if sent >= len(run.events) and not run.finished:
                 yield None
+
+    def following(self, subject: str) -> int:
+        return self._follows.get(subject, 0)
+
+    def start_follow(self, subject: str) -> None:
+        self._follows[subject] = self._follows.get(subject, 0) + 1
+
+    def end_follow(self, subject: str) -> None:
+        left = self._follows.get(subject, 0) - 1
+        if left > 0:
+            self._follows[subject] = left
+        else:
+            self._follows.pop(subject, None)
 
     async def _follow(self, run: RunRecord, after: int) -> AsyncIterator[dict[str, Any] | None]:
         """A stored run's events: a replay, or a run going on another replica, followed."""
         sent = after
         idle = 0.0
+        interval = FOLLOW_INTERVAL
         while True:
             # The row first: once it reads finished, every event is stored.
             current = await asyncio.to_thread(self.store.get_run, run.run_id)
@@ -1010,8 +1070,10 @@ class StudioService:
                 yield event
             if current is None or current.view().finished:
                 return
-            await asyncio.sleep(FOLLOW_INTERVAL)
-            idle = 0.0 if events else idle + FOLLOW_INTERVAL
+            # Back off while nothing happens; back to fast once events come.
+            interval = FOLLOW_INTERVAL if events else min(interval * 1.5, FOLLOW_MAX_INTERVAL)
+            await asyncio.sleep(interval)
+            idle = 0.0 if events else idle + interval
             if idle >= 15.0:
                 idle = 0.0
                 yield None
@@ -1031,10 +1093,21 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return out
 
 
-def _caused_by_validation(exc: BaseException) -> bool:
+def _unlabelled_node(exc: BaseException, plugin: StudioRunPlugin) -> tuple[str, list[str]] | None:
+    """``(node id, labels)`` when *exc* is a labelled node's answer failing its schema.
+
+    Only the ``Labelled_<id>`` model counts: any other validation error (a bad
+    tool argument, say) is not a missing label.
+    """
     from pydantic import ValidationError
 
-    return any(isinstance(e, ValidationError) for e in _chain(exc))
+    for error in _chain(exc):
+        if isinstance(error, ValidationError) and error.title.startswith(LABELLED_PREFIX):
+            node_id = error.title[len(LABELLED_PREFIX) :]
+            for info in plugin.labelled_nodes():
+                if info.node_id == node_id:
+                    return node_id, list(info.labels)
+    return None
 
 
 def _route_failure(exc: BaseException) -> RouteFailed | None:
