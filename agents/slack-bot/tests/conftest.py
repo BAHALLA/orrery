@@ -65,7 +65,11 @@ def fake_slack_client():
 
 @pytest.fixture
 def channel_ref():
-    return {"channel": "C_TEST", "thread_ts": "1234567890.123456"}
+    """The turn's Slack conversation, as the handler sets it around a run."""
+    from slack_bot.confirmation import slack_target
+
+    with slack_target("C_TEST", "1234567890.123456"):
+        yield ("C_TEST", "1234567890.123456")
 
 
 @pytest.fixture

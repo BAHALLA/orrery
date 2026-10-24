@@ -11,6 +11,7 @@ from orrery_core.security.identity import CallerIdentity, enabled_systems
 from orrery_core.serving.session_cache import BoundedSessionCache
 
 from .config import SlackBotConfig
+from .confirmation import slack_target
 from .formatting import chunk_message, md_to_mrkdwn
 from .progress import SlackProgress
 from .session_map import SessionMap
@@ -32,12 +33,10 @@ class SlackAgentHandler:
         self,
         gateway: AgentGateway,
         session_map: SessionMap,
-        channel_ref: dict[str, str],
         config: SlackBotConfig | None = None,
     ) -> None:
         self.gateway = gateway
         self.session_map = session_map
-        self.channel_ref = channel_ref
         self._config = config or SlackBotConfig()
         # Slack user id -> email, for impersonation. Bounded: a long-lived bot
         # sees an open-ended set of users.
@@ -88,10 +87,6 @@ class SlackAgentHandler:
             user_id: Slack user ID.
             say: Slack bolt's say() function for posting responses.
         """
-        # Update channel_ref so the confirmation callback knows where to post
-        self.channel_ref["channel"] = channel
-        self.channel_ref["thread_ts"] = thread_ts
-
         # Resolve the role on *every* turn so long-lived threads pick up
         # permission changes, then re-stamp it via state_delta below — matching
         # the Google Chat and HTTP surfaces. Without this, a thread's role would
@@ -123,6 +118,8 @@ class SlackAgentHandler:
         progress = SlackProgress(say=say, channel=channel, thread_ts=thread_ts)
         try:
             async with contextlib.AsyncExitStack() as stack:
+                # This turn's approval cards go to this conversation.
+                stack.enter_context(slack_target(channel, thread_ts))
                 if self._config.slack_progress_updates and progress.enabled:
                     await stack.enter_async_context(progress)
                     stack.enter_context(progress_scope(progress.sink))

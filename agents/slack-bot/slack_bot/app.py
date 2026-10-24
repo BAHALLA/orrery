@@ -99,11 +99,6 @@ async def _slack_rate_limit(request: Request) -> None:
     limiter.hit(_slack_limit, f"ip:{_client_ip(request)}")
 
 
-# Mutable ref updated per-message so the confirmation callback
-# knows where to post buttons.
-channel_ref: dict[str, str] = {"channel": "", "thread_ts": ""}
-
-
 # ── Slack Bolt app ────────────────────────────────────────────────────
 
 bolt_app = AsyncApp(
@@ -135,7 +130,6 @@ async def lifespan(app: FastAPI):
             slack_confirmation(
                 store=store,
                 slack_client=bolt_app.client,
-                channel_ref=channel_ref,
             ),
         ],
     )
@@ -158,7 +152,6 @@ async def lifespan(app: FastAPI):
     _handler = SlackAgentHandler(
         gateway=gateway,
         session_map=session_map,
-        channel_ref=channel_ref,
         config=config,
     )
 

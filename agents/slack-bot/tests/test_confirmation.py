@@ -40,8 +40,17 @@ def _destructive_func():
 
 
 class TestSlackConfirmation:
+    def test_no_conversation_refuses_instead_of_guessing(
+        self, fake_tool, fake_ctx, store, fake_slack_client
+    ):
+        cb = slack_confirmation(store, fake_slack_client)
+        result = cb(tool=fake_tool("create_topic", _confirm_func), args={}, tool_context=fake_ctx())
+
+        assert result is not None and result["status"] == "confirmation_required"
+        fake_slack_client.chat_postMessage.assert_not_called()
+
     def test_safe_tool_proceeds(self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("safe_tool", _safe_func)
         ctx = fake_ctx()
 
@@ -51,7 +60,7 @@ class TestSlackConfirmation:
     def test_confirm_tool_blocks_and_posts_buttons(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
@@ -66,7 +75,7 @@ class TestSlackConfirmation:
     def test_destructive_tool_blocks_and_posts_buttons(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("delete_topic", _destructive_func)
         ctx = fake_ctx()
 
@@ -79,7 +88,7 @@ class TestSlackConfirmation:
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
         """Two-phase handshake: block → click marks approved → retry consumes."""
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
@@ -98,7 +107,7 @@ class TestSlackConfirmation:
     ):
         """A model re-call without a human decision must NOT pass (the old
         state-flag handshake let any retry through)."""
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
@@ -111,7 +120,7 @@ class TestSlackConfirmation:
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
         """A retry with different args than were approved must re-prompt."""
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("create_topic", _confirm_func)
         ctx = fake_ctx()
 
@@ -126,7 +135,7 @@ class TestSlackConfirmation:
     def test_pending_confirmation_stored(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("delete_topic", _destructive_func)
         ctx = fake_ctx()
 
@@ -141,7 +150,7 @@ class TestSlackConfirmation:
     def test_tool_without_func_proceeds(
         self, fake_tool, fake_ctx, store, fake_slack_client, channel_ref
     ):
-        cb = slack_confirmation(store, fake_slack_client, channel_ref)
+        cb = slack_confirmation(store, fake_slack_client)
         tool = fake_tool("raw_tool", None)
         ctx = fake_ctx()
 

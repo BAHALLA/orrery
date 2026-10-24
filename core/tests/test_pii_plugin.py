@@ -254,7 +254,26 @@ _SAMPLE_SECRETS = [
     "slack xoxb-1234567890-abcdefghij",
     "openai sk-abcdefghijklmnopqrstuvwxyz0123",
     "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3In0.abcdefghijkl",
+    "DATABASE_URL=postgres://admin:P@ssw0rd@db:5432/prod",
+    "gemini AIzaSyA1234567890abcdefghijklmnopqrstuv",
 ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Only the userinfo goes: the scheme and host stay for the diagnosis.
+        ("postgres://admin:P@ssw0rd@db:5432/prod", "postgres://[REDACTED]@db:5432/prod"),
+        ("redis://:s3cret@cache:6379/0", "redis://[REDACTED]@cache:6379/0"),
+        # No password, nothing to hide.
+        ("https://example.com:443/a?b=c", "https://example.com:443/a?b=c"),
+        ("ssh://git@github.com/org/repo", "ssh://git@github.com/org/repo"),
+    ],
+)
+def test_url_credentials_are_redacted_and_the_host_kept(text, expected):
+    data = {"line": text}
+    redact_structure(data)
+    assert data["line"] == expected
 
 
 @pytest.mark.parametrize("secret", _SAMPLE_SECRETS)

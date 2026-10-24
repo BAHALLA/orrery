@@ -47,6 +47,57 @@ def _validate_namespace(namespace: str) -> dict[str, Any] | None:
     return validate_string(namespace, "namespace", pattern=K8S_NAME_PATTERN)
 
 
+#: Pod-spec fields that widen what a workload may do to its node or the
+#: cluster. A patch tool exists for images, replicas, resources and env; these
+#: belong in a reviewed manifest, because an approver reading a nested patch
+#: mid-incident is not a security review. Refused at any depth, whatever the
+#: value, so "privileged: false" is refused too and the rule stays one line.
+_PRIVILEGE_FIELDS = frozenset(
+    {
+        "hostPID",
+        "hostIPC",
+        "hostNetwork",
+        "hostPath",
+        "privileged",
+        "allowPrivilegeEscalation",
+        "capabilities",
+        "procMount",
+        "serviceAccountName",
+        "serviceAccount",
+        "automountServiceAccountToken",
+    }
+)
+
+
+def _refuse_privilege_changes(patch: dict[str, Any]) -> dict[str, Any] | None:
+    """An error naming every privilege field *patch* sets, or None."""
+    found: list[str] = []
+
+    def walk(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                here = f"{path}.{key}" if path else str(key)
+                if key in _PRIVILEGE_FIELDS:
+                    found.append(here)
+                else:
+                    walk(value, here)
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{path}[{i}]")
+
+    walk(patch, "")
+    if not found:
+        return None
+    return {
+        "status": "error",
+        "message": (
+            f"Refused: the patch changes pod privileges ({', '.join(found)}). Host "
+            "access, privileged mode, capabilities and the service account are not "
+            "changed through this tool; apply a reviewed manifest instead."
+        ),
+    }
+
+
 def _validate_concrete_namespace(namespace: str) -> dict[str, Any] | None:
     """Validate a namespace for a tool that reads *one* named resource.
 
@@ -601,6 +652,8 @@ async def patch_deployment(
     Args:
         name: Deployment name.
         patch: The patch to apply as a dictionary (Strategic Merge Patch).
+            Host access, privileged mode, capabilities and the service account
+            are refused; this is for images, replicas, resources and env.
         namespace: Kubernetes namespace.
 
     Returns:
@@ -612,6 +665,8 @@ async def patch_deployment(
         return err
     if not isinstance(patch, dict):
         return {"status": "error", "message": "Patch must be a dictionary."}
+    if err := _refuse_privilege_changes(patch):
+        return err
 
     try:
         apps = _apps_api()
@@ -634,6 +689,8 @@ async def patch_statefulset(
     Args:
         name: StatefulSet name.
         patch: The patch to apply as a dictionary (Strategic Merge Patch).
+            Host access, privileged mode, capabilities and the service account
+            are refused; this is for images, replicas, resources and env.
         namespace: Kubernetes namespace.
 
     Returns:
@@ -645,6 +702,8 @@ async def patch_statefulset(
         return err
     if not isinstance(patch, dict):
         return {"status": "error", "message": "Patch must be a dictionary."}
+    if err := _refuse_privilege_changes(patch):
+        return err
 
     try:
         apps = _apps_api()

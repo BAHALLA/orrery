@@ -39,11 +39,10 @@ def gateway(mock_runner, mock_session_service):
 
 
 @pytest.fixture
-def handler(gateway, session_map, channel_ref):
+def handler(gateway, session_map):
     return SlackAgentHandler(
         gateway=gateway,
         session_map=session_map,
-        channel_ref=channel_ref,
     )
 
 
@@ -228,16 +227,31 @@ class TestSlackAgentHandler:
         )
 
     @pytest.mark.asyncio
-    async def test_updates_channel_ref(self, handler, mock_runner, channel_ref, say):
-        mock_runner.run_async = _empty_run_async
+    async def test_concurrent_turns_each_ask_in_their_own_conversation(
+        self, handler, mock_runner, say
+    ):
+        """A shared target let one turn's approval card land in another's channel."""
+        import asyncio
 
-        await handler.handle_message(
-            text="hello",
-            channel="C_NEW",
-            thread_ts="999.000",
-            user_id="U_USER",
-            say=say,
+        from slack_bot.confirmation import _SLACK_TARGET
+
+        seen: dict[str, tuple[str, str] | None] = {}
+
+        async def run_async(*, user_id, **kwargs):
+            await asyncio.sleep(0.01)  # both turns are in flight here
+            seen[user_id] = _SLACK_TARGET.get()
+            return
+            yield
+
+        mock_runner.run_async = run_async
+        await asyncio.gather(
+            handler.handle_message(
+                text="restart it", channel="C_PROD", thread_ts="1.1", user_id="U_A", say=say
+            ),
+            handler.handle_message(
+                text="list pods", channel="C_GENERAL", thread_ts="2.2", user_id="U_B", say=say
+            ),
         )
 
-        assert channel_ref["channel"] == "C_NEW"
-        assert channel_ref["thread_ts"] == "999.000"
+        assert seen == {"U_A": ("C_PROD", "1.1"), "U_B": ("C_GENERAL", "2.2")}
+        assert _SLACK_TARGET.get() is None

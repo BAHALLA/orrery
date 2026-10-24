@@ -538,6 +538,39 @@ def test_patch_deployment_has_destructive_guardrail():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool", [patch_deployment, patch_statefulset])
+@pytest.mark.parametrize(
+    ("pod_spec", "field"),
+    [
+        ({"hostPID": True}, "hostPID"),
+        ({"hostNetwork": True}, "hostNetwork"),
+        ({"volumes": [{"name": "root", "hostPath": {"path": "/"}}]}, "volumes[0].hostPath"),
+        (
+            {"containers": [{"name": "app", "securityContext": {"privileged": True}}]},
+            "containers[0].securityContext.privileged",
+        ),
+        (
+            {
+                "containers": [
+                    {"name": "app", "securityContext": {"capabilities": {"add": ["ALL"]}}}
+                ]
+            },
+            "containers[0].securityContext.capabilities",
+        ),
+        ({"serviceAccountName": "cluster-admin-sa"}, "serviceAccountName"),
+    ],
+)
+async def test_patches_that_widen_pod_privileges_are_refused(tool, pod_spec, field):
+    """An approver skimming a nested patch mid-incident is not a security review."""
+    with patch("k8s_health_agent.tools._apps_api") as api:
+        result = await tool("web", patch={"spec": {"template": {"spec": pod_spec}}})
+
+    assert result["status"] == "error"
+    assert f"spec.template.spec.{field}" in result["message"]
+    api.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_patch_deployment_rejects_non_dict_patch():
     result = await patch_deployment("web", patch="not-a-dict")
     assert result["status"] == "error"

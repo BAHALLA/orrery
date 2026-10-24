@@ -53,7 +53,8 @@ All event content is redacted **at write time** — secrets never enter the memo
 
 - `password=...`, `token=...`, `secret=...`, `api_key=...`, `bearer=...` (any key-value pair where the key matches common secret names)
 - PEM private key blocks (`-----BEGIN RSA PRIVATE KEY-----`)
-- Provider tokens (`AKIA…`, `ghp_…`, `xox…`, `sk-…`) and JWTs
+- Provider tokens (`AKIA…`, `ghp_…`, `xox…`, `sk-…`, Google `AIza…` API keys) and JWTs
+- Credentials in a URL (`postgres://user:pass@db` becomes `postgres://[REDACTED]@db`)
 
 These are the same patterns `PIIRedactionPlugin` applies to tool results (`orrery_core.security.redaction.SECRET_VALUE_PATTERNS`).
 

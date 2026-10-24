@@ -47,7 +47,6 @@ config = SlackBotConfig()
 # Backend from ORRERY_CONFIRMATION_BACKEND — the shared platform store.
 store = create_confirmation_store()
 session_map = SessionMap()
-channel_ref: dict[str, str] = {"channel": "", "thread_ts": ""}
 
 
 def _create_bolt_app() -> tuple[AsyncApp, dict[str, SlackAgentHandler | None]]:
@@ -203,7 +202,6 @@ async def main() -> None:
             slack_confirmation(
                 store=store,
                 slack_client=bolt_app.client,
-                channel_ref=channel_ref,
             ),
         ],
     )
@@ -223,7 +221,6 @@ async def main() -> None:
     handler_ref["handler"] = SlackAgentHandler(
         gateway=gateway,
         session_map=session_map,
-        channel_ref=channel_ref,
         config=config,
     )
 

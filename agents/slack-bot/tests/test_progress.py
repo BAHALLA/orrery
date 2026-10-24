@@ -85,7 +85,7 @@ def _handler(runner, *, progress_updates: bool = True):
     from slack_bot.session_map import SessionMap
 
     config = SlackBotConfig(_env_file=None, slack_progress_updates=progress_updates)
-    return SlackAgentHandler(gateway=gw, session_map=SessionMap(), channel_ref={}, config=config)
+    return SlackAgentHandler(gateway=gw, session_map=SessionMap(), config=config)
 
 
 def _say():

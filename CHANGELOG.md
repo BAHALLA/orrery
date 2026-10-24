@@ -25,6 +25,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offers an instruction template, and keeps with Ctrl/Cmd+Enter. Cards with a
   pending change are marked, and the save bar lists what the save will change.
 
+### Fixed
+
+- Slack: a guarded call's approval card always goes to the conversation that
+  raised it. The target was one process-wide value each message overwrote, so
+  with two turns in flight a card, and the scope its approval is matched in,
+  could land in the other turn's channel. With no conversation the call is now
+  refused rather than posted anywhere.
+- Turns in one session run one at a time. Two at once (a double send, two
+  messages in a shared thread) rewrote each other's actor and confirmation
+  decision, so one turn could clear the approval the other was about to use.
+  Per process; turns in different sessions still run in parallel.
+- Reconfiguring the blocking-tool executor shuts the replaced pool down
+  instead of leaving its threads alive.
+
+### Security
+
+- `patch_deployment` and `patch_statefulset` refuse patches that touch pod
+  privileges: host namespaces, `hostPath`, privileged mode, privilege
+  escalation, capabilities, `procMount` and the service account. These belong
+  in a reviewed manifest, not a patch an approver skims mid-incident.
+- Secret redaction (tool results and memory) also covers credentials in a URL
+  (`postgres://user:pass@…`, `redis://:pass@…`), keeping the scheme and host,
+  and Google API keys (`AIza…`).
+- `filelock` is overridden to 4.2.1+ for CVE-2026-112940; litellm still caps
+  it below 4.
+
 ## [0.8.0] - 2026-10-24
 
 A cost and hygiene release. Daily token budgets cap what one caller, and the
