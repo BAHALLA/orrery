@@ -189,7 +189,7 @@ export const Sidebar = memo(function Sidebar({
 
         <nav
           aria-label="Conversation history"
-          className="orrery-scroll mt-5 min-h-0 flex-1 overflow-y-auto px-2"
+          className="orrery-scroll relative mt-5 min-h-0 flex-1 overflow-y-auto px-2"
         >
           <p className="px-2 pb-1.5 text-[11px] font-semibold tracking-wider text-slate-500 uppercase dark:text-slate-400">
             History

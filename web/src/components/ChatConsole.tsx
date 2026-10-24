@@ -175,7 +175,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const liveSteps = live?.trace ? flatten(live.trace).length : 0;
 
   return (
-    <div className="flex h-dvh bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="relative flex h-dvh overflow-hidden bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar
         history={visibleHistory}
         activeId={conversations.activeId}

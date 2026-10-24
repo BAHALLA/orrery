@@ -470,7 +470,7 @@ class GoogleChatHandler:
                 raise
             logger.warning(
                 "Turn exceeded %ss (session_id=%s); mutations so far: %s",
-                timeout,
+                timeout if budget.expired() else self.gateway.turn_timeout,
                 session_id,
                 ledger.mutations(),
             )

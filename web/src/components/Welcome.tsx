@@ -78,7 +78,7 @@ export function Welcome({ onSuggest, onSweep, specialists, autonomy }: Props) {
   const enabled = new Set(specialists.map((s) => s.key));
   const suggestions = SUGGESTIONS.filter((s) => enabled.has(s.specialist));
   return (
-    <div className="orrery-scroll flex flex-1 overflow-y-auto">
+    <div className="orrery-scroll relative flex flex-1 overflow-y-auto">
       <div className="m-auto flex w-full max-w-3xl flex-col items-center px-4 py-10 sm:px-6">
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg shadow-brand-900/20 dark:bg-slate-800">
           <OrreryMark className="h-9 w-9" />
