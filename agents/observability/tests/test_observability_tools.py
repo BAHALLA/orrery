@@ -30,11 +30,52 @@ from observability_agent.tools import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_session():
-    """Reset cached HTTP session between tests."""
+def _reset_session(monkeypatch):
+    """Reset cached HTTP session between tests; Loki configured unless a test unsets it."""
     _tools_mod._session = None
+    monkeypatch.setattr(_tools_mod._config, "loki_url", "http://loki:3100")
     yield
     _tools_mod._session = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: query_loki_logs('{job="x"}'),
+        lambda: query_loki_range('{job="x"}'),
+        get_loki_labels,
+        lambda: get_loki_label_values("job"),
+    ],
+)
+@patch("observability_agent.tools._http_get")
+async def test_loki_tools_refuse_without_loki_url(mock_get, monkeypatch, call):
+    monkeypatch.setattr(_tools_mod._config, "loki_url", None)
+    result = await call()
+    assert result["status"] == "error"
+    assert "LOKI_URL" in result["message"]
+    mock_get.assert_not_called()
+
+
+def test_the_agent_offers_loki_only_when_configured(monkeypatch):
+    import importlib
+
+    import observability_agent.agent as agent_mod
+
+    def tool_names() -> set[str]:
+        return {getattr(t, "__name__", getattr(t, "name", "")) for t in agent_mod.root_agent.tools}
+
+    try:
+        monkeypatch.setattr(_tools_mod._config, "loki_url", None)
+        importlib.reload(agent_mod)
+        assert "query_loki_logs" not in tool_names()
+        assert "Loki" not in agent_mod.specialist.routing_hint
+
+        monkeypatch.setattr(_tools_mod._config, "loki_url", "http://loki:3100")
+        importlib.reload(agent_mod)
+        assert {"query_loki_logs", "query_loki_range"} <= tool_names()
+    finally:
+        importlib.reload(agent_mod)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

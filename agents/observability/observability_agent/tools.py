@@ -23,13 +23,28 @@ class ObservabilityConfig(AgentConfig):
     """Observability stack configuration."""
 
     prometheus_url: str = "http://localhost:9090"
-    loki_url: str = "http://localhost:3100"
+    #: Optional: unset means no Loki, and the Loki tools are not offered at all.
+    #: A localhost default made every deployment without Loki advertise four
+    #: tools that could only fail, and the model spent turns on them.
+    loki_url: str | None = None
     alertmanager_url: str = "http://localhost:9093"
     http_timeout: int = 15
 
 
 # Loaded once at import time; agent.py calls load_agent_env() first.
 _config = ObservabilityConfig()
+
+
+def loki_enabled() -> bool:
+    """Whether ``LOKI_URL`` is configured."""
+    return bool(_config.loki_url)
+
+
+_LOKI_NOT_CONFIGURED = {
+    "status": "error",
+    "message": "Loki is not configured for this deployment (LOKI_URL is unset).",
+}
+
 
 # Reusable session for HTTP connection pooling (Keep-Alive).
 _session: requests.Session | None = None
@@ -101,7 +116,7 @@ async def query_prometheus(query: str, time: str | None = None) -> dict[str, Any
             "results": data["data"]["result"],
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -137,7 +152,7 @@ async def query_prometheus_range(
             "results": data["data"]["result"],
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -180,7 +195,7 @@ async def get_prometheus_alerts() -> dict[str, Any]:
             "alerts": alerts,
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -222,7 +237,7 @@ async def get_prometheus_targets() -> dict[str, Any]:
             "targets": targets,
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -254,6 +269,8 @@ async def query_loki_logs(
             params["start"] = start
         if end:
             params["end"] = end
+        if not _config.loki_url:
+            return dict(_LOKI_NOT_CONFIGURED)
         resp = await _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
         data = resp.json()
         if data.get("status") != "success":
@@ -275,7 +292,7 @@ async def query_loki_logs(
             "entries": entries[:limit],
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Loki")
+        logger.warning("Failed to connect to Loki: %s", e)
         return {"status": "error", "message": f"Failed to connect to Loki: {e}"}
 
 
@@ -286,13 +303,15 @@ async def get_loki_labels() -> dict[str, Any]:
         A dictionary with the list of label names.
     """
     try:
+        if not _config.loki_url:
+            return dict(_LOKI_NOT_CONFIGURED)
         resp = await _http_get(_config.loki_url, "/loki/api/v1/labels")
         data = resp.json()
         if data.get("status") != "success":
             return {"status": "error", "message": "Failed to fetch Loki labels."}
         return {"status": "success", "labels": data.get("data", [])}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Loki")
+        logger.warning("Failed to connect to Loki: %s", e)
         return {"status": "error", "message": f"Failed to connect to Loki: {e}"}
 
 
@@ -309,6 +328,8 @@ async def get_loki_label_values(label: str) -> dict[str, Any]:
         return err
 
     try:
+        if not _config.loki_url:
+            return dict(_LOKI_NOT_CONFIGURED)
         resp = await _http_get(_config.loki_url, f"/loki/api/v1/label/{label}/values")
         data = resp.json()
         if data.get("status") != "success":
@@ -318,7 +339,7 @@ async def get_loki_label_values(label: str) -> dict[str, Any]:
             }
         return {"status": "success", "label": label, "values": data.get("data", [])}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Loki")
+        logger.warning("Failed to connect to Loki: %s", e)
         return {"status": "error", "message": f"Failed to connect to Loki: {e}"}
 
 
@@ -348,7 +369,7 @@ async def get_active_alerts() -> dict[str, Any]:
             )
         return {"status": "success", "active_count": len(results), "alerts": results}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Alertmanager")
+        logger.warning("Failed to connect to Alertmanager: %s", e)
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
@@ -372,7 +393,7 @@ async def get_alert_groups() -> dict[str, Any]:
             )
         return {"status": "success", "group_count": len(results), "groups": results}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Alertmanager")
+        logger.warning("Failed to connect to Alertmanager: %s", e)
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
@@ -400,7 +421,7 @@ async def get_silences() -> dict[str, Any]:
             )
         return {"status": "success", "active_count": len(results), "silences": results}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Alertmanager")
+        logger.warning("Failed to connect to Alertmanager: %s", e)
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
@@ -448,7 +469,7 @@ async def create_silence(
             }
         return {"status": "error", "message": f"Unexpected response: {data}"}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Alertmanager")
+        logger.warning("Failed to connect to Alertmanager: %s", e)
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
@@ -477,7 +498,7 @@ async def delete_silence(silence_id: str) -> dict[str, Any]:
             "message": f"Failed to expire silence: HTTP {resp.status_code} - {resp.text}",
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Alertmanager")
+        logger.warning("Failed to connect to Alertmanager: %s", e)
         return {"status": "error", "message": f"Failed to connect to Alertmanager: {e}"}
 
 
@@ -512,7 +533,7 @@ async def list_prometheus_metrics(match: str | None = None) -> dict[str, Any]:
             names = [n for n in names if needle in n.lower()]
         return {"status": "success", "metrics": names, "count": len(names)}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -539,7 +560,7 @@ async def get_prometheus_metadata(metric: str | None = None) -> dict[str, Any]:
             }
         return {"status": "success", "metadata": data.get("data", {})}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -575,7 +596,7 @@ async def get_prometheus_rules() -> dict[str, Any]:
             groups.append({"name": group.get("name"), "file": group.get("file"), "rules": rules})
         return {"status": "success", "groups": groups, "count": len(groups)}
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Prometheus")
+        logger.warning("Failed to connect to Prometheus: %s", e)
         return {"status": "error", "message": f"Failed to connect to Prometheus: {e}"}
 
 
@@ -611,6 +632,8 @@ async def query_loki_range(query: str, hours: int = 1, limit: int = 100) -> dict
             "start": start_ns,
             "end": end_ns,
         }
+        if not _config.loki_url:
+            return dict(_LOKI_NOT_CONFIGURED)
         resp = await _http_get(_config.loki_url, "/loki/api/v1/query_range", params)
         data = resp.json()
         if data.get("status") != "success":
@@ -631,5 +654,5 @@ async def query_loki_range(query: str, hours: int = 1, limit: int = 100) -> dict
             "entries": entries[:limit],
         }
     except requests.RequestException as e:
-        logger.exception("Failed to connect to Loki")
+        logger.warning("Failed to connect to Loki: %s", e)
         return {"status": "error", "message": f"Failed to connect to Loki: {e}"}

@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from orrery_core.observability.audit import _sanitize, _sanitize_args, audit_logger
 
 
@@ -98,7 +100,7 @@ def test_audit_logger_handles_non_dict_response(tmp_path: Path, fake_tool, fake_
 
 def test_audit_logger_sanitizes_response(tmp_path: Path, fake_tool, fake_ctx):
     log_file = tmp_path / "audit.jsonl"
-    callback = audit_logger(log_file)
+    callback = audit_logger(log_file, responses="full")
 
     tool = fake_tool(name="describe_pod")
     ctx = fake_ctx()
@@ -200,8 +202,8 @@ def test_large_response_is_elided_from_the_audit_entry(caplog):
 
 
 def test_small_response_is_kept_verbatim(caplog):
-    """Ordinary results stay in full — the trail has to remain debuggable."""
-    callback = audit_logger()
+    """In full mode ordinary results stay whole, for debugging."""
+    callback = audit_logger(responses="full")
     tool = MagicMock()
     tool.name = "get_kafka_cluster_health"
 
@@ -244,3 +246,43 @@ def test_elision_does_not_serialize_the_payload():
     start = time.perf_counter()
     callback(tool=tool, args={}, tool_context=MagicMock(), tool_response=payload)
     assert time.perf_counter() - start < 0.5
+
+
+def _audited(caplog, response, **kwargs):
+    callback = audit_logger(**kwargs)
+    tool = MagicMock()
+    tool.name = "get_active_alerts"
+    with caplog.at_level(logging.INFO, logger="orrery.audit"):
+        callback(tool=tool, args={}, tool_context=MagicMock(), tool_response=response)
+    return caplog.records[-1].response
+
+
+def test_the_default_records_the_outcome_not_the_payload(caplog, monkeypatch):
+    """An alert payload names people and services; the trail keeps the outcome."""
+    monkeypatch.delenv("ORRERY_AUDIT_RESPONSES", raising=False)
+    alerts = {"status": "success", "alerts": [{"summary": "alice@example.com paged"}]}
+    recorded = _audited(caplog, alerts)
+    assert recorded["status"] == "success"
+    assert recorded["response_chars"] > 0
+    assert "alice@example.com" not in json.dumps(recorded)
+
+
+def test_a_summary_keeps_why_a_call_failed(caplog):
+    recorded = _audited(
+        caplog,
+        {"status": "error", "message": "connection refused " + "x" * 500},
+        responses="summary",
+    )
+    assert recorded["message"].startswith("connection refused")
+    assert len(recorded["message"]) == 200
+
+
+def test_none_records_no_response(caplog, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUDIT_RESPONSES", "none")
+    assert _audited(caplog, {"status": "success", "x": 1}) is None
+
+
+def test_an_unknown_mode_fails_at_construction(monkeypatch):
+    monkeypatch.setenv("ORRERY_AUDIT_RESPONSES", "verbose")
+    with pytest.raises(ValueError, match="ORRERY_AUDIT_RESPONSES"):
+        audit_logger()

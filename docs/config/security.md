@@ -289,6 +289,23 @@ ORRERY_PII_REDACTION=false   # disable credential scrubbing (default: on)
 ORRERY_REDACT_IPS=true       # also redact IPv4 addresses (default: off)
 ```
 
+### What the audit log keeps of a tool result
+
+Every tool call leaves two audit entries (`tool_attempt`, then `tool_call`)
+with the tool, its sanitized arguments, the caller and the session. What the
+outcome entry keeps of the *result* is set by `ORRERY_AUDIT_RESPONSES`:
+
+| Value | Recorded |
+|---|---|
+| `summary` (default) | `status`, `response_chars`, and for a call that did not succeed the first 200 characters of its `message`/`error` |
+| `full` | The result itself when it is under 4096 characters (keys naming a credential masked), else `status` and size |
+| `none` | No result |
+
+A tool result is infrastructure output (alert payloads, log lines, index
+documents) that often names people, and an audit trail is usually kept longer
+and read more widely than a session, so the default keeps the outcome rather
+than the payload. Use `full` while debugging a tool.
+
 ### Gemini content-safety filters
 
 `create_agent()` attaches `GenerateContentConfig` safety settings (dangerous

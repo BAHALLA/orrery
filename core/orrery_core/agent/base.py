@@ -164,7 +164,7 @@ def _resolve_primary_model() -> str | BaseLlm:
         )
 
     model_name = _prefix_provider(model_name, provider)
-    logger.info("Using LiteLlm with model: %s", model_name)
+    logger.debug("Using LiteLlm with model: %s", model_name)
     return LiteLlm(model=model_name)
 
 

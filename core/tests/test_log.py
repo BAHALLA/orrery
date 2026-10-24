@@ -176,3 +176,18 @@ def test_setup_logging_explicit_level_wins(monkeypatch):
 
     root.handlers.clear()
     root.setLevel(logging.WARNING)
+
+
+def test_litellm_per_call_lines_are_quiet_unless_asked(monkeypatch):
+    import logging
+
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.delenv("LITELLM_LOG", raising=False)
+    setup_logging()
+    assert not logging.getLogger("LiteLLM").isEnabledFor(logging.INFO)
+    assert logging.getLogger("LiteLLM").isEnabledFor(logging.WARNING)
+
+    logging.getLogger("LiteLLM").setLevel(logging.NOTSET)
+    monkeypatch.setenv("LITELLM_LOG", "INFO")
+    setup_logging()
+    assert logging.getLogger("LiteLLM").isEnabledFor(logging.INFO)

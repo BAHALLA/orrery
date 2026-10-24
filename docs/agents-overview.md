@@ -128,7 +128,7 @@ Kubernetes control-plane tooling via the official Python client. Uses in-cluster
 
 A unified interface to Prometheus, Loki, and Alertmanager. HTTP sessions are pooled.
 
-**Config:** `PROMETHEUS_URL`, `LOKI_URL`, `ALERTMANAGER_URL` (all default to their standard local dev ports)
+**Config:** `PROMETHEUS_URL`, `ALERTMANAGER_URL` (default to their standard local dev ports) and `LOKI_URL` (optional: when unset the Loki tools are not offered)
 
 | Tool | Role | Description |
 |------|------|-------------|

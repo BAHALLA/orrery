@@ -26,3 +26,7 @@ def pytest_configure(config):
     # `.env.example` turns the /metrics server on; a test that enters a FastAPI
     # lifespan must not bind :9100 (or fail on a port another run holds).
     os.environ["ENABLE_METRICS_SERVER"] = "false"
+    # Loki is optional and its tools are offered only when LOKI_URL is set; agent
+    # modules are built at import (collection), so the eval scenarios that use
+    # them need it set here. HTTP is mocked; tests of the unset case patch it.
+    os.environ.setdefault("LOKI_URL", "http://localhost:3100")

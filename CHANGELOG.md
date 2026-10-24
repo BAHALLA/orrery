@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Upgrade note.** `LOKI_URL` no longer defaults to `http://localhost:3100`:
+set it to keep the Loki tools (the shipped compose files and `.env.example`
+do). Unset, the observability specialist is not offered them at all.
+
+**Upgrade note.** Audit entries now record a tool result's status and size,
+not its contents (`ORRERY_AUDIT_RESPONSES=summary`). Set it to `full` for the
+previous behaviour.
+
 **Upgrade note.** Boolean environment variables (`AUTH_ENABLED`,
 `ORRERY_SAFETY_SCREEN`, `ORRERY_PII_REDACTION`, `ORRERY_A2A_ENABLED`, ...) now
 accept `1/true/yes/on` and `0/false/no/off` (any case, surrounding spaces
@@ -20,6 +28,10 @@ release are visible only to the person whose subject they are stored under.
 
 ### Security
 
+- The audit log no longer copies tool results. A `get_active_alerts` entry
+  carried the whole alert payload next to the caller's id, so infrastructure
+  data and the people it names ended up in plaintext logs that outlive any
+  session. `ORRERY_AUDIT_RESPONSES` (`summary` default, `full`, `none`).
 - An agent calling the console's API (a delegated or service principal) sees
   and continues only the conversations created for it. Sessions are stored
   under the user's subject, so before, an agent acting for a user could list,
@@ -49,6 +61,14 @@ release are visible only to the person whose subject they are stored under.
 
 ### Fixed
 
+- The observability specialist no longer offers Loki tools without Loki.
+  With no `LOKI_URL` it advertised four tools that could only fail, the model
+  spent turns on them, and each failure logged a traceback at ERROR. Its
+  connection failures (Prometheus, Loki, Alertmanager) are now one WARNING
+  line each.
+- LiteLLM's per-call INFO lines ("LiteLLM completion() model=...") are
+  silenced unless `LITELLM_LOG` is set, and "Using LiteLlm with model" is
+  DEBUG.
 - `orrery-core` installs outside this repository. It required
   `google-adk[eval]`, whose `google-cloud-aiplatform[evaluation]` caps
   `litellm` below core's floor; only the workspace's override let it resolve.

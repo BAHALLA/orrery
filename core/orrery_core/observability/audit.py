@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +49,31 @@ logger = logging.getLogger("orrery.audit")
 #: debugging, and anything larger is replaced by its measured size. The full
 #: result still reaches the model — this bounds the log, not the tool.
 MAX_AUDIT_RESPONSE_CHARS = 4096
+
+#: Env var choosing how much of a tool's result an audit entry records:
+#: ``summary`` (default), ``full`` or ``none``.
+AUDIT_RESPONSES_ENV = "ORRERY_AUDIT_RESPONSES"
+#: What a tool returned is infrastructure output (alert payloads, log lines,
+#: index documents), often naming people, and an audit trail is read and kept
+#: far more widely than a session. ``summary`` keeps what an audit needs (the
+#: outcome, the size, and why a call failed); ``full`` keeps small results
+#: verbatim for debugging (still bounded by :data:`MAX_AUDIT_RESPONSE_CHARS`).
+AUDIT_RESPONSE_MODES = ("summary", "full", "none")
+#: Characters of a failed call's ``message``/``error`` kept in a summary.
+_SUMMARY_MESSAGE_CHARS = 200
+_SUCCESS_STATUSES = {"success", "ok"}
+
+
+def resolve_audit_responses(mode: str | None = None) -> str:
+    """*mode*, else :data:`AUDIT_RESPONSES_ENV`, else ``summary``; a typo fails."""
+    resolved = (mode if mode is not None else os.getenv(AUDIT_RESPONSES_ENV, "")).strip().lower()
+    resolved = resolved or "summary"
+    if resolved not in AUDIT_RESPONSE_MODES:
+        raise ValueError(
+            f"{AUDIT_RESPONSES_ENV} must be one of {', '.join(AUDIT_RESPONSE_MODES)}, "
+            f"got {resolved!r}"
+        )
+    return resolved
 
 
 def _resolve_log_path(log_path: str | Path | None) -> Path | None:
@@ -113,7 +139,7 @@ def attempt_logger(log_path: str | Path | None = None) -> Callable:
     return callback
 
 
-def audit_logger(log_path: str | Path | None = None) -> Callable:
+def audit_logger(log_path: str | Path | None = None, *, responses: str | None = None) -> Callable:
     """Create an after_tool_callback that logs every tool invocation.
 
     Each log entry includes timestamp, agent, tool name, arguments,
@@ -127,6 +153,9 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
         log_path: Optional path to *also* write a local .jsonl file.
                   Useful for local development. Set to ``None`` (default)
                   to rely solely on the logging system.
+        responses: How much of each result to record (see
+                  :data:`AUDIT_RESPONSE_MODES`); ``None`` reads
+                  :data:`AUDIT_RESPONSES_ENV`, default ``summary``.
 
     Usage:
         create_agent(
@@ -136,6 +165,7 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
         )
     """
     resolved_path = _resolve_log_path(log_path)
+    mode = resolve_audit_responses(responses)
 
     def callback(
         *,
@@ -152,7 +182,7 @@ def audit_logger(log_path: str | Path | None = None) -> Callable:
             "tool": tool.name,
             "args": _sanitize(args),
             "status": status,
-            "response": _audit_response(tool_response),
+            "response": _audit_response(tool_response, mode),
             "user_id": tool_context.user_id if hasattr(tool_context, "user_id") else "unknown",
             "session_id": tool_context.session.id
             if hasattr(tool_context, "session") and tool_context.session
@@ -213,20 +243,30 @@ def audit_event(event: str, **fields: Any) -> None:
     logger.info("%s: %s", event, fields.get("tool", ""), extra=extra)
 
 
-def _audit_response(tool_response: Any) -> Any:
-    """The response as it should appear in the audit trail: bounded, redacted.
+def _audit_response(tool_response: Any, mode: str = "full") -> Any:
+    """The response as it should appear in the audit trail, per *mode*.
 
-    Small results (the overwhelming majority — status dicts, counts, short
+    ``summary`` records the status, the measured size and, for a call that did
+    not succeed, a short ``message``/``error``. ``none`` records nothing. In
+    ``full`` mode small results (the overwhelming majority — status dicts, counts, short
     summaries) are kept verbatim so the trail stays useful for debugging.
     Anything over :data:`MAX_AUDIT_RESPONSE_CHARS` is replaced by its status and
     measured size rather than serialized in full. Size is measured with a walk
     that sums string lengths, not by serializing — serializing to decide would
     reintroduce the cost being avoided.
     """
-    if not isinstance(tool_response, dict):
+    if mode == "none" or not isinstance(tool_response, dict):
         return None
 
     volume = text_volume(tool_response)
+    if mode == "summary":
+        status = tool_response.get("status", "unknown")
+        summary: dict[str, Any] = {"status": status, "response_chars": volume}
+        if str(status).lower() not in _SUCCESS_STATUSES:
+            reason = tool_response.get("message") or tool_response.get("error")
+            if isinstance(reason, str):
+                summary["message"] = reason[:_SUMMARY_MESSAGE_CHARS]
+        return summary
     if volume <= MAX_AUDIT_RESPONSE_CHARS:
         return _sanitize(tool_response)
     return {
