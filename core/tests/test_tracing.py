@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opentelemetry import trace
+from opentelemetry import propagate, trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -38,6 +38,7 @@ def _reset_tracing_guard(monkeypatch):
     """
     monkeypatch.delenv("OTEL_TRACING_ENABLED", raising=False)
     monkeypatch.delenv("OTEL_SERVICE_NAME", raising=False)
+    monkeypatch.setattr(propagate, "_HTTP_TEXT_FORMAT", propagate.get_global_textmap())
     tracing._configured = False
     request_id_var.set(None)
     # Allow configure_tracing() to install a fresh global provider.
@@ -182,6 +183,71 @@ def test_the_semconv_span_content_opt_in_is_honoured(monkeypatch, caplog, mode):
 
     assert "SECRET-LOG-LINE" in _traced_content("SECRET-LOG-LINE")
     assert "span attributes will carry prompts" in caplog.text
+
+
+# ── Inbound tracestate bound (opentelemetry-api <= 1.45.0 ReDoS) ─────
+
+_TRACEPARENT = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+
+def _parsed_tracestates(monkeypatch) -> list[list[str]]:
+    from opentelemetry.trace.span import TraceState
+
+    seen: list[list[str]] = []
+    real = TraceState.from_header.__func__
+
+    def spy(cls, header_list):
+        seen.append(list(header_list))
+        return real(cls, header_list)
+
+    monkeypatch.setattr(TraceState, "from_header", classmethod(spy))
+    return seen
+
+
+def test_configure_tracing_never_parses_an_oversized_tracestate(monkeypatch):
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    assert configure_tracing(exporter=InMemorySpanExporter()) is True
+    parsed = _parsed_tracestates(monkeypatch)
+
+    hostile = "a=b" + " " * 100_000 + "c"
+    ctx = propagate.extract({"traceparent": _TRACEPARENT, "tracestate": hostile})
+
+    assert parsed == []
+    # The trace itself survives; only the vendor state is dropped.
+    span_context = trace.get_current_span(ctx).get_span_context()
+    assert format(span_context.trace_id, "032x") == "0af7651916cd43dd8448eb211c80319c"
+    assert len(span_context.trace_state) == 0
+
+
+def test_a_tracestate_split_over_header_lines_is_bounded_as_a_whole(monkeypatch):
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    assert configure_tracing(exporter=InMemorySpanExporter()) is True
+    parsed = _parsed_tracestates(monkeypatch)
+
+    line = "a=" + "b" * (tracing.MAX_TRACESTATE_CHARS // 2)
+    propagate.extract({"traceparent": _TRACEPARENT, "tracestate": [line, line]})
+
+    assert parsed == []
+
+
+def test_an_ordinary_tracestate_is_still_propagated(monkeypatch):
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    assert configure_tracing(exporter=InMemorySpanExporter()) is True
+
+    ctx = propagate.extract({"traceparent": _TRACEPARENT, "tracestate": "vendor=abc,other=1"})
+
+    trace_state = trace.get_current_span(ctx).get_span_context().trace_state
+    assert dict(trace_state) == {"vendor": "abc", "other": "1"}
+
+
+def test_the_bound_wraps_the_global_propagator_once():
+    tracing.bound_inbound_tracestate()
+    first = propagate.get_global_textmap()
+    tracing.bound_inbound_tracestate()
+
+    assert propagate.get_global_textmap() is first
+    assert isinstance(first, tracing.BoundedTraceStatePropagator)
+    assert first.fields == first.inner.fields
 
 
 # ── TracingPlugin: request id / user message ─────────────────────────
