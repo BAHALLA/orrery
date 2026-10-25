@@ -102,6 +102,12 @@ RUN echo "security updates as of ${SECURITY_UPDATES_DATE:-local}" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# The base image's pip is never run: the app lives in the uv-built venv, which
+# has no pip. It only adds findings (CVE-2026-13346) and a way to install code
+# at runtime, so it goes, along with the wheel ensurepip would reinstall.
+RUN python -m pip uninstall --yes pip && \
+    rm -rf /usr/local/lib/python3.14/ensurepip/_bundled
+
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --create-home appuser
 
