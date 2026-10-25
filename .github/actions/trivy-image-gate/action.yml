@@ -23,6 +23,12 @@ inputs:
   skip-setup-trivy:
     description: Reuse the trivy binary installed by an earlier run of this action.
     default: "false"
+  trivy-version:
+    # Pinned rather than left to trivy-action's default, which only moves when
+    # the action releases (v0.36.0 still installs v0.70.0). Dependabot can't
+    # see it: bump it with TRIVY_VERSION in ci.yml.
+    description: Trivy release to install.
+    default: v0.76.1
 
 runs:
   using: composite
@@ -39,6 +45,7 @@ runs:
         format: ${{ inputs.format }}
         output: ${{ inputs.output }}
         skip-setup-trivy: ${{ inputs.skip-setup-trivy }}
+        version: ${{ inputs.trivy-version }}
 
     # A separate step rather than an empty TRIVY_PLATFORM, which trivy would
     # read as a platform named "".
@@ -56,3 +63,4 @@ runs:
         format: ${{ inputs.format }}
         output: ${{ inputs.output }}
         skip-setup-trivy: ${{ inputs.skip-setup-trivy }}
+        version: ${{ inputs.trivy-version }}
