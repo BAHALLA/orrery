@@ -27,6 +27,8 @@ env:
   # an unpinned scanner can change verdicts (or be swapped) between two runs.
   BANDIT_VERSION: "1.9.4"
   CYCLONEDX_BOM_VERSION: "7.5.0"
+  # Same release as the image gate's trivy-version default (trivy-image-gate).
+  TRIVY_VERSION: "v0.76.1"
 
 jobs:
   lint:
@@ -163,6 +165,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: true
+          version: ${{ env.TRIVY_VERSION }}
 
   test:
     name: Test

@@ -99,7 +99,7 @@ lint: ## Lint Python (ruff check + format check)
 # runs changes verdicts. Bump both here; CI reads them from this target.
 ACTIONLINT_VERSION ?= 1.7.12.25
 SHELLCHECK_VERSION ?= 0.11.0.1
-ZIZMOR_VERSION ?= 1.31.0
+ZIZMOR_VERSION ?= 1.31.1
 
 lint-workflows: ## Lint GitHub Actions workflows (actionlint + zizmor security audit)
 	@# shellcheck is installed alongside, not taken from the host: actionlint
