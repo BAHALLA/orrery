@@ -34,9 +34,13 @@ Environment variables:
 - ``OTEL_SERVICE_NAME``           — resource service.name (default: ``orrery``)
 - ``OTEL_TRACES_SAMPLER_ARG``     — head-sampling ratio 0.0–1.0 (default: 1.0)
 - ``ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`` — ADK's own switch for copying
-  prompts, tool arguments and results into span attributes. ADK defaults it
-  **on**; :func:`configure_tracing` defaults it **off** (see
+  prompts, tool arguments and results into span attributes under its legacy
+  telemetry schema (``ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=1``). ADK defaults
+  it **on**; :func:`configure_tracing` defaults it **off** (see
   :data:`CONTENT_IN_SPANS_ENV`). Set it to ``true`` explicitly to opt back in.
+- ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`` — the same switch
+  under ADK's default (OTel GenAI semconv) schema since ADK 2.13. It defaults
+  off; ``SPAN_ONLY`` / ``SPAN_AND_EVENT`` put content on spans.
 """
 
 from __future__ import annotations
@@ -88,6 +92,11 @@ logger = logging.getLogger("orrery.tracing")
 #: model, so the content stays out of it unless an operator opts in. ADK reads
 #: the variable per span, so setting it before the first turn is enough.
 CONTENT_IN_SPANS_ENV = "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"
+
+#: The content switch of ADK's default telemetry schema since ADK 2.13, which
+#: ignores :data:`CONTENT_IN_SPANS_ENV`. It defaults off, so it only warns.
+OTEL_CONTENT_ENV = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
+_SPAN_CONTENT_MODES = ("SPAN_ONLY", "SPAN_AND_EVENT")
 
 # Session-state key under which the per-request correlation id is stored, so it
 # survives in the persisted session alongside ``user_role`` and ``_auth``.
@@ -150,6 +159,12 @@ def configure_tracing(
             "%s is on: span attributes will carry prompts, uploaded text attachments "
             "and tool results to the trace backend.",
             CONTENT_IN_SPANS_ENV,
+        )
+    if os.getenv(OTEL_CONTENT_ENV, "").strip().upper() in _SPAN_CONTENT_MODES:
+        logger.warning(
+            "%s puts content on spans: span attributes will carry prompts, uploaded "
+            "text attachments and tool results to the trace backend.",
+            OTEL_CONTENT_ENV,
         )
 
     with _config_lock:

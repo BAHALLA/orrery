@@ -101,40 +101,86 @@ def test_configure_tracing_enabled_is_idempotent(monkeypatch):
     assert provider.resource.attributes["service.name"] == "orrery-test"
 
 
-def _traced_llm_request(text: str) -> str:
-    """What ADK writes into a real LLM span for a request carrying *text*."""
+#: ADK's telemetry schema switch. ADK 2.13 made the OTel-semconv schema (v2)
+#: the default; v1 stays selectable until 2027-03-31, and only v1 reads
+#: ``ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS``.
+SCHEMA_ENV = "ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN"
+
+
+def _traced_content(text: str) -> str:
+    """Every attribute ADK writes into an LLM span and a tool span carrying *text*."""
+    from google.adk.events.event import Event
     from google.adk.models.llm_request import LlmRequest
     from google.adk.models.llm_response import LlmResponse
-    from google.adk.telemetry.tracing import trace_call_llm
+    from google.adk.telemetry.tracing import trace_call_llm, trace_tool_call
+    from google.adk.tools.function_tool import FunctionTool
     from google.genai import types
 
     request = LlmRequest(
         model="m", contents=[types.Content(role="user", parts=[types.Part(text=text)])]
     )
     ctx = _fake(invocation_id="inv", session=_fake(id="s"), run_config=None)
+
+    async def read_logs(line: str) -> dict:
+        """Read logs."""
+        return {"line": line}
+
+    response = Event(
+        author="agent",
+        content=types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        id="c1", name="read_logs", response={"line": text}
+                    )
+                )
+            ],
+        ),
+    )
+    attributes: dict[str, Any] = {}
     with recording_span() as exporter:
         trace_call_llm(ctx, "e1", request, LlmResponse())
-    return json.dumps(dict(only_span(exporter).attributes or {}))
+        trace_tool_call(FunctionTool(read_logs), {"line": text}, response)
+    for span in exporter.get_finished_spans():
+        attributes.update(span.attributes or {})
+    return json.dumps(attributes)
 
 
-def test_configure_tracing_keeps_message_content_out_of_spans(monkeypatch):
+@pytest.mark.parametrize("schema", ["1", "2"])
+def test_configure_tracing_keeps_message_content_out_of_spans(monkeypatch, schema):
     monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    monkeypatch.setenv(SCHEMA_ENV, schema)
     monkeypatch.setenv(tracing.CONTENT_IN_SPANS_ENV, "x")
     monkeypatch.delenv(tracing.CONTENT_IN_SPANS_ENV)
+    monkeypatch.delenv(tracing.OTEL_CONTENT_ENV, raising=False)
 
     assert configure_tracing(exporter=InMemorySpanExporter()) is True
 
     # An uploaded log, a prompt, a tool result: none of it reaches the backend.
-    assert "SECRET-LOG-LINE" not in _traced_llm_request("SECRET-LOG-LINE")
+    assert "SECRET-LOG-LINE" not in _traced_content("SECRET-LOG-LINE")
 
 
 def test_an_explicit_span_content_opt_in_is_honoured(monkeypatch, caplog):
     monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    monkeypatch.setenv(SCHEMA_ENV, "1")
     monkeypatch.setenv(tracing.CONTENT_IN_SPANS_ENV, "true")
 
     assert configure_tracing(exporter=InMemorySpanExporter()) is True
 
-    assert "SECRET-LOG-LINE" in _traced_llm_request("SECRET-LOG-LINE")
+    assert "SECRET-LOG-LINE" in _traced_content("SECRET-LOG-LINE")
+    assert "span attributes will carry prompts" in caplog.text
+
+
+@pytest.mark.parametrize("mode", ["SPAN_ONLY", "SPAN_AND_EVENT"])
+def test_the_semconv_span_content_opt_in_is_honoured(monkeypatch, caplog, mode):
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "true")
+    monkeypatch.setenv(SCHEMA_ENV, "2")
+    monkeypatch.setenv(tracing.OTEL_CONTENT_ENV, mode)
+
+    assert configure_tracing(exporter=InMemorySpanExporter()) is True
+
+    assert "SECRET-LOG-LINE" in _traced_content("SECRET-LOG-LINE")
     assert "span attributes will carry prompts" in caplog.text
 
 
