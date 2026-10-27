@@ -148,7 +148,12 @@ class RemoteAuth(BaseModel):
 
 
 class RemoteAgentEntry(BaseModel):
-    """One remote A2A agent, as the ``a2a:`` registry section declares it."""
+    """One remote A2A agent, as the ``a2a:`` registry section declares it.
+
+    ``effect: acting`` is accepted here and labelled destructive on the tool
+    (so every gate refuses it unconfirmed); whether a deployment allows one
+    at all is the registry loader's check (``ORRERY_STUDIO_ACTING_REMOTES``).
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -42,6 +42,7 @@ value is ignored.
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Iterable
 from typing import Any
@@ -140,13 +141,16 @@ class AutonomyPlugin(BasePlugin):
         self._l2_whitelist = set(l2_whitelist or [])
         self._l3_blacklist = set(l3_blacklist or [])
 
-    def allow_at_l2(self, names: Iterable[str]) -> None:
-        """Let the tools named *names* run at L2 too.
+    def allowing_at_l2(self, names: Iterable[str]) -> AutonomyPlugin:
+        """A copy that also lets the tools named *names* run at L2; this one is unchanged.
 
         For a caller that gates them itself: a Studio run allows its acting
-        remotes, each call of which its owner confirms first.
+        remotes, each call of which its owner confirms first. A copy, so the
+        exception can never outlive the run, even on a shared plugin.
         """
-        self._l2_whitelist.update(names)
+        widened = copy.copy(self)
+        widened._l2_whitelist = self._l2_whitelist | set(names)
+        return widened
 
     @staticmethod
     def _normalise(level: str) -> str:

@@ -63,6 +63,8 @@ from .approval import (
 )
 from .compiler import (
     LABELLED_PREFIX,
+    NOBODY_TO_CONFIRM,
+    NOT_CONFIRMED_REASON,
     ApprovalRejected,
     CompiledComposition,
     McpPins,
@@ -327,10 +329,17 @@ class StudioRunPlugin(BasePlugin):
             return ApprovalOutcome("rejected")  # no way to ask: never approve
         return await self._run.approvals.request(node_id=node_id, prompt=prompt, text=text)
 
-    async def request_action(self, node_id: str, remote: str, request: str) -> bool:
-        """Whether the run's owner confirms sending *request* to the acting *remote*."""
-        if self._run.approvals is None or self._ledger.exhausted is not None:
-            return False
+    async def request_action(self, node_id: str, remote: str, request: str) -> str | None:
+        """``None`` when the run's owner confirms sending *request* to the acting *remote*.
+
+        Otherwise why it is not sent, for the model. The run is checked again
+        after the owner decides: a confirmation that arrives once the run's
+        budget is spent, or the run has failed, sends nothing.
+        """
+        if self._run.approvals is None:
+            return NOBODY_TO_CONFIRM
+        if self._ledger.exhausted is not None or self.failure is not None:
+            return "The run is ending (its budget is spent or a node failed); nobody was asked."
         try:
             outcome = await self._run.approvals.request(
                 node_id=node_id,
@@ -343,8 +352,18 @@ class StudioRunPlugin(BasePlugin):
                 remote=remote,
             )
         except TooManyApprovals:
-            return False  # nobody asked: nothing acts
-        return outcome.approved
+            return (
+                f"The run has asked its person {MAX_APPROVALS_PER_RUN} times already; "
+                "nobody was asked."
+            )
+        if not outcome.approved:
+            return NOT_CONFIRMED_REASON
+        if self._ledger.exhausted is not None or self.failure is not None:
+            return (
+                "The run ended (its budget ran out or a node failed) while the person was "
+                "deciding; nothing was sent."
+            )
+        return None
 
     async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
         """Ask the run's owner to answer *remote*'s question; their answer, or ``None``.
@@ -1054,6 +1073,8 @@ class StudioService:
             node_id=node_id,
             kind=kind,
             remote=remote,
+            # Ties the decision to the exact text (an action's request) it was about.
+            digest=digest,
             decision=outcome.decision,
         )
         return outcome
@@ -1157,9 +1178,10 @@ class StudioService:
             if compiled.acting_tools:
                 # L2 still holds for everything else; these calls are each
                 # confirmed by the owner (compiler.confirmation_gate).
-                for p in plugins:
-                    if isinstance(p, AutonomyPlugin):
-                        p.allow_at_l2(compiled.acting_tools)
+                plugins = [
+                    p.allowing_at_l2(compiled.acting_tools) if isinstance(p, AutonomyPlugin) else p
+                    for p in plugins
+                ]
             _place_run_plugins(plugins, plugin, StudioSpentGate(ledger))
             gateway = AgentGateway(
                 app_name=APP_NAME,

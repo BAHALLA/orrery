@@ -793,3 +793,35 @@ def test_loops_nest_two_deep_and_no_more():
     errors = _errors(_nested_loops(3))
     assert [e["code"] for e in errors] == ["loop_too_deep"]
     assert "nested 3 deep" in errors[0]["msg"]
+
+
+def test_every_compiled_agent_supervisor_children_included_gets_the_studio_gate(monkeypatch):
+    import json
+
+    from orrery_core.a2a.remote import RemoteCards
+    from orrery_core.agent import base
+    from orrery_core.security.guardrails import is_confirmation_gate
+    from orrery_core.studio import compiler
+
+    built: list[tuple[str, Any]] = []
+    real = base.create_agent
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        built.append((kwargs["name"], kwargs.get("before_tool_callback")))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(base, "create_agent", recording)
+    registry = _demo_registry(monkeypatch)
+    spec = parse_spec(json.loads((TEMPLATES / "supervisor.json").read_text()))
+    compiled = compiler.compile_spec(
+        spec, registry=registry, cards=RemoteCards(), catalogue={}, model="gemini-3.6-flash"
+    )
+    try:
+        children = {i.node_id for i in compiled.nodes.values() if i.parent}
+        assert children, "the template has supervisor children"
+        assert {name for name, _ in built} == set(compiled.nodes)
+        assert all(gate is not None and is_confirmation_gate(gate) for _, gate in built)
+    finally:
+        import asyncio
+
+        asyncio.run(compiled.close())

@@ -385,7 +385,11 @@ the request is sent; refused, expired, past the run's 12 approvals or
 cancelled, nothing is sent and the model gets `BLOCKED` ("do not retry it").
 The node goes on either way. Any other tool that changes things is refused
 outright. A refused attempt still counts against `max_remote_calls`, so a
-model that keeps retrying runs out.
+model that keeps retrying runs out. A confirmation that arrives after the run's
+budget ran out (or a node failed) sends nothing, and the owner is never asked
+about a request the remote would refuse anyway (empty or over 8192
+characters). A refused action does not fail the run: read the run's
+`approval.decided` events to see what was not done.
 
 ## Runs
 

@@ -242,6 +242,10 @@ class RunApprovals:
             # decision or the expiry settled it first.
             _settle(pending.future, ApprovalOutcome("cancelled"))
             outcome = pending.future.result()
+            if outcome.approved and (task := asyncio.current_task()) and task.cancelling():
+                # Approved, then the run was cancelled before acting on it:
+                # nothing happens, and the trace says so.
+                outcome = ApprovalOutcome("cancelled")
             self._pending.pop(pending.approval_id, None)
             self._remember(pending.approval_id, outcome.decision)
             self._emit(

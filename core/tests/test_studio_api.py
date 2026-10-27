@@ -1286,7 +1286,7 @@ def test_the_studio_gate_refuses_any_other_tool_that_changes_things():
     from orrery_core.studio.compiler import _NoTrace, confirmation_gate
 
     class Never(_NoTrace):
-        async def request_action(self, node_id: str, remote: str, request: str) -> bool:
+        async def request_action(self, node_id: str, remote: str, request: str) -> str | None:
             raise AssertionError("not asked")
 
     @destructive("drops things")
@@ -1298,8 +1298,76 @@ def test_the_studio_gate_refuses_any_other_tool_that_changes_things():
     tool = FunctionTool(drop)
     refused = asyncio.run(gate(tool=tool, args={}, tool_context=MagicMock(agent_name="n_x")))
     assert refused is not None and refused["status"] == "BLOCKED"
+    # The name an acting remote would have does not make a tool one.
+    tool.name = "a2a_demo_writer_draft"
+    refused = asyncio.run(gate(tool=tool, args={}, tool_context=MagicMock(agent_name="n_x")))
+    assert refused is not None and refused["status"] == "BLOCKED"
 
     async def read() -> dict:
         return {}
 
     assert asyncio.run(gate(tool=FunctionTool(read), args={}, tool_context=MagicMock())) is None
+
+
+def test_an_expired_action_is_never_sent(principals, acting_registry, stub, memory, remote):
+    app = _app(acting_registry, stub, memory, acting_remotes=True, approval_timeout_s=1)
+    with TestClient(app) as test_client:
+        run_id = _start(test_client)
+        summary = _finish(test_client, run_id)
+        events = _events(test_client, run_id)
+    assert remote["received"] == []
+    decided = next(e for e in events if e["type"] == "approval.decided")
+    assert decided["kind"] == "action" and decided["decision"] == "expired"
+    assert "did not confirm" in stub.seen["writer"][-1]
+    assert summary["status"] == "succeeded", summary
+
+
+def test_a_cancelled_run_sends_no_action(acting_client, remote, stub):
+    run_id = _start(acting_client)
+    _pending_input(acting_client, run_id)
+    assert acting_client.post(f"/studio/runs/{run_id}/cancel", headers=ADMIN).status_code == 200
+    summary = _finish(acting_client, run_id)
+    events = _events(acting_client, run_id)
+    assert summary["status"] == "cancelled", summary
+    assert remote["received"] == []
+    decided = next(e for e in events if e["type"] == "approval.decided")
+    assert decided["decision"] == "cancelled"
+
+
+def test_past_the_approval_cap_nobody_is_asked_and_nothing_is_sent(
+    acting_client, remote, stub, monkeypatch
+):
+    from orrery_core.studio import approval
+
+    monkeypatch.setattr(approval, "MAX_APPROVALS_PER_RUN", 0)
+    run_id = _start(acting_client)
+    _finish(acting_client, run_id)
+    events = _events(acting_client, run_id)
+    assert not any(e["type"] == "approval.requested" for e in events)
+    assert remote["received"] == []
+    assert "nobody was asked" in stub.seen["writer"][-1]
+
+
+def test_a_confirmation_after_the_budget_ran_out_sends_nothing(
+    acting_client, remote, stub, monkeypatch
+):
+    from orrery_core.studio import runner
+    from orrery_core.studio.ledger import CompositionLedger, Exhausted
+
+    ledgers: list[CompositionLedger] = []
+
+    class Recorded(CompositionLedger):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            ledgers.append(self)
+
+    monkeypatch.setattr(runner, "CompositionLedger", Recorded)
+    run_id = _start(acting_client)
+    action = _pending_input(acting_client, run_id)
+    # A parallel branch spends the run's budget while the owner decides.
+    ledgers[-1].exhausted = Exhausted("timeout_s", 1, 2)
+    url = f"/studio/runs/{run_id}/approvals/{action['approval_id']}"
+    body = {"decision": "approve", "digest": action["digest"]}
+    assert acting_client.post(url, headers=ADMIN, json=body).status_code == 200
+    _finish(acting_client, run_id)
+    assert remote["received"] == []

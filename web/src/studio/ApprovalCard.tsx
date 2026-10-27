@@ -32,7 +32,7 @@ interface Wording {
   notice: string | null;
   approve: [idle: string, busy: string];
   reject: [idle: string, busy: string];
-  /** Past tense of approve and reject, for the hints. */
+  /** "Before approving it" and "it can only be rejected", in this kind's words. */
   approving: string;
   rejected: string;
   expiring: string;
@@ -201,6 +201,7 @@ function ApprovalCard({
   const [error, setError] = useState<string | null>(null);
   const textId = useId();
   const hintId = useId();
+  const noticeId = useId();
   // The digest of the text shown, computed here: approving names it.
   const [checked, setChecked] = useState<{ text: string; digest: string | null } | null>(null);
   const text = pending?.text;
@@ -312,7 +313,9 @@ function ApprovalCard({
       )}
 
       {words.notice ? (
-        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{words.notice}</p>
+        <p id={noticeId} className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+          {words.notice}
+        </p>
       ) : null}
       {asking ? (
         <>
@@ -359,7 +362,10 @@ function ApprovalCard({
           type="button"
           className={primaryButton}
           disabled={busy || blocked !== null}
-          aria-describedby={blocked ? hintId : undefined}
+          aria-describedby={
+            [blocked ? hintId : null, words.notice ? noticeId : null].filter(Boolean).join(" ") ||
+            undefined
+          }
           onClick={() => void decide("approve")}
         >
           <CheckIcon size={14} />

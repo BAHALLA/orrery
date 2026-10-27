@@ -613,8 +613,17 @@ re-call would let the model confirm itself). The gate asks the owner through
 guarantees they confirm what is sent) and returns `BLOCKED` on anything but
 an approval; `BLOCKED` is neutral for the breaker. Any other guarded tool is
 refused. The registry refuses acting entries unless the deployment sets
-`ORRERY_STUDIO_ACTING_REMOTES` (`load_registry(allow_acting=...)`), and the
-console shows `acting_remotes` in the capabilities.
+`ORRERY_STUDIO_ACTING_REMOTES` (`load_registry(allow_acting=...)`); the
+capabilities report it (`acting_remotes`) and the console marks acting skills
+from each entry's `effect`. The run is checked again after the owner decides
+(a budget spent or a node failed meanwhile sends nothing), the gate never asks
+about a request the tool would refuse (empty or past `MAX_REQUEST_CHARS`), and
+the widened `AutonomyPlugin` is a copy (`allowing_at_l2`), so the exception
+cannot outlive the run. An approval the run was cancelled after is recorded
+`cancelled`, and the decision's audit carries the digest it named. Known
+trade-offs: a refused action does not change the run's outcome (the node goes
+on, like a declined question), and while an acting remote's circuit is
+half-open its probe slot is held for the person's wait.
 
 Still to come in P0c: registry editing.
 

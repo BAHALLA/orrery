@@ -59,6 +59,7 @@ from google.adk.workflow import FunctionNode, JoinNode, Workflow
 from pydantic import BaseModel, Field, create_model
 
 from ..a2a.remote import (
+    MAX_REQUEST_CHARS,
     GuardedRemoteA2aTool,
     RemoteCards,
     RemoteExchange,
@@ -145,8 +146,9 @@ class Trace(Protocol):
         """A person's answer to a remote's *question*, or ``None`` (declined, expired)."""
         ...
 
-    async def request_action(self, node_id: str, remote: str, request: str) -> bool:
-        """Whether a person lets *node_id* send *request* to the acting *remote*."""
+    async def request_action(self, node_id: str, remote: str, request: str) -> str | None:
+        """``None`` when a person lets *node_id* send *request* to the acting *remote*;
+        otherwise why not (for the model)."""
         ...
 
 
@@ -263,18 +265,22 @@ class _NoTrace:
     async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
         return None  # nobody to ask: the remote is sent nothing
 
-    async def request_action(self, node_id: str, remote: str, request: str) -> bool:
-        return False  # nobody to ask: nothing acts
+    async def request_action(self, node_id: str, remote: str, request: str) -> str | None:
+        return NOBODY_TO_CONFIRM  # nothing acts
 
 
-#: What the model gets when a call that changes things was not confirmed.
-NOT_CONFIRMED = {
-    "status": "BLOCKED",
-    "error": (
-        "The person did not confirm this action, so it was not sent. Do not retry it; "
-        "say what you would have done."
-    ),
-}
+#: Why an action was not sent, when its person refused it or let it expire.
+NOT_CONFIRMED_REASON = "The person did not confirm this action, so it was not sent."
+#: Why an action was not sent, in a run with nobody to ask.
+NOBODY_TO_CONFIRM = "Nobody can confirm actions in this run; nothing was sent."
+
+
+def not_confirmed(reason: str) -> dict[str, str]:
+    """What the model gets for an action that was not sent (a neutral ``BLOCKED``)."""
+    return {
+        "status": "BLOCKED",
+        "error": f"{reason} Do not retry it; say what you would have done.",
+    }
 
 
 def confirmation_gate(sink: Trace) -> Callable[..., Any]:
@@ -297,13 +303,14 @@ def confirmation_gate(sink: Trace) -> Callable[..., Any]:
                 "error": f"{tool.name} changes things; in a Studio run only acting remotes may.",
             }
         request = args.get("request")
-        if not isinstance(request, str) or not request.strip():
-            return None  # the tool refuses it itself, before anything is sent
+        if not isinstance(request, str) or not request.strip() or len(request) > MAX_REQUEST_CHARS:
+            # The tool refuses it itself, before anything is sent: never ask
+            # a person to confirm what could not be sent.
+            return None
         agent = str(getattr(tool_context, "agent_name", "") or "")
         node_id = agent.removeprefix(NODE_PREFIX)
-        if await sink.request_action(node_id, f"{tool.entry.id}.{tool.skill}", request):
-            return None
-        return dict(NOT_CONFIRMED)
+        reason = await sink.request_action(node_id, f"{tool.entry.id}.{tool.skill}", request)
+        return None if reason is None else not_confirmed(reason)
 
     return mark_confirmation_gate(gate)
 
