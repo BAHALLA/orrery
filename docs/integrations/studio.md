@@ -486,7 +486,9 @@ another framework:
 
 - `demo-writer`: a plain `a2a-sdk` agent, no LLM, deterministic
   (`orrery_core.studio.demo.writer`, in the image), served over **https** on the
-  compose network only, as `demo-writer.studio.internal`;
+  compose network only, as `demo-writer.studio.internal`. It runs from the
+  Orrery image, so importing `orrery_core` loads ADK as well: about 135 MiB
+  resident when idle. Give it at least 256 MiB;
 - `studio-demo-certs`: a one-shot job generating a throwaway internal CA and
   the writer's certificate (`orrery_core.studio.demo.certs`, in the image). It keeps them
   across restarts, and makes new ones when one is missing, expires within 7
@@ -547,8 +549,12 @@ Studio's code until someone opens it. On a deployment without the Studio
 pattern gallery one click away.
 
 - **Palette.** Drag a node kind onto the canvas, or focus it and press Enter
-  to append it after the last node. Kinds the server cannot run yet are shown
-  but disabled, labelled *coming in P0b* or *coming in P0c*. *Remote agent* is
+  to append it after the last node. The console reads what the server runs
+  from `capabilities` in `GET /studio/schema`: kinds it cannot run are shown
+  but disabled, labelled with the phase the server gives (*coming in P0c*).
+  Until the schema answers (it is asked again after 1 s and 3 s if it fails),
+  nothing is gated: every kind and pattern can be used, and the server's 422
+  decides. *Remote agent* is
   a shorthand: it adds an `llm_agent` with one `a2a:` tool, which is all the
   spec has for it. On screens narrower than 1280px the palette is a rail of
   icons (each keeps its name and blurb for screen readers and as a tooltip).
@@ -557,11 +563,13 @@ pattern gallery one click away.
 - **Inspector.** Edit a node's id (edges follow a rename), description,
   instruction and tools. Tools are picked from the registry: MCP tools, remote
   skills and catalogue tools. Anything not classified read-only is shown but
-  cannot be added, since runs are L2. The model field is disabled: per-node
-  models come in P0b.
-- **Patterns.** Pipeline and release-notes run today. Router, fan-out,
-  supervisor, critic loop, debate, map-reduce, handoff and plan-execute are
-  in the gallery, marked *needs P0b*: you can look at them but not load them.
+  cannot be added, since runs are L2. The model field lists the server's
+  `models` (`ORRERY_STUDIO_MODELS`), and a model outside that list is flagged
+  as the server would refuse it.
+- **Patterns.** The gallery holds pipeline, release-notes, router, fan-out,
+  supervisor, critic loop, debate, map-reduce, handoff and plan-execute. A
+  pattern the server cannot run (handoff, today) is marked with the phase
+  that brings it: you can look at it but not load it.
 - **Layout.** The graph flows left to right, or top to bottom when the canvas
   is taller than it is wide (a laptop screen, beside the palette and panels),
   so a pipeline fits at a readable size. Crossing between the two (a window
@@ -575,7 +583,7 @@ pattern gallery one click away.
   pattern or importing a spec can be undone from the banner it shows.
 - **Validation** runs as you edit. It checks the spec against the JSON Schema
   from `GET /studio/schema` and against this release's rules (one pipeline
-  path, kinds, tool references against the registry). Problems are marked on
+  path, kinds, models, tool references against the registry). Problems are marked on
   the node, the field and the edge, and listed under the composition
   inspector. The server still decides: a 422 from `POST /studio/runs` is
   mapped by `loc` onto the same nodes and fields, and stays pinned until that

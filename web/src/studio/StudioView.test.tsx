@@ -44,7 +44,8 @@ function stubStudio(routes: Routes = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
     calls.push({ url, init });
-    if (url.endsWith("/studio/schema")) return routes.schema?.() ?? json(schema);
+    if (url.endsWith("/studio/schema"))
+      return routes.schema?.() ?? json({ ...schema, capabilities: P0A_CAPS });
     if (url.startsWith("/studio/registry")) return json(DEMO_REGISTRY);
     if (url.endsWith("/studio/runs") && init.method === "POST") {
       return routes.start?.() ?? json({ run_id: "run-1" }, 202);
@@ -62,6 +63,31 @@ function stubStudio(routes: Routes = {}) {
   vi.stubGlobal("fetch", fetchMock);
   return calls;
 }
+
+// A server that runs P0a only.
+const P0A_CAPS = {
+  node_kinds: ["llm_agent"],
+  unsupported_node_kinds: {
+    router: "P0b",
+    parallel: "P0b",
+    join: "P0b",
+    supervisor: "P0b",
+    human_approval: "P0c",
+  },
+  patterns: ["pipeline"],
+  routing: false,
+  per_node_models: false,
+  models: [],
+};
+
+const P0B_CAPS = {
+  node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
+  unsupported_node_kinds: { human_approval: "P0c" },
+  patterns: ["pipeline", "router", "critic_loop"],
+  routing: true,
+  per_node_models: true,
+  models: ["gemini-2.5-flash"],
+};
 
 const node = (name: RegExp) => screen.getByRole("group", { name });
 
@@ -109,6 +135,69 @@ describe("Studio canvas", () => {
     expect(await screen.findByText("is required")).toBeInTheDocument();
     expect(node(/^LLM agent summariser, 1 problem$/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "1 problem" })).toBeInTheDocument();
+  });
+
+  it("enables what the server says it runs", async () => {
+    stubWideScreen();
+    stubStudio({
+      schema: () =>
+        json({
+          ...schema,
+          capabilities: P0B_CAPS,
+        }),
+    });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+
+    const palette = await screen.findByRole("complementary", { name: "Palette" });
+    await waitFor(() =>
+      expect(within(palette).getByRole("button", { name: /^Router/ })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      ),
+    );
+    // Not in the server's list: still marked with the phase that brings it.
+    expect(within(palette).getByRole("button", { name: /^Human approval/ })).toHaveTextContent(
+      "coming in P0c",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Patterns" }));
+    const dialog = screen.getByRole("dialog", { name: "Start from a pattern" });
+    const router = within(dialog).getByRole("button", { name: /^Router/ });
+    expect(router).not.toHaveAttribute("aria-disabled", "true");
+    expect(router).not.toHaveTextContent("needs P0b");
+  });
+
+  it("asks again when the schema fails once, then follows the server", async () => {
+    stubWideScreen();
+    let calls = 0;
+    stubStudio({
+      schema: () => {
+        calls += 1;
+        return calls === 1
+          ? json({ detail: "upstream hiccup" }, 502)
+          : json({ ...schema, capabilities: { ...P0B_CAPS } });
+      },
+    });
+    render(<StudioView token="t" />);
+
+    // The palette waits for the schema, which is asked again after 1 s.
+    // The canvas opens after the first failure, gating nothing, and follows
+    // the server once the retry (after 1 s) answers.
+    const palette = await screen.findByRole("complementary", { name: "Palette" });
+    expect(within(palette).getByRole("button", { name: /^Human approval/ })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await waitFor(
+      () =>
+        expect(within(palette).getByRole("button", { name: /^Human approval/ })).toHaveTextContent(
+          "coming in P0c",
+        ),
+      { timeout: 3000 },
+    );
+    expect(calls).toBe(2);
+    expect(screen.queryByText(/schema could not be read/)).not.toBeInTheDocument();
   });
 
   it("adds nodes from the palette with the keyboard and wires them in", async () => {

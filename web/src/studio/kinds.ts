@@ -1,29 +1,89 @@
-import type { NodeKind, Pattern, SpecNode } from "./types";
+import {
+  PATTERNS,
+  type NodeKind,
+  type Pattern,
+  type ServerCapabilities,
+  type SpecNode,
+} from "./types";
 
 /**
  * What this server can run, as the console reads it.
  *
  * The format describes every phase's node kinds and patterns, but a release
  * runs only some of them. The palette, the templates and the client checks all
- * ask {@link Capabilities} rather than hard-coding "P0a", so when the server
- * runs routers (P0b) the same UI lights up by changing this one value. The
- * server does not publish it yet (see the console section of
- * docs/integrations/studio.md); until it does, it is {@link P0A}.
+ * ask {@link Capabilities} rather than hard-coding a phase. The server publishes
+ * them in `GET /studio/schema` ({@link capabilitiesFrom}). Until it answers
+ * (`known` false, {@link P0A}), the console gates nothing: every kind and
+ * pattern can be used, and the server's 422 decides.
  */
 export interface Capabilities {
+  /** Whether the server said; when false, nothing is flagged as unsupported. */
+  known: boolean;
   kinds: ReadonlySet<NodeKind>;
   patterns: ReadonlySet<Pattern>;
-  /** Edge `when` / `max_iterations` / `screen`, node `model` / `output`. */
+  /** Node `output` labels and edge `when`. */
   routing: boolean;
+  /** Edge `max_iterations`. */
+  loops: boolean;
+  /** Edge `screen`. */
+  edgeScreen: boolean;
   perNodeModels: boolean;
+  /** The models a node may name (the server's allowlist). */
+  models: readonly string[];
+  /** The server's reason a kind or pattern is not run yet ("P0c", "P1; …"). */
+  pendingKinds: ReadonlyMap<string, string>;
+  pendingPatterns: ReadonlyMap<string, string>;
 }
 
 export const P0A: Capabilities = {
+  known: false,
   kinds: new Set<NodeKind>(["llm_agent"]),
   patterns: new Set<Pattern>(["pipeline"]),
   routing: false,
+  loops: false,
+  edgeScreen: false,
   perNodeModels: false,
+  models: [],
+  pendingKinds: new Map(),
+  pendingPatterns: new Map(),
 };
+
+/**
+ * The server's capabilities, keeping only the kinds and patterns this console
+ * knows: a newer server may run a kind this build cannot draw.
+ */
+export function capabilitiesFrom(server: ServerCapabilities | undefined | null): Capabilities {
+  if (!server) return P0A;
+  const known = (values: string[] | undefined, allowed: readonly string[]) =>
+    (values ?? []).filter((v) => allowed.includes(v));
+  const routing = server.routing === true;
+  return {
+    known: true,
+    kinds: new Set(known(server.node_kinds, PALETTE_KINDS) as NodeKind[]),
+    patterns: new Set(known(server.patterns, PATTERNS) as Pattern[]),
+    routing,
+    // Older servers sent `routing` alone for all three.
+    loops: server.loops ?? routing,
+    edgeScreen: server.edge_screen ?? routing,
+    perNodeModels: server.per_node_models === true,
+    models: server.per_node_models === true ? [...(server.models ?? [])] : [],
+    pendingKinds: new Map(Object.entries(server.unsupported_node_kinds ?? {})),
+    pendingPatterns: new Map(Object.entries(server.unsupported_patterns ?? {})),
+  };
+}
+
+/** "P1" from the server's "P1; a router between agents does the same". */
+const phaseIn = (reason: string | undefined) => reason?.split(";")[0].trim() || undefined;
+
+/** The phase that brings *kind* on this server ("P0c"). */
+export function kindPhase(kind: NodeKind, caps: Capabilities): string {
+  return phaseIn(caps.pendingKinds.get(kind)) ?? KINDS[kind].phase;
+}
+
+/** The phase that brings *pattern* on this server ("P1" for handoff). */
+export function patternPhase(pattern: Pattern, caps: Capabilities): string {
+  return phaseIn(caps.pendingPatterns.get(pattern)) ?? "P0b";
+}
 
 export interface KindInfo {
   label: string;
@@ -80,12 +140,13 @@ export const PALETTE_KINDS: readonly NodeKind[] = [
  * the bare kind, so the console expands it before it reaches the spec.
  */
 export function canAdd(kind: NodeKind, caps: Capabilities): boolean {
+  if (!caps.known) return true; // the server's 422 decides
   return kind === "remote_a2a" ? caps.kinds.has("llm_agent") : caps.kinds.has(kind);
 }
 
-/** "coming in P0b" for a kind this server cannot run yet, else null. */
+/** "coming in P0c" for a kind this server cannot run yet, else null. */
 export function comingIn(kind: NodeKind, caps: Capabilities): string | null {
-  return canAdd(kind, caps) ? null : `coming in ${KINDS[kind].phase}`;
+  return canAdd(kind, caps) ? null : `coming in ${kindPhase(kind, caps)}`;
 }
 
 /** The id a new node of `kind` starts from: `agent`, `remote`, `router`… */

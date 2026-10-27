@@ -27,7 +27,7 @@ import {
 import { HistoryPanel } from "./HistoryPanel";
 import { DownloadIcon, GridIcon, LayoutIcon, PlayIcon, UploadIcon } from "./icons";
 import { CompositionInspector, NodeInspector } from "./Inspector";
-import { idStem, newNode, P0A } from "./kinds";
+import { capabilitiesFrom, idStem, newNode } from "./kinds";
 import { Palette, TemplateGallery } from "./Library";
 import { McpInspector } from "./McpInspector";
 import { RunPanel } from "./RunPanel";
@@ -138,7 +138,7 @@ export default function StudioView({ token, active = true }: Props) {
   // Bumped when the graph is replaced or laid out again, so the canvas refits.
   const [fitSignal, setFitSignal] = useState(0);
   const refit = useCallback(() => setFitSignal((n) => n + 1), []);
-  const caps = P0A;
+  const caps = useMemo(() => capabilitiesFrom(schema?.capabilities), [schema]);
   const run = useStudioRun(client);
   const wide = useMediaQuery(BREAKPOINT_LG);
   const live = run.busy;
@@ -178,23 +178,37 @@ export default function StudioView({ token, active = true }: Props) {
 
   useEffect(() => {
     const controller = new AbortController();
-    client
-      .schema(controller.signal)
-      .then(setSchema)
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        if (err instanceof ApiError && (err.status === 404 || err.status === 403)) {
-          setUnavailable({ status: err.status, message: err.message });
-        } else {
-          // The canvas still works: only the schema half of live validation is missing.
-          setSchemaError(
-            `${describeApiError(err, "The Studio's schema could not be read.")} Only this release's own rules are checked here.`,
-          );
+    const loadSchema = async () => {
+      // A blip should not leave the console guessing what the server runs:
+      // try again (after 1 s, then 3 s) before settling for the client's rules.
+      for (const delay of [1000, 3000, null]) {
+        try {
+          setSchema(await client.schema(controller.signal));
+          setSchemaError(null);
+          return;
+        } catch (err) {
+          if (controller.signal.aborted) return;
+          if (err instanceof ApiError && (err.status === 404 || err.status === 403)) {
+            setUnavailable({ status: err.status, message: err.message });
+            return;
+          }
+          // Open the canvas now; a later answer still brings the capabilities.
+          setSchemaSettled(true);
+          if (delay === null) {
+            // The canvas still works: only the schema half of live validation is missing.
+            setSchemaError(
+              `${describeApiError(err, "The Studio's schema could not be read.")} Only this release's own rules are checked here.`,
+            );
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, delay));
+          if (controller.signal.aborted) return;
         }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSchemaSettled(true);
-      });
+      }
+    };
+    void loadSchema().finally(() => {
+      if (!controller.signal.aborted) setSchemaSettled(true);
+    });
     client
       .registry(false, controller.signal)
       .then(setRegistry)

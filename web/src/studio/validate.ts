@@ -1,4 +1,4 @@
-import { KINDS, parseToolRef, type Capabilities } from "./kinds";
+import { KINDS, kindPhase, parseToolRef, patternPhase, type Capabilities } from "./kinds";
 import type { CompositionSpec, JsonSchema, SpecErrorWire, StudioRegistry } from "./types";
 
 /**
@@ -252,11 +252,18 @@ function toolError(ref: string, registry: StudioRegistry): string | null {
 /** What this release refuses, field by field, before a run is even tried. */
 export function checkComposition(spec: CompositionSpec, { caps, registry }: CheckContext): Issue[] {
   const issues: Issue[] = [];
-  const add = (loc: Issue["loc"], msg: string, code = "invalid") =>
+  const add = (loc: Issue["loc"], msg: string, code = "invalid") => {
+    // Until the server says what it runs, nothing is flagged as unsupported.
+    if (code === "not_supported_yet" && !caps.known) return;
     issues.push({ loc, msg, code, source: "client" });
+  };
   const pattern = spec.pattern ?? "pipeline";
   if (!caps.patterns.has(pattern)) {
-    add(["pattern"], `pattern "${pattern}" is not supported yet (P0b)`, "not_supported_yet");
+    add(
+      ["pattern"],
+      `pattern "${pattern}" is not supported yet (${caps.pendingPatterns.get(pattern) ?? patternPhase(pattern, caps)})`,
+      "not_supported_yet",
+    );
   }
 
   const ids = new Map<string, number>();
@@ -266,13 +273,25 @@ export function checkComposition(spec: CompositionSpec, { caps, registry }: Chec
     if (!caps.kinds.has(node.kind)) {
       add(
         ["nodes", i, "kind"],
-        `${KINDS[node.kind]?.label ?? node.kind} nodes are coming in ${KINDS[node.kind]?.phase ?? "a later phase"}`,
+        KINDS[node.kind]
+          ? `${KINDS[node.kind].label} nodes are coming in ${kindPhase(node.kind, caps)}`
+          : `unknown node kind "${node.kind}"`,
         "not_supported_yet",
       );
       return;
     }
     if (node.model != null && !caps.perNodeModels) {
-      add(["nodes", i, "model"], "per-node models are coming in P0b", "not_supported_yet");
+      add(
+        ["nodes", i, "model"],
+        "this server runs every node on the deployment's model",
+        "not_supported_yet",
+      );
+    } else if (node.model != null && !caps.models.includes(node.model)) {
+      add(
+        ["nodes", i, "model"],
+        `"${node.model}" is not one of this server's models`,
+        "model_not_allowed",
+      );
     }
     if (node.output != null && !caps.routing) {
       add(["nodes", i, "output"], "output labels are coming in P0b", "not_supported_yet");
@@ -298,8 +317,13 @@ function checkPipeline(
   caps: Capabilities,
 ): Issue[] {
   const issues: Issue[] = [];
-  const add = (loc: Issue["loc"], msg: string, code = "invalid") =>
+  const add = (loc: Issue["loc"], msg: string, code = "invalid") => {
+    if (code === "not_supported_yet" && !caps.known) return;
     issues.push({ loc, msg, code, source: "client" });
+  };
+  // A supervisor's children are its tools, not steps: they are not in the graph.
+  const children = new Set(spec.nodes.flatMap((n) => n.children ?? []));
+  const steps = new Map([...ids].filter(([id]) => !children.has(id)));
   const succ = new Map<string, string>();
   const pred = new Map<string, string>();
   spec.edges.forEach((edge, j) => {
@@ -308,16 +332,24 @@ function checkPipeline(
       ["to", edge.to],
     ] as const) {
       if (!ids.has(name)) add(["edges", j, end], `no node "${name}"`);
+      else if (children.has(name))
+        add(
+          ["edges", j, end],
+          `"${name}" is a supervisor's child: children are its tools, not steps of the graph`,
+        );
     }
-    if (!caps.routing) {
-      if (edge.when != null)
-        add(["edges", j, "when"], "conditional edges are coming in P0b", "not_supported_yet");
-      if (edge.max_iterations != null) {
-        add(["edges", j, "max_iterations"], "loops are coming in P0b", "not_supported_yet");
-      }
-      if (edge.screen)
-        add(["edges", j, "screen"], "edge screening is coming in P0b", "not_supported_yet");
-    }
+    if (edge.when != null && !caps.routing)
+      add(["edges", j, "when"], "conditional edges are coming in P0b", "not_supported_yet");
+    else if (edge.when != null)
+      add(
+        ["edges", j, "when"],
+        "a pipeline has no labelled edges (use the router pattern)",
+        "pattern_mismatch",
+      );
+    if (edge.max_iterations != null && !caps.loops)
+      add(["edges", j, "max_iterations"], "loops are coming in P0b", "not_supported_yet");
+    if (edge.screen && !caps.edgeScreen)
+      add(["edges", j, "screen"], "edge screening is coming in P0b", "not_supported_yet");
     if (edge.from === edge.to) add(["edges", j], "an edge cannot loop on one node");
     else if (succ.has(edge.from)) {
       add(
@@ -333,25 +365,28 @@ function checkPipeline(
   });
   if (issues.length) return issues;
 
-  const starts = [...ids.keys()].filter((id) => !pred.has(id));
+  const cycle = caps.loops
+    ? "the edges form a cycle: a pipeline has no loops (use the critic loop pattern)"
+    : "the edges form a cycle (loops are coming in P0b)";
+  const starts = [...steps.keys()].filter((id) => !pred.has(id));
   if (starts.length !== 1) {
     add(
       ["edges"],
       starts.length
         ? `a pipeline has exactly one first node; these have no incoming edge: ${starts.sort().join(", ")}`
-        : "the edges form a cycle (loops are coming in P0b)",
+        : cycle,
     );
     return issues;
   }
   const seen = [starts[0]];
   for (let next = succ.get(starts[0]); next !== undefined; next = succ.get(next)) {
     if (seen.includes(next)) {
-      add(["edges"], "the edges form a cycle (loops are coming in P0b)");
+      add(["edges"], cycle);
       return issues;
     }
     seen.push(next);
   }
-  for (const [id, i] of ids) {
+  for (const [id, i] of steps) {
     if (!seen.includes(id)) add(["nodes", i, "id"], `"${id}" is not reachable from the start`);
   }
   return issues;

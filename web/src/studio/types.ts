@@ -7,20 +7,24 @@
  * types are the compile-time half of the same contract. Keep them in sync.
  */
 
-/** Every node kind the format describes. P0a runs `llm_agent` only. */
+/** Every node kind the format describes. What a server runs is in its {@link ServerCapabilities}. */
 export type NodeKind =
   "llm_agent" | "remote_a2a" | "router" | "parallel" | "join" | "supervisor" | "human_approval";
 
-export type Pattern =
-  | "pipeline"
-  | "fan_out_fan_in"
-  | "router"
-  | "supervisor"
-  | "critic_loop"
-  | "debate"
-  | "map_reduce"
-  | "handoff"
-  | "plan_and_execute";
+/** Every pattern the format describes. */
+export const PATTERNS = [
+  "pipeline",
+  "fan_out_fan_in",
+  "router",
+  "supervisor",
+  "critic_loop",
+  "debate",
+  "map_reduce",
+  "handoff",
+  "plan_and_execute",
+] as const;
+
+export type Pattern = (typeof PATTERNS)[number];
 
 /**
  * One node, any kind. Fields belong to some kinds only (the server refuses an
@@ -87,11 +91,27 @@ export interface SpecErrorWire {
   code: string;
 }
 
+/** `capabilities` in `GET /studio/schema`, as the server sends it (`capabilities()` in `api.py`). */
+export interface ServerCapabilities {
+  node_kinds: string[];
+  /** Kind -> why not yet: the phase first ("P0c", "P1; use an llm_agent…"). */
+  unsupported_node_kinds?: Record<string, string>;
+  patterns: string[];
+  unsupported_patterns?: Record<string, string>;
+  routing: boolean;
+  loops?: boolean;
+  edge_screen?: boolean;
+  per_node_models: boolean;
+  models: string[];
+}
+
 /** `GET /studio/schema`. */
 export interface StudioSchema {
   spec_version: number;
   spec: JsonSchema;
   events: JsonSchema;
+  /** What this server runs (published since 0.10.0). */
+  capabilities?: ServerCapabilities;
 }
 
 /** The subset of JSON Schema (draft 2020-12, as Pydantic emits it) the console reads. */
