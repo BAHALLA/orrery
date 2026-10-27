@@ -9,7 +9,7 @@ import { makeToken, jsonResponse, restoreGlobals } from "./test/appHarness";
 
 afterEach(restoreGlobals);
 
-describe("App auth flow", () => {
+describe("conversations", () => {
   it("restores history from the server in a browser that has never seen it", async () => {
     // The point of the server-backed history: a different machine (or cleared
     // site data) rebuilds the sidebar and the transcript from the session store.

@@ -16,7 +16,7 @@ import {
 
 afterEach(restoreGlobals);
 
-describe("App auth flow", () => {
+describe("chat", () => {
   it("sends a message and renders the assistant reply", async () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({ session_id: "s1", response: "Kafka is healthy." }),

@@ -10,7 +10,7 @@ import { makeToken, jsonResponse, stubApi, restoreGlobals } from "./test/appHarn
 
 afterEach(restoreGlobals);
 
-describe("resilience and safety posture", () => {
+describe("agents dashboard", () => {
   const token = makeToken({ sub: "alice", roles: ["operator"] });
 
   it("shows admins the agent inventory with each tool's guard level", async () => {

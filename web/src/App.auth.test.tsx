@@ -8,7 +8,7 @@ import { makeToken, restoreGlobals } from "./test/appHarness";
 
 afterEach(restoreGlobals);
 
-describe("App auth flow", () => {
+describe("sign-in", () => {
   it("shows the token gate when unauthenticated", () => {
     render(<App />);
     expect(screen.getByRole("heading", { name: /orrery console/i })).toBeInTheDocument();
