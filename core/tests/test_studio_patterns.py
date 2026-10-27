@@ -763,7 +763,19 @@ def test_every_template_runs_with_a_stub_model(principals, stub, path):
             label = LABELS[raw["id"]]
             stub.script[raw["id"]] = lambda _n, _t, _l=label: {"label": _l, "answer": f"{_l}!"}
     with TestClient(make_app(stub)) as client:
-        summary, trace = run(client, spec, "Kafka consumer lag")
+        run_id = start(client, spec, "Kafka consumer lag")
+        # A human approval waits for its person: approve each as it asks.
+        while (summary := client.get(f"/studio/runs/{run_id}", headers=ADMIN).json())[
+            "status"
+        ] == "running":
+            for waiting in summary["pending_approvals"]:
+                client.post(
+                    f"/studio/runs/{run_id}/approvals/{waiting['approval_id']}",
+                    headers=ADMIN,
+                    json={"decision": "approve", "digest": waiting["digest"]},
+                )
+            time.sleep(0.05)
+        trace = events(client, run_id)
     assert summary["status"] == "succeeded", summary
     children = {c for n in spec["nodes"] for c in n.get("children", [])}
     graph = {n["id"] for n in spec["nodes"] if n["id"] not in children}

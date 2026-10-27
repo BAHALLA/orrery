@@ -124,10 +124,7 @@ def test_the_published_schema_names_every_node_kind():
 
 @pytest.mark.parametrize(
     ("kind", "extra", "phase"),
-    [
-        ("human_approval", {"prompt": "ok?"}, "P0c"),
-        ("remote_a2a", {"remote": "demo-writer.draft"}, "P1"),
-    ],
+    [("remote_a2a", {"remote": "demo-writer.draft"}, "P1")],
 )
 def test_other_node_kinds_are_not_supported_yet(kind, extra, phase):
     raw = _spec(nodes=[{"id": "x", "kind": kind, **extra}], edges=[])
@@ -471,6 +468,7 @@ TEMPLATE_PATTERNS = {
     "debate": "debate",
     "map-reduce": "map_reduce",
     "plan-and-execute": "plan_and_execute",
+    "human-review": "critic_loop",
 }
 
 

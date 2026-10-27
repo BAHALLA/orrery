@@ -59,6 +59,8 @@ class StudioConfig:
     max_running: int = 8
     #: Starts per person, as a ``limits`` rate (``"10/minute"``).
     rate_limit: str = "10/minute"
+    #: Seconds a ``human_approval`` waits for its person before it expires (a reject).
+    approval_timeout_s: int = 900
 
     @classmethod
     def from_env(cls) -> StudioConfig:
@@ -92,6 +94,9 @@ class StudioConfig:
             ),
             max_running=env_int("ORRERY_STUDIO_MAX_RUNNING", cls.max_running),
             rate_limit=os.getenv("ORRERY_STUDIO_RATE_LIMIT", "").strip() or cls.rate_limit,
+            approval_timeout_s=env_int(
+                "ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS", cls.approval_timeout_s
+            ),
         )
 
     def validate(self, *, auth_enabled: bool, human_clients_configured: bool) -> None:
@@ -118,6 +123,7 @@ class StudioConfig:
             "run_retention_days",
             "max_running_per_user",
             "max_running",
+            "approval_timeout_s",
         ):
             if getattr(self, name) < 1:
                 raise ValueError(f"Studio setting {name} must be at least 1")

@@ -29,7 +29,12 @@ The graph (see :func:`~.spec.plan_graph`):
   ``JoinNode`` and a function node that lays the branches' answers out as one
   text for the node after it;
 - an edge with ``screen`` gets a function node running the safety screen on
-  the text crossing it.
+  the text crossing it;
+- a ``human_approval`` node is an async function node that waits for the
+  person's decision (:meth:`Trace.request_approval`, see :mod:`.approval`)
+  and routes on ``approved`` / ``rejected`` like a labelled node. A rejection
+  with no edge for it raises :class:`ApprovalRejected`, and the run ends
+  ``rejected``.
 
 A node's model is the deployment's (``None``: ``resolve_model()``) unless it
 names one, which then runs alone, without the fallback chain.
@@ -41,6 +46,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
@@ -61,12 +67,15 @@ from ..agent.prompts import OPERATING_PRINCIPLES
 from ..plugins.safety_plugin import neutralize_text
 from ..serving.inventory import model_label
 from ..tools.mcp import GuardedMcpToolset
+from .approval import ApprovalOutcome
 from .events import LoopIteration, NodeEnter, NodeExit, RouteDecision, TokenCount
 from .registry import StudioRegistry
 from .spec import (
+    APPROVAL_LABELS,
     NODE_TOOL_PREFIX,
     CompositionSpec,
     GraphPlan,
+    HumanApprovalNode,
     LlmAgentNode,
     SupervisorNode,
     graph_order,
@@ -128,9 +137,32 @@ class Trace(Protocol):
 
     def answer_of(self, node_id: str) -> str | None: ...
 
+    async def request_approval(self, node_id: str, prompt: str, text: str) -> ApprovalOutcome: ...
+
 
 class RouteFailed(Exception):
     """A labelled node answered without one of its labels."""
+
+
+class ApprovalRejected(Exception):
+    """A person rejected (or let expire) an approval with no edge to take on it."""
+
+    def __init__(self, node_id: str, outcome: ApprovalOutcome) -> None:
+        super().__init__(
+            f"approval {node_id!r} "
+            + ("expired" if outcome.decision == "expired" else "was rejected")
+        )
+        self.node_id = node_id
+        self.outcome = outcome
+
+
+#: What a rejected branch gets: the reviewer's comment, then what was reviewed.
+REJECTED_TEXT = """A reviewer rejected this at `{node_id}`.
+
+Reviewer's comment: {comment}
+
+What was reviewed:
+{text}"""
 
 
 @dataclass
@@ -211,6 +243,9 @@ class _NoTrace:
     def answer_of(self, node_id: str) -> str | None:
         return None
 
+    async def request_approval(self, node_id: str, prompt: str, text: str) -> ApprovalOutcome:
+        return ApprovalOutcome("rejected")  # nobody to ask: never approve
+
 
 def _safe(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower())
@@ -241,6 +276,20 @@ def label_schema(node_id: str, labels: list[str]) -> type[BaseModel]:
         label=(Literal[tuple(labels)], Field(description="One of the labels.")),  # ty: ignore[invalid-type-form]
         answer=(str, Field(description="The text the next step gets.")),
     )
+
+
+def _text_of(node_input: Any) -> str:
+    """The text a node hands on, whatever shape the graph passes it in."""
+    if isinstance(node_input, str):
+        return node_input
+    if isinstance(node_input, BaseModel):
+        node_input = node_input.model_dump()
+    if isinstance(node_input, dict) and isinstance(node_input.get("answer"), str):
+        return node_input["answer"]
+    parts = getattr(node_input, "parts", None)
+    if parts is not None:
+        return "".join(p.text for p in parts if getattr(p, "text", None))
+    return "" if node_input is None else str(node_input)
 
 
 def _label_and_answer(node_input: Any) -> tuple[Any, str]:
@@ -460,6 +509,58 @@ def compile_spec(
 
         return FunctionNode(func=screen, name=f"screen_{j}")
 
+    def approval_node(node: HumanApprovalNode) -> FunctionNode:
+        targets = {
+            spec.edges[j].when: spec.edges[j].to
+            for j in plan.out[node.id]
+            if spec.edges[j].when is not None
+        }
+
+        async def approve(ctx: Context, node_input: Any) -> str:
+            text = _text_of(node_input)
+            sink.emit_event(NodeEnter(node_id=node.id, kind=node.kind, model=""))
+            started = time.monotonic()
+            outcome = await sink.request_approval(node.id, node.prompt, text)
+            label = "approved" if outcome.approved else "rejected"
+            # Only a decision routes: an expiry is a reject that ends the run,
+            # never a lap round a loop that would ask (and wait) again.
+            ends = outcome.decision != "approved" and (
+                outcome.decision != "rejected" or label not in targets
+            )
+            sink.emit_event(
+                NodeExit(
+                    node_id=node.id,
+                    kind=node.kind,
+                    model="",
+                    tokens=TokenCount(),
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    outcome="ok" if outcome.approved else "rejected",
+                )
+            )
+            if ends:
+                raise ApprovalRejected(node.id, outcome)
+            sink.emit_event(
+                RouteDecision(
+                    node_id=node.id,
+                    source=node.id,
+                    label=label,
+                    alternatives=[x for x in APPROVAL_LABELS if x != label],
+                    to=targets.get(label),
+                )
+            )
+            answer = (
+                text
+                if outcome.approved
+                else REJECTED_TEXT.format(
+                    node_id=node.id, comment=outcome.comment or "(none)", text=text
+                )
+            )
+            sink.record_output(node.id, answer)
+            ctx.route = label
+            return answer
+
+        return FunctionNode(func=approve, name=NODE_PREFIX + node.id)
+
     def fan_out_node(node_id: str) -> FunctionNode:
         def fan_out(node_input: Any) -> Any:
             instant(node_id, "parallel")
@@ -500,6 +601,8 @@ def compile_spec(
             )
         elif node.kind == "parallel":
             entries[node_id] = exits[node_id] = fan_out_node(node_id)
+        elif isinstance(node, HumanApprovalNode):
+            entries[node_id] = exits[node_id] = approval_node(node)
         else:  # join
             barrier = JoinNode(name=f"join_{node_id}")
             entries[node_id] = barrier
@@ -533,7 +636,7 @@ def compile_spec(
             continue
         source = exits[node_id]
         if isinstance(source, FunctionNode) and (
-            node.kind == "router" or source.name == f"route_{node_id}"
+            node.kind in ("router", "human_approval") or source.name == f"route_{node_id}"
         ):
             edges.append((source, {spec.edges[j].when: chain_to(j) for j in outs}))
         elif node.kind == "parallel":
