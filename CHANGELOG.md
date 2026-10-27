@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Studio console: what the server runs.** The console assumed every server
+  ran P0a only, so routers, parallel/join, supervisors, loops and per-node
+  models were shown as *coming in P0b* on a server that ran them. It now reads
+  `capabilities` from `GET /studio/schema`: the palette, the pattern gallery
+  and the client checks follow the server, and the model field lists
+  `ORRERY_STUDIO_MODELS` (a model outside it is flagged as the server would
+  refuse it). A server that does not say is still treated as P0a.
+
+### Security
+
+- Tracing: an inbound `tracestate` over 512 characters is dropped before
+  `opentelemetry-api` parses it (its parser is quadratic in a run of blanks,
+  and runs before auth). `opentelemetry-api` stays at 1.44 because
+  google-adk caps it there.
+- Image: the base image's `pip` and `ensurepip` wheels are removed
+  (CVE-2026-13346), and a rebuild picks up Debian's OpenSSL fix
+  (CVE-2026-84782, `3.0.22-1~deb12u2`) that the published 0.10.0 lacks.
+
+### Changed
+
+- google-adk 2.13: its `JSON_SCHEMA_FOR_FUNC_DECL` feature is stable, so the
+  startup `UserWarning` about it is gone. 2.13 traces with the OTel GenAI
+  semantic conventions by default, where span content follows
+  `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` (off by default) rather
+  than `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS`; Orrery warns when that switch
+  puts content on spans.
+
 ## [0.10.0] - 2026-10-25
 
 **Orrery Studio** (preview, admins only, off by default): compose LLM agents,

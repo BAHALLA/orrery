@@ -111,6 +111,43 @@ describe("Studio canvas", () => {
     expect(screen.getByRole("button", { name: "1 problem" })).toBeInTheDocument();
   });
 
+  it("enables what the server says it runs", async () => {
+    stubWideScreen();
+    stubStudio({
+      schema: () =>
+        json({
+          ...schema,
+          capabilities: {
+            node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
+            patterns: ["pipeline", "router", "critic_loop"],
+            routing: true,
+            per_node_models: true,
+            models: ["gemini-2.5-flash"],
+          },
+        }),
+    });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+
+    const palette = await screen.findByRole("complementary", { name: "Palette" });
+    await waitFor(() =>
+      expect(within(palette).getByRole("button", { name: /^Router/ })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      ),
+    );
+    // Not in the server's list: still marked with the phase that brings it.
+    expect(within(palette).getByRole("button", { name: /^Human approval/ })).toHaveTextContent(
+      "coming in P0c",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Patterns" }));
+    const dialog = screen.getByRole("dialog", { name: "Start from a pattern" });
+    const router = within(dialog).getByRole("button", { name: /^Router/ });
+    expect(router).not.toHaveAttribute("aria-disabled", "true");
+    expect(router).not.toHaveTextContent("needs P0b");
+  });
+
   it("adds nodes from the palette with the keyboard and wires them in", async () => {
     stubWideScreen();
     stubStudio();

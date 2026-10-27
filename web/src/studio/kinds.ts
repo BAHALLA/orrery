@@ -1,21 +1,29 @@
-import type { NodeKind, Pattern, SpecNode } from "./types";
+import {
+  PATTERNS,
+  type NodeKind,
+  type Pattern,
+  type ServerCapabilities,
+  type SpecNode,
+} from "./types";
 
 /**
  * What this server can run, as the console reads it.
  *
  * The format describes every phase's node kinds and patterns, but a release
  * runs only some of them. The palette, the templates and the client checks all
- * ask {@link Capabilities} rather than hard-coding "P0a", so when the server
- * runs routers (P0b) the same UI lights up by changing this one value. The
- * server does not publish it yet (see the console section of
- * docs/integrations/studio.md); until it does, it is {@link P0A}.
+ * ask {@link Capabilities} rather than hard-coding a phase. The server publishes
+ * them in `GET /studio/schema` ({@link capabilitiesFrom}); until it answers, or
+ * on a server too old to say, the console assumes {@link P0A}, the least any
+ * Studio runs.
  */
 export interface Capabilities {
   kinds: ReadonlySet<NodeKind>;
   patterns: ReadonlySet<Pattern>;
-  /** Edge `when` / `max_iterations` / `screen`, node `model` / `output`. */
+  /** Edge `when` / `max_iterations` / `screen`, node `output`. */
   routing: boolean;
   perNodeModels: boolean;
+  /** The models a node may name (the server's allowlist). */
+  models: readonly string[];
 }
 
 export const P0A: Capabilities = {
@@ -23,7 +31,25 @@ export const P0A: Capabilities = {
   patterns: new Set<Pattern>(["pipeline"]),
   routing: false,
   perNodeModels: false,
+  models: [],
 };
+
+/**
+ * The server's capabilities, keeping only the kinds and patterns this console
+ * knows: a newer server may run a kind this build cannot draw.
+ */
+export function capabilitiesFrom(server: ServerCapabilities | undefined | null): Capabilities {
+  if (!server) return P0A;
+  const known = (values: string[] | undefined, allowed: readonly string[]) =>
+    (values ?? []).filter((v) => allowed.includes(v));
+  return {
+    kinds: new Set(known(server.node_kinds, PALETTE_KINDS) as NodeKind[]),
+    patterns: new Set(known(server.patterns, PATTERNS) as Pattern[]),
+    routing: server.routing === true,
+    perNodeModels: server.per_node_models === true,
+    models: server.per_node_models === true ? [...(server.models ?? [])] : [],
+  };
+}
 
 export interface KindInfo {
   label: string;

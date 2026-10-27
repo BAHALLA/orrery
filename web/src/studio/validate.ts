@@ -272,7 +272,17 @@ export function checkComposition(spec: CompositionSpec, { caps, registry }: Chec
       return;
     }
     if (node.model != null && !caps.perNodeModels) {
-      add(["nodes", i, "model"], "per-node models are coming in P0b", "not_supported_yet");
+      add(
+        ["nodes", i, "model"],
+        "this server runs every node on the deployment's model",
+        "not_supported_yet",
+      );
+    } else if (node.model != null && !caps.models.includes(node.model)) {
+      add(
+        ["nodes", i, "model"],
+        `"${node.model}" is not one of this server's models`,
+        "model_not_allowed",
+      );
     }
     if (node.output != null && !caps.routing) {
       add(["nodes", i, "output"], "output labels are coming in P0b", "not_supported_yet");

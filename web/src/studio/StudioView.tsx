@@ -27,7 +27,7 @@ import {
 import { HistoryPanel } from "./HistoryPanel";
 import { DownloadIcon, GridIcon, LayoutIcon, PlayIcon, UploadIcon } from "./icons";
 import { CompositionInspector, NodeInspector } from "./Inspector";
-import { idStem, newNode, P0A } from "./kinds";
+import { capabilitiesFrom, idStem, newNode } from "./kinds";
 import { Palette, TemplateGallery } from "./Library";
 import { McpInspector } from "./McpInspector";
 import { RunPanel } from "./RunPanel";
@@ -138,7 +138,7 @@ export default function StudioView({ token, active = true }: Props) {
   // Bumped when the graph is replaced or laid out again, so the canvas refits.
   const [fitSignal, setFitSignal] = useState(0);
   const refit = useCallback(() => setFitSignal((n) => n + 1), []);
-  const caps = P0A;
+  const caps = useMemo(() => capabilitiesFrom(schema?.capabilities), [schema]);
   const run = useStudioRun(client);
   const wide = useMediaQuery(BREAKPOINT_LG);
   const live = run.busy;

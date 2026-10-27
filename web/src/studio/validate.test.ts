@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import schema from "./fixtures/studio-schema.json";
-import { P0A } from "./kinds";
+import { capabilitiesFrom, P0A } from "./kinds";
 import { RELEASE_NOTES, TEMPLATES, templateNeeds } from "./templates";
 import { DEMO_REGISTRY } from "./fixtures/registry";
 import type { CompositionSpec, JsonSchema } from "./types";
@@ -84,6 +84,64 @@ describe("templates", () => {
     for (const t of TEMPLATES.filter((t) => templateNeeds(t, P0A) === null)) {
       expect(validate(t.spec, SPEC_SCHEMA, ctx)).toEqual([]);
     }
+  });
+});
+
+// What a 0.10 server publishes (`capabilities()` in core/orrery_core/studio/api.py).
+const P0B_SERVER = {
+  node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
+  patterns: [
+    "pipeline",
+    "fan_out_fan_in",
+    "router",
+    "supervisor",
+    "critic_loop",
+    "debate",
+    "map_reduce",
+    "plan_and_execute",
+  ],
+  routing: true,
+  per_node_models: true,
+  models: ["gemini-2.5-flash"],
+};
+
+describe("capabilitiesFrom", () => {
+  it("assumes P0a until the server says otherwise", () => {
+    expect(capabilitiesFrom(undefined)).toBe(P0A);
+    expect(capabilitiesFrom(null)).toBe(P0A);
+  });
+
+  it("keeps only kinds and patterns this console can draw", () => {
+    const caps = capabilitiesFrom({
+      ...P0B_SERVER,
+      node_kinds: [...P0B_SERVER.node_kinds, "teleport"],
+      patterns: [...P0B_SERVER.patterns, "swarm"],
+    });
+    expect([...caps.kinds]).toEqual(P0B_SERVER.node_kinds);
+    expect([...caps.patterns]).toEqual(P0B_SERVER.patterns);
+  });
+
+  it("offers models only when the server runs per-node models", () => {
+    expect(capabilitiesFrom(P0B_SERVER).models).toEqual(["gemini-2.5-flash"]);
+    expect(capabilitiesFrom({ ...P0B_SERVER, per_node_models: false }).models).toEqual([]);
+  });
+
+  it("lets a P0b server load every template but handoff", () => {
+    const caps = capabilitiesFrom(P0B_SERVER);
+    const blocked = TEMPLATES.filter((t) => templateNeeds(t, caps) !== null).map((t) => t.id);
+    expect(blocked).toEqual(TEMPLATES.filter((t) => t.spec.pattern === "handoff").map((t) => t.id));
+  });
+
+  it("refuses a model outside the server's list, as the server would", () => {
+    const caps = capabilitiesFrom(P0B_SERVER);
+    const spec: CompositionSpec = {
+      ...(demoSpec as CompositionSpec),
+      nodes: (demoSpec as CompositionSpec).nodes.map((n, i) =>
+        i === 0 ? { ...n, model: "gpt-9" } : n,
+      ),
+    };
+    const issues = checkComposition(spec, { caps, registry: DEMO_REGISTRY });
+    expect(issues.map((i) => i.code)).toContain("model_not_allowed");
   });
 });
 

@@ -94,7 +94,7 @@ export function TemplatesDialog({
   return (
     <Modal
       title="Start from a pattern"
-      description="Loading a template replaces the canvas (you can undo it). Patterns marked “needs P0b” light up when the server runs them."
+      description="Loading a template replaces the canvas (you can undo it). Patterns this server cannot run yet are marked with the phase that brings them."
       onClose={onClose}
       wide
     >

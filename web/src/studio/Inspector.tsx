@@ -17,6 +17,11 @@ import { describeLoc, fieldIssues, type Issue, type IssueMap } from "./validate"
 import { graphToSpec } from "./graph";
 import { budgetLabel } from "./format";
 
+/** The server's models, plus the node's own if it names one the server does not list. */
+function modelChoices(models: readonly string[], current: string | null | undefined): string[] {
+  return current && !models.includes(current) ? [...models, current] : [...models];
+}
+
 function FieldIssues({ issues, id }: { issues: Issue[]; id?: string }) {
   if (!issues.length) return null;
   return (
@@ -278,7 +283,7 @@ export function NodeInspector({
           hint={
             caps.perNodeModels
               ? undefined
-              : "Per-node models are coming in P0b; every node runs on the deployment's model."
+              : "This server runs every node on the deployment's model."
           }
         >
           {(props) => (
@@ -290,7 +295,11 @@ export function NodeInspector({
               onChange={(e) => set({ model: e.target.value || null })}
             >
               <option value="">Deployment model</option>
-              {node.model ? <option value={node.model}>{node.model}</option> : null}
+              {modelChoices(caps.models, node.model).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
             </select>
           )}
         </Field>
