@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-27
+
+**Orrery Studio, P0c: a person in the loop.** A `human_approval` node stops a
+run until its owner approves or rejects the exact text; a remote A2A agent's
+question goes to the owner, never to the model; a remote that changes things
+(`effect: acting`) is called only once its owner confirms the exact request;
+and admins can edit the registry from the console, versioned and audited
+([AEP-031](docs/enhancements/aep-031-orrery-studio.md)).
+
+Upgrade notes:
+- Nothing changes for chat or for a Studio left as it was: each new behaviour
+  is opt-in (`ORRERY_STUDIO_ACTING_REMOTES`, `ORRERY_STUDIO_REGISTRY_EDITING`)
+  or comes from a node or entry you add. `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS`
+  (default 900) bounds how long an approval waits.
+- A registry with an `effect: acting` entry refuses to start unless
+  `ORRERY_STUDIO_ACTING_REMOTES=true`.
+- With a database and registry editing on, a `studio_registry_versions` table
+  is created at startup; no existing table changes. Without one, edits live
+  in the process and a restart goes back to the file.
+
 ### Added
 
 - **Studio: registry editing (AEP-031 P0c).** With
@@ -14,8 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the console (**Registry**), validated exactly as the file is at startup.
   Every save names the version it was edited from (a stale one is a 409), is
   kept with who, when, a note and what it changed (a History tab), is audited
-  with before and after, and applies to the next run; an edited entry is
-  pinned afresh. Replicas follow the stored version. Off, the console shows
+  with before and after, and applies to the next run. An entry that sends a
+  secret, is private or targets loopback must keep an endpoint the file
+  declares (checked on save and whenever a stored version is served); pins
+  are keyed by endpoint, so a changed endpoint is pinned afresh. Replicas
+  follow the newest stored version that validates. Off, the console shows
   the registry read-only.
 - **Studio: remotes that act (AEP-031 P0c).** A registry A2A entry may be
   `effect: acting` when the deployment sets `ORRERY_STUDIO_ACTING_REMOTES=true`
@@ -1680,7 +1703,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/BAHALLA/orrery/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/BAHALLA/orrery/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/BAHALLA/orrery/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/BAHALLA/orrery/releases/tag/v0.9.0
