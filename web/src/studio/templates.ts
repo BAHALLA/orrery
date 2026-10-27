@@ -1,4 +1,4 @@
-import { KINDS, type Capabilities } from "./kinds";
+import { kindPhase, patternPhase, type Capabilities } from "./kinds";
 import type { CompositionSpec, Pattern } from "./types";
 
 /**
@@ -292,8 +292,12 @@ export const TEMPLATES: readonly Template[] = [
   },
 ];
 
-const PHASES = ["P0a", "P0b", "P0c"];
-const later = (a: string, b: string) => (PHASES.indexOf(a) >= PHASES.indexOf(b) ? a : b);
+const PHASES = ["P0a", "P0b", "P0c", "P1", "P2", "P3"];
+/** The later of two phases; an unknown one counts as later than any known. */
+const later = (a: string, b: string) => {
+  const rank = (p: string) => (PHASES.includes(p) ? PHASES.indexOf(p) : PHASES.length);
+  return rank(a) >= rank(b) ? a : b;
+};
 
 /**
  * Why `spec` cannot run on a server with `caps`, as the phase that brings the
@@ -305,15 +309,17 @@ export function specNeeds(spec: CompositionSpec, caps: Capabilities): string | n
   const bump = (phase: string) => {
     need = need === null ? phase : later(need, phase);
   };
-  if (spec.pattern && !caps.patterns.has(spec.pattern)) bump("P0b");
+  if (spec.pattern && !caps.patterns.has(spec.pattern)) bump(patternPhase(spec.pattern, caps));
   for (const node of spec.nodes) {
     // remote_a2a is the console's shorthand, expanded on import (normalizeSpec).
-    if (node.kind !== "remote_a2a" && !caps.kinds.has(node.kind)) bump(KINDS[node.kind].phase);
+    if (node.kind !== "remote_a2a" && !caps.kinds.has(node.kind)) bump(kindPhase(node.kind, caps));
     if (node.output && !caps.routing) bump("P0b");
     if (node.model && !caps.perNodeModels) bump("P0b");
   }
   for (const edge of spec.edges) {
-    if ((edge.when || edge.max_iterations || edge.screen) && !caps.routing) bump("P0b");
+    if (edge.when && !caps.routing) bump("P0b");
+    if (edge.max_iterations && !caps.loops) bump("P0b");
+    if (edge.screen && !caps.edgeScreen) bump("P0b");
   }
   return need;
 }

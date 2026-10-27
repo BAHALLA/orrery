@@ -550,9 +550,10 @@ pattern gallery one click away.
 
 - **Palette.** Drag a node kind onto the canvas, or focus it and press Enter
   to append it after the last node. The console reads what the server runs
-  from `capabilities` in `GET /studio/schema` (P0a only, until it answers):
-  kinds it cannot run are shown but disabled, labelled with the phase that
-  brings them (*coming in P0c*). *Remote agent* is
+  from `capabilities` in `GET /studio/schema`: kinds it cannot run are shown
+  but disabled, labelled with the phase the server gives (*coming in P0c*).
+  Until the schema answers (it is asked again after 1 s and 3 s if it fails),
+  the palette offers P0a's kinds and nothing is flagged as unsupported. *Remote agent* is
   a shorthand: it adds an `llm_agent` with one `a2a:` tool, which is all the
   spec has for it. On screens narrower than 1280px the palette is a rail of
   icons (each keeps its name and blurb for screen readers and as a tooltip).

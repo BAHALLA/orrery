@@ -94,8 +94,13 @@ export interface SpecErrorWire {
 /** `capabilities` in `GET /studio/schema`, as the server sends it (`capabilities()` in `api.py`). */
 export interface ServerCapabilities {
   node_kinds: string[];
+  /** Kind -> why not yet: the phase first ("P0c", "P1; use an llm_agent…"). */
+  unsupported_node_kinds?: Record<string, string>;
   patterns: string[];
+  unsupported_patterns?: Record<string, string>;
   routing: boolean;
+  loops?: boolean;
+  edge_screen?: boolean;
   per_node_models: boolean;
   models: string[];
 }
@@ -105,7 +110,7 @@ export interface StudioSchema {
   spec_version: number;
   spec: JsonSchema;
   events: JsonSchema;
-  /** What this server runs (absent before 0.10.1). */
+  /** What this server runs (published since 0.10.0). */
   capabilities?: ServerCapabilities;
 }
 

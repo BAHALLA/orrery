@@ -63,6 +63,15 @@ function stubStudio(routes: Routes = {}) {
   return calls;
 }
 
+const P0B_CAPS = {
+  node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
+  unsupported_node_kinds: { human_approval: "P0c" },
+  patterns: ["pipeline", "router", "critic_loop"],
+  routing: true,
+  per_node_models: true,
+  models: ["gemini-2.5-flash"],
+};
+
 const node = (name: RegExp) => screen.getByRole("group", { name });
 
 async function loadDemo(user: ReturnType<typeof userEvent.setup>) {
@@ -117,13 +126,7 @@ describe("Studio canvas", () => {
       schema: () =>
         json({
           ...schema,
-          capabilities: {
-            node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
-            patterns: ["pipeline", "router", "critic_loop"],
-            routing: true,
-            per_node_models: true,
-            models: ["gemini-2.5-flash"],
-          },
+          capabilities: P0B_CAPS,
         }),
     });
     const user = userEvent.setup();
@@ -146,6 +149,37 @@ describe("Studio canvas", () => {
     const router = within(dialog).getByRole("button", { name: /^Router/ });
     expect(router).not.toHaveAttribute("aria-disabled", "true");
     expect(router).not.toHaveTextContent("needs P0b");
+  });
+
+  it("asks again when the schema fails once, then follows the server", async () => {
+    stubWideScreen();
+    let calls = 0;
+    stubStudio({
+      schema: () => {
+        calls += 1;
+        return calls === 1
+          ? json({ detail: "upstream hiccup" }, 502)
+          : json({ ...schema, capabilities: { ...P0B_CAPS } });
+      },
+    });
+    render(<StudioView token="t" />);
+
+    // The palette waits for the schema, which is asked again after 1 s.
+    const palette = await screen.findByRole(
+      "complementary",
+      { name: "Palette" },
+      { timeout: 3000 },
+    );
+    await waitFor(
+      () =>
+        expect(within(palette).getByRole("button", { name: /^Router/ })).not.toHaveAttribute(
+          "aria-disabled",
+          "true",
+        ),
+      { timeout: 3000 },
+    );
+    expect(calls).toBe(2);
+    expect(screen.queryByText(/schema could not be read/)).not.toBeInTheDocument();
   });
 
   it("adds nodes from the palette with the keyboard and wires them in", async () => {

@@ -178,23 +178,35 @@ export default function StudioView({ token, active = true }: Props) {
 
   useEffect(() => {
     const controller = new AbortController();
-    client
-      .schema(controller.signal)
-      .then(setSchema)
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        if (err instanceof ApiError && (err.status === 404 || err.status === 403)) {
-          setUnavailable({ status: err.status, message: err.message });
-        } else {
-          // The canvas still works: only the schema half of live validation is missing.
-          setSchemaError(
-            `${describeApiError(err, "The Studio's schema could not be read.")} Only this release's own rules are checked here.`,
-          );
+    const loadSchema = async () => {
+      // A blip should not leave the console guessing what the server runs:
+      // try again (after 1 s, then 3 s) before settling for the client's rules.
+      for (const delay of [1000, 3000, null]) {
+        try {
+          setSchema(await client.schema(controller.signal));
+          setSchemaError(null);
+          return;
+        } catch (err) {
+          if (controller.signal.aborted) return;
+          if (err instanceof ApiError && (err.status === 404 || err.status === 403)) {
+            setUnavailable({ status: err.status, message: err.message });
+            return;
+          }
+          if (delay === null) {
+            // The canvas still works: only the schema half of live validation is missing.
+            setSchemaError(
+              `${describeApiError(err, "The Studio's schema could not be read.")} Only this release's own rules are checked here.`,
+            );
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, delay));
+          if (controller.signal.aborted) return;
         }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSchemaSettled(true);
-      });
+      }
+    };
+    void loadSchema().finally(() => {
+      if (!controller.signal.aborted) setSchemaSettled(true);
+    });
     client
       .registry(false, controller.signal)
       .then(setRegistry)

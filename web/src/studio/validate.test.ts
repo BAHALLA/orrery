@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import schema from "./fixtures/studio-schema.json";
-import { capabilitiesFrom, P0A } from "./kinds";
+import { capabilitiesFrom, comingIn, P0A } from "./kinds";
 import { RELEASE_NOTES, TEMPLATES, templateNeeds } from "./templates";
 import { DEMO_REGISTRY } from "./fixtures/registry";
 import type { CompositionSpec, JsonSchema } from "./types";
@@ -90,6 +90,11 @@ describe("templates", () => {
 // What a 0.10 server publishes (`capabilities()` in core/orrery_core/studio/api.py).
 const P0B_SERVER = {
   node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
+  unsupported_node_kinds: {
+    remote_a2a: "P1; use an llm_agent with an a2a: tool",
+    human_approval: "P0c",
+  },
+  unsupported_patterns: { handoff: "P1; a router between agents does the same" },
   patterns: [
     "pipeline",
     "fan_out_fan_in",
@@ -101,6 +106,8 @@ const P0B_SERVER = {
     "plan_and_execute",
   ],
   routing: true,
+  loops: true,
+  edge_screen: true,
   per_node_models: true,
   models: ["gemini-2.5-flash"],
 };
@@ -130,6 +137,48 @@ describe("capabilitiesFrom", () => {
     const caps = capabilitiesFrom(P0B_SERVER);
     const blocked = TEMPLATES.filter((t) => templateNeeds(t, caps) !== null).map((t) => t.id);
     expect(blocked).toEqual(TEMPLATES.filter((t) => t.spec.pattern === "handoff").map((t) => t.id));
+  });
+
+  it("names the phase the server gives, not a guess", () => {
+    const caps = capabilitiesFrom(P0B_SERVER);
+    const handoff = TEMPLATES.find((t) => t.spec.pattern === "handoff")!;
+    expect(templateNeeds(handoff, caps)).toBe("P1");
+    expect(comingIn("human_approval", caps)).toBe("coming in P0c");
+    const issues = checkComposition(
+      { ...(demoSpec as CompositionSpec), pattern: "handoff" },
+      { caps, registry: DEMO_REGISTRY },
+    );
+    expect(issues.find((i) => i.loc[0] === "pattern")?.msg).toContain(
+      "P1; a router between agents does the same",
+    );
+  });
+
+  it("flags nothing as unsupported until the server says what it runs", () => {
+    const spec: CompositionSpec = {
+      ...(demoSpec as CompositionSpec),
+      pattern: "router",
+      nodes: [...(demoSpec as CompositionSpec).nodes, { id: "pick", kind: "router" }],
+    };
+    const codes = (caps: typeof P0A) =>
+      checkComposition(spec, { caps, registry: DEMO_REGISTRY }).map((i) => i.code);
+    expect(codes(P0A)).not.toContain("not_supported_yet");
+    expect(codes({ ...P0A, known: true })).toContain("not_supported_yet");
+  });
+
+  it("leaves a supervisor's children out of the pipeline's steps", () => {
+    const spec: CompositionSpec = {
+      spec_version: 1,
+      name: "with-a-supervisor",
+      pattern: "pipeline",
+      nodes: [
+        { id: "lead", kind: "supervisor", instruction: "Delegate.", children: ["helper"] },
+        { id: "helper", kind: "llm_agent", instruction: "Help." },
+        { id: "editor", kind: "llm_agent", instruction: "Edit." },
+      ],
+      edges: [{ from: "lead", to: "editor" }],
+    };
+    const caps = capabilitiesFrom(P0B_SERVER);
+    expect(checkComposition(spec, { caps, registry: DEMO_REGISTRY })).toEqual([]);
   });
 
   it("refuses a model outside the server's list, as the server would", () => {
@@ -205,15 +254,17 @@ describe("this release's rules", () => {
   });
 
   it("refuse kinds, models and conditions that come later, at their field", () => {
+    // A server that says it runs P0a only.
+    const p0a = { ...ctx, caps: { ...P0A, known: true } };
     const spec = withNode({ model: "gpt" });
-    expect(checkComposition(spec, ctx)).toEqual([
+    expect(checkComposition(spec, p0a)).toEqual([
       expect.objectContaining({ loc: ["nodes", 1, "model"], code: "not_supported_yet" }),
     ]);
     const router = {
       ...RELEASE_NOTES,
       nodes: [...RELEASE_NOTES.nodes, { id: "route", kind: "router" as const }],
     };
-    expect(checkComposition(router, ctx)[0]).toMatchObject({
+    expect(checkComposition(router, p0a)[0]).toMatchObject({
       loc: ["nodes", 3, "kind"],
       msg: expect.stringMatching(/P0b/),
     });

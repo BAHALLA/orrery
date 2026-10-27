@@ -4,7 +4,7 @@ import { toneChip } from "../components/severity";
 import { fieldLabel, input, invalidInput, sectionTitle, subtleButton } from "./format";
 import { isValidId, type StudioGraph } from "./graph";
 import { KindIcon } from "./icons";
-import { comingIn, KINDS, type Capabilities } from "./kinds";
+import { comingIn, KINDS, patternPhase, type Capabilities } from "./kinds";
 import { ToolPicker } from "./ToolPicker";
 import {
   BUDGET_NAMES,
@@ -289,7 +289,8 @@ export function NodeInspector({
           {(props) => (
             <select
               {...props}
-              disabled={!caps.perNodeModels || !editable}
+              // Enabled while a node names a model, so one this server refuses can be cleared.
+              disabled={(!caps.perNodeModels && !node.model) || !editable}
               value={node.model ?? ""}
               className={input}
               onChange={(e) => set({ model: e.target.value || null })}
@@ -459,7 +460,7 @@ export function CompositionInspector({
             {(Object.keys(PATTERN_LABEL) as Pattern[]).map((p) => (
               <option key={p} value={p}>
                 {PATTERN_LABEL[p]}
-                {caps.patterns.has(p) ? "" : " (P0b)"}
+                {caps.patterns.has(p) ? "" : ` (${patternPhase(p, caps)})`}
               </option>
             ))}
           </select>
