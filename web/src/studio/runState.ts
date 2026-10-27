@@ -1,5 +1,6 @@
 import type {
   A2aMessageEvent,
+  ApprovalDecision,
   BudgetHitEvent,
   McpCallEvent,
   NodeOutcome,
@@ -20,8 +21,11 @@ import type {
  * events never break an older console.
  */
 
-/** `unknown`: the node was running when the console lost the run. */
-export type NodeRunStatus = "pending" | "active" | NodeOutcome | "unknown";
+/**
+ * `awaiting`: a human approval waiting for its person. `unknown`: the node was
+ * running when the console lost the run.
+ */
+export type NodeRunStatus = "pending" | "active" | "awaiting" | NodeOutcome | "unknown";
 
 export interface NodeRun {
   id: string;
@@ -46,6 +50,21 @@ export interface A2aExchange {
   skill: string;
   outbound: A2aMessageEvent | null;
   inbound: A2aMessageEvent | null;
+}
+
+/** One decision the run asked a person for, from its `approval.*` events. */
+export interface ApprovalAsk {
+  approvalId: string;
+  nodeId: string;
+  prompt: string;
+  digest: string;
+  size: number;
+  /** Unix seconds; undecided by then, it expires. */
+  expiresAt: number;
+  /** `null` while it waits. */
+  decision: ApprovalDecision | null;
+  /** The text under review, when the server captures content. */
+  content: string | null;
 }
 
 /**
@@ -78,6 +97,7 @@ export interface RunView {
   droppedEvents: number;
   mcp: McpCallEvent[];
   a2a: A2aExchange[];
+  approvals: ApprovalAsk[];
   input: string | null;
   output: string | null;
 }
@@ -105,6 +125,7 @@ export function initialRun(runId: string): RunView {
     droppedEvents: 0,
     mcp: [],
     a2a: [],
+    approvals: [],
     input: null,
     output: null,
   };
@@ -223,6 +244,32 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
           : next),
         a2a: addA2a(next.a2a, event),
       };
+    case "approval.requested":
+      return {
+        ...patchNode(next, event.node_id, () => ({ status: "awaiting" })),
+        approvals: [
+          ...next.approvals,
+          {
+            approvalId: event.approval_id,
+            nodeId: event.node_id,
+            prompt: event.prompt,
+            digest: event.digest,
+            size: event.size,
+            expiresAt: event.expires_at,
+            decision: null,
+            content: event.content ?? null,
+          },
+        ],
+      };
+    case "approval.decided":
+      return {
+        ...patchNode(next, event.node_id, (n) => ({
+          status: n.status === "awaiting" ? "active" : n.status,
+        })),
+        approvals: next.approvals.map((a) =>
+          a.approvalId === event.approval_id ? { ...a, decision: event.decision } : a,
+        ),
+      };
     case "budget.hit":
       return { ...next, budgetHit: event };
     case "run.end": {
@@ -230,7 +277,9 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
       const nodes = Object.fromEntries(
         Object.entries(next.nodes).map(([id, n]) => [
           id,
-          n.status === "active" ? { ...n, status: outcomeOfNode(event.outcome) } : n,
+          n.status === "active" || n.status === "awaiting"
+            ? { ...n, status: outcomeOfNode(event.outcome) }
+            : n,
         ]),
       ) as Record<string, NodeRun>;
       return {
@@ -255,8 +304,16 @@ function outcomeOfNode(outcome: RunOutcome): NodeOutcome {
 
 function settleActive(view: RunView, status: NodeRunStatus): Record<string, NodeRun> {
   return Object.fromEntries(
-    Object.entries(view.nodes).map(([id, n]) => [id, n.status === "active" ? { ...n, status } : n]),
+    Object.entries(view.nodes).map(([id, n]) => [
+      id,
+      n.status === "active" || n.status === "awaiting" ? { ...n, status } : n,
+    ]),
   );
+}
+
+/** The decisions the run waits for now, oldest first. */
+export function waitingApprovals(view: RunView): ApprovalAsk[] {
+  return isFinished(view) ? [] : view.approvals.filter((a) => a.decision === null);
 }
 
 /**

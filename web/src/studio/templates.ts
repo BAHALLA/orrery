@@ -63,6 +63,73 @@ export const RELEASE_NOTES: CompositionSpec = {
   ],
 };
 
+/** `deploy/studio-demo/specs/human-review.json`, verbatim (a test holds them equal). */
+export const RELEASE_NOTES_REVIEWED: CompositionSpec = {
+  spec_version: 1,
+  name: "release-notes-reviewed",
+  description:
+    "Research a topic on Tirraflow, have the remote writer draft notes, and send the draft to you: approve it to publish, or reject it with a comment and the writer drafts again (at most twice).",
+  pattern: "critic_loop",
+  budgets: {
+    max_tokens: 120000,
+    max_tool_calls: 20,
+    max_remote_calls: 3,
+    timeout_s: 240,
+  },
+  nodes: [
+    {
+      id: "research",
+      kind: "llm_agent",
+      description: "Finds what Tirraflow says about the topic.",
+      instruction:
+        "Search Tirraflow for the topic in your input, read the best one or two articles, and answer with five to eight short factual notes, one per line, each citing the article URL. Start with a line '# <topic>'.",
+      tools: ["mcp:tirraflow.search_articles", "mcp:tirraflow.get_article"],
+    },
+    {
+      id: "writer",
+      kind: "llm_agent",
+      description: "Hands the notes, and any reviewer comment, to the remote writer agent.",
+      instruction:
+        "Send your input to the demo writer's draft tool, then answer with exactly the draft it returns. If your input is a reviewer's rejection, send the reviewed draft's notes with the reviewer's comment first.",
+      tools: ["a2a:demo-writer.draft"],
+    },
+    {
+      id: "review",
+      kind: "human_approval",
+      description: "You approve the draft, or send it back with a comment.",
+      prompt: "Publish these release notes?",
+    },
+    {
+      id: "publisher",
+      kind: "llm_agent",
+      description: "Formats the approved draft.",
+      instruction:
+        "Format the approved draft in your input as the final release notes, in Markdown, changing no facts and keeping every URL.",
+    },
+  ],
+  edges: [
+    {
+      from: "research",
+      to: "writer",
+    },
+    {
+      from: "writer",
+      to: "review",
+    },
+    {
+      from: "review",
+      to: "publisher",
+      when: "approved",
+    },
+    {
+      from: "review",
+      to: "writer",
+      when: "rejected",
+      max_iterations: 2,
+    },
+  ],
+};
+
 export const TEMPLATES: readonly Template[] = [
   {
     id: "pipeline",
@@ -86,6 +153,13 @@ export const TEMPLATES: readonly Template[] = [
     pattern: "pipeline",
     blurb: "The demo: an MCP search, a remote A2A writer, an LLM critic.",
     spec: RELEASE_NOTES,
+  },
+  {
+    id: "human-review",
+    title: "Writer → your review",
+    pattern: "critic_loop",
+    blurb: "The demo, with you as the critic: approve to publish, or reject with a comment.",
+    spec: RELEASE_NOTES_REVIEWED,
   },
   {
     id: "router",

@@ -126,7 +126,7 @@
       },
       "HumanApprovalNode": {
         "additionalProperties": false,
-        "description": "Pauses the run until a human admin approves (P0c).",
+        "description": "Pauses the run until the person who started it decides (P0c).\n\nIts answer is labelled ``approved`` or ``rejected`` (:data:`APPROVAL_LABELS`),\nso its edges are taken on those. An approved branch gets the text that\nwas reviewed; a rejected one gets the reviewer's comment and that text. A\nrejection with no edge for it ends the run ``rejected``.",
         "properties": {
           "id": {
             "description": "Unique in the spec; the compiled agent is n_<id>.",
@@ -355,7 +355,7 @@
       },
       "SupervisorNode": {
         "additionalProperties": false,
-        "description": "An llm_agent whose children are its tools (P0b).",
+        "description": "An llm_agent whose children (llm_agent or supervisor nodes) are its tools.",
         "properties": {
           "id": {
             "description": "Unique in the spec; the compiled agent is n_<id>.",
@@ -408,6 +408,17 @@
             ],
             "default": null,
             "title": "Model"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NodeOutput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": ["id", "kind", "instruction", "children"],
@@ -660,6 +671,138 @@
         "title": "A2aMessage",
         "type": "object"
       },
+      "ApprovalDecided": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "approval.decided",
+            "default": "approval.decided",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "decision": {
+            "enum": ["approved", "rejected", "expired", "cancelled"],
+            "title": "Decision",
+            "type": "string"
+          },
+          "waited_ms": {
+            "title": "Waited Ms",
+            "type": "integer"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          }
+        },
+        "required": ["node_id", "approval_id", "kind", "decision", "waited_ms"],
+        "title": "ApprovalDecided",
+        "type": "object"
+      },
+      "ApprovalRequested": {
+        "additionalProperties": false,
+        "description": "A run paused for a person's decision (P0c). The text is served apart, to its owner.",
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "approval.requested",
+            "default": "approval.requested",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "number"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Content"
+          }
+        },
+        "required": ["node_id", "approval_id", "kind", "prompt", "digest", "size", "expires_at"],
+        "title": "ApprovalRequested",
+        "type": "object"
+      },
       "BudgetHit": {
         "additionalProperties": false,
         "properties": {
@@ -706,6 +849,61 @@
         },
         "required": ["budget", "limit", "used"],
         "title": "BudgetHit",
+        "type": "object"
+      },
+      "LoopIteration": {
+        "additionalProperties": false,
+        "description": "A loop edge was taken (``stopped=False``) or refused at its cap (``stopped=True``).",
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "loop.iteration",
+            "default": "loop.iteration",
+            "title": "Type",
+            "type": "string"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "string"
+          },
+          "from_node": {
+            "title": "From Node",
+            "type": "string"
+          },
+          "to_node": {
+            "title": "To Node",
+            "type": "string"
+          },
+          "iteration": {
+            "title": "Iteration",
+            "type": "integer"
+          },
+          "cap": {
+            "title": "Cap",
+            "type": "integer"
+          },
+          "stopped": {
+            "default": false,
+            "title": "Stopped",
+            "type": "boolean"
+          }
+        },
+        "required": ["edge", "from_node", "to_node", "iteration", "cap"],
+        "title": "LoopIteration",
         "type": "object"
       },
       "McpCall": {
@@ -816,6 +1014,18 @@
           "model": {
             "title": "Model",
             "type": "string"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent"
           }
         },
         "required": ["node_id", "kind", "model"],
@@ -866,9 +1076,21 @@
             "type": "integer"
           },
           "outcome": {
-            "enum": ["ok", "failed", "cancelled", "budget_exhausted"],
+            "enum": ["ok", "failed", "cancelled", "budget_exhausted", "rejected"],
             "title": "Outcome",
             "type": "string"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent"
           },
           "content": {
             "anyOf": [
@@ -903,6 +1125,67 @@
         "title": "PartSummary",
         "type": "object"
       },
+      "RouteDecision": {
+        "additionalProperties": false,
+        "description": "A labelled node's answer chose an edge (or ended its branch).",
+        "properties": {
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ts": {
+            "default": 0.0,
+            "title": "Ts",
+            "type": "number"
+          },
+          "type": {
+            "const": "route.decision",
+            "default": "route.decision",
+            "title": "Type",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "alternatives": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Alternatives",
+            "type": "array"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "To"
+          }
+        },
+        "required": ["node_id", "source", "label", "alternatives"],
+        "title": "RouteDecision",
+        "type": "object"
+      },
       "RunEnd": {
         "additionalProperties": false,
         "properties": {
@@ -928,7 +1211,7 @@
             "type": "string"
           },
           "outcome": {
-            "enum": ["succeeded", "failed", "cancelled", "budget_exhausted"],
+            "enum": ["succeeded", "failed", "cancelled", "budget_exhausted", "rejected"],
             "title": "Outcome",
             "type": "string"
           },
@@ -1019,6 +1302,30 @@
             "title": "Budgets",
             "type": "object"
           },
+          "composition_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Composition Id"
+          },
+          "composition_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Composition Version"
+          },
           "content": {
             "anyOf": [
               {
@@ -1099,10 +1406,14 @@
     "discriminator": {
       "mapping": {
         "a2a.message": "#/$defs/A2aMessage",
+        "approval.decided": "#/$defs/ApprovalDecided",
+        "approval.requested": "#/$defs/ApprovalRequested",
         "budget.hit": "#/$defs/BudgetHit",
+        "loop.iteration": "#/$defs/LoopIteration",
         "mcp.call": "#/$defs/McpCall",
         "node.enter": "#/$defs/NodeEnter",
         "node.exit": "#/$defs/NodeExit",
+        "route.decision": "#/$defs/RouteDecision",
         "run.end": "#/$defs/RunEnd",
         "run.start": "#/$defs/RunStart"
       },
@@ -1122,10 +1433,22 @@
         "$ref": "#/$defs/NodeExit"
       },
       {
+        "$ref": "#/$defs/RouteDecision"
+      },
+      {
+        "$ref": "#/$defs/LoopIteration"
+      },
+      {
         "$ref": "#/$defs/A2aMessage"
       },
       {
         "$ref": "#/$defs/McpCall"
+      },
+      {
+        "$ref": "#/$defs/ApprovalRequested"
+      },
+      {
+        "$ref": "#/$defs/ApprovalDecided"
       },
       {
         "$ref": "#/$defs/BudgetHit"

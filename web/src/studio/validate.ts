@@ -1,4 +1,5 @@
 import { KINDS, kindPhase, parseToolRef, patternPhase, type Capabilities } from "./kinds";
+import { APPROVAL_LABELS } from "./graph";
 import type { CompositionSpec, JsonSchema, SpecErrorWire, StudioRegistry } from "./types";
 
 /**
@@ -307,7 +308,36 @@ export function checkComposition(spec: CompositionSpec, { caps, registry }: Chec
     }
   });
 
+  issues.push(...checkApprovalEdges(spec));
   if (pattern === "pipeline") issues.push(...checkPipeline(spec, ids, caps));
+  return issues;
+}
+
+/** A human approval's edges are each taken on approved or rejected, one per label. */
+function checkApprovalEdges(spec: CompositionSpec): Issue[] {
+  const gates = new Set(spec.nodes.filter((n) => n.kind === "human_approval").map((n) => n.id));
+  const issues: Issue[] = [];
+  const taken = new Set<string>();
+  spec.edges.forEach((edge, j) => {
+    if (!gates.has(edge.from)) return;
+    const label = edge.when ?? "";
+    if (!(APPROVAL_LABELS as readonly string[]).includes(label)) {
+      issues.push({
+        loc: ["edges", j, "when"],
+        msg: `"${edge.from}" is a human approval: each of its edges needs when (approved or rejected)`,
+        code: "invalid",
+        source: "client",
+      });
+    } else if (taken.has(`${edge.from}:${label}`)) {
+      issues.push({
+        loc: ["edges", j, "when"],
+        msg: `"${edge.from}" already has an edge for "${label}": one per label`,
+        code: "invalid",
+        source: "client",
+      });
+    }
+    taken.add(`${edge.from}:${label}`);
+  });
   return issues;
 }
 
@@ -324,6 +354,9 @@ function checkPipeline(
   // A supervisor's children are its tools, not steps: they are not in the graph.
   const children = new Set(spec.nodes.flatMap((n) => n.children ?? []));
   const steps = new Map([...ids].filter(([id]) => !children.has(id)));
+  // A human approval may branch: its rejected edge leads off the main line.
+  const gates = new Set(spec.nodes.filter((n) => n.kind === "human_approval").map((n) => n.id));
+  const rejections: string[][] = [];
   const succ = new Map<string, string>();
   const pred = new Map<string, string>();
   spec.edges.forEach((edge, j) => {
@@ -338,9 +371,10 @@ function checkPipeline(
           `"${name}" is a supervisor's child: children are its tools, not steps of the graph`,
         );
     }
-    if (edge.when != null && !caps.routing)
+    const gate = gates.has(edge.from);
+    if (edge.when != null && !gate && !caps.routing)
       add(["edges", j, "when"], "conditional edges are coming in P0b", "not_supported_yet");
-    else if (edge.when != null)
+    else if (edge.when != null && !gate)
       add(
         ["edges", j, "when"],
         "a pipeline has no labelled edges (use the router pattern)",
@@ -348,6 +382,17 @@ function checkPipeline(
       );
     if (edge.max_iterations != null && !caps.loops)
       add(["edges", j, "max_iterations"], "loops are coming in P0b", "not_supported_yet");
+    else if (edge.max_iterations != null)
+      add(
+        ["edges", j, "max_iterations"],
+        "a pipeline has no loops (use the critic loop pattern)",
+        "pattern_mismatch",
+      );
+    if (gate && edge.when === "rejected") {
+      rejections.push([edge.from, edge.to]);
+      if (!pred.has(edge.to)) pred.set(edge.to, edge.from);
+      return;
+    }
     if (edge.screen && !caps.edgeScreen)
       add(["edges", j, "screen"], "edge screening is coming in P0b", "not_supported_yet");
     if (edge.from === edge.to) add(["edges", j], "an edge cannot loop on one node");
@@ -378,13 +423,24 @@ function checkPipeline(
     );
     return issues;
   }
-  const seen = [starts[0]];
-  for (let next = succ.get(starts[0]); next !== undefined; next = succ.get(next)) {
-    if (seen.includes(next)) {
+  const seen: string[] = [];
+  const walk = (first: string): boolean => {
+    for (let next: string | undefined = first; next !== undefined; next = succ.get(next)) {
+      if (seen.includes(next)) return false;
+      seen.push(next);
+    }
+    return true;
+  };
+  if (!walk(starts[0])) {
+    add(["edges"], cycle);
+    return issues;
+  }
+  // A rejection off the main line starts a branch of its own.
+  for (const [gate, target] of rejections) {
+    if (seen.includes(gate) && !seen.includes(target) && !walk(target)) {
       add(["edges"], cycle);
       return issues;
     }
-    seen.push(next);
   }
   for (const [id, i] of steps) {
     if (!seen.includes(id)) add(["nodes", i, "id"], `"${id}" is not reachable from the start`);

@@ -8,6 +8,7 @@ import {
   isFinished,
   reduceRun,
   tokensSoFar,
+  waitingApprovals,
   type RunView,
 } from "./runState";
 import type { StudioEvent } from "./types";
@@ -200,5 +201,68 @@ describe("reduceRun", () => {
     expect(lost.nodes.writer?.status).toBe("unknown");
     expect(lost.nodes.research?.status).toBe("ok");
     expect(markLost(fold(releaseNotesRun()))).toEqual(fold(releaseNotesRun()));
+  });
+});
+
+describe("approvals", () => {
+  const start = releaseNotesRun().slice(0, 1);
+  const base = { run_id: "run-1" };
+  const enter: StudioEvent = {
+    ...base,
+    seq: 2,
+    ts: 101,
+    type: "node.enter",
+    node_id: "review",
+    kind: "human_approval",
+    model: "",
+  };
+  const requested: StudioEvent = {
+    ...base,
+    seq: 3,
+    ts: 101.1,
+    type: "approval.requested",
+    node_id: "review",
+    approval_id: "a1",
+    kind: "approval",
+    prompt: "Publish?",
+    digest: "d".repeat(64),
+    size: 42,
+    expires_at: 1001,
+  };
+  const decided = (decision: "approved" | "expired"): StudioEvent => ({
+    ...base,
+    seq: 4,
+    ts: 120,
+    type: "approval.decided",
+    node_id: "review",
+    approval_id: "a1",
+    kind: "approval",
+    decision,
+    waited_ms: 18900,
+  });
+
+  it("marks the node awaiting and lists the ask until it is decided", () => {
+    const waiting = fold([...start, enter, requested]);
+    expect(waiting.nodes.review?.status).toBe("awaiting");
+    expect(waitingApprovals(waiting)).toMatchObject([
+      { approvalId: "a1", nodeId: "review", prompt: "Publish?", decision: null, content: null },
+    ]);
+    const done = reduceRun(waiting, decided("approved"));
+    expect(done.nodes.review?.status).toBe("active");
+    expect(waitingApprovals(done)).toEqual([]);
+    expect(done.approvals[0]?.decision).toBe("approved");
+  });
+
+  it("asks nothing of a finished run, and settles a node still awaiting", () => {
+    const end = releaseNotesRun().at(-1)!;
+    const ended = reduceRun(fold([...start, enter, requested]), {
+      ...end,
+      seq: 5,
+      outcome: "rejected",
+      error: "approval 'review' expired",
+    } as StudioEvent);
+    expect(ended.status).toBe("rejected");
+    expect(waitingApprovals(ended)).toEqual([]);
+    expect(ended.nodes.review?.status).not.toBe("awaiting");
   });
 });

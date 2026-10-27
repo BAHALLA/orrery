@@ -40,6 +40,7 @@ export const runTone: Record<RunStatus, StatusTone> = {
   failed: "crit",
   cancelled: "refused",
   budget_exhausted: "warn",
+  rejected: "refused",
   lost: "neutral",
 };
 
@@ -50,26 +51,31 @@ export const runLabel: Record<RunStatus, string> = {
   failed: "failed",
   cancelled: "cancelled",
   budget_exhausted: "budget exhausted",
+  rejected: "rejected",
   lost: "outcome unknown",
 };
 
 export const nodeTone: Record<NodeRunStatus, StatusTone> = {
   pending: "neutral",
   active: "running",
+  awaiting: "warn",
   ok: "ok",
   failed: "crit",
   cancelled: "refused",
   budget_exhausted: "warn",
+  rejected: "refused",
   unknown: "neutral",
 };
 
 export const nodeLabel: Record<NodeRunStatus, string> = {
   pending: "waiting",
   active: "running",
+  awaiting: "awaiting you",
   ok: "done",
   failed: "failed",
   cancelled: "cancelled",
   budget_exhausted: "budget hit",
+  rejected: "rejected",
   unknown: "unknown",
 };
 
@@ -103,4 +109,13 @@ export function formatBytes(n: number): string {
 /** A digest's first 12 hex characters. */
 export function shortDigest(digest: string | null | undefined): string {
   return digest ? digest.slice(0, 12) : "—";
+}
+
+/** Seconds left as "14:05", or "expiring" once the deadline has passed. */
+export function timeLeft(expiresAt: number, now: number): string {
+  const left = Math.floor(expiresAt - now);
+  if (left <= 0) return "expiring";
+  const m = Math.floor(left / 60);
+  const s = String(left % 60).padStart(2, "0");
+  return `${m}:${s}`;
 }

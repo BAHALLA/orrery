@@ -103,6 +103,10 @@ export interface ServerCapabilities {
   edge_screen?: boolean;
   per_node_models: boolean;
   models: string[];
+  /** Whether `human_approval` nodes run (P0c). */
+  human_approval?: boolean;
+  /** Seconds an approval waits before it expires (P0c). */
+  approval_timeout_s?: number;
 }
 
 /** `GET /studio/schema`. */
@@ -201,8 +205,26 @@ export interface StudioRegistry {
 
 // ── Runs ─────────────────────────────────────────────────────────────
 
-export type RunOutcome = "succeeded" | "failed" | "cancelled" | "budget_exhausted";
-export type NodeOutcome = "ok" | "failed" | "cancelled" | "budget_exhausted";
+export type RunOutcome = "succeeded" | "failed" | "cancelled" | "budget_exhausted" | "rejected";
+export type NodeOutcome = "ok" | "failed" | "cancelled" | "budget_exhausted" | "rejected";
+
+/** A decision a person is asked for (P0c), as `GET /studio/runs/{id}/approvals` lists it. */
+export interface PendingApproval {
+  approval_id: string;
+  node_id: string;
+  kind: string;
+  /** The composition's question (from the spec, not a model). */
+  prompt: string;
+  /** SHA-256 of the text under review: approving names it. */
+  digest: string;
+  size: number;
+  requested_at: number;
+  expires_at: number;
+  /** The text under review, redacted: in the approvals list only, never in events. */
+  text?: string;
+}
+
+export type ApprovalDecision = "approved" | "rejected" | "expired" | "cancelled";
 
 /** `GET /studio/runs/{id}`. */
 export interface RunSummary {
@@ -216,6 +238,8 @@ export interface RunSummary {
   totals: Totals | null;
   event_count: number;
   dropped_events: number;
+  /** What waits for a person, without the text (P0c servers). */
+  pending_approvals?: PendingApproval[];
 }
 
 export interface TokenCount {
@@ -326,6 +350,29 @@ export interface BudgetHitEvent extends EventBase {
   used: number;
 }
 
+export interface ApprovalRequestedEvent extends EventBase {
+  type: "approval.requested";
+  node_id: string;
+  approval_id: string;
+  kind: string;
+  prompt: string;
+  digest: string;
+  size: number;
+  expires_at: number;
+  content?: string;
+}
+
+export interface ApprovalDecidedEvent extends EventBase {
+  type: "approval.decided";
+  node_id: string;
+  approval_id: string;
+  kind: string;
+  decision: ApprovalDecision;
+  waited_ms: number;
+  /** The reviewer's comment (capture on only). */
+  content?: string;
+}
+
 export type StudioEvent =
   | RunStartEvent
   | RunEndEvent
@@ -333,4 +380,6 @@ export type StudioEvent =
   | NodeExitEvent
   | A2aMessageEvent
   | McpCallEvent
+  | ApprovalRequestedEvent
+  | ApprovalDecidedEvent
   | BudgetHitEvent;

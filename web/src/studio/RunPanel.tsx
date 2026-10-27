@@ -20,8 +20,10 @@ import {
   subtleButton,
   toolbarButton,
 } from "./format";
+import type { StudioClient } from "./api";
+import { ApprovalCards } from "./ApprovalCard";
 import { PlayIcon } from "./icons";
-import { budgetUse, isFinished, type RunView } from "./runState";
+import { budgetUse, isFinished, type RunView, waitingApprovals } from "./runState";
 import type { StudioEvent } from "./types";
 import type { Connection } from "./useStudioRun";
 import type { Issue } from "./validate";
@@ -29,6 +31,8 @@ import type { Issue } from "./validate";
 const MAX_INPUT = 8192;
 
 interface Props {
+  /** Reads and decides the run's pending approvals. */
+  client: StudioClient;
   view: RunView | null;
   input: string;
   onInput: (text: string) => void;
@@ -52,6 +56,7 @@ interface Props {
 
 /** Start a run, watch it, and read it back: status, budgets, nodes, timeline, totals. */
 export function RunPanel({
+  client,
   view,
   input: text,
   onInput,
@@ -161,7 +166,13 @@ export function RunPanel({
       ) : null}
 
       {view ? (
-        <RunDetail view={view} connection={connection} finished={finished} now={now} />
+        <RunDetail
+          client={client}
+          view={view}
+          connection={connection}
+          finished={finished}
+          now={now}
+        />
       ) : (
         <EmptyRun />
       )}
@@ -185,11 +196,13 @@ function EmptyRun() {
 }
 
 function RunDetail({
+  client,
   view,
   connection,
   finished,
   now,
 }: {
+  client: StudioClient;
   view: RunView;
   connection: Connection;
   finished: boolean;
@@ -238,6 +251,8 @@ function RunDetail({
           <p className="mt-1.5 text-xs text-crit-fg">{view.error}</p>
         ) : null}
       </div>
+
+      <ApprovalCards client={client} runId={view.runId} asks={waitingApprovals(view)} now={now} />
 
       {view.budgetHit ? (
         <div
@@ -427,6 +442,8 @@ const eventTone: Record<string, string> = {
   "mcp.call": "bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-200",
   "a2a.message": "bg-violet-50 text-violet-800 dark:bg-violet-950/60 dark:text-violet-200",
   "budget.hit": tonePill.warn,
+  "approval.requested": tonePill.warn,
+  "approval.decided": tonePill.neutral,
 };
 
 /** One line per event: what happened, in plain words. */
@@ -444,6 +461,10 @@ function describeEvent(e: StudioEvent): string {
       return e.direction === "outbound"
         ? `${e.node_id} → ${e.remote}.${e.skill} ${e.method}${e.parts?.length ? ` · ${e.parts.map((p) => `${p.kind} ${formatBytes(p.size)}`).join(", ")}` : ""}`
         : `${e.remote} → ${e.node_id}: ${e.task_state ?? e.status ?? "reply"}${e.elapsed_ms != null ? ` · ${formatMs(e.elapsed_ms)}` : ""}`;
+    case "approval.requested":
+      return `${e.node_id} is waiting for a person: ${e.prompt}`;
+    case "approval.decided":
+      return `${e.node_id} ${e.decision}${e.waited_ms != null ? ` after ${formatMs(e.waited_ms)}` : ""}`;
     case "budget.hit":
       return `budget ${e.budget} hit: ${e.used} of ${e.limit}`;
     case "run.end":

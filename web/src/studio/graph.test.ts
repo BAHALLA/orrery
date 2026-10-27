@@ -7,6 +7,7 @@ import {
   graphToSpec,
   moveNodes,
   layout,
+  relabel,
   LEVEL,
   relayout,
   removeEdges,
@@ -17,7 +18,7 @@ import {
   updateNode,
 } from "./graph";
 import { newNode } from "./kinds";
-import { RELEASE_NOTES, TEMPLATES } from "./templates";
+import { RELEASE_NOTES, RELEASE_NOTES_REVIEWED, TEMPLATES } from "./templates";
 import type { CompositionSpec } from "./types";
 
 describe("spec ↔ graph", () => {
@@ -152,6 +153,33 @@ describe("editing", () => {
     expect(connect(g, "research", "writer")).toBe(g);
     const id = g.edges[0]!.id;
     expect(removeEdges(g, [id]).edges).toHaveLength(1);
+  });
+
+  it("labels a human approval's edges approved, then rejected, then refuses a third", () => {
+    const review = specToGraph({
+      ...RELEASE_NOTES_REVIEWED,
+      edges: [
+        { from: "research", to: "writer" },
+        { from: "writer", to: "review" },
+      ],
+    });
+    const one = connect(review, "review", "publisher");
+    const two = connect(one, "review", "writer");
+    expect(graphToSpec(two).edges.slice(2)).toEqual([
+      { from: "review", to: "publisher", when: "approved" },
+      // writer already leads to review: going back is a loop, capped.
+      { from: "review", to: "writer", when: "rejected", max_iterations: 2 },
+    ]);
+    expect(connect(two, "review", "research")).toBe(two);
+  });
+
+  it("swaps a human approval's labels when one edge takes the other's", () => {
+    const g = specToGraph(RELEASE_NOTES_REVIEWED);
+    const toPublisher = g.edges.find((e) => e.source === "review" && e.target === "publisher")!;
+    const swapped = graphToSpec(relabel(g, toPublisher.id, "rejected")).edges;
+    expect(swapped.find((e) => e.to === "publisher")?.when).toBe("rejected");
+    expect(swapped.find((e) => e.from === "review" && e.to === "writer")?.when).toBe("approved");
+    expect(relabel(g, toPublisher.id, "approved")).toBe(g);
   });
 
   it("makes valid, unique ids", () => {
