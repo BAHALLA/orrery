@@ -6,6 +6,11 @@
   :class:`CompositionConflict` against anything else: two admins editing at
   once get a conflict, not a silent last write. Compositions are shared by the
   Studio's admins; runs are not.
+- **The registry**, when admins may edit it (``ORRERY_STUDIO_REGISTRY_EDITING``),
+  is one versioned document (``studio_registry_versions``): every version is
+  kept with who wrote it, when, why and what changed, so the history is the
+  audit trail. A save names the version it was edited from, like a
+  composition, and a stale one is :class:`RegistryConflict`.
 - **Runs** (``studio_runs``) and their **events** (``studio_run_events``) are
   written by the replica running them, so any replica can serve a run's
   summary and replay its events. They are kept for
@@ -29,6 +34,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Protocol
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger("orrery.studio")
 
@@ -50,6 +56,40 @@ class CompositionConflict(Exception):
 
 class CompositionNotFound(Exception):
     """No composition (or no such version of it)."""
+
+
+#: Registry versions kept; saving past it drops the oldest.
+MAX_REGISTRY_VERSIONS = 200
+
+
+class RegistryConflict(Exception):
+    """The registry changed since the caller read it."""
+
+    def __init__(self, current_version: int) -> None:
+        super().__init__(f"the registry is at version {current_version}")
+        self.current_version = current_version
+
+
+@dataclass(frozen=True)
+class RegistryVersion:
+    """One saved registry: the document as written, and who changed what."""
+
+    version: int
+    document: dict[str, Any]
+    actor: str
+    created_at: float
+    note: str
+    #: ``{"added": [...], "removed": [...], "changed": [...]}`` against the previous version.
+    changes: dict[str, list[str]]
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "actor": self.actor,
+            "created_at": self.created_at,
+            "note": self.note,
+            "changes": self.changes,
+        }
 
 
 @dataclass(frozen=True)
@@ -153,6 +193,32 @@ class StudioStore(Protocol):
 
     def delete_composition(self, cid: str, *, expected_version: int) -> None: ...
 
+    def latest_registry(self) -> RegistryVersion | None:
+        """The newest saved registry; ``None`` before the first edit."""
+        ...
+
+    def registry_version(self) -> int:
+        """The newest saved registry's version, ``0`` before the first edit (a cheap read)."""
+        ...
+
+    def get_registry(self, version: int) -> RegistryVersion | None: ...
+
+    def registry_history(self, *, limit: int = 50) -> list[RegistryVersion]:
+        """Saved versions, newest first."""
+        ...
+
+    def save_registry(
+        self,
+        document: dict[str, Any],
+        *,
+        expected_version: int,
+        actor: str,
+        note: str,
+        changes: dict[str, list[str]],
+    ) -> RegistryVersion:
+        """Save the next version; :class:`RegistryConflict` unless the latest is *expected_version*."""
+        ...
+
     def save_run(self, run: RunRecord) -> None: ...
 
     def append_events(self, run_id: str, events: list[dict[str, Any]]) -> None:
@@ -203,6 +269,42 @@ class InMemoryStudioStore:
         self._runs: OrderedDict[str, RunRecord] = OrderedDict()
         self._events: dict[str, list[dict[str, Any]]] = {}
         self._max_runs = max_runs
+        self._registry: list[RegistryVersion] = []
+
+    # ── the registry ──
+    def latest_registry(self) -> RegistryVersion | None:
+        with self._lock:
+            return self._registry[-1] if self._registry else None
+
+    def registry_version(self) -> int:
+        with self._lock:
+            return self._registry[-1].version if self._registry else 0
+
+    def get_registry(self, version: int) -> RegistryVersion | None:
+        with self._lock:
+            return next((r for r in self._registry if r.version == version), None)
+
+    def registry_history(self, *, limit: int = 50) -> list[RegistryVersion]:
+        with self._lock:
+            return list(reversed(self._registry[-limit:]))
+
+    def save_registry(
+        self,
+        document: dict[str, Any],
+        *,
+        expected_version: int,
+        actor: str,
+        note: str,
+        changes: dict[str, list[str]],
+    ) -> RegistryVersion:
+        with self._lock:
+            current = self._registry[-1].version if self._registry else 0
+            if current != expected_version:
+                raise RegistryConflict(current)
+            record = RegistryVersion(current + 1, document, actor, time.time(), note, changes)
+            self._registry.append(record)
+            del self._registry[:-MAX_REGISTRY_VERSIONS]
+            return record
 
     def list_compositions(self) -> list[CompositionRecord]:
         with self._lock:
@@ -346,6 +448,18 @@ _versions = sa.Table(
     sa.Column("created_by", sa.String(255), nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
 )
+_registry = sa.Table(
+    "studio_registry_versions",
+    _metadata,
+    # The primary key is the concurrency check: two saves from one version
+    # both insert version + 1, and the second fails.
+    sa.Column("version", sa.Integer, primary_key=True),
+    sa.Column("document", sa.Text, nullable=False),
+    sa.Column("actor", sa.String(255), nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("note", sa.Text, nullable=False),
+    sa.Column("changes", sa.Text, nullable=False),
+)
 _runs = sa.Table(
     "studio_runs",
     _metadata,
@@ -420,6 +534,77 @@ class SqlStudioStore:
             # the tables there.
             conn.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": _DDL_LOCK_KEY})
             _metadata.create_all(conn)
+
+    # ── the registry ──
+    @staticmethod
+    def _registry_record(row: Any) -> RegistryVersion:
+        return RegistryVersion(
+            version=int(row.version),
+            document=json.loads(row.document),
+            actor=row.actor,
+            created_at=row.created_at,
+            note=row.note,
+            changes=json.loads(row.changes),
+        )
+
+    def latest_registry(self) -> RegistryVersion | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.select(_registry).order_by(_registry.c.version.desc()).limit(1)
+            ).first()
+        return None if row is None else self._registry_record(row)
+
+    def registry_version(self) -> int:
+        with self._engine.connect() as conn:
+            value = conn.execute(sa.select(sa.func.max(_registry.c.version))).scalar()
+        return int(value or 0)
+
+    def get_registry(self, version: int) -> RegistryVersion | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(sa.select(_registry).where(_registry.c.version == version)).first()
+        return None if row is None else self._registry_record(row)
+
+    def registry_history(self, *, limit: int = 50) -> list[RegistryVersion]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.select(_registry).order_by(_registry.c.version.desc()).limit(limit)
+            )
+            return [self._registry_record(row) for row in rows]
+
+    def save_registry(
+        self,
+        document: dict[str, Any],
+        *,
+        expected_version: int,
+        actor: str,
+        note: str,
+        changes: dict[str, list[str]],
+    ) -> RegistryVersion:
+        record = RegistryVersion(expected_version + 1, document, actor, time.time(), note, changes)
+        try:
+            with self._engine.begin() as conn:
+                current = conn.execute(sa.select(sa.func.max(_registry.c.version))).scalar()
+                if int(current or 0) != expected_version:
+                    raise RegistryConflict(int(current or 0))
+                conn.execute(
+                    sa.insert(_registry).values(
+                        version=record.version,
+                        document=json.dumps(document),
+                        actor=actor,
+                        created_at=record.created_at,
+                        note=note,
+                        changes=json.dumps(changes),
+                    )
+                )
+                conn.execute(
+                    sa.delete(_registry).where(
+                        _registry.c.version <= record.version - MAX_REGISTRY_VERSIONS
+                    )
+                )
+        except IntegrityError:
+            # Another replica saved the same next version first.
+            raise RegistryConflict(self.registry_version()) from None
+        return record
 
     # ── compositions ──
     def _record(self, row: Any, document: str) -> CompositionRecord:

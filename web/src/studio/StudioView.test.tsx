@@ -259,7 +259,10 @@ describe("Studio runs", () => {
     stream.push(...events.slice(6));
     stream.close();
     expect(await screen.findByText("2,500")).toBeInTheDocument();
-    expect(node(/^LLM agent critic, ok$/)).toBeInTheDocument();
+    // The canvas restyles its nodes a frame after the panel: wait for it.
+    expect(
+      await screen.findByRole("group", { name: /^LLM agent critic, ok$/ }),
+    ).toBeInTheDocument();
     const panel = screen.getByRole("tabpanel");
     expect(within(panel).getByText("succeeded")).toBeInTheDocument();
     expect(

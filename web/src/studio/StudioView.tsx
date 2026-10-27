@@ -9,6 +9,7 @@ import { A2aInspector } from "./A2aInspector";
 import { StudioClient } from "./api";
 import { Canvas } from "./Canvas";
 import { SpecDialog, TemplatesDialog } from "./Dialogs";
+import { RegistryDialog } from "./RegistryDialog";
 import { primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
 import {
   addNode,
@@ -131,7 +132,7 @@ export default function StudioView({ token, active = true }: Props) {
   const [tab, setTab] = useState<Tab>("inspect");
   const [input, setInput] = useState("");
   const [pinned, setPinned] = useState<PinnedIssue[]>([]);
-  const [dialog, setDialog] = useState<null | "templates" | "export" | "import">(null);
+  const [dialog, setDialog] = useState<null | "templates" | "export" | "import" | "registry">(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -454,6 +455,15 @@ export default function StudioView({ token, active = true }: Props) {
             <button
               type="button"
               className={toolbarButton}
+              onClick={() => setDialog("registry")}
+              title="The MCP servers and remote agents compositions may reach"
+            >
+              <GridIcon size={15} />
+              <span className="sr-only sm:not-sr-only">Registry</span>
+            </button>
+            <button
+              type="button"
+              className={toolbarButton}
               disabled={live}
               onClick={() => setDialog("import")}
             >
@@ -527,7 +537,18 @@ export default function StudioView({ token, active = true }: Props) {
               className="orrery-scroll w-14 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-2 xl:w-60 xl:p-3 dark:border-slate-800 dark:bg-slate-900/40"
             >
               <Palette caps={caps} editable={editable} onAdd={addKind} />
-              <p className={`${sectionTitle} mt-5 hidden px-1 xl:block`}>Registry</p>
+              <p
+                className={`${sectionTitle} mt-5 hidden items-center justify-between px-1 xl:flex`}
+              >
+                Registry
+                <button
+                  type="button"
+                  className="text-[11px] font-medium tracking-normal text-brand-600 normal-case underline dark:text-brand-400"
+                  onClick={() => setDialog("registry")}
+                >
+                  {registry?.editable ? "Edit" : "View"}
+                </button>
+              </p>
               <ul className="mt-1.5 hidden flex-col gap-1 px-1 text-xs text-slate-600 xl:flex dark:text-slate-300">
                 <li className="flex justify-between">
                   <span>MCP servers</span>
@@ -718,6 +739,18 @@ export default function StudioView({ token, active = true }: Props) {
           templates={TEMPLATES}
           caps={caps}
           onPick={loadTemplate}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "registry" ? (
+        <RegistryDialog
+          client={client}
+          onSaved={() => {
+            client
+              .registry()
+              .then(setRegistry)
+              .catch(() => {});
+          }}
           onClose={() => setDialog(null)}
         />
       ) : null}

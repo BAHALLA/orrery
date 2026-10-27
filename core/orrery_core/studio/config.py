@@ -16,6 +16,8 @@ STUDIO_REGISTRY_ENV = "ORRERY_STUDIO_REGISTRY"
 STUDIO_CAPTURE_CONTENT_ENV = "ORRERY_STUDIO_CAPTURE_CONTENT"
 STUDIO_MODELS_ENV = "ORRERY_STUDIO_MODELS"
 STUDIO_ACTING_REMOTES_ENV = "ORRERY_STUDIO_ACTING_REMOTES"
+#: Lets the Studio's admins edit the registry from the console (P0c).
+STUDIO_REGISTRY_EDITING_ENV = "ORRERY_STUDIO_REGISTRY_EDITING"
 #: The longest a ``human_approval`` may wait (a day).
 MAX_APPROVAL_TIMEOUT_S = 86_400
 
@@ -67,6 +69,9 @@ class StudioConfig:
     #: ``ORRERY_STUDIO_ACTING_REMOTES``: allow ``effect: acting`` registry
     #: entries, each call confirmed by the run's owner.
     acting_remotes: bool = False
+    #: ``ORRERY_STUDIO_REGISTRY_EDITING``: admins may edit the registry; the
+    #: file is then only the first version.
+    registry_editing: bool = False
 
     @classmethod
     def from_env(cls) -> StudioConfig:
@@ -104,6 +109,7 @@ class StudioConfig:
                 "ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS", cls.approval_timeout_s
             ),
             acting_remotes=env_flag(STUDIO_ACTING_REMOTES_ENV, default=False),
+            registry_editing=env_flag(STUDIO_REGISTRY_EDITING_ENV, default=False),
         )
 
     def validate(self, *, auth_enabled: bool, human_clients_configured: bool) -> None:

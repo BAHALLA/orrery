@@ -38,7 +38,9 @@ Every entry goes through the network guard: public addresses only, unless
 
 from __future__ import annotations
 
+import ipaddress
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -129,6 +131,41 @@ class StudioRegistry(BaseModel):
                 entry.auth.token()  # an unset secret fails startup, not the first call
 
 
+def parse_registry(
+    raw: Any, *, network: RemoteNetwork | None = None, allow_acting: bool = False
+) -> StudioRegistry:
+    """Validate a registry document: the schema, the acting opt-in, the network, the secrets.
+
+    The one check, for the file at startup and for every edit (P0c): an edit
+    can never hold what the deployment's file could not.
+    """
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("the registry is a mapping with `mcp` and `a2a` lists")
+    registry = StudioRegistry.model_validate(raw)
+    if not allow_acting and (acting := [e.id for e in registry.a2a if e.effect == "acting"]):
+        raise ValueError(
+            f"a2a entries {acting} are effect: acting; set {STUDIO_ACTING_REMOTES_ENV}=true "
+            "to allow remotes that change things (each call is confirmed by the run's owner)"
+        )
+    registry.check_network((network or RemoteNetwork.from_env()).private_allow)
+    return registry
+
+
+def read_registry_document(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+    """The registry file as written (``ORRERY_STUDIO_REGISTRY`` when *path* is None); ``{}`` if none."""
+    import yaml
+
+    target = path if path is not None else os.getenv(STUDIO_REGISTRY_ENV, "").strip()
+    if not target:
+        return {}
+    raw = yaml.safe_load(Path(target).read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{target}: the registry is a mapping with `mcp` and `a2a` lists")
+    return raw
+
+
 def load_registry(
     path: str | os.PathLike[str] | None = None,
     *,
@@ -141,17 +178,103 @@ def load_registry(
     missing or invalid raises: a typo must not start the Studio without the
     guards the operator thinks it has.
     """
-    import yaml
+    return parse_registry(read_registry_document(path), network=network, allow_acting=allow_acting)
 
-    target = path if path is not None else os.getenv(STUDIO_REGISTRY_ENV, "").strip()
-    if not target:
-        return StudioRegistry()
-    raw = yaml.safe_load(Path(target).read_text(encoding="utf-8")) or {}
-    registry = StudioRegistry.model_validate(raw)
-    if not allow_acting and (acting := [e.id for e in registry.a2a if e.effect == "acting"]):
-        raise ValueError(
-            f"a2a entries {acting} are effect: acting; set {STUDIO_ACTING_REMOTES_ENV}=true "
-            "to allow remotes that change things (each call is confirmed by the run's owner)"
+
+def _is_loopback(url: Any) -> bool:
+    host = (urlsplit(url).hostname or "").lower() if isinstance(url, str) else ""
+    if host in LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _text(value: Any) -> str | None:
+    """A malformed value never matches (the schema refuses it next) nor raises here."""
+    return value if isinstance(value, str) else None
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _a2a_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    auth = item.get("auth")
+    origins = item.get("service_origins")
+    return (
+        _text(item.get("card_url")),
+        tuple(sorted(map(str, origins))) if isinstance(origins, list) else (),
+        bool(item.get("private_network")),
+        _text(auth.get("bearer_env")) if isinstance(auth, Mapping) else None,
+    )
+
+
+def _mcp_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (_text(item.get("url")), bool(item.get("private_network")))
+
+
+def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
+    """Refuse an edit that reaches what only the deployment may bind.
+
+    A secret is sent to its entry's origins, and a private or loopback address
+    is reachable only from the deployment's network: in the file, the
+    operator chose both. An edited entry that sends a secret, is
+    ``private_network`` or targets loopback must therefore keep an endpoint
+    the deployment's file already declares (the same URLs, origins, network
+    flag and secret). Checked before anything else, so a refusal never says
+    whether a secret is set.
+    """
+    if not isinstance(document, Mapping):
+        return
+    bound_a2a = {
+        _a2a_endpoint(i) for i in _list(file_document.get("a2a")) if isinstance(i, Mapping)
+    }
+    bound_mcp = {
+        _mcp_endpoint(i) for i in _list(file_document.get("mcp")) if isinstance(i, Mapping)
+    }
+    problems: list[str] = []
+    for item in _list(document.get("a2a")):
+        if not isinstance(item, Mapping):
+            continue
+        sensitive = (
+            item.get("auth") is not None
+            or bool(item.get("private_network"))
+            or _is_loopback(item.get("card_url"))
+            or any(_is_loopback(o) for o in _list(item.get("service_origins")))
         )
-    registry.check_network((network or RemoteNetwork.from_env()).private_allow)
-    return registry
+        if sensitive and _a2a_endpoint(item) not in bound_a2a:
+            problems.append(f"a2a entry {item.get('id')!r}")
+    for item in _list(document.get("mcp")):
+        if not isinstance(item, Mapping):
+            continue
+        sensitive = bool(item.get("private_network")) or _is_loopback(item.get("url"))
+        if sensitive and _mcp_endpoint(item) not in bound_mcp:
+            problems.append(f"mcp entry {item.get('id')!r}")
+    if problems:
+        raise ValueError(
+            f"{', '.join(problems)}: an entry that sends a secret, is private_network or "
+            "targets loopback must keep an endpoint the deployment's registry file declares "
+            "(same URLs, service_origins, private_network and bearer_env); change those in "
+            f"the file ({STUDIO_REGISTRY_ENV})"
+        )
+
+
+def registry_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Entries added, removed and changed between two registry documents (``mcp:<id>``)."""
+
+    def entries(doc: Mapping[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for section in ("mcp", "a2a"):
+            for item in doc.get(section) or []:
+                if isinstance(item, Mapping):
+                    out[f"{section}:{item.get('id')}"] = item
+        return out
+
+    old, new = entries(before), entries(after)
+    return {
+        "added": sorted(new.keys() - old.keys()),
+        "removed": sorted(old.keys() - new.keys()),
+        "changed": sorted(k for k in old.keys() & new.keys() if old[k] != new[k]),
+    }

@@ -1486,19 +1486,19 @@ def create_app(
         from ..a2a.remote import RemoteCards, RemoteNetwork
         from ..studio.api import mount_studio
         from ..studio.models import model_lookup
-        from ..studio.registry import load_registry
+        from ..studio.registry import parse_registry, read_registry_document
         from ..studio.runner import StudioService
         from ..studio.store import create_studio_store
 
         network = RemoteNetwork.from_env()
+        # A missing or invalid registry fails startup, like ORRERY_MCP_CONFIG.
+        registry_document = read_registry_document(cfg.studio.registry_path)
         studio_service = StudioService(
             config=cfg.studio,
-            # A missing or invalid registry fails startup, like ORRERY_MCP_CONFIG.
-            registry=load_registry(
-                cfg.studio.registry_path,
-                network=network,
-                allow_acting=cfg.studio.acting_remotes,
+            registry=parse_registry(
+                registry_document, network=network, allow_acting=cfg.studio.acting_remotes
             ),
+            registry_document=registry_document,
             cards=RemoteCards(network),
             catalogue=studio_catalogue,
             model_factory=studio_model,

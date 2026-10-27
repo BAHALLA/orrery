@@ -209,19 +209,31 @@ class McpPins:
     A Studio run builds its own toolsets, and a toolset's pin store would
     otherwise die with it: every run would pin whatever the server serves now,
     and a changed description would never be noticed. Like :class:`RemoteCards`,
-    one of these lives as long as the process.
+    one of these lives as long as the process, and like its card pins these
+    are keyed by the entry's endpoint too: a run still on an edited entry's
+    old endpoint pins under the old key, never the new one's.
     """
 
     def __init__(self) -> None:
-        self._by_entry: dict[str, dict[str, str]] = {}
-        self._seen: dict[str, dict[str, dict[str, Any]]] = {}
+        self._by_entry: dict[tuple[str, tuple[Any, ...]], dict[str, str]] = {}
+        self._seen: dict[tuple[str, tuple[Any, ...]], dict[str, dict[str, Any]]] = {}
 
-    def for_entry(self, entry_id: str) -> dict[str, str]:
-        return self._by_entry.setdefault(entry_id, {})
+    @staticmethod
+    def _key(entry_id: str, server: Any) -> tuple[str, tuple[Any, ...]]:
+        return entry_id, (server.url, server.transport, server.allow_private_network)
 
-    def seen_for_entry(self, entry_id: str) -> dict[str, dict[str, Any]]:
+    def for_entry(self, entry_id: str, server: Any) -> dict[str, str]:
+        return self._by_entry.setdefault(self._key(entry_id, server), {})
+
+    def seen_for_entry(self, entry_id: str, server: Any) -> dict[str, dict[str, Any]]:
         """Tool -> the description and input schema it was pinned with."""
-        return self._seen.setdefault(entry_id, {})
+        return self._seen.setdefault(self._key(entry_id, server), {})
+
+    def forget(self, entry_id: str) -> None:
+        """Drop every pin *entry_id* has had: it left the registry."""
+        for store in (self._by_entry, self._seen):
+            for key in [k for k in store if k[0] == entry_id]:
+                del store[key]
 
 
 def registry_toolset(
@@ -241,11 +253,11 @@ def registry_toolset(
     return GuardedMcpToolset(
         config,
         private_allow=cards.network.private_allow,
-        pin_store=pins.for_entry(entry_id),
+        pin_store=pins.for_entry(entry_id, server),
         # Registry entries never name files: the deployment's CA bundle.
         verify=cards.network.ssl_context,
         egress_proxy=cards.network.egress_proxy,
-        seen_store=pins.seen_for_entry(entry_id),
+        seen_store=pins.seen_for_entry(entry_id, server),
     )
 
 

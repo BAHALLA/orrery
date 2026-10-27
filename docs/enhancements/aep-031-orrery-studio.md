@@ -625,7 +625,23 @@ trade-offs: a refused action does not change the run's outcome (the node goes
 on, like a declined question), and while an acting remote's circuit is
 half-open its probe slot is held for the person's wait.
 
-Still to come in P0c: registry editing.
+**Registry editing** (`ORRERY_STUDIO_REGISTRY_EDITING`, `StudioService.update_registry`).
+The registry is one versioned document in the Studio store
+(`studio_registry_versions`, the version the primary key, so two saves from
+one version cannot both land); the file is version 0. A save is validated by
+`parse_registry`, the one function the startup path also uses, so an edit can
+never hold what the file could not. It is refused unless it names the latest
+version (409), saved with the actor, a note and the entries it changed, and
+audited (`studio_registry_updated`) with both documents. The service swaps the
+registry under a lock; runs already going keep the entries they compiled, and
+an entry that changed or was removed loses its card and MCP tool pins
+(`RemoteCards.forget`, `McpPins.forget`), so it is pinned afresh rather than
+trusted on its old identity. Replicas follow by polling the stored version
+(10 s), like the agent catalogue; a stored version that no longer validates
+is logged and not served. Without `DATABASE_URL` edits are per process (the
+lab is like that: a restart returns to the file).
+
+P0c is complete.
 
 ## Security
 
