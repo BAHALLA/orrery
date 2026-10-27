@@ -316,7 +316,7 @@ other is a remote's question, above). The design is deliberately narrow:
   ends `rejected` there. A loop through an approval is capped by its
   `max_iterations`; a rejection past the cap ends the run `rejected` (never
   `succeeded` with the draft that was turned down). A run asks for at most
-  12 approvals.
+  12 approvals, remote questions included.
 - **The text is held in memory only**, on the replica running the run, and
   dropped when it is decided. Events carry its digest and size, and (redacted)
   content only with `ORRERY_STUDIO_CAPTURE_CONTENT`. Like cancel, a decision
@@ -363,10 +363,14 @@ owner is asked, the same way as a human approval (`kind: "input"`, the
 question as the text under review), and their answer is sent on the same
 task (ADK continues it from the `context_id`). The model only gets the final
 reply. Each answer is one more message to the remote, so it counts as a
-remote call against `max_remote_calls`: past the budget it is not sent and
-the run ends `budget_exhausted`. A remote is answered at most 3 times per
-call; a fourth question, a declined one, or one that expires ends the call
-`input_required`, with a message telling the model not to answer it itself.
+remote call against `max_remote_calls`. With no remote call left, nobody is
+asked (the answer could never be sent) and the run ends `budget_exhausted`;
+an answer written after the run's budget ran out is not sent. A remote is
+answered at most 3 times per call; a fourth question, an empty one, a
+declined one, one that expires, or one past the run's 12 approvals ends the
+call `input_required`, with a message saying why and telling the model not
+to answer it itself. The model never gets the question's text. The console
+marks it as written by an external agent: never answer with secrets.
 Unlike an approval, a declined or expired question does not end the run: the
 node goes on without the answer. Each message's timeout (`total_timeout_s`)
 covers the remote, not the person.

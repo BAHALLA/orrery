@@ -1117,6 +1117,7 @@ def test_a_remotes_question_goes_to_the_runs_owner_and_the_answer_continues_its_
     run_id = _start(client)
     question = _pending_input(client, run_id)
     assert question["kind"] == "input" and question["text"] == "Which release?"
+    assert question["remote"] == "demo-writer.draft"
     assert "demo-writer.draft" in question["prompt"]
     url = f"/studio/runs/{run_id}/approvals/{question['approval_id']}"
     # Answering is approving with the answer; without one it is refused.
@@ -1163,18 +1164,57 @@ def test_a_declined_question_reaches_the_model_as_unanswered(client, remote, stu
     assert summary["totals"]["remote_calls"] == 1
 
 
-def test_an_answer_past_the_remote_call_budget_is_not_sent(client, remote, stub):
+def test_a_question_whose_answer_could_not_be_sent_is_never_asked(client, remote, stub):
     remote["asks"] = 1
     spec = _spec()
     spec["budgets"] = {**spec.get("budgets", {}), "max_remote_calls": 1}
     run_id = _start(client, spec=spec)
-    question = _pending_input(client, run_id)
-    url = f"/studio/runs/{run_id}/approvals/{question['approval_id']}"
-    body = {"decision": "approve", "digest": question["digest"], "answer": "0.11"}
-    assert client.post(url, headers=ADMIN, json=body).status_code == 200
     summary = _finish(client, run_id)
     events = _events(client, run_id)
     assert summary["status"] == "budget_exhausted", summary
     assert len(remote["received"]) == 1
+    # Nobody was asked: an answer would have been the call past the budget.
+    assert not any(e["type"] == "approval.requested" for e in events)
     hit = next(e for e in events if e["type"] == "budget.hit")
     assert hit["budget"] == "max_remote_calls"
+
+
+def test_an_answer_is_not_sent_once_the_run_is_out_of_budget(client, remote, stub, monkeypatch):
+    from orrery_core.studio import runner
+    from orrery_core.studio.ledger import CompositionLedger, Exhausted
+
+    ledgers: list[CompositionLedger] = []
+
+    class Recorded(CompositionLedger):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            ledgers.append(self)
+
+    monkeypatch.setattr(runner, "CompositionLedger", Recorded)
+    remote["asks"] = 1
+    run_id = _start(client)
+    question = _pending_input(client, run_id)
+    # The run's budget runs out while the person writes (here: by fiat).
+    ledgers[-1].exhausted = Exhausted("timeout_s", 1, 2)
+    url = f"/studio/runs/{run_id}/approvals/{question['approval_id']}"
+    body = {"decision": "approve", "digest": question["digest"], "answer": "0.11"}
+    assert client.post(url, headers=ADMIN, json=body).status_code == 200
+    _finish(client, run_id)
+    assert len(remote["received"]) == 1
+    assert "0.11" not in remote["received"]
+
+
+def test_questions_past_the_runs_approval_cap_reach_the_model_as_unavailable(
+    client, remote, stub, monkeypatch
+):
+    from orrery_core.studio import approval
+
+    monkeypatch.setattr(approval, "MAX_APPROVALS_PER_RUN", 0)
+    remote["asks"] = 1
+    run_id = _start(client)
+    summary = _finish(client, run_id)
+    events = _events(client, run_id)
+    assert summary["status"] == "succeeded", summary
+    assert not any(e["type"] == "approval.requested" for e in events)
+    assert "nobody was asked" in stub.seen["writer"][-1]
+    assert len(remote["received"]) == 1

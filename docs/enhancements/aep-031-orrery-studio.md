@@ -588,10 +588,15 @@ against the digest of the question shown, default deny. The tool keeps one
 ADK session open for the call, so the answer, sent with the reply's
 `context_id`, continues the same task (ADK sets `task_id` from the session's
 paused reply). The model never sees the question as something to answer:
-it gets the final reply, or `input_required` with "do not answer it
-yourself" when the person declines, the question expires, or the remote asks
-a fourth time (`MAX_INPUT_ROUNDS = 3`). Each answer is charged as a remote
-call (`CompositionLedger.charge_remote`), and the per-message
+it gets the final reply, or `input_required` (question blanked) with "do not
+answer it yourself" when the person declines, the question expires or is
+empty, or the remote asks a fourth time (`MAX_INPUT_ROUNDS = 3`). An asker
+that cannot ask raises `InputUnavailable`, whose message the model gets:
+no remote call left (charged, so the run ends `budget_exhausted` without
+asking anyone), the run's budget spent while the person answered (the answer
+is not sent), or `MAX_APPROVALS_PER_RUN` reached. Each answer is charged as a
+remote call (`CompositionLedger.charge_remote`); the conversation's close is
+bounded (`CLOSE_TIMEOUT_S`), and the per-message
 `total_timeout_s` excludes the person's time. ADK hands a paused task's
 status message on as thought, so the question is read from the wire
 response. Outside the Studio (chat), there is no `ask` and nothing changes.

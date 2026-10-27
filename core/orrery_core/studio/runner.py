@@ -43,7 +43,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools.set_model_response_tool import SetModelResponseTool
 from google.genai import types
 
-from ..a2a.remote import RemoteCards, RemoteExchange
+from ..a2a.remote import InputUnavailable, RemoteCards, RemoteExchange
 from ..observability.audit import audit_event
 from ..plugins import CALL_BUDGET_STATUS, ErrorHandlerPlugin, default_plugins
 from ..plugins.delegation_guard_plugin import is_delegation
@@ -72,6 +72,7 @@ from .compiler import (
 from .config import StudioConfig
 from .events import (
     ALWAYS_KEPT,
+    MAX_APPROVALS_PER_RUN,
     MAX_EVENTS_PER_RUN,
     RESERVED_EVENTS,
     A2aMessage,
@@ -328,23 +329,48 @@ class StudioRunPlugin(BasePlugin):
     async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
         """Ask the run's owner to answer *remote*'s question; their answer, or ``None``.
 
-        An answer is one more message to the remote, so it is charged as a
-        remote call: past the budget, nothing is sent and the run ends on it.
+        An answer is one more message to the remote, so it is a remote call:
+        a person is never asked a question whose answer could not be sent
+        (no budget left), and an answer is not sent if the run's budget ran
+        out while they wrote it. Each refusal raises :class:`InputUnavailable`,
+        whose message the model gets.
         """
-        if self._run.approvals is None or self._ledger.exhausted is not None:
-            return None
-        outcome = await self._run.approvals.request(
-            node_id=node_id,
-            prompt=f"The remote agent {remote} needs input to go on. Answer it, or decline.",
-            text=question,
-            kind="input",
-            remote=remote,
-        )
+        ledger = self._ledger
+        if self._run.approvals is None:
+            raise InputUnavailable("nobody can be asked in this run.")
+        if ledger.exhausted is not None:
+            raise InputUnavailable("the run's budget is spent; nobody was asked.")
+        if ledger.remote_calls >= ledger.budgets.max_remote_calls:
+            # The answer is the call past the budget: the run ends on it, and
+            # nobody is asked a question whose answer could never be sent.
+            if (hit := ledger.charge_remote()) is not None:
+                self.emit_budget(hit)
+            raise InputUnavailable(
+                "an answer would be a remote call past the run's max_remote_calls; "
+                "nobody was asked."
+            )
+        try:
+            outcome = await self._run.approvals.request(
+                node_id=node_id,
+                prompt=f"The remote agent {remote} needs input to go on. Answer it, or decline.",
+                text=question,
+                kind="input",
+                remote=remote,
+            )
+        except TooManyApprovals:
+            raise InputUnavailable(
+                f"the run has asked its person {MAX_APPROVALS_PER_RUN} times already; "
+                "nobody was asked."
+            ) from None
         if not outcome.approved or outcome.answer is None:
             return None
-        if (hit := self._ledger.charge_remote()) is not None:
+        if ledger.exhausted is not None:
+            raise InputUnavailable(
+                "the run's budget ran out while the person was answering; the answer was not sent."
+            )
+        if (hit := ledger.charge_remote()) is not None:  # checked above: not expected
             self.emit_budget(hit)
-            return None
+            raise InputUnavailable("the answer is past the run's max_remote_calls; not sent.")
         return outcome.answer
 
     def hold_inbound(self, event: A2aMessage, call_id: str | None) -> None:
@@ -993,6 +1019,9 @@ class StudioService:
         if run.approvals is None:
             raise ApprovalNotFound(approval_id)
         node_id = run.approvals.node_of(approval_id)
+        pending = next((p for p in run.approvals.pending() if p.approval_id == approval_id), None)
+        kind = pending.kind if pending is not None else None
+        remote = pending.remote if pending is not None else None
         outcome = run.approvals.decide(
             approval_id, approve=approve, digest=digest, comment=comment, answer=answer
         )
@@ -1002,6 +1031,8 @@ class StudioService:
             run_id=run.run_id,
             approval_id=approval_id,
             node_id=node_id,
+            kind=kind,
+            remote=remote,
             decision=outcome.decision,
         )
         return outcome

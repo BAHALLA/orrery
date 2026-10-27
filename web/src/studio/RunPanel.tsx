@@ -446,6 +446,14 @@ const eventTone: Record<string, string> = {
   "approval.decided": tonePill.neutral,
 };
 
+/** A question is answered or declined; an approval is approved or rejected. */
+function decisionWord(e: Extract<StudioEvent, { type: "approval.decided" }>): string {
+  if (e.kind !== "input") return e.decision;
+  if (e.decision === "approved") return "answered";
+  if (e.decision === "rejected") return "declined";
+  return `question ${e.decision}`;
+}
+
 /** One line per event: what happened, in plain words. */
 function describeEvent(e: StudioEvent): string {
   switch (e.type) {
@@ -466,7 +474,7 @@ function describeEvent(e: StudioEvent): string {
         ? `${e.remote ?? "a remote agent"} asked you a question (${e.node_id})`
         : `${e.node_id} is waiting for a person: ${e.prompt}`;
     case "approval.decided":
-      return `${e.node_id} ${e.decision}${e.waited_ms != null ? ` after ${formatMs(e.waited_ms)}` : ""}`;
+      return `${e.node_id} ${decisionWord(e)}${e.waited_ms != null ? ` after ${formatMs(e.waited_ms)}` : ""}`;
     case "budget.hit":
       return `budget ${e.budget} hit: ${e.used} of ${e.limit}`;
     case "run.end":

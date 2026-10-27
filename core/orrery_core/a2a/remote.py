@@ -92,6 +92,8 @@ SECRET_ENV_PREFIX = "ORRERY_STUDIO_SECRET_"
 CA_FILE_ENV = "ORRERY_A2A_CA_FILE"
 #: Longest request text sent to a remote (ADR-007's inbound bound, applied outbound).
 MAX_REQUEST_CHARS = 8192
+#: Seconds to close one remote conversation (its runner, then its client).
+CLOSE_TIMEOUT_S = 5.0
 
 _ENTRY_ID = re.compile(r"^[a-z][a-z0-9_-]{1,40}$")
 _SKILL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -107,8 +109,13 @@ STATUS_ERROR = "error"
 MAX_INPUT_ROUNDS = 3
 
 #: Asks a person to answer a remote's ``input-required`` *question*: their
-#: answer, or ``None`` (declined, expired, or nothing left to send it with).
+#: answer, or ``None`` (declined or expired). Raises :class:`InputUnavailable`
+#: when nobody can be asked.
 InputAsker = Callable[[str], Awaitable[str | None]]
+
+
+class InputUnavailable(Exception):
+    """Raised by an :data:`InputAsker` that cannot ask anyone; its message goes to the model."""
 
 
 def safe_tool_name(*parts: str) -> str:
@@ -763,20 +770,37 @@ class GuardedRemoteA2aTool(BaseTool):
                 if result["status"] != STATUS_INPUT_REQUIRED or self._ask is None:
                     return result
                 if answered >= MAX_INPUT_ROUNDS:
-                    result["message"] = (
-                        f"{self.name}: the remote asked for input again after "
-                        f"{MAX_INPUT_ROUNDS} answers; the call ends here."
+                    return self._unanswered(
+                        result,
+                        f"the remote asked for input again after {MAX_INPUT_ROUNDS} answers; "
+                        "the call ends here.",
                     )
-                    return result
-                answer = await self._ask(result.get("reply") or "")
+                question = result.get("reply") or ""
+                if not question.strip():
+                    return self._unanswered(
+                        result, "the remote asked for input without saying what it needs."
+                    )
+                try:
+                    answer = await self._ask(question)
+                except InputUnavailable as exc:
+                    return self._unanswered(result, str(exc))
                 if answer is None:
-                    result["message"] = (
-                        f"{self.name}: the remote needed input and the person did not give "
-                        "it (declined, or the question expired). Do not answer it yourself."
+                    return self._unanswered(
+                        result,
+                        "the remote needed input and the person did not give it (declined, "
+                        "or the question expired).",
                     )
-                    return result
                 text, context_id, answered = answer, result.get("context_id"), answered + 1
         raise AssertionError("unreachable")  # the loop only returns
+
+    def _unanswered(self, result: dict[str, Any], why: str) -> dict[str, Any]:
+        """End the call ``input_required`` without the question: it was for a person."""
+        result["reply"] = ""
+        result["message"] = (
+            f"{self.name}: {why} Nothing more was sent. Do not answer it yourself, and do "
+            "not call the remote again to guess the answer."
+        )
+        return result
 
     async def _round(
         self,
@@ -908,8 +932,13 @@ class GuardedRemoteA2aTool(BaseTool):
 
             yield send
         finally:
-            await runner.close()
-            await client.aclose()
+            # Bounded: a remote that hangs on close must not hold the call.
+            for close in (runner.close, client.aclose):
+                try:
+                    async with asyncio.timeout(CLOSE_TIMEOUT_S):
+                        await close()
+                except Exception:
+                    logger.warning("remote A2A %s: closing timed out or failed", self.name)
 
     async def _exchange(
         self, runner: Any, author: str, session_id: str, text: str
@@ -923,28 +952,28 @@ class GuardedRemoteA2aTool(BaseTool):
         error: str | None = None
         question = ""
         message = types.Content(role="user", parts=[types.Part.from_text(text=text)])
-        async for event in runner.run_async(
-            user_id="orrery", session_id=session_id, new_message=message
-        ):
-            if event.partial is True or event.author != author:
-                continue
-            if event.error_message:
-                error = event.error_message
-            metadata = event.custom_metadata or {}
-            task_id = metadata.get("a2a:task_id") or task_id
-            context_id = metadata.get("a2a:context_id") or context_id
-            response = metadata.get("a2a:response")
-            if isinstance(response, dict):
-                state = _state_name((response.get("status") or {}).get("state"))
-                if state is None and "parts" in response:
-                    state = "message"
-                if state and (not states or states[-1] != state):
-                    states.append(state)
-                task_state = state or task_state
-                parts = [_part_info(p) for p in _response_parts(response)]
-                question = _status_text(response) if state == "input-required" else ""
-            if reply_text := _text_of(event.content):
-                reply.append(reply_text)
+        events = runner.run_async(user_id="orrery", session_id=session_id, new_message=message)
+        async with contextlib.aclosing(events):
+            async for event in events:
+                if event.partial is True or event.author != author:
+                    continue
+                if event.error_message:
+                    error = event.error_message
+                metadata = event.custom_metadata or {}
+                task_id = metadata.get("a2a:task_id") or task_id
+                context_id = metadata.get("a2a:context_id") or context_id
+                response = metadata.get("a2a:response")
+                if isinstance(response, dict):
+                    state = _state_name((response.get("status") or {}).get("state"))
+                    if state is None and "parts" in response:
+                        state = "message"
+                    if state and (not states or states[-1] != state):
+                        states.append(state)
+                    task_state = state or task_state
+                    parts = [_part_info(p) for p in _response_parts(response)]
+                    question = _status_text(response) if state == "input-required" else ""
+                if reply_text := _text_of(event.content):
+                    reply.append(reply_text)
 
         base: dict[str, Any] = {
             "task_state": task_state,

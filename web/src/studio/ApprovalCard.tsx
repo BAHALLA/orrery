@@ -18,8 +18,8 @@ import type { ApprovalAsk } from "./runState";
 import type { PendingApproval } from "./types";
 
 const MAX_COMMENT = 2000;
-/** A remote request's own cap: an answer is sent to the remote as one. */
-const MAX_ANSWER = 8192;
+/** A remote request's own cap (`MAX_REQUEST_CHARS`): an answer is sent to the remote as one. */
+export const MAX_ANSWER = 8192;
 
 /**
  * The decisions a run is waiting for, one card each (P0c).
@@ -158,13 +158,15 @@ function ApprovalCard({
         : null
       : null;
   const blocked = !pending
-    ? "Approve is available once the text has been read."
+    ? asking
+      ? "You can answer once the question has been read."
+      : "Approve is available once the text has been read."
     : !pending.complete
-      ? `The text is ${formatBytes(pending.size)}, too long to show in full: it can only be rejected.`
+      ? `The ${asking ? "question" : "text"} is ${formatBytes(pending.size)}, too long to show in full: it can only be ${asking ? "declined" : "rejected"}.`
       : ownDigest === undefined
         ? "Checking the text…"
         : approveDigest === null
-          ? "The text shown does not match the server's digest: reload it before approving."
+          ? `The ${asking ? "question" : "text"} shown does not match the server's digest: reload it before ${asking ? "answering" : "approving"}.`
           : expired
             ? asking
               ? "This question is expiring: the remote will be sent nothing."
@@ -255,6 +257,10 @@ function ApprovalCard({
 
       {asking ? (
         <>
+          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            This question was written by an external agent, not by Orrery. Answer only what the task
+            needs; never send secrets or credentials.
+          </p>
           <label htmlFor={commentId} className={`${fieldLabel} mt-2`}>
             Your answer{" "}
             <span className="font-normal text-slate-500">(sent to the remote, nothing else)</span>

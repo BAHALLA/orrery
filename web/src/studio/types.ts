@@ -225,6 +225,8 @@ export interface PendingApproval {
   expires_at: number;
   /** Whether `text` is all of it: only then can it be approved. */
   complete: boolean;
+  /** The remote agent asking (`kind: "input"`), else null. */
+  remote: string | null;
   /**
    * The text under review, exactly as the next node gets it (not redacted, so
    * what is approved is what was read): in the approvals list only, never in

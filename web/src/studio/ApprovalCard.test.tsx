@@ -39,6 +39,7 @@ const pending: PendingApproval = {
   requested_at: 1000,
   expires_at: 1900,
   complete: true,
+  remote: null,
   text: TEXT,
 };
 
@@ -144,6 +145,7 @@ describe("ApprovalCards", () => {
     render(<ApprovalCards client={c} runId="run-1" asks={[input]} now={1000} />);
     expect(await screen.findByText(question)).toBeInTheDocument();
     expect(screen.getByText("demo-writer.draft asks:")).toBeInTheDocument();
+    expect(screen.getByText(/written by an external agent/)).toBeInTheDocument();
     expect(screen.getByText("Write your answer to send it.")).toBeInTheDocument();
     const send = screen.getByRole("button", { name: "Send answer" });
     expect(send).toBeDisabled();

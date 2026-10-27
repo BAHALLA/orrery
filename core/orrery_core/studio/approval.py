@@ -46,6 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..a2a.remote import MAX_REQUEST_CHARS
 from .events import MAX_APPROVALS_PER_RUN, ApprovalDecided, ApprovalRequested
 
 ApprovalKind = Literal["approval", "input"]
@@ -56,7 +57,7 @@ MAX_REVIEW_BYTES = 128 * 1024
 #: A reviewer's comment, in characters.
 MAX_COMMENT_CHARS = 2000
 #: An answer to a remote's question, in characters (a remote request's own cap).
-MAX_ANSWER_CHARS = 8192
+MAX_ANSWER_CHARS = MAX_REQUEST_CHARS
 #: Decided approval ids remembered per run, to answer a second decision with 409.
 MAX_DECIDED = 256
 
@@ -111,6 +112,8 @@ class PendingApproval:
     requested_at: float
     expires_at: float
     future: asyncio.Future[ApprovalOutcome] = field(repr=False)
+    #: The remote agent asking (kind ``input``), else ``None``.
+    remote: str | None = None
 
     def view(self, *, with_text: bool) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -123,6 +126,7 @@ class PendingApproval:
             "requested_at": self.requested_at,
             "expires_at": self.expires_at,
             "complete": self.complete,
+            "remote": self.remote,
         }
         if with_text:
             data["text"] = self.text
@@ -208,6 +212,7 @@ class RunApprovals:
             requested_at=now,
             expires_at=now + self._timeout_s,
             future=loop.create_future(),
+            remote=remote,
         )
         expiry = loop.call_later(
             self._timeout_s, _settle, pending.future, ApprovalOutcome("expired")
