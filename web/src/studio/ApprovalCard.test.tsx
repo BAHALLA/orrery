@@ -171,6 +171,31 @@ describe("ApprovalCards", () => {
     expect(c.decide).toHaveBeenCalledWith("run-1", "a1", { decision: "reject" });
   });
 
+  it("confirms an acting remote's request with its digest, and refuses with nothing", async () => {
+    const c = client(
+      {},
+      { ...pending, kind: "action", remote: "demo-writer.draft", text: TEXT, digest: DIGEST },
+    );
+    const action: ApprovalAsk = { ...ask, kind: "action", remote: "demo-writer.draft" };
+    render(<ApprovalCards client={c} runId="run-1" asks={[action]} now={1000} />);
+    expect(await screen.findByText(TEXT)).toBeInTheDocument();
+    expect(screen.getByText(/goes to an external agent that changes things/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Comment/)).not.toBeInTheDocument();
+    const send = screen.getByRole("button", { name: "Confirm and send" });
+    await waitFor(() => expect(send).toBeEnabled());
+    await userEvent.click(send);
+    expect(c.decide).toHaveBeenCalledWith("run-1", "a1", { decision: "approve", digest: DIGEST });
+  });
+
+  it("refusing an action sends a plain reject", async () => {
+    const c = client({}, { ...pending, kind: "action", remote: "demo-writer.draft" });
+    const action: ApprovalAsk = { ...ask, kind: "action", remote: "demo-writer.draft" };
+    render(<ApprovalCards client={c} runId="run-1" asks={[action]} now={1000} />);
+    await screen.findByText(TEXT);
+    await userEvent.click(screen.getByRole("button", { name: "Don't send" }));
+    expect(c.decide).toHaveBeenCalledWith("run-1", "a1", { decision: "reject" });
+  });
+
   it("renders nothing with no pending ask", () => {
     const { container } = render(
       <ApprovalCards client={client()} runId="run-1" asks={[]} now={1000} />,

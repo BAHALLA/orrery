@@ -49,9 +49,11 @@ function toolGroups(registry: StudioRegistry): Group[] {
           label: card?.name ? `${skill} — ${card.name}` : skill,
           // A card error can be a refusal or a fetch that timed out, and a run
           // fetches the card again; the server is the judge, so warn, don't block.
-          detail: entry.card.error
-            ? `Card not resolved (${entry.card.error}); the run retries it.`
-            : card?.description || entry.description || "remote skill",
+          detail: `${entry.effect === "acting" ? "acts: you confirm each call · " : ""}${
+            entry.card.error
+              ? `Card not resolved (${entry.card.error}); the run retries it.`
+              : card?.description || entry.description || "remote skill"
+          }`,
           blocked: null,
         };
       }),

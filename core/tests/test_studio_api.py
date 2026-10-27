@@ -29,12 +29,14 @@ from google.adk.memory import BaseMemoryService  # noqa: E402
 from google.adk.models.base_llm import BaseLlm  # noqa: E402
 from google.adk.models.llm_response import LlmResponse  # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
+from google.adk.tools import FunctionTool  # noqa: E402
 from google.genai import types  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 from mcp.types import ToolAnnotations  # noqa: E402
 
 from orrery_core.plugins.safety_plugin import FILTER_MARKER  # noqa: E402
 from orrery_core.security.auth import JWTConfig  # noqa: E402
+from orrery_core.security.guardrails import destructive  # noqa: E402
 from orrery_core.security.principal import is_machine_session  # noqa: E402
 from orrery_core.security.redaction import REDACTED_EMAIL  # noqa: E402
 from orrery_core.serving.gateway import AgentGateway  # noqa: E402
@@ -1218,3 +1220,86 @@ def test_questions_past_the_runs_approval_cap_reach_the_model_as_unavailable(
     assert not any(e["type"] == "approval.requested" for e in events)
     assert "nobody was asked" in stub.seen["writer"][-1]
     assert len(remote["received"]) == 1
+
+
+# ── Acting remotes: each call is confirmed by the run's owner (P0c) ──
+
+
+@pytest.fixture
+def acting_registry(registry_file: Path) -> Path:
+    raw = yaml.safe_load(registry_file.read_text())
+    raw["a2a"][0]["effect"] = "acting"
+    registry_file.write_text(yaml.safe_dump(raw))
+    return registry_file
+
+
+@pytest.fixture
+def acting_client(principals, acting_registry, stub, memory) -> Iterator[TestClient]:
+    with TestClient(_app(acting_registry, stub, memory, acting_remotes=True)) as test_client:
+        yield test_client
+
+
+def test_an_acting_registry_needs_the_deployments_opt_in(principals, acting_registry, stub):
+    with (
+        pytest.raises(ValueError, match="ORRERY_STUDIO_ACTING_REMOTES"),
+        TestClient(_app(acting_registry, stub)),
+    ):
+        pass
+
+
+def test_an_acting_remote_is_called_only_once_its_owner_confirms_the_request(
+    acting_client, remote, stub
+):
+    caps = acting_client.get("/studio/schema", headers=ADMIN).json()["capabilities"]
+    assert caps["acting_remotes"] is True
+    run_id = _start(acting_client)
+    action = _pending_input(acting_client, run_id)
+    assert action["kind"] == "action"
+    # What the person confirms is exactly what would be sent.
+    assert action["text"] == stub.seen["writer"][-1]
+    assert remote["received"] == []
+    url = f"/studio/runs/{run_id}/approvals/{action['approval_id']}"
+    body = {"decision": "approve", "digest": action["digest"]}
+    assert acting_client.post(url, headers=ADMIN, json=body).status_code == 200
+    summary = _finish(acting_client, run_id)
+    assert summary["status"] == "succeeded", summary
+    assert remote["received"] == [action["text"]]
+    asked = next(e for e in _events(acting_client, run_id) if e["type"] == "approval.requested")
+    assert asked["kind"] == "action" and asked["remote"] == "demo-writer.draft"
+
+
+def test_a_rejected_action_is_never_sent(acting_client, remote, stub):
+    run_id = _start(acting_client)
+    action = _pending_input(acting_client, run_id)
+    url = f"/studio/runs/{run_id}/approvals/{action['approval_id']}"
+    assert acting_client.post(url, headers=ADMIN, json={"decision": "reject"}).status_code == 200
+    summary = _finish(acting_client, run_id)
+    assert remote["received"] == []
+    assert "did not confirm" in stub.seen["writer"][-1]
+    # The attempt is charged (the ledger counts calls the model makes, so a
+    # model retrying a refused action still runs out), though nothing was sent.
+    assert summary["totals"]["remote_calls"] == 1
+
+
+def test_the_studio_gate_refuses_any_other_tool_that_changes_things():
+    from orrery_core.security.guardrails import is_confirmation_gate
+    from orrery_core.studio.compiler import _NoTrace, confirmation_gate
+
+    class Never(_NoTrace):
+        async def request_action(self, node_id: str, remote: str, request: str) -> bool:
+            raise AssertionError("not asked")
+
+    @destructive("drops things")
+    async def drop() -> dict:
+        return {}
+
+    gate = confirmation_gate(Never())
+    assert is_confirmation_gate(gate)
+    tool = FunctionTool(drop)
+    refused = asyncio.run(gate(tool=tool, args={}, tool_context=MagicMock(agent_name="n_x")))
+    assert refused is not None and refused["status"] == "BLOCKED"
+
+    async def read() -> dict:
+        return {}
+
+    assert asyncio.run(gate(tool=FunctionTool(read), args={}, tool_context=MagicMock())) is None

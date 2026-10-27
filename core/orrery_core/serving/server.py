@@ -1494,7 +1494,11 @@ def create_app(
         studio_service = StudioService(
             config=cfg.studio,
             # A missing or invalid registry fails startup, like ORRERY_MCP_CONFIG.
-            registry=load_registry(cfg.studio.registry_path, network=network),
+            registry=load_registry(
+                cfg.studio.registry_path,
+                network=network,
+                allow_acting=cfg.studio.acting_remotes,
+            ),
             cards=RemoteCards(network),
             catalogue=studio_catalogue,
             model_factory=studio_model,

@@ -199,12 +199,13 @@ class ApprovalRequested(_Event):
     type: Literal["approval.requested"] = "approval.requested"
     node_id: str
     approval_id: str
-    #: ``approval`` (a ``human_approval`` node) or ``input`` (a remote's question).
-    kind: Literal["approval", "input"]
+    #: ``approval`` (a ``human_approval`` node), ``input`` (a remote's
+    #: question) or ``action`` (a call to an acting remote, before it is sent).
+    kind: Literal["approval", "input", "action"]
     #: The question: the spec's ``prompt`` for an approval, Orrery's own words
     #: naming the remote for an input (never a model's or a remote's text).
     prompt: str
-    #: The remote asking (``<entry>.<skill>``), for an ``input``.
+    #: The remote (``<entry>.<skill>``), for an ``input`` or an ``action``.
     remote: str | None = None
     #: SHA-256 of the text under review; approving names it.
     digest: str
@@ -218,7 +219,7 @@ class ApprovalDecided(_Event):
     type: Literal["approval.decided"] = "approval.decided"
     node_id: str
     approval_id: str
-    kind: Literal["approval", "input"]
+    kind: Literal["approval", "input", "action"]
     decision: Literal["approved", "rejected", "expired", "cancelled"]
     waited_ms: int
     #: The reviewer's comment (capture on only). An answer to a remote is

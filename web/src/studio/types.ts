@@ -210,7 +210,7 @@ export type NodeOutcome = "ok" | "failed" | "cancelled" | "budget_exhausted" | "
 
 /** A decision a person is asked for (P0c), as `GET /studio/runs/{id}/approvals` lists it. */
 /** `approval`: a human_approval node. `input`: a remote agent's question (P0c). */
-export type ApprovalKind = "approval" | "input";
+export type ApprovalKind = "approval" | "input" | "action";
 
 export interface PendingApproval {
   approval_id: string;

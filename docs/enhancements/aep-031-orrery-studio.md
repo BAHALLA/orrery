@@ -246,7 +246,7 @@ a2a:
     card_url: https://demo-writer.studio.internal/.well-known/agent-card.json
     card_sha256: "…"           # JCS digest of the trust fields (ADR-008)
     skills: [draft]
-    effect: read_only           # acting -> @destructive: L4 + confirmation
+    effect: read_only           # acting -> @destructive: confirmed per call
     private_network: true       # host must match ORRERY_A2A_PRIVATE_ALLOW
     auth: { bearer_env: ORRERY_STUDIO_SECRET_DEMO_WRITER }
 ```
@@ -331,7 +331,7 @@ counter, and an amendment to ADR-007.
    - multi-replica event reads.
 3. **P0c, people in the loop:**
    - `human_approval` and remote `input-required`;
-   - `effect: acting` remotes (L4 + confirmation);
+   - `effect: acting` remotes (confirmed per call by the run's owner);
    - registry editing with an audit trail.
 4. **P1, Studio v1 (admin only):** canvas, templates, run panel, A2A and MCP
    inspectors, history and compare, the LangGraph agent in the demo fleet, the
@@ -601,7 +601,22 @@ bounded (`CLOSE_TIMEOUT_S`), and the per-message
 status message on as thought, so the question is read from the wire
 response. Outside the Studio (chat), there is no `ask` and nothing changes.
 
-Still to come in P0c: `effect: acting` remotes and registry editing.
+**`effect: acting` remotes** (`compiler.confirmation_gate`,
+`StudioRunPlugin.request_action`). As built, not L4: the run stays at L2 and
+`AutonomyPlugin.allow_at_l2()` lets through only the model-facing names of
+the acting remotes the spec references (`CompiledComposition.acting_tools`),
+on that run's fresh plugin. Every compiled agent gets the Studio's own gate
+as its `before_tool_callback`, marked with `mark_confirmation_gate()` so
+`create_agent()` adds no `require_confirmation()` (that gate's model-mediated
+re-call would let the model confirm itself). The gate asks the owner through
+`RunApprovals` (`kind="action"`, the request as the text, so the digest
+guarantees they confirm what is sent) and returns `BLOCKED` on anything but
+an approval; `BLOCKED` is neutral for the breaker. Any other guarded tool is
+refused. The registry refuses acting entries unless the deployment sets
+`ORRERY_STUDIO_ACTING_REMOTES` (`load_registry(allow_acting=...)`), and the
+console shows `acting_remotes` in the capabilities.
+
+Still to come in P0c: registry editing.
 
 ## Security
 
@@ -610,7 +625,7 @@ Still to come in P0c: `effect: acting` remotes and registry editing.
 | Arbitrary imports through a spec | The spec references catalogue tools and registry entries by id only; no import paths, no code fields |
 | SSRF through MCP or A2A URLs | Registry in deployment config; network guard on both httpx stacks; private addresses only for allowlisted hosts or CIDRs |
 | A remote agent seeing our data | Remote agents are tools that receive only the model's request, never the session (ADR-008) |
-| A remote agent acting on our behalf | `effect: acting` is `@destructive`: L4 + requester-verified confirmation; unavailable at the L2 default |
+| A remote agent acting on our behalf | `effect: acting` is `@destructive` and needs the deployment's opt-in (`ORRERY_STUDIO_ACTING_REMOTES`); in a run, the owner confirms each exact request; nothing else is let past L2 |
 | Prompt injection travelling between nodes | Every remote reply and MCP result is a tool result: screened, PII-redacted and capped; optional `screen` on LLM→LLM edges |
 | Studio runs touching real systems | Catalogue tools capped at L2 in studio runs; fresh plugin state per run |
 | Loops between agents | Hop header for direct Orrery→Orrery calls; composition ledger (delegations, remote calls, deadline) for the rest |

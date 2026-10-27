@@ -26,8 +26,10 @@ not carry: stdio (running someone else's code on the host), headers from env,
 per-user token exchange and file paths (TLS files, mTLS). ``description``
 defaults to the id.
 
-**A2A entries are** :class:`~orrery_core.a2a.remote.RemoteAgentEntry`;
-``effect: acting`` is refused until P0c.
+**A2A entries are** :class:`~orrery_core.a2a.remote.RemoteAgentEntry`.
+``effect: acting`` (a remote that changes something) is refused unless the
+deployment opts in with ``ORRERY_STUDIO_ACTING_REMOTES=true``; each call
+then needs the run's owner to confirm it (P0c).
 
 Every entry goes through the network guard: public addresses only, unless
 ``private_network`` is set **and** the host or its network is in
@@ -46,7 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ..a2a.remote import RemoteAgentEntry, RemoteNetwork, check_private_allow
 from ..tools.mcp import McpServerConfig
 from ..tools.mcp_network import LOOPBACK_HOSTS, PrivateAllowlist
-from .config import STUDIO_REGISTRY_ENV
+from .config import STUDIO_ACTING_REMOTES_ENV, STUDIO_REGISTRY_ENV
 
 #: Keys of ``McpServerConfig`` a registry entry may not set, and why.
 _MCP_REFUSED_KEYS = {
@@ -128,7 +130,10 @@ class StudioRegistry(BaseModel):
 
 
 def load_registry(
-    path: str | os.PathLike[str] | None = None, *, network: RemoteNetwork | None = None
+    path: str | os.PathLike[str] | None = None,
+    *,
+    network: RemoteNetwork | None = None,
+    allow_acting: bool = False,
 ) -> StudioRegistry:
     """Read and validate the registry (``ORRERY_STUDIO_REGISTRY`` when *path* is None).
 
@@ -143,5 +148,10 @@ def load_registry(
         return StudioRegistry()
     raw = yaml.safe_load(Path(target).read_text(encoding="utf-8")) or {}
     registry = StudioRegistry.model_validate(raw)
+    if not allow_acting and (acting := [e.id for e in registry.a2a if e.effect == "acting"]):
+        raise ValueError(
+            f"a2a entries {acting} are effect: acting; set {STUDIO_ACTING_REMOTES_ENV}=true "
+            "to allow remotes that change things (each call is confirmed by the run's owner)"
+        )
     registry.check_network((network or RemoteNetwork.from_env()).private_allow)
     return registry

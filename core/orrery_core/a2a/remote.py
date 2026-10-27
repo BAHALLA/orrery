@@ -184,11 +184,6 @@ class RemoteAgentEntry(BaseModel):
     def _check(self) -> RemoteAgentEntry:
         if not _ENTRY_ID.match(self.id):
             raise ValueError(f"id {self.id!r} must match {_ENTRY_ID.pattern}")
-        if self.effect == "acting":
-            raise ValueError(
-                "effect: acting is not supported yet (AEP-031 P0c: it needs L4 and a "
-                "human confirmation); only read_only remotes can be registered"
-            )
         if self.card_sha256 is not None and not _SHA256.match(self.card_sha256):
             raise ValueError("card_sha256 must be 64 hex characters")
         if bad := [s for s in self.skills if not _SKILL_ID.match(s)]:
@@ -690,8 +685,9 @@ class GuardedRemoteA2aTool(BaseTool):
         self._cards = cards
         self._observer = observer
         self._ask = ask
-        # read_only is an ordinary read (allowed at L2). acting is refused by
-        # the registry until P0c, but would be destructive here.
+        # read_only is an ordinary read (allowed at L2). acting is
+        # destructive: every gate refuses it unless a person confirms the
+        # call (a Studio run asks its owner; ORRERY_STUDIO_ACTING_REMOTES).
         set_guard(
             self,
             LEVEL_DESTRUCTIVE if entry.effect == "acting" else None,

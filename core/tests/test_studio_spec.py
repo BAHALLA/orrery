@@ -348,10 +348,25 @@ def test_a_spec_is_not_executable_code():
 # ── Registry ─────────────────────────────────────────────────────────
 
 
-def test_a2a_acting_entries_are_refused():
-    raw = {"a2a": [{**REGISTRY["a2a"][0], "effect": "acting"}]}
-    with pytest.raises(ValidationError, match="acting is not supported yet"):
-        StudioRegistry.model_validate(raw)
+def test_a2a_acting_entries_need_the_deployments_opt_in(tmp_path: Path):
+    import yaml
+
+    path = tmp_path / "registry.yaml"
+    path.write_text(yaml.safe_dump({"a2a": [{**REGISTRY["a2a"][0], "effect": "acting"}]}))
+    with pytest.raises(ValueError, match="ORRERY_STUDIO_ACTING_REMOTES"):
+        load_registry(path)
+    entry = load_registry(path, allow_acting=True).a2a_entry("demo-writer")
+    assert entry is not None and entry.effect == "acting"
+    # A read-only registry loads either way.
+    path.write_text(yaml.safe_dump({"a2a": [REGISTRY["a2a"][0]]}))
+    assert load_registry(path).a2a_entry("demo-writer") is not None
+
+
+def test_acting_remotes_are_off_unless_the_deployment_says_so(monkeypatch):
+    monkeypatch.delenv("ORRERY_STUDIO_ACTING_REMOTES", raising=False)
+    assert StudioConfig.from_env().acting_remotes is False
+    monkeypatch.setenv("ORRERY_STUDIO_ACTING_REMOTES", "true")
+    assert StudioConfig.from_env().acting_remotes is True
 
 
 @pytest.mark.parametrize(

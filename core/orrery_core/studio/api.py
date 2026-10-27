@@ -205,6 +205,7 @@ def capabilities(service: StudioService) -> dict[str, Any]:
         "models": sorted(service.config.models),
         "human_approval": "human_approval" not in UNSUPPORTED_KINDS,
         "approval_timeout_s": service.config.approval_timeout_s,
+        "acting_remotes": service.config.acting_remotes,
         "stored_compositions": True,
         "limits": {
             "max_nodes": MAX_NODES,

@@ -15,6 +15,7 @@ STUDIO_ENABLED_ENV = "ORRERY_STUDIO_ENABLED"
 STUDIO_REGISTRY_ENV = "ORRERY_STUDIO_REGISTRY"
 STUDIO_CAPTURE_CONTENT_ENV = "ORRERY_STUDIO_CAPTURE_CONTENT"
 STUDIO_MODELS_ENV = "ORRERY_STUDIO_MODELS"
+STUDIO_ACTING_REMOTES_ENV = "ORRERY_STUDIO_ACTING_REMOTES"
 #: The longest a ``human_approval`` may wait (a day).
 MAX_APPROVAL_TIMEOUT_S = 86_400
 
@@ -63,6 +64,9 @@ class StudioConfig:
     rate_limit: str = "10/minute"
     #: Seconds a ``human_approval`` waits for its person before it expires (a reject).
     approval_timeout_s: int = 900
+    #: ``ORRERY_STUDIO_ACTING_REMOTES``: allow ``effect: acting`` registry
+    #: entries, each call confirmed by the run's owner.
+    acting_remotes: bool = False
 
     @classmethod
     def from_env(cls) -> StudioConfig:
@@ -99,6 +103,7 @@ class StudioConfig:
             approval_timeout_s=env_int(
                 "ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS", cls.approval_timeout_s
             ),
+            acting_remotes=env_flag(STUDIO_ACTING_REMOTES_ENV, default=False),
         )
 
     def validate(self, *, auth_enabled: bool, human_clients_configured: bool) -> None:

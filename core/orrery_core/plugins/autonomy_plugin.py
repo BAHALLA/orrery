@@ -43,6 +43,7 @@ value is ignored.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from google.adk.plugins.base_plugin import BasePlugin
@@ -138,6 +139,14 @@ class AutonomyPlugin(BasePlugin):
         # Explicit overrides on top of the decorator-based classification.
         self._l2_whitelist = set(l2_whitelist or [])
         self._l3_blacklist = set(l3_blacklist or [])
+
+    def allow_at_l2(self, names: Iterable[str]) -> None:
+        """Let the tools named *names* run at L2 too.
+
+        For a caller that gates them itself: a Studio run allows its acting
+        remotes, each call of which its owner confirms first.
+        """
+        self._l2_whitelist.update(names)
 
     @staticmethod
     def _normalise(level: str) -> str:

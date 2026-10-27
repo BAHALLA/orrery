@@ -46,6 +46,7 @@ from google.genai import types
 from ..a2a.remote import InputUnavailable, RemoteCards, RemoteExchange
 from ..observability.audit import audit_event
 from ..plugins import CALL_BUDGET_STATUS, ErrorHandlerPlugin, default_plugins
+from ..plugins.autonomy_plugin import AutonomyPlugin
 from ..plugins.delegation_guard_plugin import is_delegation
 from ..plugins.output_cap_plugin import ToolOutputCapPlugin
 from ..plugins.token_budget_plugin import TokenBudgetPlugin
@@ -326,6 +327,25 @@ class StudioRunPlugin(BasePlugin):
             return ApprovalOutcome("rejected")  # no way to ask: never approve
         return await self._run.approvals.request(node_id=node_id, prompt=prompt, text=text)
 
+    async def request_action(self, node_id: str, remote: str, request: str) -> bool:
+        """Whether the run's owner confirms sending *request* to the acting *remote*."""
+        if self._run.approvals is None or self._ledger.exhausted is not None:
+            return False
+        try:
+            outcome = await self._run.approvals.request(
+                node_id=node_id,
+                prompt=(
+                    f"{node_id} wants the remote agent {remote} to act on this request. "
+                    "It changes things: confirm only what you mean to happen."
+                ),
+                text=request,
+                kind="action",
+                remote=remote,
+            )
+        except TooManyApprovals:
+            return False  # nobody asked: nothing acts
+        return outcome.approved
+
     async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
         """Ask the run's owner to answer *remote*'s question; their answer, or ``None``.
 
@@ -368,7 +388,8 @@ class StudioRunPlugin(BasePlugin):
             raise InputUnavailable(
                 "the run's budget ran out while the person was answering; the answer was not sent."
             )
-        if (hit := ledger.charge_remote()) is not None:  # checked above: not expected
+        # A parallel branch may have spent the last remote call meanwhile.
+        if (hit := ledger.charge_remote()) is not None:
             self.emit_budget(hit)
             raise InputUnavailable("the answer is past the run's max_remote_calls; not sent.")
         return outcome.answer
@@ -1133,6 +1154,12 @@ class StudioService:
             )
             plugin.attach(compiled)
             plugins = list(self._plugin_factory())
+            if compiled.acting_tools:
+                # L2 still holds for everything else; these calls are each
+                # confirmed by the owner (compiler.confirmation_gate).
+                for p in plugins:
+                    if isinstance(p, AutonomyPlugin):
+                        p.allow_at_l2(compiled.acting_tools)
             _place_run_plugins(plugins, plugin, StudioSpentGate(ledger))
             gateway = AgentGateway(
                 app_name=APP_NAME,
