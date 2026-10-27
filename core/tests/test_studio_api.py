@@ -737,7 +737,7 @@ def test_the_studio_refuses_to_start_without_human_clients(monkeypatch, registry
 def test_an_invalid_spec_is_422_with_field_paths_before_any_model_call(client, stub, remote):
     spec = _spec()
     spec["nodes"][1]["tools"] = ["a2a:demo-writer.deploy"]
-    spec["nodes"].append({"id": "gate", "kind": "human_approval", "prompt": "ok?"})
+    spec["nodes"].append({"id": "relay", "kind": "remote_a2a", "remote": "demo-writer.draft"})
     res = client.post("/studio/runs", headers=ADMIN, json={"spec": spec, "input": "x"})
     assert res.status_code == 422
     errors = res.json()["detail"]["errors"]
@@ -861,9 +861,11 @@ def test_the_schema_says_what_this_server_runs(principals, registry_file, stub, 
         body = client.get("/studio/schema", headers=ADMIN).json()
     caps = body["capabilities"]
     assert caps["routing"] and caps["loops"] and caps["parallel"] and caps["supervisor"]
-    assert caps["per_node_models"] is True and caps["human_approval"] is False
+    assert caps["per_node_models"] is True and caps["human_approval"] is True
+    assert caps["approval_timeout_s"] == 900
     assert caps["models"] == ["anthropic/claude-x", "gemini-flash"]
-    assert "human_approval" in caps["unsupported_node_kinds"]
+    assert "human_approval" in caps["node_kinds"]
+    assert "remote_a2a" in caps["unsupported_node_kinds"]
     assert "handoff" in caps["unsupported_patterns"] and "handoff" not in caps["patterns"]
     assert {"pipeline", "router", "critic_loop", "fan_out_fan_in", "supervisor"} <= set(
         caps["patterns"]

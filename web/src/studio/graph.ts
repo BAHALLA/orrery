@@ -327,10 +327,74 @@ export function addNode(graph: StudioGraph, spec: SpecNode, position?: XYPositio
   return ends.length === 1 && tail ? connect(next, tail.id, spec.id) : next;
 }
 
-/** Add an edge, unless it would loop on one node or already exists. */
+/** A human approval's edges are taken on these, in the order they are added. */
+export const APPROVAL_LABELS = ["approved", "rejected"] as const;
+/** A rejection wired back to an earlier node loops; the cap it starts with. */
+export const APPROVAL_LOOP_CAP = 2;
+
+/** Whether `from` already leads to `to` along the graph's edges. */
+function reaches(graph: StudioGraph, from: string, to: string): boolean {
+  const next = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    if (!e.data?.child) next.set(e.source, [...(next.get(e.source) ?? []), e.target]);
+  }
+  const seen = new Set<string>();
+  const stack = [from];
+  for (let n = stack.pop(); n !== undefined; n = stack.pop()) {
+    if (n === to) return true;
+    if (!seen.has(n)) {
+      seen.add(n);
+      stack.push(...(next.get(n) ?? []));
+    }
+  }
+  return false;
+}
+
+/**
+ * Add an edge, unless it would loop on one node or already exists. An edge
+ * out of a human approval takes the first of its labels still free (approved,
+ * then rejected; none left, no edge), and one going back to an earlier node
+ * becomes a loop capped at {@link APPROVAL_LOOP_CAP}.
+ */
 export function connect(graph: StudioGraph, from: string, to: string): StudioGraph {
   if (from === to || graph.edges.some((e) => e.id === edgeId(from, to))) return graph;
-  return { ...graph, edges: [...graph.edges, toEdge({ from, to })] };
+  const source = graph.nodes.find((n) => n.id === from)?.data.spec;
+  if (source?.kind !== "human_approval") {
+    return { ...graph, edges: [...graph.edges, toEdge({ from, to })] };
+  }
+  const used = new Set(
+    graph.edges.filter((e) => e.source === from && !e.data?.child).map((e) => e.data?.spec.when),
+  );
+  const when = APPROVAL_LABELS.find((label) => !used.has(label));
+  if (!when) return graph;
+  const loop = reaches(graph, to, from);
+  return {
+    ...graph,
+    edges: [
+      ...graph.edges,
+      toEdge({ from, to, when, ...(loop ? { max_iterations: APPROVAL_LOOP_CAP } : {}) }),
+    ],
+  };
+}
+
+/**
+ * Take edge `id` on label `when`; another edge of the same node holding that
+ * label takes this edge's old one (a human approval's two edges swap).
+ */
+export function relabel(graph: StudioGraph, id: string, when: string): StudioGraph {
+  const edge = graph.edges.find((e) => e.id === id);
+  if (!edge?.data || edge.data.spec.when === when) return graph;
+  const old = edge.data.spec.when ?? null;
+  return {
+    ...graph,
+    edges: graph.edges.map((e) => {
+      if (!e.data || e.source !== edge.source || e.data.child) return e;
+      if (e.id === id) return { ...e, data: { ...e.data, spec: { ...e.data.spec, when } } };
+      if (e.data.spec.when === when)
+        return { ...e, data: { ...e.data, spec: { ...e.data.spec, when: old } } };
+      return e;
+    }),
+  };
 }
 
 /** Remove nodes (and every edge and child link touching them). */

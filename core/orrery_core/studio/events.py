@@ -11,8 +11,9 @@ timings only. With ``ORRERY_STUDIO_CAPTURE_CONTENT=true`` some events carry
 to :data:`MAX_CONTENT_BYTES`.
 
 A run emits at most :data:`MAX_EVENTS_PER_RUN` events. Past
-``MAX_EVENTS_PER_RUN - RESERVED_EVENTS``, everything but ``budget.hit`` and
-``run.end`` is dropped, and ``run.end`` reports how many were.
+``MAX_EVENTS_PER_RUN - RESERVED_EVENTS``, everything but ``budget.hit``,
+``run.end`` and the ``approval.*`` events is dropped, and ``run.end`` reports
+how many were.
 """
 
 from __future__ import annotations
@@ -24,12 +25,14 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from ..security.redaction import redact_text
 
 MAX_EVENTS_PER_RUN = 2000
-#: Kept free for ``budget.hit`` and ``run.end``.
-RESERVED_EVENTS = 4
+#: Approvals one run may ask for (``approval.py``): each is two kept events.
+MAX_APPROVALS_PER_RUN = 12
+#: Kept free for ``budget.hit``, ``run.end`` and every approval's two events.
+RESERVED_EVENTS = 4 + 2 * MAX_APPROVALS_PER_RUN
 MAX_CONTENT_BYTES = 2048
 
-RunOutcome = Literal["succeeded", "failed", "cancelled", "budget_exhausted"]
-NodeOutcome = Literal["ok", "failed", "cancelled", "budget_exhausted"]
+RunOutcome = Literal["succeeded", "failed", "cancelled", "budget_exhausted", "rejected"]
+NodeOutcome = Literal["ok", "failed", "cancelled", "budget_exhausted", "rejected"]
 BudgetName = Literal[
     "max_tokens", "max_tool_calls", "max_delegations", "max_remote_calls", "timeout_s"
 ]
@@ -190,6 +193,34 @@ class McpCall(_Event):
     elapsed_ms: int | None = None
 
 
+class ApprovalRequested(_Event):
+    """A run paused for a person's decision (P0c). The text is served apart, to its owner."""
+
+    type: Literal["approval.requested"] = "approval.requested"
+    node_id: str
+    approval_id: str
+    kind: str
+    #: The question the composition asks (from the spec, not a model).
+    prompt: str
+    #: SHA-256 of the text under review; approving names it.
+    digest: str
+    size: int
+    #: Unix seconds; undecided by then, the approval expires (a reject).
+    expires_at: float
+    content: str | None = None
+
+
+class ApprovalDecided(_Event):
+    type: Literal["approval.decided"] = "approval.decided"
+    node_id: str
+    approval_id: str
+    kind: str
+    decision: Literal["approved", "rejected", "expired", "cancelled"]
+    waited_ms: int
+    #: The reviewer's comment (capture on only).
+    content: str | None = None
+
+
 class BudgetHit(_Event):
     type: Literal["budget.hit"] = "budget.hit"
     budget: BudgetName
@@ -206,14 +237,16 @@ StudioEvent = Annotated[
     | LoopIteration
     | A2aMessage
     | McpCall
+    | ApprovalRequested
+    | ApprovalDecided
     | BudgetHit,
     Field(discriminator="type"),
 ]
 
 EventAdapter: TypeAdapter[Any] = TypeAdapter(StudioEvent)
 
-#: Events never dropped by the per-run cap.
-ALWAYS_KEPT = frozenset({"run.end", "budget.hit"})
+#: Events never dropped by the per-run cap: a person must see what waits for them.
+ALWAYS_KEPT = frozenset({"run.end", "budget.hit", "approval.requested", "approval.decided"})
 
 
 def events_json_schema() -> dict[str, Any]:

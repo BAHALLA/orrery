@@ -15,6 +15,8 @@ STUDIO_ENABLED_ENV = "ORRERY_STUDIO_ENABLED"
 STUDIO_REGISTRY_ENV = "ORRERY_STUDIO_REGISTRY"
 STUDIO_CAPTURE_CONTENT_ENV = "ORRERY_STUDIO_CAPTURE_CONTENT"
 STUDIO_MODELS_ENV = "ORRERY_STUDIO_MODELS"
+#: The longest a ``human_approval`` may wait (a day).
+MAX_APPROVAL_TIMEOUT_S = 86_400
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ class StudioConfig:
     max_running: int = 8
     #: Starts per person, as a ``limits`` rate (``"10/minute"``).
     rate_limit: str = "10/minute"
+    #: Seconds a ``human_approval`` waits for its person before it expires (a reject).
+    approval_timeout_s: int = 900
 
     @classmethod
     def from_env(cls) -> StudioConfig:
@@ -92,6 +96,9 @@ class StudioConfig:
             ),
             max_running=env_int("ORRERY_STUDIO_MAX_RUNNING", cls.max_running),
             rate_limit=os.getenv("ORRERY_STUDIO_RATE_LIMIT", "").strip() or cls.rate_limit,
+            approval_timeout_s=env_int(
+                "ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS", cls.approval_timeout_s
+            ),
         )
 
     def validate(self, *, auth_enabled: bool, human_clients_configured: bool) -> None:
@@ -111,6 +118,12 @@ class StudioConfig:
         for name, value in vars(self.ceilings).items():
             if value < 1:
                 raise ValueError(f"Studio ceiling {name} must be at least 1")
+        if self.approval_timeout_s > MAX_APPROVAL_TIMEOUT_S:
+            # A waiting run holds its slot, toolsets and connections, up to
+            # MAX_APPROVALS_PER_RUN times this.
+            raise ValueError(
+                f"Studio setting approval_timeout_s must be at most {MAX_APPROVAL_TIMEOUT_S}"
+            )
         for name in (
             "max_runs",
             "max_runs_per_user",
@@ -118,6 +131,7 @@ class StudioConfig:
             "run_retention_days",
             "max_running_per_user",
             "max_running",
+            "approval_timeout_s",
         ):
             if getattr(self, name) < 1:
                 raise ValueError(f"Studio setting {name} must be at least 1")

@@ -3,6 +3,7 @@ import { readSse } from "../api/sse";
 import { config } from "../config";
 import type {
   CompositionSpec,
+  PendingApproval,
   RunSummary,
   SpecErrorWire,
   StudioEvent,
@@ -132,6 +133,31 @@ export class StudioClient {
 
   run(runId: string, signal?: AbortSignal): Promise<RunSummary> {
     return this.json<RunSummary>(`/studio/runs/${encodeURIComponent(runId)}`, undefined, signal);
+  }
+
+  /** The run's pending approvals, each with the text under review (owner only). */
+  approvals(runId: string, signal?: AbortSignal): Promise<{ approvals: PendingApproval[] }> {
+    return this.json(`/studio/runs/${encodeURIComponent(runId)}/approvals`, undefined, signal);
+  }
+
+  /**
+   * Decide one. Approving names the digest of the text that was read: the
+   * server refuses (409) a digest that is not the one under review.
+   */
+  decide(
+    runId: string,
+    approvalId: string,
+    body:
+      | { decision: "approve"; digest: string; comment?: string }
+      | {
+          decision: "reject";
+          comment?: string;
+        },
+  ): Promise<{ approval_id: string; decision: string }> {
+    return this.json(
+      `/studio/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`,
+      body,
+    );
   }
 
   cancel(runId: string): Promise<RunSummary> {

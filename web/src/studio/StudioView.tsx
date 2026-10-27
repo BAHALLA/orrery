@@ -13,6 +13,7 @@ import { primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
 import {
   addNode,
   connect,
+  relabel,
   graphToSpec,
   relayout,
   removeEdges,
@@ -660,6 +661,7 @@ export default function StudioView({ token, active = true }: Props) {
                     }}
                     onConnect={(from, to) => setGraph((g) => connect(g, from, to))}
                     onDisconnect={(edgeId) => setGraph((g) => removeEdges(g, [edgeId]))}
+                    onRelabel={(edgeId, when) => setGraph((g) => relabel(g, edgeId, when))}
                   />
                 ) : (
                   <CompositionInspector
@@ -673,6 +675,7 @@ export default function StudioView({ token, active = true }: Props) {
                 )
               ) : tab === "run" ? (
                 <RunPanel
+                  client={client}
                   view={view}
                   input={input}
                   onInput={setInput}

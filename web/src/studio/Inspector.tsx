@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { AlertIcon, TrashIcon } from "../components/icons";
 import { toneChip } from "../components/severity";
 import { fieldLabel, input, invalidInput, sectionTitle, subtleButton } from "./format";
-import { isValidId, type StudioGraph } from "./graph";
+import { APPROVAL_LABELS, isValidId, type StudioGraph } from "./graph";
 import { KindIcon } from "./icons";
 import { comingIn, KINDS, patternPhase, type Capabilities } from "./kinds";
 import { ToolPicker } from "./ToolPicker";
@@ -150,6 +150,8 @@ interface NodeInspectorProps {
   onRemove: (id: string) => void;
   onConnect: (from: string, to: string) => void;
   onDisconnect: (edgeId: string) => void;
+  /** Take an edge on another label (a human approval's approved / rejected). */
+  onRelabel: (edgeId: string, when: string) => void;
 }
 
 /** Everything about one node: what it is told, what it may call, where it hands off. */
@@ -164,6 +166,7 @@ export function NodeInspector({
   onRemove,
   onConnect,
   onDisconnect,
+  onRelabel,
 }: NodeInspectorProps) {
   const kind = KINDS[node.kind];
   const later = comingIn(node.kind, caps);
@@ -248,12 +251,17 @@ export function NodeInspector({
       ) : null}
 
       {node.kind === "human_approval" ? (
-        <Field label="Prompt" issues={fieldIssues(issues, "prompt")}>
+        <Field
+          label="Prompt"
+          issues={fieldIssues(issues, "prompt")}
+          hint="The question you are asked when the run gets here. Approved, the next node gets the text you reviewed; rejected, it gets your comment and that text, and with no edge for rejected the run ends."
+        >
           {(props) => (
             <input
               {...props}
               value={node.prompt ?? ""}
               disabled={!editable}
+              maxLength={2000}
               onChange={(e) => set({ prompt: e.target.value })}
               className={input}
             />
@@ -325,7 +333,22 @@ export function NodeInspector({
             >
               <span className="text-slate-500 dark:text-slate-400">to</span>
               <span className="font-mono">{e.target}</span>
-              {e.data?.spec.when ? (
+              {node.kind === "human_approval" ? (
+                <select
+                  aria-label={`Label of the edge to ${e.target}`}
+                  value={e.data?.spec.when ?? ""}
+                  disabled={!editable}
+                  onChange={(ev) => onRelabel(e.id, ev.target.value)}
+                  className={`${input} w-auto py-0.5 text-xs`}
+                >
+                  {e.data?.spec.when ? null : <option value="">no label</option>}
+                  {APPROVAL_LABELS.map((label) => (
+                    <option key={label} value={label}>
+                      when {label}
+                    </option>
+                  ))}
+                </select>
+              ) : e.data?.spec.when ? (
                 <span className="text-slate-500">when {e.data.spec.when}</span>
               ) : null}
               <button

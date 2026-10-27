@@ -1,4 +1,4 @@
-"""``/studio/*``: the Studio's HTTP API (AEP-031 P0a/P0b, API only).
+"""``/studio/*``: the Studio's HTTP API (AEP-031 P0a/P0b/P0c).
 
 Mounted by :func:`~orrery_core.serving.server.create_app` only when
 ``ORRERY_STUDIO_ENABLED=true``. Every route needs the admin role **and** a human
@@ -18,6 +18,13 @@ Runs:
   through the store.
 - ``POST /studio/runs/{id}/cancel`` → the summary, ``cancelled`` once it stops;
   409 for a run still going on another replica.
+- ``GET /studio/runs/{id}/approvals`` → the run's pending approvals, each with
+  the text under review (held in memory, never stored).
+- ``POST /studio/runs/{id}/approvals/{approval_id}``
+  ``{decision: approve|reject, digest?, comment?}``: approving names the
+  ``digest`` of the text it saw. 404 for no such pending approval, 409 when
+  already decided, for a digest that does not match, or for a run on another
+  replica.
 
 Compositions (shared by the Studio's admins, versioned):
 
@@ -47,11 +54,11 @@ import contextlib
 import json
 import weakref
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..a2a.remote import CardRefused
 from ..observability.audit import audit_event
@@ -59,6 +66,7 @@ from ..security.auth import AuthContext
 from ..security.guardrails import get_guard_level
 from ..security.principal import PrincipalKind
 from ..serving.rate_limit import RateLimiter, parse_rate
+from .approval import MAX_COMMENT_CHARS, ApprovalConflict, ApprovalNotFound
 from .compiler import registry_toolset
 from .events import events_json_schema
 from .runner import MAX_FOLLOWS_PER_USER, RunElsewhere, StudioService, TooManyRuns
@@ -107,6 +115,22 @@ NODE_KINDS = [
 
 class _SpecOnly(BaseModel):
     spec: dict[str, Any]
+
+
+class ApprovalDecision(BaseModel):
+    """``POST /studio/runs/{id}/approvals/{aid}``. Approving names the digest of the text seen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approve", "reject"]
+    digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    comment: str | None = Field(default=None, max_length=MAX_COMMENT_CHARS)
+
+    @model_validator(mode="after")
+    def _digest_to_approve(self) -> ApprovalDecision:
+        if self.decision == "approve" and self.digest is None:
+            raise ValueError("approving names the digest of the text under review")
+        return self
 
 
 def _errors_response(exc: SpecInvalid, prefix: tuple[str, ...] = ()) -> JSONResponse:
@@ -171,6 +195,7 @@ def capabilities(service: StudioService) -> dict[str, Any]:
         "per_node_models": True,
         "models": sorted(service.config.models),
         "human_approval": "human_approval" not in UNSUPPORTED_KINDS,
+        "approval_timeout_s": service.config.approval_timeout_s,
         "stored_compositions": True,
         "limits": {
             "max_nodes": MAX_NODES,
@@ -294,6 +319,51 @@ def mount_studio(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
         audit_event("studio_run_cancelled", subject=auth.subject, run_id=run_id)
         return summary_of(run)
+
+    @api.get("/studio/runs/{run_id}/approvals")
+    async def run_approvals(run_id: str, auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
+        """The run's pending approvals, each with the text under review (owner only)."""
+        run = await own_run(run_id, auth)
+        if isinstance(run, RunRecord):
+            if not run.finished:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="this run is on another replica; its approvals are read there",
+                )
+            return {"approvals": []}
+        return {"approvals": [p.view(with_text=True) for p in run.pending_approvals()]}
+
+    @api.post("/studio/runs/{run_id}/approvals/{approval_id}")
+    async def decide_approval(
+        run_id: str,
+        approval_id: str,
+        request: Request,
+        auth: AuthContext = Depends(studio_admin),  # noqa: B008
+    ) -> Any:
+        limiter.hit(write_rate, f"studio-decide:{auth.subject}")
+        try:
+            body = ApprovalDecision.model_validate(await json_body(request))
+        except ValidationError as exc:
+            return _errors_response(SpecInvalid(errors_from_validation(exc)))
+        run = await own_run(run_id, auth)
+        try:
+            outcome = service.decide(
+                run,
+                approval_id,
+                auth,
+                approve=body.decision == "approve",
+                digest=body.digest,
+                comment=body.comment,
+            )
+        except RunElsewhere as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
+        except ApprovalNotFound:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="No such pending approval"
+            ) from None
+        except ApprovalConflict as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
+        return {"approval_id": approval_id, "decision": outcome.decision}
 
     @api.get("/studio/runs/{run_id}/events")
     async def run_events(

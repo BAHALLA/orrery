@@ -27,6 +27,8 @@ const ring: Record<string, string> = {
   failed: "border-crit-solid ring-2 ring-crit-solid/20",
   cancelled: "border-refused-border border-dashed",
   budget_exhausted: "border-warn-solid ring-2 ring-warn-solid/25",
+  awaiting: "border-warn-solid ring-4 ring-warn-solid/30 shadow-lg shadow-warn-solid/20",
+  rejected: "border-refused-border border-dashed",
 };
 
 // React Flow styles handles itself; `!` wins over its stylesheet.
@@ -95,6 +97,12 @@ export const NodeCard = memo(function NodeCard({ data, selected }: NodeProps<Stu
           </span>
         ) : status === "active" ? (
           <OrbitSpinner className={toneText.running} />
+        ) : status === "awaiting" ? (
+          <span
+            className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${toneChip.warn}`}
+          >
+            awaiting you
+          </span>
         ) : status === "ok" ? (
           <CheckIcon size={14} className={toneText.ok} />
         ) : status !== "pending" ? (

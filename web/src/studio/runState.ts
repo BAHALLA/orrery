@@ -1,5 +1,6 @@
 import type {
   A2aMessageEvent,
+  ApprovalDecision,
   BudgetHitEvent,
   McpCallEvent,
   NodeOutcome,
@@ -20,8 +21,11 @@ import type {
  * events never break an older console.
  */
 
-/** `unknown`: the node was running when the console lost the run. */
-export type NodeRunStatus = "pending" | "active" | NodeOutcome | "unknown";
+/**
+ * `awaiting`: a human approval waiting for its person. `unknown`: the node was
+ * running when the console lost the run.
+ */
+export type NodeRunStatus = "pending" | "active" | "awaiting" | NodeOutcome | "unknown";
 
 export interface NodeRun {
   id: string;
@@ -46,6 +50,25 @@ export interface A2aExchange {
   skill: string;
   outbound: A2aMessageEvent | null;
   inbound: A2aMessageEvent | null;
+}
+
+/** One decision the run asked a person for, from its `approval.*` events. */
+export interface ApprovalAsk {
+  approvalId: string;
+  nodeId: string;
+  prompt: string;
+  digest: string;
+  size: number;
+  /** Unix seconds; undecided by then, it expires. */
+  expiresAt: number;
+  /** `null` while it waits. */
+  decision: ApprovalDecision | null;
+  /** Unix seconds: when it was asked. */
+  requestedAt: number;
+  /** How long the person took, once decided. */
+  waitedMs: number | null;
+  /** The text under review, when the server captures content. */
+  content: string | null;
 }
 
 /**
@@ -78,6 +101,7 @@ export interface RunView {
   droppedEvents: number;
   mcp: McpCallEvent[];
   a2a: A2aExchange[];
+  approvals: ApprovalAsk[];
   input: string | null;
   output: string | null;
 }
@@ -105,6 +129,7 @@ export function initialRun(runId: string): RunView {
     droppedEvents: 0,
     mcp: [],
     a2a: [],
+    approvals: [],
     input: null,
     output: null,
   };
@@ -223,6 +248,36 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
           : next),
         a2a: addA2a(next.a2a, event),
       };
+    case "approval.requested":
+      return {
+        ...patchNode(next, event.node_id, () => ({ status: "awaiting" })),
+        approvals: [
+          ...next.approvals,
+          {
+            approvalId: event.approval_id,
+            nodeId: event.node_id,
+            prompt: event.prompt,
+            digest: event.digest,
+            size: event.size,
+            expiresAt: event.expires_at,
+            decision: null,
+            requestedAt: event.ts,
+            waitedMs: null,
+            content: event.content ?? null,
+          },
+        ],
+      };
+    case "approval.decided":
+      return {
+        ...patchNode(next, event.node_id, (n) => ({
+          status: n.status === "awaiting" ? "active" : n.status,
+        })),
+        approvals: next.approvals.map((a) =>
+          a.approvalId === event.approval_id
+            ? { ...a, decision: event.decision, waitedMs: event.waited_ms }
+            : a,
+        ),
+      };
     case "budget.hit":
       return { ...next, budgetHit: event };
     case "run.end": {
@@ -230,7 +285,9 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
       const nodes = Object.fromEntries(
         Object.entries(next.nodes).map(([id, n]) => [
           id,
-          n.status === "active" ? { ...n, status: outcomeOfNode(event.outcome) } : n,
+          n.status === "active" || n.status === "awaiting"
+            ? { ...n, status: outcomeOfNode(event.outcome) }
+            : n,
         ]),
       ) as Record<string, NodeRun>;
       return {
@@ -255,8 +312,16 @@ function outcomeOfNode(outcome: RunOutcome): NodeOutcome {
 
 function settleActive(view: RunView, status: NodeRunStatus): Record<string, NodeRun> {
   return Object.fromEntries(
-    Object.entries(view.nodes).map(([id, n]) => [id, n.status === "active" ? { ...n, status } : n]),
+    Object.entries(view.nodes).map(([id, n]) => [
+      id,
+      n.status === "active" || n.status === "awaiting" ? { ...n, status } : n,
+    ]),
   );
+}
+
+/** The decisions the run waits for now, oldest first. */
+export function waitingApprovals(view: RunView): ApprovalAsk[] {
+  return isFinished(view) ? [] : view.approvals.filter((a) => a.decision === null);
 }
 
 /**
@@ -306,6 +371,20 @@ export function tokensSoFar(view: RunView): TokenCount {
  * calls (MCP calls plus remote calls), remote calls, and wall time. Delegations
  * are only in the totals. Exact once `run.end` arrives.
  */
+/**
+ * Seconds the run has spent waiting for people: not compute time, so the
+ * server pauses `timeout_s` while it lasts, and the meter leaves it out too.
+ */
+export function humanWaitS(view: RunView, now: number): number {
+  let ms = 0;
+  for (const a of view.approvals) {
+    if (a.waitedMs !== null) ms += a.waitedMs;
+    else if (a.decision === null && !isFinished(view))
+      ms += Math.max(0, now - a.requestedAt) * 1000;
+  }
+  return ms / 1000;
+}
+
 export function budgetUse(
   view: RunView,
   now: number,
@@ -317,13 +396,15 @@ export function budgetUse(
         max_tool_calls: view.totals.tool_calls,
         max_delegations: view.totals.delegations,
         max_remote_calls: view.totals.remote_calls,
-        timeout_s: Math.round(view.totals.wall_ms / 1000),
+        timeout_s: Math.max(0, Math.round(view.totals.wall_ms / 1000 - humanWaitS(view, now))),
       }
     : {
         max_tokens: tokensSoFar(view).total,
         max_tool_calls: view.mcp.length + remote,
         max_remote_calls: remote,
-        timeout_s: view.startedAt ? Math.max(0, Math.round(now - view.startedAt)) : 0,
+        timeout_s: view.startedAt
+          ? Math.max(0, Math.round(now - view.startedAt - humanWaitS(view, now)))
+          : 0,
       };
   if (view.budgetHit) used[view.budgetHit.budget] = view.budgetHit.used;
   return Object.entries(view.budgets)

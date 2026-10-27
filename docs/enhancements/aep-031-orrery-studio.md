@@ -200,6 +200,10 @@ on its own. Instead, the node:
 A remote agent's `input-required` uses the same path: a human answers it, never
 a model.
 
+*As built (P0c), the mechanism is simpler than the plan above:* see
+[P0c as built](#p0c-as-built). The guarantees (only the owner, once, against a
+digest of what was read) are the same.
+
 ### 4. Trace events v2
 
 Superset of `ProgressStep`, on the studio SSE stream only:
@@ -520,13 +524,64 @@ Where the code differs from, or pins down, the design above:
   stays on the running replica; elsewhere it is a 409. A run whose replica
   died reads as `failed` two minutes past its deadline.
 - **`spec_version` stays 1**: P0b only gave meaning to fields P0a parsed and
-  refused. `handoff`, `remote_a2a` and `human_approval` stay refused.
+  refused. `handoff`, `remote_a2a` and `human_approval` stay refused
+  (`human_approval` runs since P0c).
 - **For the console** (P1): `POST /studio/validate`, `capabilities` and
   `budget_ceilings` in `/studio/schema`, each MCP tool's description and input
   schema (as pinned) in `/studio/registry`, and `studio_available` in `/me`.
   An MCP "try it" call is not built.
 - **Templates** are tested specs in `deploy/studio-demo/specs/`, one per
   pattern; the demo spec moved there as `critic-loop.json` and now loops.
+
+### P0c as built
+
+**Human approval** (`studio/approval.py`). The plan above paused the run with
+a `RequestInput` interrupt and had the server inject the resume. A Studio run
+is one asyncio task held in memory on the replica running it, so the node
+simply **waits in that task**, on a future that only
+`RunApprovals.decide()` resolves, reached only through
+`POST /studio/runs/{id}/approvals/{aid}` for the run's owner (a human admin,
+like every Studio route). There is no resume event, so there is nothing for a
+client or a model to forge; the cost is the same as cancel's: a decision must
+reach the running replica (elsewhere, 409).
+
+- **Approve names a digest.** The person reads the text from
+  `GET /studio/runs/{id}/approvals` (held in memory only, owner only) and
+  approves its SHA-256; another digest is a 409. The text is **not redacted**:
+  the first cut redacted credentials and emails while the digest, and the
+  next node, had the original, so a person could approve
+  `[REDACTED_EMAIL]` and send the real address on. Now what is shown is what
+  runs on, the console recomputes the digest from what it shows, and text over
+  128 KiB (served in part) can only be rejected. Reject needs no digest.
+- **Once**, and **default deny**: a second decision is a 409; an approval
+  undecided after `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` (900, at most a
+  day) expires, and an expiry always ends the run `rejected`, never takes an
+  edge. The approval's future is the one arbiter: the expiry (`call_later`),
+  a cancel (`cancel_all()`, called before the task is cancelled) and a
+  decision each settle it, and a decision that loses gets a 409 rather than a
+  200 the audit log would then contradict.
+- **The deadline pauses.** The run's `timeout_s` is an `asyncio.timeout` the
+  runner owns (the gateway's turn timeout is off for Studio runs), rescheduled
+  while any approval waits; the ledger's deadline check subtracts the paused
+  time. A person's time is not the run's compute budget.
+- **Graph.** The node is an async `FunctionNode` that routes on
+  `approved`/`rejected`. A rejection with a `rejected` edge sends that node the
+  comment and the rejected text; without one the run ends `rejected`, and so
+  does a rejection past the loop's `max_iterations` (a loop's "stop" would
+  otherwise end the branch with the turned-down draft as the run's output).
+  Approvals may not sit on a parallel branch or feed a `router`, and a run asks
+  for at most 12 (a loop around one is also capped by `max_iterations`).
+- **Trace.** `approval.requested` and `approval.decided` carry ids, the digest,
+  size, expiry, decision and wait; content only with capture on. They are
+  always kept when a run hits the event cap. Decisions are audited
+  (`studio_approval_decided`).
+- **Console.** An approval card in the Run tab (text, comment, time left;
+  Approve stays off until the text is read), *awaiting you* on the node, label
+  aware edge drawing, and a human-review template
+  (`deploy/studio-demo/specs/human-review.json`).
+
+Still to come in P0c: a remote's `input-required` answered by a person,
+`effect: acting` remotes, and registry editing.
 
 ## Security
 
@@ -566,7 +621,7 @@ Where the code differs from, or pins down, the design above:
 
 - [ ] Every node kind compiles and runs; a recorded run replays to the same graph state.
 - [ ] A loop stops at its cap, and a ledger budget ends the run with `budget.hit`.
-- [ ] An approval can only be resumed by a human admin, once (P0c).
+- [x] An approval can only be resumed by a human admin, once (P0c): the run's owner, against the digest of the text they read; expiry is a rejection (`test_studio_approval.py`).
 - [ ] The console builds every pattern template, runs it and renders the live graph; axe-clean in both themes (P1).
 
 ## Open Questions

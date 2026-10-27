@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import schema from "./fixtures/studio-schema.json";
 import { capabilitiesFrom, comingIn, P0A } from "./kinds";
-import { RELEASE_NOTES, TEMPLATES, templateNeeds } from "./templates";
+import { RELEASE_NOTES, RELEASE_NOTES_REVIEWED, TEMPLATES, templateNeeds } from "./templates";
 import { DEMO_REGISTRY } from "./fixtures/registry";
 import type { CompositionSpec, JsonSchema } from "./types";
 import {
@@ -17,6 +17,7 @@ import {
 // the console's release-notes template): the image's build
 // context is web/ alone, so tests (type-checked by `npm run build`) can't
 // import from deploy/. The test below keeps the two identical.
+import reviewedSpec from "./fixtures/human-review.spec.json";
 import demoSpec from "./fixtures/release-notes.spec.json";
 
 /**
@@ -25,10 +26,13 @@ import demoSpec from "./fixtures/release-notes.spec.json";
  * failing to compile. Where the tests run (CI, `make test-web`), the test
  * below fails if it finds nothing, so a moved file cannot pass by skipping.
  */
-const deployCopies = import.meta.glob<unknown>("../../../deploy/studio-demo/specs/pipeline.json", {
-  eager: true,
-  import: "default",
-});
+const deployCopies = import.meta.glob<unknown>(
+  [
+    "../../../deploy/studio-demo/specs/pipeline.json",
+    "../../../deploy/studio-demo/specs/human-review.json",
+  ],
+  { eager: true, import: "default" },
+);
 
 // The real published schema, dumped from the server (GET /studio/schema).
 const SPEC_SCHEMA = (schema as { spec: JsonSchema }).spec;
@@ -43,22 +47,27 @@ function withNode(patch: Record<string, unknown>, index = 1): CompositionSpec {
 }
 
 describe("templates", () => {
-  it("ship the demo spec verbatim", () => {
+  it("ship the demo specs verbatim", () => {
     expect(RELEASE_NOTES).toEqual(demoSpec);
+    expect(RELEASE_NOTES_REVIEWED).toEqual(reviewedSpec);
   });
 
   // If the deploy file moves, point the glob above at it: this fails, not skips.
   it("the fixture is the deploy copy of the demo pipeline, unchanged", () => {
-    expect(Object.keys(deployCopies)).toHaveLength(1);
-    expect(Object.values(deployCopies)).toEqual([demoSpec]);
+    expect(Object.keys(deployCopies)).toHaveLength(2);
+    expect(deployCopies["../../../deploy/studio-demo/specs/pipeline.json"]).toEqual(demoSpec);
+    expect(deployCopies["../../../deploy/studio-demo/specs/human-review.json"]).toEqual(
+      reviewedSpec,
+    );
   });
 
-  it("enable what P0a runs and mark the rest as needing P0b", () => {
+  it("enable what P0a runs and mark the rest with the phase that brings them", () => {
     const p0a = { ...P0A, known: true };
     const enabled = TEMPLATES.filter((t) => templateNeeds(t, p0a) === null).map((t) => t.id);
     expect(enabled).toEqual(["pipeline", "release-notes"]);
     for (const t of TEMPLATES.filter((t) => !enabled.includes(t.id))) {
-      expect(templateNeeds(t, p0a)).toBe("P0b");
+      // The latest phase a template needs: human review waits for P0c.
+      expect(templateNeeds(t, p0a)).toBe(t.id === "human-review" ? "P0c" : "P0b");
     }
   });
 
@@ -138,10 +147,28 @@ describe("capabilitiesFrom", () => {
     expect(capabilitiesFrom({ ...P0B_SERVER, per_node_models: false }).models).toEqual([]);
   });
 
-  it("lets a P0b server load every template but handoff", () => {
+  it("lets a P0b server load every template but human review and handoff", () => {
     const caps = capabilitiesFrom(P0B_SERVER);
     const blocked = TEMPLATES.filter((t) => templateNeeds(t, caps) !== null).map((t) => t.id);
-    expect(blocked).toEqual(TEMPLATES.filter((t) => t.spec.pattern === "handoff").map((t) => t.id));
+    expect(blocked).toEqual(["human-review", "handoff"]);
+    expect(
+      templateNeeds(
+        TEMPLATES.find((t) => t.id === "human-review")!,
+        caps,
+      ),
+    ).toBe("P0c");
+  });
+
+  it("lets a P0c server run human review", () => {
+    const caps = capabilitiesFrom({
+      ...P0B_SERVER,
+      node_kinds: [...P0B_SERVER.node_kinds, "human_approval"],
+      unsupported_node_kinds: { remote_a2a: P0B_SERVER.unsupported_node_kinds.remote_a2a },
+      human_approval: true,
+    });
+    const review = TEMPLATES.find((t) => t.id === "human-review")!;
+    expect(templateNeeds(review, caps)).toBeNull();
+    expect(validate(review.spec, SPEC_SCHEMA, { caps, registry: DEMO_REGISTRY })).toEqual([]);
   });
 
   it("names the phase the server gives, not a guess", () => {
@@ -298,6 +325,29 @@ describe("this release's rules", () => {
       loc: ["nodes", 3, "kind"],
       msg: expect.stringMatching(/P0b/),
     });
+  });
+
+  it("refuse a human approval's edge without its label, or a label taken twice", () => {
+    const edges = [
+      { from: "research", to: "writer" },
+      { from: "writer", to: "review" },
+      { from: "review", to: "publisher" },
+      { from: "review", to: "writer", when: "approved" },
+      { from: "review", to: "publisher", when: "approved" },
+    ];
+    const issues = checkComposition({ ...RELEASE_NOTES_REVIEWED, edges }, ctx);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          loc: ["edges", 2, "when"],
+          msg: expect.stringMatching(/approved or rejected/),
+        }),
+        expect.objectContaining({
+          loc: ["edges", 4, "when"],
+          msg: expect.stringMatching(/one per label/),
+        }),
+      ]),
+    );
   });
 
   it("check tool references against the registry, read-only only", () => {

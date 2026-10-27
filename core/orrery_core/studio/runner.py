@@ -54,8 +54,15 @@ from ..security.auth import AUTH_STATE_KEY, AuthContext
 from ..security.identity import CallerIdentity
 from ..security.principal import STUDIO_SESSION_PREFIX
 from ..serving.gateway import AgentGateway, TurnTimedOut
+from .approval import (
+    ApprovalOutcome,
+    PendingApproval,
+    RunApprovals,
+    TooManyApprovals,
+)
 from .compiler import (
     LABELLED_PREFIX,
+    ApprovalRejected,
     CompiledComposition,
     McpPins,
     NodeInfo,
@@ -104,7 +111,7 @@ logger = logging.getLogger("orrery.studio")
 
 APP_NAME = "orrery-studio"
 
-RunStatus = Literal["running", "succeeded", "failed", "cancelled", "budget_exhausted"]
+RunStatus = Literal["running", "succeeded", "failed", "cancelled", "budget_exhausted", "rejected"]
 
 
 class TooManyRuns(Exception):
@@ -144,6 +151,13 @@ class StudioRun:
     redact_ips: bool = False
     max_content_bytes: int = 256 * 1024
     content_bytes: int = 0
+    #: Its human approvals (P0c); set when the run starts executing.
+    approvals: RunApprovals | None = None
+    #: Unix seconds the run's compute deadline falls at, moved on by the time
+    #: spent waiting for people (``None``: ``created_at`` + its timeout).
+    deadline_at: float | None = None
+    #: Compute seconds left while paused for an approval.
+    paused_remaining: float | None = None
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
 
     @property
@@ -194,6 +208,9 @@ class StudioRun:
             async with asyncio.timeout(timeout):
                 await changed.wait()
 
+    def pending_approvals(self) -> list[PendingApproval]:
+        return self.approvals.pending() if self.approvals is not None else []
+
     def summary(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -211,7 +228,15 @@ class StudioRun:
             "dropped_events": self.dropped,
             # This replica runs it: it can be cancelled here.
             "cancellable": not self.finished,
+            "pending_approvals": [p.view(with_text=False) for p in self.pending_approvals()],
         }
+
+    def deadline(self, timeout_s: int) -> float:
+        """When other replicas may take this run as lost (its deadline, plus waits)."""
+        if self.paused_remaining is not None and self.approvals is not None:
+            expiry = self.approvals.latest_expiry() or time.time()
+            return expiry + self.paused_remaining
+        return self.deadline_at if self.deadline_at is not None else self.created_at + timeout_s
 
     def record(self, replica: str, timeout_s: int) -> RunRecord:
         """The run as stored, for the other replicas."""
@@ -224,7 +249,7 @@ class StudioRun:
             pattern=self.spec.pattern,
             status=self.status,
             created_at=self.created_at,
-            deadline=self.created_at + timeout_s,
+            deadline=self.deadline(timeout_s),
             composition_id=self.composition_id,
             composition_version=self.composition_version,
             ended_at=self.ended_at,
@@ -294,6 +319,11 @@ class StudioRunPlugin(BasePlugin):
 
     def answer_of(self, node_id: str) -> str | None:
         return self._answers.get(node_id)
+
+    async def request_approval(self, node_id: str, prompt: str, text: str) -> ApprovalOutcome:
+        if self._run.approvals is None:
+            return ApprovalOutcome("rejected")  # no way to ask: never approve
+        return await self._run.approvals.request(node_id=node_id, prompt=prompt, text=text)
 
     def hold_inbound(self, event: A2aMessage, call_id: str | None) -> None:
         key = (event.node_id, call_id)
@@ -541,6 +571,52 @@ def studio_plugins() -> list[BasePlugin]:
 
 class RunElsewhere(Exception):
     """A run that is still going on another replica: only that one can cancel it."""
+
+
+class _Deadline:
+    """A run's compute deadline, paused while any of its approvals waits for a person.
+
+    The run's ``timeout_s`` budgets models and tools, not people: a run that
+    waits ten minutes for an approval still has the compute time it had when
+    it paused. The approval's own timeout bounds the wait.
+    """
+
+    def __init__(self, run: StudioRun, timeout_s: int) -> None:
+        self._run = run
+        self._timeout: asyncio.Timeout | None = None
+        self._remaining = float(timeout_s)
+        self._paused_at: float | None = None
+        #: Seconds spent waiting for people.
+        self.paused = 0.0
+        run.deadline_at = run.created_at + timeout_s
+
+    def bind(self, timeout: asyncio.Timeout) -> None:
+        self._timeout = timeout
+
+    def waiting(self, waiting: bool) -> None:
+        timeout = self._timeout
+        if timeout is None:
+            return
+        loop = asyncio.get_running_loop()
+        if timeout.expired():
+            return  # the deadline already fired: the run is ending on it
+        if waiting and self._paused_at is None:
+            when = timeout.when()
+            remaining = max(0.0, when - loop.time()) if when is not None else 0.0
+            try:
+                timeout.reschedule(None)
+            except RuntimeError:  # expiring: its cancel is on the way
+                return
+            self._remaining = remaining
+            self._paused_at = time.monotonic()
+            self._run.paused_remaining = self._remaining
+        elif not waiting and self._paused_at is not None:
+            self.paused += time.monotonic() - self._paused_at
+            self._paused_at = None
+            with contextlib.suppress(RuntimeError):  # the run is unwinding
+                timeout.reschedule(loop.time() + self._remaining)
+            self._run.paused_remaining = None
+            self._run.deadline_at = time.time() + self._remaining
 
 
 #: Seconds between store writes of a run in flight (events are batched).
@@ -860,8 +936,50 @@ class StudioService:
                     "(route the console's requests to one replica, sticky sessions)"
                 )
             return
+        if run.approvals is not None:
+            # Settled first, so a decision arriving before the task unwinds is
+            # refused rather than reported as taken.
+            run.approvals.cancel_all()
         if run.task is not None and not run.task.done():
             run.task.cancel()
+
+    def decide(
+        self,
+        run: StudioRun | RunRecord,
+        approval_id: str,
+        auth: AuthContext,
+        *,
+        approve: bool,
+        digest: str | None = None,
+        comment: str | None = None,
+    ) -> ApprovalOutcome:
+        """Decide one of *run*'s approvals, here; elsewhere raises :class:`RunElsewhere`.
+
+        Raises :class:`~.approval.ApprovalNotFound` (no such pending approval,
+        or the run has ended) and :class:`~.approval.ApprovalConflict`.
+        """
+        from .approval import ApprovalNotFound
+
+        if isinstance(run, RunRecord):
+            if not run.finished:
+                raise RunElsewhere(
+                    "this run is on another replica; only that replica can take its "
+                    "decisions (route the console's requests to one replica, sticky sessions)"
+                )
+            raise ApprovalNotFound(approval_id)
+        if run.approvals is None:
+            raise ApprovalNotFound(approval_id)
+        node_id = run.approvals.node_of(approval_id)
+        outcome = run.approvals.decide(approval_id, approve=approve, digest=digest, comment=comment)
+        audit_event(
+            "studio_approval_decided",
+            subject=auth.subject,
+            run_id=run.run_id,
+            approval_id=approval_id,
+            node_id=node_id,
+            decision=outcome.decision,
+        )
+        return outcome
 
     async def shutdown(self) -> None:
         tasks = [r.task for r in self._runs.values() if r.task is not None and not r.task.done()]
@@ -933,6 +1051,13 @@ class StudioService:
         )
         compiled: CompiledComposition | None = None
         plugin = StudioRunPlugin(run, ledger)
+        deadline = _Deadline(run, budgets.timeout_s)
+        approvals = run.approvals = RunApprovals(
+            timeout_s=self.config.approval_timeout_s,
+            emit=run.emit,
+            capture=run.capture,
+        )
+        approvals.on_waiting = deadline.waiting
         outcome: RunOutcome = "failed"
         node_outcome: NodeOutcome = "failed"
         error: str | None = None
@@ -959,7 +1084,8 @@ class StudioService:
                 memory_service=None,
                 events_compaction_config=None,
                 verified_confirmation=True,
-                turn_timeout=float(budgets.timeout_s),
+                # The run keeps its own deadline, paused while a person decides.
+                turn_timeout=0,
             )
             session_id = f"{STUDIO_SESSION_PREFIX}{run.run_id}"
             await gateway.sessions.create_session(
@@ -972,14 +1098,21 @@ class StudioService:
                 if plugin.failure is not None:
                     raise _NodeFailed
 
-            await gateway.run_in_session(
-                user_id=auth.subject,
-                session_id=session_id,
-                text=run.input,
-                state_delta={AUTH_STATE_KEY: auth.as_state()},
-                on_event=stop_when_spent,
-                identity=self._caller_identity(auth) if self._caller_identity else None,
-            )
+            try:
+                async with asyncio.timeout(budgets.timeout_s) as timeout:
+                    deadline.bind(timeout)
+                    await gateway.run_in_session(
+                        user_id=auth.subject,
+                        session_id=session_id,
+                        text=run.input,
+                        state_delta={AUTH_STATE_KEY: auth.as_state()},
+                        on_event=stop_when_spent,
+                        identity=self._caller_identity(auth) if self._caller_identity else None,
+                    )
+            except TimeoutError as exc:
+                if not timeout.expired():
+                    raise  # a tool's or a model's own timeout, not the run's
+                raise TurnTimedOut(budgets.timeout_s) from exc
             if ledger.exhausted is not None:
                 outcome, node_outcome = "budget_exhausted", "budget_exhausted"
             elif plugin.failure is not None:
@@ -997,10 +1130,16 @@ class StudioService:
         except RouteFailed as exc:
             error = str(exc)
             outcome, node_outcome = "failed", "failed"
+        except ApprovalRejected as exc:
+            error = str(exc)
+            outcome, node_outcome = "rejected", "cancelled"
+        except TooManyApprovals as exc:
+            error = str(exc)
+            outcome, node_outcome = "failed", "failed"
         except _BudgetStop:
             outcome, node_outcome = "budget_exhausted", "budget_exhausted"
         except TurnTimedOut:
-            hit = ledger.deadline(time.monotonic() - started)
+            hit = ledger.deadline(time.monotonic() - started - deadline.paused)
             run.emit(BudgetHit(budget=hit.budget, limit=hit.limit, used=hit.used))
             outcome, node_outcome = "budget_exhausted", "budget_exhausted"
         except asyncio.CancelledError:
@@ -1012,7 +1151,15 @@ class StudioService:
         except Exception as exc:  # noqa: BLE001 - a failed run is an outcome, not a crash
             route_failed = _route_failure(exc)
             unlabelled = _unlabelled_node(exc, plugin)
-            if route_failed is not None:
+            rejected = _found(exc, ApprovalRejected)
+            too_many = _found(exc, TooManyApprovals)
+            if rejected is not None:
+                error = str(rejected)
+                outcome, node_outcome = "rejected", "cancelled"
+            elif too_many is not None:
+                error = str(too_many)
+                outcome, node_outcome = "failed", "failed"
+            elif route_failed is not None:
                 error = str(route_failed)
             elif unlabelled is not None:
                 node_id, labels = unlabelled
@@ -1023,8 +1170,10 @@ class StudioService:
             else:
                 logger.exception("Studio run %s failed", run.run_id)
                 error = type(exc).__name__
-            outcome, node_outcome = "failed", "failed"
+            if rejected is None:
+                outcome, node_outcome = "failed", "failed"
         finally:
+            approvals.cancel_all()
             if compiled is not None:
                 # Shielded: a cancelled run still closes its MCP sessions.
                 # Bounded: a server that never answers its close does not
@@ -1153,6 +1302,11 @@ def _unlabelled_node(exc: BaseException, plugin: StudioRunPlugin) -> tuple[str, 
     return None
 
 
+def _found[E: BaseException](exc: BaseException, kind: type[E]) -> E | None:
+    """The *kind* exception behind *exc*, if ADK wrapped one."""
+    return next((e for e in _chain(exc) if isinstance(e, kind)), None)
+
+
 def _route_failure(exc: BaseException) -> RouteFailed | None:
     """The :class:`RouteFailed` behind *exc*, if ADK wrapped one."""
-    return next((e for e in _chain(exc) if isinstance(e, RouteFailed)), None)
+    return _found(exc, RouteFailed)

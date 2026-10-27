@@ -14,8 +14,8 @@ Tools are referenced by id only, never by import path:
 The models describe every node kind the AEP plans, so a console can be built
 against one schema. P0b runs ``llm_agent``, ``router``, ``parallel``/``join``
 and ``supervisor`` nodes, labelled and looping edges, and per-node models;
-:func:`validate_spec` refuses the rest (``remote_a2a``, ``human_approval``,
-the ``handoff`` pattern) field by field, and checks the graph
+P0c adds ``human_approval``. :func:`validate_spec` refuses the rest
+(``remote_a2a``, the ``handoff`` pattern) field by field, and checks the graph
 (:func:`plan_graph`), before any model call.
 
 The format is the one P0a published (``spec_version`` 1): P0b only lets
@@ -174,10 +174,20 @@ class SupervisorNode(_Node):
 
 
 class HumanApprovalNode(_Node):
-    """Pauses the run until a human admin approves (P0c)."""
+    """Pauses the run until the person who started it decides (P0c).
+
+    Its answer is labelled ``approved`` or ``rejected`` (:data:`APPROVAL_LABELS`),
+    so its edges are taken on those. An approved branch gets the text that
+    was reviewed; a rejected one gets the reviewer's comment and that text. A
+    rejection with no edge for it ends the run ``rejected``.
+    """
 
     kind: Literal["human_approval"]
     prompt: str = Field(min_length=1, max_length=2000)
+
+
+#: The labels a ``human_approval`` node's edges are taken on.
+APPROVAL_LABELS = ("approved", "rejected")
 
 
 Node = Annotated[
@@ -194,7 +204,6 @@ Node = Annotated[
 #: The phase that brings each node kind not runnable yet.
 UNSUPPORTED_KINDS = {
     "remote_a2a": "P1; use an llm_agent with an a2a: tool",
-    "human_approval": "P0c",
 }
 #: Patterns the console knows but the server cannot run yet.
 UNSUPPORTED_PATTERNS = {"handoff": "P1; a router between agents does the same"}
@@ -584,12 +593,12 @@ class GraphPlan:
     def labels(self, spec: CompositionSpec, node_id: str) -> list[str] | None:
         """The labels edges out of *node_id* are taken on (a router's: its source's)."""
         by_id = {n.id: n for n in spec.nodes}
-        node = by_id[self.router_source.get(node_id, node_id)]
-        output = getattr(node, "output", None)
-        return list(output.labels) if output is not None else None
+        return _labels_of(by_id[self.router_source.get(node_id, node_id)])
 
 
 def _labels_of(node: Any) -> list[str] | None:
+    if isinstance(node, HumanApprovalNode):
+        return list(APPROVAL_LABELS)
     output = getattr(node, "output", None)
     return list(output.labels) if output is not None else None
 
@@ -713,6 +722,15 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
             continue
         incoming = [j for j in into[name] if j not in back]
         sources = [spec.edges[j].from_ for j in incoming]
+        if len(sources) == 1 and by_id[sources[0]].kind == "human_approval":
+            errors.append(
+                SpecError(
+                    ("nodes", index[name]),
+                    f"a router cannot follow human approval {sources[0]!r}: give the "
+                    "approval's own edges when: approved / rejected",
+                )
+            )
+            continue
         if len(sources) != 1 or _labels_of(by_id[sources[0]]) is None:
             errors.append(
                 SpecError(
@@ -924,6 +942,15 @@ def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]
                     )
                 )
                 return None
+            if node.kind == "human_approval":
+                errors.append(
+                    SpecError(
+                        ("nodes", index[n]),
+                        f"{n!r} is on a branch of parallel {par!r}: a human approval "
+                        "waits after the join (one decision on the combined answer)",
+                    )
+                )
+                return None
             if node.kind == "router" or _labels_of(node) is not None:
                 errors.append(
                     SpecError(
@@ -1033,10 +1060,18 @@ _PATTERN_NEEDS: dict[str, tuple[str, Callable[[CompositionSpec, GraphPlan], bool
         lambda s, p: bool(p.join_of or p.back_edges),
     ),
     "pipeline": (
-        "no labels, fan-out or loops",
-        lambda s, p: not (p.join_of or p.back_edges or any(e.when for e in s.edges)),
+        "no labels (but a human approval's), fan-out or loops",
+        lambda s, p: not (p.join_of or p.back_edges or _labelled_edges(s, gates=False)),
     ),
 }
+
+
+def _labelled_edges(spec: CompositionSpec, *, gates: bool) -> bool:
+    """Whether an edge is taken on a label; *gates* counts a human approval's."""
+    kinds = {n.id: n.kind for n in spec.nodes}
+    return any(
+        e.when is not None and (gates or kinds.get(e.from_) != "human_approval") for e in spec.edges
+    )
 
 
 def _check_pattern(spec: CompositionSpec, plan: GraphPlan) -> list[SpecError]:
