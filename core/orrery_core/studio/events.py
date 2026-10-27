@@ -199,9 +199,13 @@ class ApprovalRequested(_Event):
     type: Literal["approval.requested"] = "approval.requested"
     node_id: str
     approval_id: str
-    kind: str
-    #: The question the composition asks (from the spec, not a model).
+    #: ``approval`` (a ``human_approval`` node) or ``input`` (a remote's question).
+    kind: Literal["approval", "input"]
+    #: The question: the spec's ``prompt`` for an approval, Orrery's own words
+    #: naming the remote for an input (never a model's or a remote's text).
     prompt: str
+    #: The remote asking (``<entry>.<skill>``), for an ``input``.
+    remote: str | None = None
     #: SHA-256 of the text under review; approving names it.
     digest: str
     size: int
@@ -214,10 +218,11 @@ class ApprovalDecided(_Event):
     type: Literal["approval.decided"] = "approval.decided"
     node_id: str
     approval_id: str
-    kind: str
+    kind: Literal["approval", "input"]
     decision: Literal["approved", "rejected", "expired", "cancelled"]
     waited_ms: int
-    #: The reviewer's comment (capture on only).
+    #: The reviewer's comment (capture on only). An answer to a remote is
+    #: captured as the outbound ``a2a.message`` it becomes.
     content: str | None = None
 
 

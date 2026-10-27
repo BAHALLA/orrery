@@ -9,12 +9,16 @@ import type { ApprovalAsk } from "./runState";
 import type { PendingApproval } from "./types";
 
 const TEXT = "# Release 0.11";
+// sha256 of QUESTION.
+const QUESTION_DIGEST = "f0d6df84f200b006c75f0b1d4dcfc2db23ea1b77bcf4c56684235940891425e0";
 // sha256 of TEXT.
 const DIGEST = "613d9f9fe23668fe504b263921d534ac90ae1f56a74c11aba3fddf7bd43c4774";
 
 const ask: ApprovalAsk = {
   approvalId: "a1",
   nodeId: "review",
+  kind: "approval",
+  remote: null,
   prompt: "Publish these release notes?",
   digest: DIGEST,
   size: 12,
@@ -35,6 +39,7 @@ const pending: PendingApproval = {
   requested_at: 1000,
   expires_at: 1900,
   complete: true,
+  remote: null,
   text: TEXT,
 };
 
@@ -131,6 +136,39 @@ describe("ApprovalCards", () => {
     render(<ApprovalCards client={client()} runId="run-1" asks={[ask]} now={2000} />);
     expect(await screen.findByText(/expiring: the run will end rejected/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  });
+
+  it("answers a remote's question with the answer, and declines with nothing", async () => {
+    const question = "Which release?";
+    const c = client({}, { ...pending, kind: "input", text: question, digest: QUESTION_DIGEST });
+    const input: ApprovalAsk = { ...ask, kind: "input", remote: "demo-writer.draft" };
+    render(<ApprovalCards client={c} runId="run-1" asks={[input]} now={1000} />);
+    expect(await screen.findByText(question)).toBeInTheDocument();
+    expect(screen.getByText("demo-writer.draft asks:")).toBeInTheDocument();
+    expect(screen.getByText(/written by an external agent/)).toBeInTheDocument();
+    expect(screen.getByText("Write your answer to send it.")).toBeInTheDocument();
+    const send = screen.getByRole("button", { name: "Send answer" });
+    expect(send).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/Your answer/), "0.11");
+    await waitFor(() => expect(send).toBeEnabled());
+    await userEvent.click(send);
+    expect(c.decide).toHaveBeenCalledWith("run-1", "a1", {
+      decision: "approve",
+      digest: QUESTION_DIGEST,
+      answer: "0.11",
+    });
+  });
+
+  it("declining a question sends no answer", async () => {
+    const c = client(
+      {},
+      { ...pending, kind: "input", text: "Which release?", digest: QUESTION_DIGEST },
+    );
+    const input: ApprovalAsk = { ...ask, kind: "input", remote: "demo-writer.draft" };
+    render(<ApprovalCards client={c} runId="run-1" asks={[input]} now={1000} />);
+    await userEvent.type(screen.getByLabelText(/Your answer/), "never sent");
+    await userEvent.click(screen.getByRole("button", { name: "Decline" }));
+    expect(c.decide).toHaveBeenCalledWith("run-1", "a1", { decision: "reject" });
   });
 
   it("renders nothing with no pending ask", () => {

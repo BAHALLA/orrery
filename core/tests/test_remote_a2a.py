@@ -19,6 +19,7 @@ from starlette.routing import Route  # noqa: E402
 from orrery_core.a2a import remote  # noqa: E402
 from orrery_core.a2a.remote import (  # noqa: E402
     GuardedRemoteA2aTool,
+    InputUnavailable,
     RemoteAgentEntry,
     RemoteCards,
     RemoteNetwork,
@@ -494,6 +495,155 @@ def test_input_required_returns_the_ids_to_resume_with(serve_asgi, writer_module
     assert result["task_state"] == "input-required"
     assert result["task_id"] and result["context_id"]
     assert "A person must answer it" in result["message"]
+
+
+def _asking_writer(
+    writer_module, *, asks: int, seen: list[tuple[str, str]], question: str = "Which release?"
+):
+    """A writer that asks *question* *asks* times on one task, then drafts."""
+    from a2a.helpers import new_task, new_text_message, new_text_part
+    from a2a.server.tasks import TaskUpdater
+    from a2a.types.a2a_pb2 import TaskState
+
+    class Asking(writer_module.WriterExecutor):
+        async def execute(self, context, event_queue):
+            task_id, context_id = context.task_id or "", context.context_id or ""
+            seen.append((task_id, context.get_user_input()))
+            if context.current_task is None:
+                await event_queue.enqueue_event(
+                    new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=[])
+                )
+            updater = TaskUpdater(event_queue, task_id, context_id)
+            if len(seen) <= asks:
+                await updater.requires_input(
+                    new_text_message(question, context_id=context_id, task_id=task_id)
+                )
+                return
+            await updater.add_artifact(
+                [new_text_part(f"Notes for {context.get_user_input()}")], name="draft"
+            )
+            await updater.complete()
+
+    return Asking()
+
+
+def test_a_person_answers_input_required_on_the_same_task(serve_asgi, writer_module):
+    seen: list[tuple[str, str]] = []
+    questions: list[str] = []
+    exchanges = []
+
+    async def ask(question: str) -> str | None:
+        questions.append(question)
+        return "0.11"
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(
+            base, _asking_writer(writer_module, asks=1, seen=seen)
+        )
+    )
+    tool = GuardedRemoteA2aTool(
+        _entry(url), "draft", cards=RemoteCards(), observer=exchanges.append, ask=ask
+    )
+    result = _call(tool)
+    assert result["status"] == "success"
+    assert result["reply"] == "Notes for 0.11"
+    assert questions == ["Which release?"]
+    # The answer continued the task the question came from.
+    assert [text for _, text in seen] == ["# Notes\nfirst point", "0.11"]
+    assert seen[0][0] == seen[1][0] == result["task_id"]
+    directions = [(e.direction, e.awaiting_input) for e in exchanges]
+    assert directions == [
+        ("outbound", False),
+        ("inbound", True),
+        ("outbound", False),
+        ("inbound", False),
+    ]
+    assert exchanges[2].text == "0.11"
+
+
+def test_a_declined_question_ends_the_call_and_the_model_may_not_answer(serve_asgi, writer_module):
+    seen: list[tuple[str, str]] = []
+
+    async def decline(question: str) -> str | None:
+        return None
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(
+            base, _asking_writer(writer_module, asks=1, seen=seen)
+        )
+    )
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards(), ask=decline)
+    result = _call(tool)
+    assert result["status"] == "input_required"
+    assert "did not give it" in result["message"] and "yourself" in result["message"]
+    # The question was for the person: the model does not get it to answer.
+    assert result["reply"] == ""
+    assert len(seen) == 1
+
+
+def test_a_question_nobody_can_answer_ends_the_call_with_why(serve_asgi, writer_module):
+    seen: list[tuple[str, str]] = []
+
+    async def unavailable(question: str) -> str | None:
+        raise InputUnavailable("the run's budget is spent; nobody was asked.")
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(
+            base, _asking_writer(writer_module, asks=1, seen=seen)
+        )
+    )
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards(), ask=unavailable)
+    result = _call(tool)
+    assert result["status"] == "input_required"
+    assert "budget is spent" in result["message"] and "declined" not in result["message"]
+    assert result["reply"] == ""
+    assert len(seen) == 1
+
+
+def test_an_empty_question_is_not_put_to_a_person(serve_asgi, writer_module):
+    seen: list[tuple[str, str]] = []
+    asked: list[str] = []
+
+    async def ask(question: str) -> str | None:
+        asked.append(question)
+        return "0.11"
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(
+            base, _asking_writer(writer_module, asks=1, seen=seen, question="   ")
+        )
+    )
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards(), ask=ask)
+    result = _call(tool)
+    assert result["status"] == "input_required"
+    assert asked == []
+    assert "without saying what it needs" in result["message"]
+
+
+def test_a_remote_that_keeps_asking_is_answered_a_bounded_number_of_times(
+    serve_asgi, writer_module
+):
+    from orrery_core.a2a.remote import MAX_INPUT_ROUNDS
+
+    seen: list[tuple[str, str]] = []
+    answers = 0
+
+    async def answer(question: str) -> str | None:
+        nonlocal answers
+        answers += 1
+        return f"answer {answers}"
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(
+            base, _asking_writer(writer_module, asks=100, seen=seen)
+        )
+    )
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards(), ask=answer)
+    result = _call(tool)
+    assert result["status"] == "input_required"
+    assert answers == MAX_INPUT_ROUNDS
+    assert len(seen) == MAX_INPUT_ROUNDS + 1
+    assert "again after" in result["message"]
 
 
 # ── https with the deployment's internal CA (the compose demo's setup) ──

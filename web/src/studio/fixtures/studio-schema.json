@@ -704,6 +704,7 @@
             "type": "string"
           },
           "kind": {
+            "enum": ["approval", "input"],
             "title": "Kind",
             "type": "string"
           },
@@ -767,12 +768,25 @@
             "type": "string"
           },
           "kind": {
+            "enum": ["approval", "input"],
             "title": "Kind",
             "type": "string"
           },
           "prompt": {
             "title": "Prompt",
             "type": "string"
+          },
+          "remote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Remote"
           },
           "digest": {
             "title": "Digest",

@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run ends `rejected`. New events `approval.requested` and
   `approval.decided`, a `rejected` outcome, `pending_approvals` in the run
   summary, and an audit line per decision.
+- **Studio: a remote's question goes to a person.** When a remote A2A agent
+  in a Studio run needs input (`input-required`), the run's owner is asked
+  (an approval of kind `input`, with the question) and their answer is sent
+  on the same task; the model gets only the final reply and is told never to
+  answer for the person. At most 3 answers per call, each counted against
+  `max_remote_calls`; declining or letting it expire sends nothing. Nobody
+  is asked a question whose answer could not be sent (no remote call left),
+  and the console marks the question as written by an external agent.
 - Studio console: an approval card in the Run tab (the text, a comment, the
   time left; Approve is off until the text is read and its digest checked in
   the browser), *awaiting you* on the node, a timeout meter that leaves out

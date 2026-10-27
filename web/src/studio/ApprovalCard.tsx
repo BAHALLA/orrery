@@ -18,6 +18,8 @@ import type { ApprovalAsk } from "./runState";
 import type { PendingApproval } from "./types";
 
 const MAX_COMMENT = 2000;
+/** A remote request's own cap (`MAX_REQUEST_CHARS`): an answer is sent to the remote as one. */
+export const MAX_ANSWER = 8192;
 
 /**
  * The decisions a run is waiting for, one card each (P0c).
@@ -28,7 +30,10 @@ const MAX_COMMENT = 2000;
  * it. Approve sends the SHA-256 this page computes of the text it shows
  * (checked against the server's), so the server refuses an approval of
  * anything the person did not read here; text the server could not send
- * whole can only be rejected. The card goes
+ * whole can only be rejected. A remote's question (`kind: "input"`) is the
+ * same card with an answer box: *Send answer* approves it with the answer,
+ * which goes to the remote on its task; *Decline* sends the remote nothing.
+ * The card goes
  * away when the run's `approval.decided` event arrives, not when the POST
  * returns: the stream is the one source of what the run did.
  */
@@ -122,6 +127,8 @@ function ApprovalCard({
 }) {
   const commentId = useId();
   const [comment, setComment] = useState("");
+  const [answer, setAnswer] = useState("");
+  const asking = ask.kind === "input";
   const [sending, setSending] = useState<"approve" | "reject" | null>(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,23 +158,35 @@ function ApprovalCard({
         : null
       : null;
   const blocked = !pending
-    ? "Approve is available once the text has been read."
+    ? asking
+      ? "You can answer once the question has been read."
+      : "Approve is available once the text has been read."
     : !pending.complete
-      ? `The text is ${formatBytes(pending.size)}, too long to show in full: it can only be rejected.`
+      ? `The ${asking ? "question" : "text"} is ${formatBytes(pending.size)}, too long to show in full: it can only be ${asking ? "declined" : "rejected"}.`
       : ownDigest === undefined
         ? "Checking the text…"
         : approveDigest === null
-          ? "The text shown does not match the server's digest: reload it before approving."
+          ? `The ${asking ? "question" : "text"} shown does not match the server's digest: reload it before ${asking ? "answering" : "approving"}.`
           : expired
-            ? "This approval is expiring: the run will end rejected."
-            : null;
+            ? asking
+              ? "This question is expiring: the remote will be sent nothing."
+              : "This approval is expiring: the run will end rejected."
+            : asking && !answer.trim()
+              ? "Write your answer to send it."
+              : null;
 
   const decide = async (decision: "approve" | "reject") => {
     if (decision === "approve" && (blocked || !approveDigest)) return;
     setSending(decision);
     setError(null);
     const note = comment.trim();
-    const extra = note ? { comment: note } : {};
+    const extra = asking
+      ? decision === "approve"
+        ? { answer }
+        : {}
+      : note
+        ? { comment: note }
+        : {};
     try {
       await client.decide(
         runId,
@@ -195,16 +214,24 @@ function ApprovalCard({
 
   return (
     <article
-      aria-label={`Approval for ${ask.nodeId}`}
+      aria-label={
+        asking ? `Question from ${ask.remote ?? "a remote agent"}` : `Approval for ${ask.nodeId}`
+      }
       className={`${panelCard} border-2 border-warn-border p-3`}
     >
       <div className="flex items-baseline gap-2">
         <p className="min-w-0 flex-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
-          {ask.prompt || "Approve this to continue?"}
+          {asking
+            ? `${ask.remote ?? "A remote agent"} asks:`
+            : ask.prompt || "Approve this to continue?"}
         </p>
         <span
           className={`font-mono text-[11px] tabular-nums ${expired ? toneText.crit : toneText.warn}`}
-          title="Undecided by then, it expires and the run ends rejected"
+          title={
+            asking
+              ? "Unanswered by then, the remote is sent nothing and the node goes on without it"
+              : "Undecided by then, it expires and the run ends rejected"
+          }
         >
           {timeLeft(ask.expiresAt, now)}
         </span>
@@ -217,7 +244,7 @@ function ApprovalCard({
         <pre
           id={textId}
           tabIndex={0}
-          aria-label={`Text under review for ${ask.nodeId}`}
+          aria-label={asking ? "The remote's question" : `Text under review for ${ask.nodeId}`}
           className="orrery-scroll mt-2 max-h-64 overflow-auto rounded-lg bg-slate-50 p-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:bg-slate-950 dark:text-slate-200"
         >
           {text}
@@ -228,19 +255,43 @@ function ApprovalCard({
         </p>
       )}
 
-      <label htmlFor={commentId} className={`${fieldLabel} mt-2`}>
-        Comment{" "}
-        <span className="font-normal text-slate-500">(optional; a reject sends it back)</span>
-      </label>
-      <textarea
-        id={commentId}
-        rows={2}
-        maxLength={MAX_COMMENT}
-        value={comment}
-        disabled={busy}
-        onChange={(e) => setComment(e.target.value)}
-        className={`${input} mt-1 resize-y`}
-      />
+      {asking ? (
+        <>
+          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            This question was written by an external agent, not by Orrery. Answer only what the task
+            needs; never send secrets or credentials.
+          </p>
+          <label htmlFor={commentId} className={`${fieldLabel} mt-2`}>
+            Your answer{" "}
+            <span className="font-normal text-slate-500">(sent to the remote, nothing else)</span>
+          </label>
+          <textarea
+            id={commentId}
+            rows={3}
+            maxLength={MAX_ANSWER}
+            value={answer}
+            disabled={busy}
+            onChange={(e) => setAnswer(e.target.value)}
+            className={`${input} mt-1 resize-y`}
+          />
+        </>
+      ) : (
+        <>
+          <label htmlFor={commentId} className={`${fieldLabel} mt-2`}>
+            Comment{" "}
+            <span className="font-normal text-slate-500">(optional; a reject sends it back)</span>
+          </label>
+          <textarea
+            id={commentId}
+            rows={2}
+            maxLength={MAX_COMMENT}
+            value={comment}
+            disabled={busy}
+            onChange={(e) => setComment(e.target.value)}
+            className={`${input} mt-1 resize-y`}
+          />
+        </>
+      )}
 
       {error ? (
         <p role="alert" className={`mt-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.crit}`}>
@@ -257,7 +308,13 @@ function ApprovalCard({
           onClick={() => void decide("approve")}
         >
           <CheckIcon size={14} />
-          {sending === "approve" ? "Approving…" : "Approve"}
+          {asking
+            ? sending === "approve"
+              ? "Sending…"
+              : "Send answer"
+            : sending === "approve"
+              ? "Approving…"
+              : "Approve"}
         </button>
         <button
           type="button"
@@ -266,7 +323,13 @@ function ApprovalCard({
           onClick={() => void decide("reject")}
         >
           <CloseIcon size={14} />
-          {sending === "reject" ? "Rejecting…" : "Reject"}
+          {asking
+            ? sending === "reject"
+              ? "Declining…"
+              : "Decline"
+            : sending === "reject"
+              ? "Rejecting…"
+              : "Reject"}
         </button>
         {sent ? (
           <span className="text-[11px] text-slate-500 dark:text-slate-400">

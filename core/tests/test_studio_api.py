@@ -171,13 +171,40 @@ def mcp_url(serve_asgi) -> str:
 
 @pytest.fixture
 def remote(serve_asgi, writer_module) -> dict[str, Any]:
-    """The writer; ``state["compose"]`` replaces its reply, ``received`` records requests."""
-    state: dict[str, Any] = {"received": [], "headers": [], "compose": writer_module.draft}
+    """The writer; ``state["compose"]`` replaces its reply, ``received`` records requests.
+
+    With ``state["asks"]`` set, it first asks "Which release?" that many times
+    on the task (``input-required``), then drafts from the last answer.
+    """
+    from a2a.helpers import new_task, new_text_message
+    from a2a.server.tasks import TaskUpdater
+    from a2a.types.a2a_pb2 import TaskState
+
+    state: dict[str, Any] = {
+        "received": [],
+        "headers": [],
+        "compose": writer_module.draft,
+        "asks": 0,
+        "asked": 0,
+    }
+
+    class Writer(writer_module.WriterExecutor):
+        async def execute(self, context, event_queue):
+            if state["asked"] >= state["asks"]:
+                return await super().execute(context, event_queue)
+            state["asked"] += 1
+            state["received"].append(context.get_user_input())
+            task_id, context_id = context.task_id or "", context.context_id or ""
+            if context.current_task is None:
+                await event_queue.enqueue_event(
+                    new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=[])
+                )
+            await TaskUpdater(event_queue, task_id, context_id).requires_input(
+                new_text_message("Which release?", context_id=context_id, task_id=task_id)
+            )
 
     def factory(base: str):
-        executor = writer_module.WriterExecutor(
-            compose=lambda text: state["compose"](text), received=state["received"]
-        )
+        executor = Writer(compose=lambda text: state["compose"](text), received=state["received"])
         app = writer_module.build_app(base, executor)
 
         async def recording(scope, receive, send):
@@ -347,6 +374,16 @@ def _run(client: TestClient, **kwargs: Any) -> tuple[dict, list[dict]]:
     run_id = _start(client, **kwargs)
     summary = _finish(client, run_id)
     return summary, _events(client, run_id)
+
+
+def _pending_input(client: TestClient, run_id: str, timeout: float = 20.0) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        res = client.get(f"/studio/runs/{run_id}/approvals", headers=ADMIN)
+        if approvals := res.json()["approvals"]:
+            return approvals[0]
+        time.sleep(0.02)
+    raise AssertionError(f"run {run_id} never asked")
 
 
 # ── The happy path and its trace ─────────────────────────────────────
@@ -1068,3 +1105,116 @@ def test_a_label_error_is_told_from_other_validation_errors():
         wrapped = RuntimeError("tool failed")
         wrapped.__cause__ = exc
         assert _unlabelled_node(wrapped, plugin) is None
+
+
+# ── A remote's question goes to a person (P0c) ───────────────────────
+
+
+def test_a_remotes_question_goes_to_the_runs_owner_and_the_answer_continues_its_task(
+    client, remote, stub
+):
+    remote["asks"] = 1
+    run_id = _start(client)
+    question = _pending_input(client, run_id)
+    assert question["kind"] == "input" and question["text"] == "Which release?"
+    assert question["remote"] == "demo-writer.draft"
+    assert "demo-writer.draft" in question["prompt"]
+    url = f"/studio/runs/{run_id}/approvals/{question['approval_id']}"
+    # Answering is approving with the answer; without one it is refused.
+    body = {"decision": "approve", "digest": question["digest"]}
+    assert client.post(url, headers=ADMIN, json=body).status_code == 422
+    other = client.post(url, headers=_bearer("bob"), json={**body, "answer": "1.0"})
+    assert other.status_code == 404
+    assert client.post(url, headers=ADMIN, json={**body, "answer": "0.11"}).status_code == 200
+    summary = _finish(client, run_id)
+    events = _events(client, run_id)
+    assert summary["status"] == "succeeded", summary
+    # The answer went to the remote, on the task that asked.
+    assert remote["received"][-1] == "0.11"
+    assert len(remote["received"]) == 2
+    asked = next(e for e in events if e["type"] == "approval.requested")
+    assert asked["kind"] == "input" and asked["remote"] == "demo-writer.draft"
+    a2a = [(e["direction"], e.get("task_state")) for e in events if e["type"] == "a2a.message"]
+    assert a2a == [
+        ("outbound", None),
+        ("inbound", "input-required"),
+        ("outbound", None),
+        ("inbound", "completed"),
+    ]
+    tasks = {e["task_id"] for e in events if e["type"] == "a2a.message" and e.get("task_id")}
+    assert len(tasks) == 1
+    # Two messages to the remote: two remote calls against the budget.
+    assert summary["totals"]["remote_calls"] == 2
+    # The model got the draft, never the question to answer itself.
+    assert "0.11" in stub.seen["writer"][-1]
+
+
+def test_a_declined_question_reaches_the_model_as_unanswered(client, remote, stub):
+    remote["asks"] = 1
+    run_id = _start(client)
+    question = _pending_input(client, run_id)
+    url = f"/studio/runs/{run_id}/approvals/{question['approval_id']}"
+    refused = client.post(url, headers=ADMIN, json={"decision": "reject", "answer": "x"})
+    assert refused.status_code == 422  # declining sends nothing
+    assert client.post(url, headers=ADMIN, json={"decision": "reject"}).status_code == 200
+    summary = _finish(client, run_id)
+    assert summary["status"] == "succeeded", summary
+    assert len(remote["received"]) == 1
+    assert "did not give it" in stub.seen["writer"][-1]
+    assert summary["totals"]["remote_calls"] == 1
+
+
+def test_a_question_whose_answer_could_not_be_sent_is_never_asked(client, remote, stub):
+    remote["asks"] = 1
+    spec = _spec()
+    spec["budgets"] = {**spec.get("budgets", {}), "max_remote_calls": 1}
+    run_id = _start(client, spec=spec)
+    summary = _finish(client, run_id)
+    events = _events(client, run_id)
+    assert summary["status"] == "budget_exhausted", summary
+    assert len(remote["received"]) == 1
+    # Nobody was asked: an answer would have been the call past the budget.
+    assert not any(e["type"] == "approval.requested" for e in events)
+    hit = next(e for e in events if e["type"] == "budget.hit")
+    assert hit["budget"] == "max_remote_calls"
+
+
+def test_an_answer_is_not_sent_once_the_run_is_out_of_budget(client, remote, stub, monkeypatch):
+    from orrery_core.studio import runner
+    from orrery_core.studio.ledger import CompositionLedger, Exhausted
+
+    ledgers: list[CompositionLedger] = []
+
+    class Recorded(CompositionLedger):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            ledgers.append(self)
+
+    monkeypatch.setattr(runner, "CompositionLedger", Recorded)
+    remote["asks"] = 1
+    run_id = _start(client)
+    question = _pending_input(client, run_id)
+    # The run's budget runs out while the person writes (here: by fiat).
+    ledgers[-1].exhausted = Exhausted("timeout_s", 1, 2)
+    url = f"/studio/runs/{run_id}/approvals/{question['approval_id']}"
+    body = {"decision": "approve", "digest": question["digest"], "answer": "0.11"}
+    assert client.post(url, headers=ADMIN, json=body).status_code == 200
+    _finish(client, run_id)
+    assert len(remote["received"]) == 1
+    assert "0.11" not in remote["received"]
+
+
+def test_questions_past_the_runs_approval_cap_reach_the_model_as_unavailable(
+    client, remote, stub, monkeypatch
+):
+    from orrery_core.studio import approval
+
+    monkeypatch.setattr(approval, "MAX_APPROVALS_PER_RUN", 0)
+    remote["asks"] = 1
+    run_id = _start(client)
+    summary = _finish(client, run_id)
+    events = _events(client, run_id)
+    assert summary["status"] == "succeeded", summary
+    assert not any(e["type"] == "approval.requested" for e in events)
+    assert "nobody was asked" in stub.seen["writer"][-1]
+    assert len(remote["received"]) == 1

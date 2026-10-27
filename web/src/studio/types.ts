@@ -209,10 +209,13 @@ export type RunOutcome = "succeeded" | "failed" | "cancelled" | "budget_exhauste
 export type NodeOutcome = "ok" | "failed" | "cancelled" | "budget_exhausted" | "rejected";
 
 /** A decision a person is asked for (P0c), as `GET /studio/runs/{id}/approvals` lists it. */
+/** `approval`: a human_approval node. `input`: a remote agent's question (P0c). */
+export type ApprovalKind = "approval" | "input";
+
 export interface PendingApproval {
   approval_id: string;
   node_id: string;
-  kind: string;
+  kind: ApprovalKind;
   /** The composition's question (from the spec, not a model). */
   prompt: string;
   /** SHA-256 of the text under review: approving names it. */
@@ -222,6 +225,8 @@ export interface PendingApproval {
   expires_at: number;
   /** Whether `text` is all of it: only then can it be approved. */
   complete: boolean;
+  /** The remote agent asking (`kind: "input"`), else null. */
+  remote: string | null;
   /**
    * The text under review, exactly as the next node gets it (not redacted, so
    * what is approved is what was read): in the approvals list only, never in
@@ -360,8 +365,10 @@ export interface ApprovalRequestedEvent extends EventBase {
   type: "approval.requested";
   node_id: string;
   approval_id: string;
-  kind: string;
+  kind: ApprovalKind;
   prompt: string;
+  /** The remote asking (`<entry>.<skill>`), for an `input`. */
+  remote?: string | null;
   digest: string;
   size: number;
   expires_at: number;
@@ -372,7 +379,7 @@ export interface ApprovalDecidedEvent extends EventBase {
   type: "approval.decided";
   node_id: string;
   approval_id: string;
-  kind: string;
+  kind: ApprovalKind;
   decision: ApprovalDecision;
   waited_ms: number;
   /** The reviewer's comment (capture on only). */

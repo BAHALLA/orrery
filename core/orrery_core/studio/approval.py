@@ -1,6 +1,8 @@
 """Human approvals in Studio runs (AEP-031 §3, P0c).
 
-A run pauses where a person must decide: at a ``human_approval`` node. The
+A run pauses where a person must decide: at a ``human_approval`` node
+(kind ``approval``), or when a remote agent's task needs input (kind
+``input``: the person's answer is sent on the remote's task). The
 run's task waits here, on a future only :meth:`RunApprovals.decide` resolves,
 and that is reached only through ``POST /studio/runs/{id}/approvals/{aid}``,
 called by the human admin who started the run. Nothing a model writes, and
@@ -20,7 +22,9 @@ reach the replica running the run (any other answers 409).
 - **Approve names the digest** of the text it saw (the console checks it
   against the text it shows), so an approval can never apply to text the
   person did not see. Text too long to serve whole (:data:`MAX_REVIEW_BYTES`)
-  can only be rejected. Reject needs no digest.
+  can only be rejected. Reject needs no digest. For an ``input``, approve
+  carries the answer (and the digest of the question it answers); reject
+  declines to answer, and the remote is sent nothing.
 - **Once**: a second decision is refused (409). The approval's future is the
   one arbiter: a decision, the expiry and a cancel each try to settle it,
   and the first stands, so a decision that loses a race is refused rather
@@ -42,15 +46,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..a2a.remote import MAX_REQUEST_CHARS
 from .events import MAX_APPROVALS_PER_RUN, ApprovalDecided, ApprovalRequested
 
-ApprovalKind = Literal["approval"]
+ApprovalKind = Literal["approval", "input"]
 Decision = Literal["approved", "rejected", "expired", "cancelled"]
 
 #: Text served whole for review, in UTF-8 bytes; longer text can only be rejected.
 MAX_REVIEW_BYTES = 128 * 1024
 #: A reviewer's comment, in characters.
 MAX_COMMENT_CHARS = 2000
+#: An answer to a remote's question, in characters (a remote request's own cap).
+MAX_ANSWER_CHARS = MAX_REQUEST_CHARS
 #: Decided approval ids remembered per run, to answer a second decision with 409.
 MAX_DECIDED = 256
 
@@ -81,6 +88,8 @@ def _settle(future: asyncio.Future[ApprovalOutcome], outcome: ApprovalOutcome) -
 class ApprovalOutcome:
     decision: Decision
     comment: str | None = None
+    #: The person's answer, for an approved ``input``.
+    answer: str | None = None
 
     @property
     def approved(self) -> bool:
@@ -103,6 +112,8 @@ class PendingApproval:
     requested_at: float
     expires_at: float
     future: asyncio.Future[ApprovalOutcome] = field(repr=False)
+    #: The remote agent asking (kind ``input``), else ``None``.
+    remote: str | None = None
 
     def view(self, *, with_text: bool) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -115,6 +126,7 @@ class PendingApproval:
             "requested_at": self.requested_at,
             "expires_at": self.expires_at,
             "complete": self.complete,
+            "remote": self.remote,
         }
         if with_text:
             data["text"] = self.text
@@ -131,6 +143,10 @@ class TooManyApprovals(Exception):
 
 class ApprovalConflict(Exception):
     """Already decided, or approved against text the person did not see."""
+
+
+class ApprovalInvalid(ValueError):
+    """A decision that does not fit its kind: an answer missing, or one where none is asked."""
 
 
 class RunApprovals:
@@ -164,7 +180,13 @@ class RunApprovals:
         return max((p.expires_at for p in self._pending.values()), default=None)
 
     async def request(
-        self, *, node_id: str, prompt: str, text: str, kind: ApprovalKind = "approval"
+        self,
+        *,
+        node_id: str,
+        prompt: str,
+        text: str,
+        kind: ApprovalKind = "approval",
+        remote: str | None = None,
     ) -> ApprovalOutcome:
         """Wait for the person's decision on *text*; ``expired`` past the timeout.
 
@@ -190,6 +212,7 @@ class RunApprovals:
             requested_at=now,
             expires_at=now + self._timeout_s,
             future=loop.create_future(),
+            remote=remote,
         )
         expiry = loop.call_later(
             self._timeout_s, _settle, pending.future, ApprovalOutcome("expired")
@@ -205,6 +228,7 @@ class RunApprovals:
                     digest=pending.digest,
                     size=pending.size,
                     expires_at=pending.expires_at,
+                    remote=remote,
                     content=self._capture(text),
                 )
             )
@@ -244,8 +268,14 @@ class RunApprovals:
         approve: bool,
         digest: str | None = None,
         comment: str | None = None,
+        answer: str | None = None,
     ) -> ApprovalOutcome:
-        """Resolve a pending approval. Raises :class:`ApprovalNotFound` or :class:`ApprovalConflict`."""
+        """Resolve a pending approval.
+
+        Raises :class:`ApprovalNotFound`, :class:`ApprovalConflict` or
+        :class:`ApprovalInvalid` (an answer missing for an ``input``, or given
+        where none is asked).
+        """
         pending = self._pending.get(approval_id)
         if pending is None:
             if approval_id in self._decided:
@@ -255,6 +285,13 @@ class RunApprovals:
             raise ApprovalConflict(
                 "this approval was already settled (decided, expired or cancelled)"
             )
+        if answer is not None and (pending.kind != "input" or not approve):
+            raise ApprovalInvalid("only answering a remote's question carries an answer")
+        if pending.kind == "input" and approve:
+            if not (answer or "").strip():
+                raise ApprovalInvalid("answering a remote's question needs the answer")
+            if len(answer or "") > MAX_ANSWER_CHARS:
+                raise ApprovalInvalid(f"an answer is limited to {MAX_ANSWER_CHARS} characters")
         if approve and not pending.complete:
             raise ApprovalConflict(
                 f"the text is over {MAX_REVIEW_BYTES // 1024} KiB, too long to review whole: "
@@ -267,6 +304,7 @@ class RunApprovals:
         outcome = ApprovalOutcome(
             "approved" if approve else "rejected",
             (comment or "").strip()[:MAX_COMMENT_CHARS] or None,
+            answer if approve else None,
         )
         pending.future.set_result(outcome)
         return outcome

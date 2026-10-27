@@ -63,6 +63,11 @@ class CompositionLedger:
             return self._check("max_remote_calls", self.remote_calls, self.budgets.max_remote_calls)
         return None
 
+    def charge_remote(self) -> Exhausted | None:
+        """Count one more message on a remote call already counted (a person's answer)."""
+        self.remote_calls += 1
+        return self._check("max_remote_calls", self.remote_calls, self.budgets.max_remote_calls)
+
     def deadline(self, elapsed_s: float) -> Exhausted:
         if self.exhausted is None:
             self.exhausted = Exhausted("timeout_s", self.budgets.timeout_s, int(elapsed_s))

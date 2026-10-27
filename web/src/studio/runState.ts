@@ -1,6 +1,7 @@
 import type {
   A2aMessageEvent,
   ApprovalDecision,
+  ApprovalKind,
   BudgetHitEvent,
   McpCallEvent,
   NodeOutcome,
@@ -56,6 +57,10 @@ export interface A2aExchange {
 export interface ApprovalAsk {
   approvalId: string;
   nodeId: string;
+  /** A decision on text (`approval`), or an answer a remote asked for (`input`). */
+  kind: ApprovalKind;
+  /** The remote asking, for an `input`. */
+  remote: string | null;
   prompt: string;
   digest: string;
   size: number;
@@ -256,6 +261,8 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
           {
             approvalId: event.approval_id,
             nodeId: event.node_id,
+            kind: event.kind,
+            remote: event.remote ?? null,
             prompt: event.prompt,
             digest: event.digest,
             size: event.size,
