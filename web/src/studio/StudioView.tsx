@@ -192,6 +192,8 @@ export default function StudioView({ token, active = true }: Props) {
             setUnavailable({ status: err.status, message: err.message });
             return;
           }
+          // Open the canvas now; a later answer still brings the capabilities.
+          setSchemaSettled(true);
           if (delay === null) {
             // The canvas still works: only the schema half of live validation is missing.
             setSchemaError(

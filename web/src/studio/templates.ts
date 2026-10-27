@@ -305,6 +305,7 @@ const later = (a: string, b: string) => {
  * kinds of an imported spec.
  */
 export function specNeeds(spec: CompositionSpec, caps: Capabilities): string | null {
+  if (!caps.known) return null; // the server's 422 decides
   let need: string | null = null;
   const bump = (phase: string) => {
     need = need === null ? phase : later(need, phase);

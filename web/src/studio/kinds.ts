@@ -12,9 +12,9 @@ import {
  * The format describes every phase's node kinds and patterns, but a release
  * runs only some of them. The palette, the templates and the client checks all
  * ask {@link Capabilities} rather than hard-coding a phase. The server publishes
- * them in `GET /studio/schema` ({@link capabilitiesFrom}); until it answers, the
- * console draws what {@link P0A} allows (the least any Studio runs) but does not
- * flag the rest as unsupported: `known` is false.
+ * them in `GET /studio/schema` ({@link capabilitiesFrom}). Until it answers
+ * (`known` false, {@link P0A}), the console gates nothing: every kind and
+ * pattern can be used, and the server's 422 decides.
  */
 export interface Capabilities {
   /** Whether the server said; when false, nothing is flagged as unsupported. */
@@ -140,6 +140,7 @@ export const PALETTE_KINDS: readonly NodeKind[] = [
  * the bare kind, so the console expands it before it reaches the spec.
  */
 export function canAdd(kind: NodeKind, caps: Capabilities): boolean {
+  if (!caps.known) return true; // the server's 422 decides
   return kind === "remote_a2a" ? caps.kinds.has("llm_agent") : caps.kinds.has(kind);
 }
 

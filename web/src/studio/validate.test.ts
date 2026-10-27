@@ -54,11 +54,16 @@ describe("templates", () => {
   });
 
   it("enable what P0a runs and mark the rest as needing P0b", () => {
-    const enabled = TEMPLATES.filter((t) => templateNeeds(t, P0A) === null).map((t) => t.id);
+    const p0a = { ...P0A, known: true };
+    const enabled = TEMPLATES.filter((t) => templateNeeds(t, p0a) === null).map((t) => t.id);
     expect(enabled).toEqual(["pipeline", "release-notes"]);
     for (const t of TEMPLATES.filter((t) => !enabled.includes(t.id))) {
-      expect(templateNeeds(t, P0A)).toBe("P0b");
+      expect(templateNeeds(t, p0a)).toBe("P0b");
     }
+  });
+
+  it("are all loadable while the server's capabilities are unknown", () => {
+    expect(TEMPLATES.filter((t) => templateNeeds(t, P0A) !== null)).toEqual([]);
   });
 
   it("are all well-formed against the published schema, P0b ones included", () => {
@@ -179,6 +184,31 @@ describe("capabilitiesFrom", () => {
     };
     const caps = capabilitiesFrom(P0B_SERVER);
     expect(checkComposition(spec, { caps, registry: DEMO_REGISTRY })).toEqual([]);
+  });
+
+  it("refuses what the server would in a pipeline: child edges and labels", () => {
+    const caps = capabilitiesFrom(P0B_SERVER);
+    const spec: CompositionSpec = {
+      spec_version: 1,
+      name: "bad-pipeline",
+      pattern: "pipeline",
+      nodes: [
+        { id: "lead", kind: "supervisor", instruction: "Delegate.", children: ["helper"] },
+        { id: "helper", kind: "llm_agent", instruction: "Help." },
+        { id: "editor", kind: "llm_agent", instruction: "Edit." },
+      ],
+      edges: [
+        { from: "lead", to: "helper" },
+        { from: "lead", to: "editor", when: "done" },
+      ],
+    };
+    const issues = checkComposition(spec, { caps, registry: DEMO_REGISTRY });
+    expect(issues.map((i) => [i.loc.join("."), i.code])).toEqual(
+      expect.arrayContaining([
+        ["edges.0.to", "invalid"],
+        ["edges.1.when", "pattern_mismatch"],
+      ]),
+    );
   });
 
   it("refuses a model outside the server's list, as the server would", () => {

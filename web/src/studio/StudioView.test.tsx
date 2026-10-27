@@ -44,7 +44,8 @@ function stubStudio(routes: Routes = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
     calls.push({ url, init });
-    if (url.endsWith("/studio/schema")) return routes.schema?.() ?? json(schema);
+    if (url.endsWith("/studio/schema"))
+      return routes.schema?.() ?? json({ ...schema, capabilities: P0A_CAPS });
     if (url.startsWith("/studio/registry")) return json(DEMO_REGISTRY);
     if (url.endsWith("/studio/runs") && init.method === "POST") {
       return routes.start?.() ?? json({ run_id: "run-1" }, 202);
@@ -62,6 +63,22 @@ function stubStudio(routes: Routes = {}) {
   vi.stubGlobal("fetch", fetchMock);
   return calls;
 }
+
+// A server that runs P0a only.
+const P0A_CAPS = {
+  node_kinds: ["llm_agent"],
+  unsupported_node_kinds: {
+    router: "P0b",
+    parallel: "P0b",
+    join: "P0b",
+    supervisor: "P0b",
+    human_approval: "P0c",
+  },
+  patterns: ["pipeline"],
+  routing: false,
+  per_node_models: false,
+  models: [],
+};
 
 const P0B_CAPS = {
   node_kinds: ["llm_agent", "router", "parallel", "join", "supervisor"],
@@ -165,16 +182,17 @@ describe("Studio canvas", () => {
     render(<StudioView token="t" />);
 
     // The palette waits for the schema, which is asked again after 1 s.
-    const palette = await screen.findByRole(
-      "complementary",
-      { name: "Palette" },
-      { timeout: 3000 },
+    // The canvas opens after the first failure, gating nothing, and follows
+    // the server once the retry (after 1 s) answers.
+    const palette = await screen.findByRole("complementary", { name: "Palette" });
+    expect(within(palette).getByRole("button", { name: /^Human approval/ })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
     );
     await waitFor(
       () =>
-        expect(within(palette).getByRole("button", { name: /^Router/ })).not.toHaveAttribute(
-          "aria-disabled",
-          "true",
+        expect(within(palette).getByRole("button", { name: /^Human approval/ })).toHaveTextContent(
+          "coming in P0c",
         ),
       { timeout: 3000 },
     );

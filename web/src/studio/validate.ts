@@ -332,9 +332,20 @@ function checkPipeline(
       ["to", edge.to],
     ] as const) {
       if (!ids.has(name)) add(["edges", j, end], `no node "${name}"`);
+      else if (children.has(name))
+        add(
+          ["edges", j, end],
+          `"${name}" is a supervisor's child: children are its tools, not steps of the graph`,
+        );
     }
     if (edge.when != null && !caps.routing)
       add(["edges", j, "when"], "conditional edges are coming in P0b", "not_supported_yet");
+    else if (edge.when != null)
+      add(
+        ["edges", j, "when"],
+        "a pipeline has no labelled edges (use the router pattern)",
+        "pattern_mismatch",
+      );
     if (edge.max_iterations != null && !caps.loops)
       add(["edges", j, "max_iterations"], "loops are coming in P0b", "not_supported_yet");
     if (edge.screen && !caps.edgeScreen)
