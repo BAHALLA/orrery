@@ -287,8 +287,8 @@ not be followed by a `router` (its edges already route).
 
 ### Human approval
 
-A `human_approval` node is the one place a run waits for a person. The design
-is deliberately narrow:
+A `human_approval` node is one of the two places a run waits for a person (the
+other is a remote's question, above). The design is deliberately narrow:
 
 - **Only the run's owner decides**, through
   `POST /studio/runs/{id}/approvals/{approval_id}`. Nothing a model writes,
@@ -348,13 +348,28 @@ never sees the session, earlier nodes or earlier tool results. Each call:
  "parts": [{"kind": "text", "size": 31}]}
 ```
 
-`status` is `success`, `input_required` (with the remote's `task_id` and
-`context_id`, and a message that a person must answer; answering is P0c) or
+`status` is `success`, `input_required` (with the remote's `task_id`,
+`context_id` and question as `reply`, and a message that a person must
+answer; in a Studio run the person is asked first, below) or
 `error` with an `error_type`: `card_refused`, `remote_error`, `reply_refused`,
 `remote_task_<state>` (the task ended `failed`, `canceled`, `rejected`…),
 `timeout`, `invalid_request` or `misconfigured`. Only text parts come back;
 other parts are listed in `dropped_parts`. A remote call counts as a
 delegation for AEP-027 and as a remote call for the run's ledger.
+
+**A remote's question goes to a person.** In a Studio run, a remote whose task
+ends `input-required` does not hand its question to the model. The run's
+owner is asked, the same way as a human approval (`kind: "input"`, the
+question as the text under review), and their answer is sent on the same
+task (ADK continues it from the `context_id`). The model only gets the final
+reply. Each answer is one more message to the remote, so it counts as a
+remote call against `max_remote_calls`: past the budget it is not sent and
+the run ends `budget_exhausted`. A remote is answered at most 3 times per
+call; a fourth question, a declined one, or one that expires ends the call
+`input_required`, with a message telling the model not to answer it itself.
+Unlike an approval, a declined or expired question does not end the run: the
+node goes on without the answer. Each message's timeout (`total_timeout_s`)
+covers the remote, not the person.
 
 ## Runs
 
@@ -415,7 +430,7 @@ All routes need a human admin's bearer token.
 | `GET /studio/runs/{id}/events` | `Last-Event-ID` header to resume | `text/event-stream`: every event so far, then each new one, until `run.end` |
 | `POST /studio/runs/{id}/cancel` | | The summary; `status` becomes `cancelled` once the task stops; 409 when another replica runs it |
 | `GET /studio/runs/{id}/approvals` | | `{"approvals": [{approval_id, node_id, kind, prompt, digest, size, requested_at, expires_at, complete, text}…]}`: the run's pending approvals, with the text under review; 409 when another replica runs it |
-| `POST /studio/runs/{id}/approvals/{approval_id}` | `{"decision": "approve", "digest": "<64 hex>", "comment"?: "…"}` or `{"decision": "reject", "comment"?: "…"}` (comment ≤ 2000 chars) | 200 `{"approval_id", "decision"}`; 404 for an unknown approval; 409 when it was already settled (decided, expired, cancelled), the digest is not the text's, the text is too long to approve, or another replica runs it; 422 for a bad body |
+| `POST /studio/runs/{id}/approvals/{approval_id}` | `{"decision": "approve", "digest": "<64 hex>", "comment"?: "…"}` or `{"decision": "reject", "comment"?: "…"}` (comment ≤ 2000 chars). A remote's question (`kind: "input"`) is answered with `{"decision": "approve", "digest", "answer": "…"}` (1–8192 chars) and declined with `{"decision": "reject"}`; an answer is required to approve it and refused anywhere else (422) | 200 `{"approval_id", "decision"}`; 404 for an unknown approval; 409 when it was already settled (decided, expired, cancelled), the digest is not the text's, the text is too long to approve, or another replica runs it; 422 for a bad body |
 | `POST /studio/validate` | `{"spec": {…}}` | 200 `{"ok": true, "spec_digest": "…", "warnings": [{loc, msg, code}]}`, or the same 422 as a run. Never calls a model or a remote |
 | `GET /studio/compositions` | | `{"compositions": [{id, name, description, pattern, version, created_by, created_at, updated_by, updated_at}…]}` |
 | `POST /studio/compositions` | `{"spec": {…}}` | 201, the composition with `spec` and `versions`; 422 as a run |
@@ -503,7 +518,7 @@ Every event has `type`, `seq` (1, 2, … within the run), `run_id` and `ts`
 | `loop.iteration` | `edge` (`"critic->writer"`), `from_node`, `to_node`, `iteration` (1…cap), `cap`, `stopped` (true at the cap: the edge is not taken) |
 | `mcp.call` | `node_id`, `entry`, `tool`, `classification`, `outcome` (`success` · `failure` · `refused`), `status`, `elapsed_ms` |
 | `a2a.message` | `node_id`, `remote`, `skill`, `direction` (`outbound` · `inbound`), `method`, `task_id`, `context_id`, `task_state`, `states` (each state seen), `parts` `[{kind, size}]`, `elapsed_ms`, `status`, `card_digest`, `content`? |
-| `approval.requested` | `node_id`, `approval_id`, `kind` (`approval`), `prompt`, `digest`, `size`, `expires_at`, `content`? |
+| `approval.requested` | `node_id`, `approval_id`, `kind` (`approval` · `input`), `prompt`, `remote` (for an `input`: `<entry>.<skill>`), `digest`, `size`, `expires_at`, `content`? |
 | `approval.decided` | `node_id`, `approval_id`, `kind`, `decision` (`approved` · `rejected` · `expired` · `cancelled`), `waited_ms`, `content`? (the comment) |
 | `budget.hit` | `budget` (`max_tokens` · `max_tool_calls` · `max_delegations` · `max_remote_calls` · `timeout_s`), `limit`, `used` |
 | `run.end` | `outcome` (`succeeded` · `failed` · `cancelled` · `budget_exhausted` · `rejected`), `error`, `totals` `{tokens, tokens_by_model, tool_calls, delegations, remote_calls, wall_ms}`, `dropped_events`, `content`? |
@@ -670,6 +685,9 @@ the event stream:
   expiring. *Reject* sends the comment back. The node is marked *awaiting
   you*, the timeout meter leaves out the time spent waiting (as the server
   does), and the card goes when the run's `approval.decided` arrives;
+- a remote's question shows the same card with the question and an answer
+  box: *Send answer* sends it to the remote (and is off until there is one),
+  *Decline* sends nothing;
 - if the stream drops, it reconnects (0.5 s, then 1, 2, 4 and 8 s) with
   `Last-Event-ID`, and events already seen are ignored, so nothing is played
   twice;
@@ -728,8 +746,7 @@ uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browse
 ## Not yet
 
 - `handoff`, `remote_a2a` nodes, a dynamic map width, and an MCP "try it" call.
-- Answering a remote's `input-required`, `acting` remotes and registry editing
-  (the rest of P0c).
+- `acting` remotes and registry editing (the rest of P0c).
 - `tasks/cancel` to a remote when a run is cancelled.
 - Auth for registry MCP entries (only `ORRERY_STUDIO_SECRET_*` will be allowed).
 - In the console: a validate-only call (validation before a run is the

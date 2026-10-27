@@ -462,7 +462,9 @@ function describeEvent(e: StudioEvent): string {
         ? `${e.node_id} → ${e.remote}.${e.skill} ${e.method}${e.parts?.length ? ` · ${e.parts.map((p) => `${p.kind} ${formatBytes(p.size)}`).join(", ")}` : ""}`
         : `${e.remote} → ${e.node_id}: ${e.task_state ?? e.status ?? "reply"}${e.elapsed_ms != null ? ` · ${formatMs(e.elapsed_ms)}` : ""}`;
     case "approval.requested":
-      return `${e.node_id} is waiting for a person: ${e.prompt}`;
+      return e.kind === "input"
+        ? `${e.remote ?? "a remote agent"} asked you a question (${e.node_id})`
+        : `${e.node_id} is waiting for a person: ${e.prompt}`;
     case "approval.decided":
       return `${e.node_id} ${e.decision}${e.waited_ms != null ? ` after ${formatMs(e.waited_ms)}` : ""}`;
     case "budget.hit":

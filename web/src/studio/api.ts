@@ -142,17 +142,16 @@ export class StudioClient {
 
   /**
    * Decide one. Approving names the digest of the text that was read: the
-   * server refuses (409) a digest that is not the one under review.
+   * server refuses (409) a digest that is not the one under review. A
+   * remote's question (`kind: "input"`) is answered by approving it with
+   * `answer`; rejecting it declines, and the remote is sent nothing.
    */
   decide(
     runId: string,
     approvalId: string,
     body:
-      | { decision: "approve"; digest: string; comment?: string }
-      | {
-          decision: "reject";
-          comment?: string;
-        },
+      | { decision: "approve"; digest: string; comment?: string; answer?: string }
+      | { decision: "reject"; comment?: string },
   ): Promise<{ approval_id: string; decision: string }> {
     return this.json(
       `/studio/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}`,

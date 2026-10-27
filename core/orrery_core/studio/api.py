@@ -21,8 +21,9 @@ Runs:
 - ``GET /studio/runs/{id}/approvals`` → the run's pending approvals, each with
   the text under review (held in memory, never stored).
 - ``POST /studio/runs/{id}/approvals/{approval_id}``
-  ``{decision: approve|reject, digest?, comment?}``: approving names the
-  ``digest`` of the text it saw. 404 for no such pending approval, 409 when
+  ``{decision: approve|reject, digest?, comment?, answer?}``: approving names
+  the ``digest`` of the text it saw; answering a remote's question (an
+  ``input``) is approving it with the ``answer``. 404 for no such pending approval, 409 when
   already decided, for a digest that does not match, or for a run on another
   replica.
 
@@ -66,7 +67,13 @@ from ..security.auth import AuthContext
 from ..security.guardrails import get_guard_level
 from ..security.principal import PrincipalKind
 from ..serving.rate_limit import RateLimiter, parse_rate
-from .approval import MAX_COMMENT_CHARS, ApprovalConflict, ApprovalNotFound
+from .approval import (
+    MAX_ANSWER_CHARS,
+    MAX_COMMENT_CHARS,
+    ApprovalConflict,
+    ApprovalInvalid,
+    ApprovalNotFound,
+)
 from .compiler import registry_toolset
 from .events import events_json_schema
 from .runner import MAX_FOLLOWS_PER_USER, RunElsewhere, StudioService, TooManyRuns
@@ -125,6 +132,8 @@ class ApprovalDecision(BaseModel):
     decision: Literal["approve", "reject"]
     digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     comment: str | None = Field(default=None, max_length=MAX_COMMENT_CHARS)
+    #: The answer to a remote's question (an ``input`` approval), sent on its task.
+    answer: str | None = Field(default=None, min_length=1, max_length=MAX_ANSWER_CHARS)
 
     @model_validator(mode="after")
     def _digest_to_approve(self) -> ApprovalDecision:
@@ -354,7 +363,10 @@ def mount_studio(
                 approve=body.decision == "approve",
                 digest=body.digest,
                 comment=body.comment,
+                answer=body.answer,
             )
+        except ApprovalInvalid as exc:
+            return _errors_response(SpecInvalid([SpecError(("answer",), str(exc), "invalid")]))
         except RunElsewhere as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
         except ApprovalNotFound:

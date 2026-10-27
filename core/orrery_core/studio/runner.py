@@ -325,6 +325,28 @@ class StudioRunPlugin(BasePlugin):
             return ApprovalOutcome("rejected")  # no way to ask: never approve
         return await self._run.approvals.request(node_id=node_id, prompt=prompt, text=text)
 
+    async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
+        """Ask the run's owner to answer *remote*'s question; their answer, or ``None``.
+
+        An answer is one more message to the remote, so it is charged as a
+        remote call: past the budget, nothing is sent and the run ends on it.
+        """
+        if self._run.approvals is None or self._ledger.exhausted is not None:
+            return None
+        outcome = await self._run.approvals.request(
+            node_id=node_id,
+            prompt=f"The remote agent {remote} needs input to go on. Answer it, or decline.",
+            text=question,
+            kind="input",
+            remote=remote,
+        )
+        if not outcome.approved or outcome.answer is None:
+            return None
+        if (hit := self._ledger.charge_remote()) is not None:
+            self.emit_budget(hit)
+            return None
+        return outcome.answer
+
     def hold_inbound(self, event: A2aMessage, call_id: str | None) -> None:
         key = (event.node_id, call_id)
         if (earlier := self.pending_inbound.pop(key, None)) is not None:
@@ -952,6 +974,7 @@ class StudioService:
         approve: bool,
         digest: str | None = None,
         comment: str | None = None,
+        answer: str | None = None,
     ) -> ApprovalOutcome:
         """Decide one of *run*'s approvals, here; elsewhere raises :class:`RunElsewhere`.
 
@@ -970,7 +993,9 @@ class StudioService:
         if run.approvals is None:
             raise ApprovalNotFound(approval_id)
         node_id = run.approvals.node_of(approval_id)
-        outcome = run.approvals.decide(approval_id, approve=approve, digest=digest, comment=comment)
+        outcome = run.approvals.decide(
+            approval_id, approve=approve, digest=digest, comment=comment, answer=answer
+        )
         audit_event(
             "studio_approval_decided",
             subject=auth.subject,
@@ -1023,11 +1048,13 @@ class StudioService:
             elapsed_ms=exchange.elapsed_ms,
             status=exchange.status,
             card_digest=exchange.card_digest,
-            # The request is what the node's model wrote; the reply is
-            # captured after the plugins have screened it (below).
+            # The request is what the node's model (or the person answering)
+            # wrote; the reply is captured after the plugins have screened it
+            # (below). A question going to a person is captured on its
+            # approval.requested instead.
             content=None if inbound else run.capture(exchange.text),
         )
-        if inbound and run.capture_content and plugin is not None:
+        if inbound and not exchange.awaiting_input and run.capture_content and plugin is not None:
             plugin.hold_inbound(event, exchange.call_id)
         else:
             run.emit(event)

@@ -580,8 +580,23 @@ reach the running replica (elsewhere, 409).
   aware edge drawing, and a human-review template
   (`deploy/studio-demo/specs/human-review.json`).
 
-Still to come in P0c: a remote's `input-required` answered by a person,
-`effect: acting` remotes, and registry editing.
+**A remote's `input-required`** (`a2a/remote.py`, `StudioRunPlugin.request_input`).
+`GuardedRemoteA2aTool` takes an optional `ask` callback. A Studio run passes
+one that asks the run's owner through the same `RunApprovals`
+(`kind="input"`), so the guarantees are the approval's: owner only, once,
+against the digest of the question shown, default deny. The tool keeps one
+ADK session open for the call, so the answer, sent with the reply's
+`context_id`, continues the same task (ADK sets `task_id` from the session's
+paused reply). The model never sees the question as something to answer:
+it gets the final reply, or `input_required` with "do not answer it
+yourself" when the person declines, the question expires, or the remote asks
+a fourth time (`MAX_INPUT_ROUNDS = 3`). Each answer is charged as a remote
+call (`CompositionLedger.charge_remote`), and the per-message
+`total_timeout_s` excludes the person's time. ADK hands a paused task's
+status message on as thought, so the question is read from the wire
+response. Outside the Studio (chat), there is no `ask` and nothing changes.
+
+Still to come in P0c: `effect: acting` remotes and registry editing.
 
 ## Security
 

@@ -140,6 +140,10 @@ class Trace(Protocol):
 
     async def request_approval(self, node_id: str, prompt: str, text: str) -> ApprovalOutcome: ...
 
+    async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
+        """A person's answer to a remote's *question*, or ``None`` (declined, expired)."""
+        ...
+
 
 class RouteFailed(Exception):
     """A labelled node answered without one of its labels."""
@@ -248,6 +252,9 @@ class _NoTrace:
     async def request_approval(self, node_id: str, prompt: str, text: str) -> ApprovalOutcome:
         return ApprovalOutcome("rejected")  # nobody to ask: never approve
 
+    async def request_input(self, node_id: str, remote: str, question: str) -> str | None:
+        return None  # nobody to ask: the remote is sent nothing
+
 
 def _safe(name: str) -> str:
     return re.sub(r"[^a-z0-9_]", "_", name.lower())
@@ -346,8 +353,16 @@ def compile_spec(
             elif parsed.kind == "a2a":
                 entry = registry.a2a_entry(parsed.entry)
                 assert entry is not None
+                remote = f"{parsed.entry}.{parsed.name}"
                 tools.append(
-                    GuardedRemoteA2aTool(entry, parsed.name, cards=cards, observer=observer)
+                    GuardedRemoteA2aTool(
+                        entry,
+                        parsed.name,
+                        cards=cards,
+                        observer=observer,
+                        # A remote's question goes to the run's owner, never the model.
+                        ask=lambda q, _n=node.id, _r=remote: sink.request_input(_n, _r, q),
+                    )
                 )
             else:
                 mcp_refs.setdefault(parsed.entry, []).append(parsed.name)

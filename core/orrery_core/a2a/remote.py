@@ -33,6 +33,7 @@ guard sees. :class:`GuardedRemoteA2aTool` is a ``BaseTool`` instead:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -41,7 +42,7 @@ import os
 import re
 import ssl
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
@@ -101,6 +102,13 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_]")
 STATUS_SUCCESS = "success"
 STATUS_INPUT_REQUIRED = "input_required"
 STATUS_ERROR = "error"
+#: Answers a person may give one remote call (AEP-031 P0c); past them the call
+#: ends ``input_required``.
+MAX_INPUT_ROUNDS = 3
+
+#: Asks a person to answer a remote's ``input-required`` *question*: their
+#: answer, or ``None`` (declined, expired, or nothing left to send it with).
+InputAsker = Callable[[str], Awaitable[str | None]]
 
 
 def safe_tool_name(*parts: str) -> str:
@@ -576,6 +584,9 @@ class RemoteExchange:
     #: The model's function-call id for the tool call that made this exchange,
     #: so a trace can pair a reply with its request when calls run in parallel.
     call_id: str | None = None
+    #: An ``input-required`` reply that goes to a person, not back to the model:
+    #: the call goes on (a trace shows it as it is, not as the tool's result).
+    awaiting_input: bool = False
 
 
 ExchangeObserver = Callable[[RemoteExchange], None]
@@ -613,6 +624,16 @@ def _response_parts(response: dict[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
+def _status_text(response: dict[str, Any]) -> str:
+    """The text of a task's status message: what an ``input-required`` task asks.
+
+    ADK does not hand it on as reply content (it marks a paused task's
+    message as thought), so it is read from the wire response.
+    """
+    message = (response.get("status") or {}).get("message") or {}
+    return "".join(p["text"] for p in message.get("parts") or [] if isinstance(p.get("text"), str))
+
+
 def _text_of(content: types.Content | None) -> str:
     if content is None or not content.parts:
         return ""
@@ -620,7 +641,14 @@ def _text_of(content: types.Content | None) -> str:
 
 
 class GuardedRemoteA2aTool(BaseTool):
-    """Sends one request to one registered remote skill; returns its reply as a dict."""
+    """Sends one request to one registered remote skill; returns its reply as a dict.
+
+    With *ask* (a Studio run), a reply that needs input goes to a person
+    instead of the model: their answer is sent on the same task, up to
+    :data:`MAX_INPUT_ROUNDS` times, and the model gets the final reply. The
+    model can never answer for them: without *ask* the call simply ends
+    ``input_required``.
+    """
 
     #: Counted as a delegation by DelegationGuardPlugin and ProgressPlugin.
     delegates_remotely = True
@@ -634,6 +662,7 @@ class GuardedRemoteA2aTool(BaseTool):
         *,
         cards: RemoteCards,
         observer: ExchangeObserver | None = None,
+        ask: InputAsker | None = None,
     ) -> None:
         if skill not in entry.skills:
             raise ValueError(f"{entry.id} is not registered for skill {skill!r}")
@@ -653,6 +682,7 @@ class GuardedRemoteA2aTool(BaseTool):
         self.skill = skill
         self._cards = cards
         self._observer = observer
+        self._ask = ask
         # read_only is an ordinary read (allowed at L2). acting is refused by
         # the registry until P0c, but would be destructive here.
         set_guard(
@@ -704,7 +734,6 @@ class GuardedRemoteA2aTool(BaseTool):
             return self._error(
                 "invalid_request", f"`request` is limited to {MAX_REQUEST_CHARS} characters"
             )
-        started = time.monotonic()
         raw_id = getattr(tool_context, "function_call_id", None)
         call_id = raw_id if isinstance(raw_id, str) and raw_id else None
         try:
@@ -723,20 +752,58 @@ class GuardedRemoteA2aTool(BaseTool):
         except ValueError as exc:  # a missing secret
             return self._error("misconfigured", str(exc))
 
+        async with contextlib.AsyncExitStack() as stack:
+            try:
+                send = await stack.enter_async_context(self._conversation(pinned))
+            except ValueError as exc:  # building the client: a missing secret, a bad CA file
+                return self._error("misconfigured", str(exc))
+            text, context_id, answered = request, None, 0
+            while True:
+                result = await self._round(send, pinned, text, context_id, call_id, answered)
+                if result["status"] != STATUS_INPUT_REQUIRED or self._ask is None:
+                    return result
+                if answered >= MAX_INPUT_ROUNDS:
+                    result["message"] = (
+                        f"{self.name}: the remote asked for input again after "
+                        f"{MAX_INPUT_ROUNDS} answers; the call ends here."
+                    )
+                    return result
+                answer = await self._ask(result.get("reply") or "")
+                if answer is None:
+                    result["message"] = (
+                        f"{self.name}: the remote needed input and the person did not give "
+                        "it (declined, or the question expired). Do not answer it yourself."
+                    )
+                    return result
+                text, context_id, answered = answer, result.get("context_id"), answered + 1
+        raise AssertionError("unreachable")  # the loop only returns
+
+    async def _round(
+        self,
+        send: Callable[[str, str | None], Awaitable[dict[str, Any]]],
+        pinned: PinnedCard,
+        text: str,
+        context_id: str | None,
+        call_id: str | None,
+        answered: int,
+    ) -> dict[str, Any]:
+        """Send one message on the conversation, observed and audited."""
         self._observe(
             RemoteExchange(
                 remote=self.entry.id,
                 skill=self.skill,
                 direction="outbound",
-                parts=[PartInfo("text", len(request))],
-                text=request,
+                parts=[PartInfo("text", len(text))],
+                text=text,
                 card_digest=pinned.digest,
                 call_id=call_id,
             )
         )
+        started = time.monotonic()
         try:
+            # Per message: a person's time answering is not the remote's.
             async with asyncio.timeout(self.entry.total_timeout_s):
-                result = await self._exchange(pinned, request)
+                result = await send(text, context_id)
         except TimeoutError:
             result = self._error(
                 "timeout",
@@ -747,6 +814,11 @@ class GuardedRemoteA2aTool(BaseTool):
             result = self._error("misconfigured", str(exc))
         elapsed = int((time.monotonic() - started) * 1000)
         states = result.pop("_states", [])
+        awaiting = (
+            result["status"] == STATUS_INPUT_REQUIRED
+            and self._ask is not None
+            and answered < MAX_INPUT_ROUNDS
+        )
         self._observe(
             RemoteExchange(
                 remote=self.entry.id,
@@ -762,6 +834,7 @@ class GuardedRemoteA2aTool(BaseTool):
                 text=result.get("reply") or None,
                 card_digest=pinned.digest,
                 call_id=call_id,
+                awaiting_input=awaiting,
             )
         )
         audit_event(
@@ -771,10 +844,20 @@ class GuardedRemoteA2aTool(BaseTool):
             status=result["status"],
             task_state=result.get("task_state"),
             elapsed_ms=elapsed,
+            answer=answered or None,
         )
         return result
 
-    async def _exchange(self, pinned: PinnedCard, request: str) -> dict[str, Any]:
+    @contextlib.asynccontextmanager
+    async def _conversation(
+        self, pinned: PinnedCard
+    ) -> AsyncGenerator[Callable[[str, str | None], Awaitable[dict[str, Any]]]]:
+        """One remote conversation: ``send(text, context_id)`` per message.
+
+        Every message goes through one ADK session, so a message sent with the
+        ``context_id`` of an ``input-required`` reply continues that task (ADK
+        sets its ``task_id`` from the session's last reply).
+        """
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
 
@@ -788,12 +871,14 @@ class GuardedRemoteA2aTool(BaseTool):
                 supported_protocol_bindings=[TransportProtocol.JSONRPC],
             )
         )
+        outgoing: dict[str, Any] = {"text": "", "context_id": None}
 
         def only_the_request(
             _ctx: Any, _name: str, _converter: Any
         ) -> tuple[list[Any], str | None]:
-            # Exactly what the model wrote, never the session (ADR-008).
-            return [new_text_part(request)], None
+            # Exactly what the model (or the person answering) wrote, never
+            # the session (ADR-008).
+            return [new_text_part(outgoing["text"])], outgoing["context_id"]
 
         # google.adk.a2a.agent exports it through a lazy __getattr__, which ty reads as object.
         agent = RemoteA2aAgent(  # ty: ignore[call-non-callable]
@@ -812,6 +897,23 @@ class GuardedRemoteA2aTool(BaseTool):
             session_service=InMemorySessionService(),
             plugins=[],
         )
+        try:
+            session = await runner.session_service.create_session(
+                app_name="orrery-remote-a2a", user_id="orrery"
+            )
+
+            async def send(text: str, context_id: str | None) -> dict[str, Any]:
+                outgoing["text"], outgoing["context_id"] = text, context_id
+                return await self._exchange(runner, agent.name, session.id, text)
+
+            yield send
+        finally:
+            await runner.close()
+            await client.aclose()
+
+    async def _exchange(
+        self, runner: Any, author: str, session_id: str, text: str
+    ) -> dict[str, Any]:
         reply: list[str] = []
         states: list[str] = []
         parts: list[PartInfo] = []
@@ -819,35 +921,30 @@ class GuardedRemoteA2aTool(BaseTool):
         task_id: str | None = None
         context_id: str | None = None
         error: str | None = None
-        try:
-            session = await runner.session_service.create_session(
-                app_name="orrery-remote-a2a", user_id="orrery"
-            )
-            message = types.Content(role="user", parts=[types.Part.from_text(text=request)])
-            async for event in runner.run_async(
-                user_id="orrery", session_id=session.id, new_message=message
-            ):
-                if event.partial is True or event.author != agent.name:
-                    continue
-                if event.error_message:
-                    error = event.error_message
-                metadata = event.custom_metadata or {}
-                task_id = metadata.get("a2a:task_id") or task_id
-                context_id = metadata.get("a2a:context_id") or context_id
-                response = metadata.get("a2a:response")
-                if isinstance(response, dict):
-                    state = _state_name((response.get("status") or {}).get("state"))
-                    if state is None and "parts" in response:
-                        state = "message"
-                    if state and (not states or states[-1] != state):
-                        states.append(state)
-                    task_state = state or task_state
-                    parts = [_part_info(p) for p in _response_parts(response)]
-                if text := _text_of(event.content):
-                    reply.append(text)
-        finally:
-            await runner.close()
-            await client.aclose()
+        question = ""
+        message = types.Content(role="user", parts=[types.Part.from_text(text=text)])
+        async for event in runner.run_async(
+            user_id="orrery", session_id=session_id, new_message=message
+        ):
+            if event.partial is True or event.author != author:
+                continue
+            if event.error_message:
+                error = event.error_message
+            metadata = event.custom_metadata or {}
+            task_id = metadata.get("a2a:task_id") or task_id
+            context_id = metadata.get("a2a:context_id") or context_id
+            response = metadata.get("a2a:response")
+            if isinstance(response, dict):
+                state = _state_name((response.get("status") or {}).get("state"))
+                if state is None and "parts" in response:
+                    state = "message"
+                if state and (not states or states[-1] != state):
+                    states.append(state)
+                task_state = state or task_state
+                parts = [_part_info(p) for p in _response_parts(response)]
+                question = _status_text(response) if state == "input-required" else ""
+            if reply_text := _text_of(event.content):
+                reply.append(reply_text)
 
         base: dict[str, Any] = {
             "task_state": task_state,
@@ -866,10 +963,12 @@ class GuardedRemoteA2aTool(BaseTool):
                 ),
                 **base,
             }
-        text = "\n".join(reply)
-        truncated = len(text) > self.entry.max_reply_chars
+        joined = "\n".join(reply)
+        if task_state == "input-required" and not joined:
+            joined = question
+        truncated = len(joined) > self.entry.max_reply_chars
         if truncated:
-            text = text[: self.entry.max_reply_chars]
+            joined = joined[: self.entry.max_reply_chars]
         dropped = [p.kind for p in parts if p.kind != "text"]
         if task_state == "input-required":
             status = STATUS_INPUT_REQUIRED
@@ -877,7 +976,7 @@ class GuardedRemoteA2aTool(BaseTool):
             status = STATUS_SUCCESS
         else:
             status = STATUS_ERROR
-        result: dict[str, Any] = {"status": status, "reply": text, **base}
+        result: dict[str, Any] = {"status": status, "reply": joined, **base}
         if status == STATUS_ERROR:
             result["error_type"] = "remote_task_" + (task_state or "unknown").replace("-", "_")
             result["message"] = f"{self.name}: the remote task ended {task_state}"
