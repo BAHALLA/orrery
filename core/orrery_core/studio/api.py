@@ -631,7 +631,7 @@ def mount_studio(
             )
 
         def tool_view(server: Any, tool: str) -> dict[str, Any]:
-            seen = service.mcp_pins.seen_for_entry(server.name).get(tool)
+            seen = service.mcp_pins.seen_for_entry(server.name, server).get(tool)
             return {
                 "name": tool,
                 "classification": "read_only" if tool in server.read_only else "destructive",
@@ -690,8 +690,21 @@ def mount_studio(
 
     @api.get("/studio/registry/document")
     async def registry_document(auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
+        """What an edit starts from: the newest stored version (or the file).
+
+        ``version`` is what a save must name. When that version no longer
+        validates, ``head_error`` says why and ``serving_version`` is the one
+        that runs, so the admin can fix it by saving over it.
+        """
         await service.sync_registry()
-        return {**registry_source(), "document": service.registry_document}
+        editing = service.config.registry_editing
+        return {
+            **registry_source(),
+            "version": service.registry_head if editing else service.registry_version,
+            "serving_version": service.registry_version,
+            "head_error": service.registry_head_error if editing else None,
+            "document": service.registry_head_document if editing else service.registry_document,
+        }
 
     @api.put("/studio/registry/document")
     async def update_registry_document(

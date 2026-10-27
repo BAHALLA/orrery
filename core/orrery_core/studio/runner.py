@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 import uuid
@@ -95,7 +96,12 @@ from .events import (
     capture,
 )
 from .ledger import CompositionLedger, Exhausted
-from .registry import StudioRegistry, parse_registry, registry_changes
+from .registry import (
+    StudioRegistry,
+    check_deployment_bound,
+    parse_registry,
+    registry_changes,
+)
 from .spec import (
     CompositionSpec,
     SpecError,
@@ -145,6 +151,9 @@ class StudioRun:
     input: str
     composition_id: str | None = None
     composition_version: int | None = None
+    #: The registry the spec was validated against, which it also runs on
+    #: (an edit made meanwhile applies to the next run).
+    registry: StudioRegistry | None = None
     created_at: float = field(default_factory=time.time)
     status: RunStatus = "running"
     ended_at: float | None = None
@@ -736,6 +745,10 @@ PURGE_INTERVAL = 3600.0
 REGISTRY_POLL_INTERVAL = 10.0
 #: Longest note on a registry edit.
 MAX_REGISTRY_NOTE = 500
+#: Largest registry document a save may hold (serialised).
+MAX_REGISTRY_BYTES = 256 * 1024
+#: Seconds one registry store call may take.
+REGISTRY_STORE_TIMEOUT = 10.0
 
 
 class RegistryEditingDisabled(Exception):
@@ -765,6 +778,16 @@ class StudioService:
         #: version (0: the deployment's file) and where it came from.
         self.registry_document: dict[str, Any] = dict(registry_document or {})
         self.registry_version = 0
+        #: The deployment's file: version 0, and what binds secrets and
+        #: private endpoints (``check_deployment_bound``).
+        self.file_document = self.registry_document
+        self._file_registry = registry
+        #: The newest stored version (what a save must name), its document,
+        #: and why it is not served when it no longer validates.
+        self.registry_head = 0
+        self.registry_head_document = self.registry_document
+        self.registry_head_error: str | None = None
+        self._registry_synced = False
         self._registry_lock = asyncio.Lock()
         self._registry_follower: asyncio.Task[None] | None = None
         self.cards = cards
@@ -821,49 +844,79 @@ class StudioService:
             document, network=self.cards.network, allow_acting=self.config.acting_remotes
         )
 
+    async def _store_call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """A store call off the loop, bounded: a hung database must not hold the registry lock."""
+        async with asyncio.timeout(REGISTRY_STORE_TIMEOUT):
+            return await asyncio.to_thread(fn, *args, **kwargs)
+
     def _swap_registry(
         self, registry: StudioRegistry, document: dict[str, Any], version: int
     ) -> None:
-        """Serve *registry* from now on; an entry it changed or dropped is pinned afresh.
+        """Serve *registry* from now on. Runs already started keep their own.
 
-        Runs already started keep the entries they were compiled with.
+        Card and MCP tool pins are keyed by each entry's endpoint, so a
+        changed endpoint is fetched and pinned afresh (while a run still on
+        the old one pins under the old key) and a description edit keeps its
+        pin. An entry that goes takes its pins with it.
         """
-        changes = registry_changes(self.registry_document, document)
-        for key in (*changes["changed"], *changes["removed"]):
-            section, _, entry_id = key.partition(":")
-            if section == "a2a":
-                self.cards.forget(entry_id)
-            else:
-                self.mcp_pins.forget(entry_id)
-                self.mcp_errors.pop(entry_id, None)
+        new_mcp = {s.name: s for s in registry.mcp}
+        for server in self.registry.mcp:
+            kept = new_mcp.get(server.name)
+            if kept is None:
+                self.mcp_pins.forget(server.name)
+            if kept != server:
+                # The last problem was the old entry's.
+                self.mcp_errors.pop(server.name, None)
+        for entry in self.registry.a2a:
+            kept = registry.a2a_entry(entry.id)
+            if kept is None:
+                self.cards.forget(entry.id)
+            elif kept != entry:
+                self.cards.clear_error(entry.id)
         self.registry, self.registry_document, self.registry_version = registry, document, version
 
     async def sync_registry(self) -> None:
-        """Serve the newest stored registry, when another replica (or a restart) has one."""
+        """Serve the newest stored registry that validates; note a head that does not.
+
+        A stored version can stop validating (a secret unset, the allowlist
+        narrowed). It is not served: the newest version that still validates
+        is (the file, when none does), on every replica alike, and an admin
+        can save over the bad head.
+        """
         if not self.config.registry_editing:
             return
         async with self._registry_lock:
-            version = await asyncio.to_thread(self.store.registry_version)
-            if version == self.registry_version:
+            head = await self._store_call(self.store.registry_version)
+            if head == self.registry_head and self._registry_synced:
                 return
-            record = await asyncio.to_thread(self.store.latest_registry)
-            if record is None:
-                return
-            try:
-                registry = self._parse_registry(record.document)
-            except (ValueError, ValidationError) as exc:
-                # Valid when saved; no longer (a secret unset, the allowlist
-                # narrowed). Keep serving what was last good, loudly.
-                logger.error(
-                    "Stored Studio registry version %d no longer validates; still serving "
-                    "version %d: %s",
-                    record.version,
-                    self.registry_version,
-                    exc,
-                )
-                return
-            self._swap_registry(registry, record.document, record.version)
-            logger.info("Studio registry now at version %d", record.version)
+            records = await self._store_call(self.store.registry_history, limit=200)
+            head_document = records[0].document if records else self.file_document
+            head_error: str | None = None
+            target: tuple[StudioRegistry, dict[str, Any], int] | None = None
+            for record in records:
+                try:
+                    target = (
+                        self._parse_registry(record.document),
+                        record.document,
+                        record.version,
+                    )
+                    break
+                except (ValueError, ValidationError) as exc:
+                    if head_error is None:
+                        head_error = str(exc)
+                    logger.error(
+                        "Stored Studio registry version %d no longer validates: %s",
+                        record.version,
+                        exc,
+                    )
+            if target is None:
+                target = (self._file_registry, self.file_document, 0)
+            if target[2] != self.registry_version or not self._registry_synced:
+                self._swap_registry(*target)
+                logger.info("Studio registry now at version %d", target[2])
+            self.registry_head, self.registry_head_document = head, head_document
+            self.registry_head_error = head_error
+            self._registry_synced = True
 
     async def _follow_registry(self) -> None:
         while True:
@@ -873,45 +926,67 @@ class StudioService:
             except Exception:  # noqa: BLE001 - a dead follower would serve a stale registry
                 logger.warning("Studio registry poll failed", exc_info=True)
 
-    async def update_registry(
-        self, document: Any, *, expected_version: int, note: str, auth: AuthContext
-    ) -> RegistryVersion:
-        """Validate *document* exactly as the file is at startup, save it, and serve it.
-
-        Raises :class:`RegistryEditingDisabled`, :class:`SpecInvalid` (the
-        problems, under ``document``), or :class:`RegistryConflict` when the
-        registry moved past *expected_version*. Audited with before and after.
-        """
-        if not self.config.registry_editing:
-            raise RegistryEditingDisabled()
+    def _checked_registry(self, document: Any, note: str) -> StudioRegistry:
         if len(note) > MAX_REGISTRY_NOTE:
             raise SpecInvalid(
                 [SpecError(("note",), f"at most {MAX_REGISTRY_NOTE} characters", "too_long")]
             )
+        if len(json.dumps(document, default=str)) > MAX_REGISTRY_BYTES:
+            raise SpecInvalid(
+                [SpecError(("document",), f"at most {MAX_REGISTRY_BYTES} bytes", "too_long")]
+            )
         try:
-            registry = self._parse_registry(document)
+            # First: whether a secret is set is never told to an edit that
+            # could not use it anyway.
+            check_deployment_bound(document, self.file_document)
+            return self._parse_registry(document)
         except ValidationError as exc:
             raise SpecInvalid(
                 [replace(e, loc=("document", *e.loc)) for e in errors_from_validation(exc)]
             ) from None
         except ValueError as exc:
             raise SpecInvalid([SpecError(("document",), str(exc))]) from None
-        async with self._registry_lock:
-            before, before_version = self.registry_document, self.registry_version
-            if expected_version != before_version:
-                raise RegistryConflict(before_version)
-            changes = registry_changes(before, document)
-            if not any(changes.values()):
-                raise SpecInvalid([SpecError(("document",), "nothing changed", "unchanged")])
-            record = await asyncio.to_thread(
-                self.store.save_registry,
-                document,
+
+    async def update_registry(
+        self, document: Any, *, expected_version: int, note: str, auth: AuthContext
+    ) -> RegistryVersion:
+        """Validate *document* as the file is at startup, save it, and serve it.
+
+        Raises :class:`RegistryEditingDisabled`, :class:`SpecInvalid` (the
+        problems, under ``document``), or :class:`RegistryConflict` when the
+        stored registry moved past *expected_version*. Saves and refusals
+        are both audited; a save with before and after.
+        """
+        if not self.config.registry_editing:
+            raise RegistryEditingDisabled()
+        try:
+            registry = self._checked_registry(document, note)
+            async with self._registry_lock:
+                before, before_version = self.registry_head_document, self.registry_head
+                if expected_version != before_version:
+                    raise RegistryConflict(before_version)
+                changes = registry_changes(before, document)
+                if not any(changes.values()):
+                    raise SpecInvalid([SpecError(("document",), "nothing changed", "unchanged")])
+                record = await self._store_call(
+                    self.store.save_registry,
+                    document,
+                    expected_version=expected_version,
+                    actor=auth.subject[:255],
+                    note=note,
+                    changes=changes,
+                )
+                self._swap_registry(registry, document, record.version)
+                self.registry_head, self.registry_head_document = record.version, document
+                self.registry_head_error = None
+        except (SpecInvalid, RegistryConflict) as exc:
+            audit_event(
+                "studio_registry_refused",
+                subject=auth.subject,
                 expected_version=expected_version,
-                actor=auth.subject,
-                note=note,
-                changes=changes,
+                reason=str(exc)[:1000],
             )
-            self._swap_registry(registry, document, record.version)
+            raise
         audit_event(
             "studio_registry_updated",
             subject=auth.subject,
@@ -1030,6 +1105,7 @@ class StudioService:
             capture_content=self.config.capture_content,
             redact_ips=self.config.redact_ips,
             max_content_bytes=self.config.max_content_bytes_per_run,
+            registry=self.registry,
         )
         self._runs[run.run_id] = run
         audit_event(
@@ -1299,7 +1375,7 @@ class StudioService:
         try:
             compiled = compile_spec(
                 spec,
-                registry=self.registry,
+                registry=run.registry or self.registry,
                 cards=self.cards,
                 catalogue=self.catalogue(),
                 model=self._model_factory() if self._model_factory else None,

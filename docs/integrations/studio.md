@@ -188,21 +188,36 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   acting` only with `ORRERY_STUDIO_ACTING_REMOTES`. An edit can never hold
   what the deployment's file could not. Secrets stay environment variables:
   the document names them, never holds them.
+- **What only the deployment binds.** A secret goes to its entry's origins,
+  and a private or loopback address is reachable only from inside the
+  deployment, so the file's operator chose both. An edited entry that sends a
+  secret (`auth`), is `private_network`, or targets loopback must keep an
+  endpoint the file declares: the same `card_url`, `service_origins`,
+  `private_network` and `bearer_env` (for MCP, the same `url` and
+  `private_network`). Its skills, tools, description and limits stay
+  editable. This is checked first, so a refusal never says whether a secret is
+  set.
 - **Versioned, never overwritten.** The file is version 0. A save names the
   version it was edited from; if someone saved since, it is a 409 and nothing
   changes. Every version is kept (the latest 200) with who saved it, when,
   their note and which entries it added, removed or changed.
 - **Audited with before and after.** `studio_registry_updated` records the
   subject, both versions, the note, the changed entries and both documents.
-- **Applies to the next run.** Runs already going keep the entries they
-  started with. An entry that changed or was removed is fetched and pinned
-  afresh (its card digest or MCP tool pins from before do not carry over).
+- **Applies to the next run.** A run validates and runs on the registry of
+  the moment it started; runs already going keep theirs. Card and MCP tool
+  pins are keyed by the entry's endpoint (card URL, `card_sha256`, skills,
+  origins and network flag; for MCP the URL, transport and network flag), so
+  an entry whose endpoint changed is fetched and pinned afresh, a run still on
+  the old endpoint never pins for the new one, and a description edit keeps
+  its pin. A removed entry's pins are dropped.
 - **Across replicas and restarts.** Versions live in the Studio store
   (PostgreSQL with `DATABASE_URL`); each replica polls the version every 10 s
   and serves the newest. Without a database, edits live in the process and a
   restart goes back to the file. A stored version that stops validating (a
-  secret unset, the allowlist narrowed) is not served: the replica keeps the
-  last good one and logs an error.
+  secret unset, the allowlist narrowed) is not served: every replica serves
+  the newest version that still does (the file when none does), and the
+  document view reports the newest as `version` with `serving_version` and
+  `head_error`, so an admin saves a fixed version over it.
 - **Changing the file later.** Once a version is saved, the stored registry
   wins over the file. To start again from a changed file, save the file's
   content as a new version.
@@ -492,7 +507,7 @@ All routes need a human admin's bearer token.
 | `DELETE /studio/compositions/{id}` | `?version=<latest>` | 204, every version gone; 409 as `PUT` |
 | `GET /studio/schema` | | `{"spec_version", "spec": <JSON Schema>, "events": <JSON Schema>, "capabilities", "budget_ceilings"}` (below) |
 | `GET /studio/registry` | `?resolve=true` fetches every card and lists every MCP server's tools first, concurrently, at most 5 s each (a slow one shows its error) | MCP servers and their tools, A2A entries with card status, usable catalogue tools, and `version`, `source` (`file` or `stored`), `editable`. Never secrets or env var names |
-| `GET /studio/registry/document` | | `{"version", "source", "editable", "document"}`: the registry as written, env var names included (never their values) |
+| `GET /studio/registry/document` | | `{"version", "source", "editable", "serving_version", "head_error", "document"}`: the newest version as written (what a save names), env var names included (never their values); `serving_version` is the one that runs |
 | `PUT /studio/registry/document` | `{"document", "version", "note"?}` | The saved version: `{version, actor, created_at, note, changes}`; 422 with paths under `document`; 409 `{current_version}` when stale; 404 when editing is off |
 | `GET /studio/registry/history` | `?limit=` (≤ 200) | `{"versions": [...]}`, newest first, without documents; 404 when editing is off |
 | `GET /studio/registry/history/{version}` | | One version with its `document` |

@@ -17,6 +17,8 @@ import { useTabs } from "./useTabs";
 
 const TABS = ["document", "history"] as const;
 type RegistryTab = (typeof TABS)[number];
+/** Without editing there is no history to show. */
+const READ_ONLY_TABS: readonly RegistryTab[] = ["document"];
 
 /** Longest note on a save (the server's `MAX_REGISTRY_NOTE`). */
 const MAX_NOTE = 500;
@@ -41,11 +43,15 @@ export function RegistryDialog({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<RegistryTab>("document");
-  const tabs = useTabs(TABS, tab, setTab);
   const panelId = useId();
   const [current, setCurrent] = useState<RegistryDocument | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const tabs = useTabs(current?.editable ? TABS : READ_ONLY_TABS, tab, setTab);
+  // Held here, not in the editor, so a reload (which remounts it) keeps
+  // both the confirmation of a save and text the admin has not saved.
+  const [saved, setSaved] = useState<RegistryVersionSummary | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -109,11 +115,19 @@ export function RegistryDialog({
             key={current.version}
             client={client}
             current={current}
-            onSaved={() => {
+            draft={draft}
+            onDraft={setDraft}
+            saved={saved}
+            onSaved={(record) => {
+              setSaved(record);
+              setDraft(null);
               setReload((n) => n + 1);
               onSaved();
             }}
-            onReload={() => setReload((n) => n + 1)}
+            onReload={() => {
+              setSaved(null);
+              setReload((n) => n + 1);
+            }}
           />
         ) : (
           <History client={client} />
@@ -126,22 +140,30 @@ export function RegistryDialog({
 function DocumentEditor({
   client,
   current,
+  draft,
+  onDraft,
+  saved,
   onSaved,
   onReload,
 }: {
   client: StudioClient;
   current: RegistryDocument;
-  onSaved: () => void;
+  /** Unsaved text, kept across a reload; null shows the document read. */
+  draft: string | null;
+  onDraft: (text: string | null) => void;
+  /** The last save, shown until the next attempt or a reload. */
+  saved: RegistryVersionSummary | null;
+  onSaved: (record: RegistryVersionSummary) => void;
   onReload: () => void;
 }) {
   const textId = useId();
   const noteId = useId();
-  const [text, setText] = useState(() => pretty(current.document));
+  const text = draft ?? pretty(current.document);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [conflict, setConflict] = useState(false);
-  const [saved, setSaved] = useState<RegistryVersionSummary | null>(null);
+  const [shownSaved, setShownSaved] = useState(saved);
   const origin =
     current.source === "file"
       ? "the deployment's file (version 0)"
@@ -168,7 +190,7 @@ function DocumentEditor({
   const save = async () => {
     setProblems([]);
     setConflict(false);
-    setSaved(null);
+    setShownSaved(null);
     let document: unknown;
     try {
       document = JSON.parse(text);
@@ -187,8 +209,8 @@ function DocumentEditor({
         version: current.version,
         note: note.trim(),
       });
-      setSaved(record);
-      onSaved();
+      setShownSaved(record);
+      onSaved(record);
     } catch (err) {
       if (err instanceof SpecRefused) {
         setProblems(
@@ -212,8 +234,16 @@ function DocumentEditor({
       <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
         Editing {origin}. A save is checked exactly as the file is at startup (network allowlist,
         secrets, the acting opt-in), applies to runs started after it, and is kept with your name
-        and note. An entry you change is fetched and pinned afresh.
+        and note. An entry whose endpoint you change is fetched and pinned afresh; one that sends a
+        secret, is private or targets loopback keeps the endpoint the deployment&apos;s file
+        declares.
       </p>
+      {current.head_error ? (
+        <p role="alert" className={`mb-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.warn}`}>
+          Version {current.version} no longer passes the checks, so version{" "}
+          {current.serving_version} runs: {current.head_error} Save a fixed version over it.
+        </p>
+      ) : null}
       <label htmlFor={textId} className={fieldLabel}>
         Registry (JSON)
       </label>
@@ -223,7 +253,7 @@ function DocumentEditor({
         spellCheck={false}
         rows={18}
         disabled={saving}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onDraft(e.target.value)}
         className={`${input} mt-1 resize-y font-mono text-[12px] leading-relaxed`}
       />
       <label htmlFor={noteId} className={`${fieldLabel} mt-2`}>
@@ -239,23 +269,24 @@ function DocumentEditor({
       />
       {problems.length ? (
         <ul role="alert" className={`mt-2 rounded-lg border px-3 py-2 text-xs ${toneChip.crit}`}>
-          {problems.map((p) => (
-            <li key={p}>{p}</li>
+          {problems.map((p, i) => (
+            // Two problems can read the same; the list is replaced whole.
+            <li key={i}>{p}</li>
           ))}
         </ul>
       ) : null}
       {conflict ? (
         <p role="alert" className={`mt-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.warn}`}>
-          Someone saved the registry since you opened it. Copy your changes, then{" "}
+          Someone saved the registry since you opened it.{" "}
           <button type="button" className="underline" onClick={onReload}>
-            reload the latest
-          </button>{" "}
-          and apply them again.
+            Reload the latest
+          </button>
+          : your text stays here, so check it against what changed (History) before saving again.
         </p>
       ) : null}
-      {saved ? (
+      {shownSaved ? (
         <p role="status" className={`mt-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.ok}`}>
-          Saved as version {saved.version}: {describeChanges(saved.changes)}.
+          Saved as version {shownSaved.version}: {describeChanges(shownSaved.changes)}.
         </p>
       ) : null}
       <div className="mt-3 flex items-center gap-2">
@@ -272,8 +303,10 @@ function DocumentEditor({
           className={`${toolbarButton} border border-slate-200 dark:border-slate-700`}
           disabled={saving}
           onClick={() => {
-            setText(pretty(current.document));
+            onDraft(null);
             setProblems([]);
+            setConflict(false);
+            setShownSaved(null);
           }}
         >
           Discard changes
@@ -287,6 +320,7 @@ function History({ client }: { client: StudioClient }) {
   const [versions, setVersions] = useState<RegistryVersionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState<{ version: number; text: string } | null>(null);
+  const [showError, setShowError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -301,11 +335,12 @@ function History({ client }: { client: StudioClient }) {
   }, [client]);
 
   const show = async (version: number) => {
+    setShowError(null);
     try {
       const record = await client.registryVersion(version);
       setShown({ version, text: pretty(record.document) });
     } catch (err) {
-      setError(describeApiError(err, `Version ${version} could not be read.`));
+      setShowError(describeApiError(err, `Version ${version} could not be read.`));
     }
   };
 
@@ -354,6 +389,11 @@ function History({ client }: { client: StudioClient }) {
           </li>
         ))}
       </ol>
+      {showError ? (
+        <p role="alert" className={`mt-3 rounded-lg border px-2 py-1.5 text-xs ${toneChip.crit}`}>
+          {showError}
+        </p>
+      ) : null}
       {shown ? (
         <pre
           tabIndex={0}

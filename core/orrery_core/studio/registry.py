@@ -38,6 +38,7 @@ Every entry goes through the network guard: public addresses only, unless
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -178,6 +179,72 @@ def load_registry(
     guards the operator thinks it has.
     """
     return parse_registry(read_registry_document(path), network=network, allow_acting=allow_acting)
+
+
+def _is_loopback(url: Any) -> bool:
+    host = (urlsplit(url).hostname or "").lower() if isinstance(url, str) else ""
+    if host in LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _a2a_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    auth = item.get("auth")
+    return (
+        item.get("card_url"),
+        tuple(sorted(item.get("service_origins") or [])),
+        bool(item.get("private_network")),
+        auth.get("bearer_env") if isinstance(auth, Mapping) else None,
+    )
+
+
+def _mcp_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (item.get("url"), bool(item.get("private_network")))
+
+
+def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
+    """Refuse an edit that reaches what only the deployment may bind.
+
+    A secret is sent to its entry's origins, and a private or loopback address
+    is reachable only from the deployment's network: in the file, the
+    operator chose both. An edited entry that sends a secret, is
+    ``private_network`` or targets loopback must therefore keep an endpoint
+    the deployment's file already declares (the same URLs, origins, network
+    flag and secret). Checked before anything else, so a refusal never says
+    whether a secret is set.
+    """
+    if not isinstance(document, Mapping):
+        return
+    bound_a2a = {_a2a_endpoint(i) for i in file_document.get("a2a") or [] if isinstance(i, Mapping)}
+    bound_mcp = {_mcp_endpoint(i) for i in file_document.get("mcp") or [] if isinstance(i, Mapping)}
+    problems: list[str] = []
+    for item in document.get("a2a") or []:
+        if not isinstance(item, Mapping):
+            continue
+        sensitive = (
+            item.get("auth") is not None
+            or bool(item.get("private_network"))
+            or _is_loopback(item.get("card_url"))
+            or any(_is_loopback(o) for o in item.get("service_origins") or [])
+        )
+        if sensitive and _a2a_endpoint(item) not in bound_a2a:
+            problems.append(f"a2a entry {item.get('id')!r}")
+    for item in document.get("mcp") or []:
+        if not isinstance(item, Mapping):
+            continue
+        sensitive = bool(item.get("private_network")) or _is_loopback(item.get("url"))
+        if sensitive and _mcp_endpoint(item) not in bound_mcp:
+            problems.append(f"mcp entry {item.get('id')!r}")
+    if problems:
+        raise ValueError(
+            f"{', '.join(problems)}: an entry that sends a secret, is private_network or "
+            "targets loopback must keep an endpoint the deployment's registry file declares "
+            "(same URLs, service_origins, private_network and bearer_env); change those in "
+            f"the file ({STUDIO_REGISTRY_ENV})"
+        )
 
 
 def registry_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, list[str]]:

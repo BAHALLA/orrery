@@ -331,6 +331,20 @@ class PinnedCard:
     #: ``config`` (card_sha256 matched) or ``first_use`` (trusted on first sight).
     pinned_by: Literal["config", "first_use"]
     fetched_at: float
+    #: :func:`pin_identity` of the entry it was checked against: an edited
+    #: entry with another identity never reuses it.
+    identity: tuple[Any, ...] = ()
+
+
+def pin_identity(entry: RemoteAgentEntry) -> tuple[Any, ...]:
+    """What a card is checked against: where it lives, its pin, its skills, its origins."""
+    return (
+        entry.card_url,
+        entry.card_sha256,
+        tuple(sorted(entry.skills)),
+        entry.private_network,
+        tuple(sorted(entry.service_origins)),
+    )
 
 
 def check_rpc_targets(entry: RemoteAgentEntry, card: AgentCard) -> None:
@@ -458,13 +472,19 @@ class RemoteCards:
     def __init__(self, network: RemoteNetwork | None = None) -> None:
         self.network = network or RemoteNetwork()
         self._pinned: dict[str, PinnedCard] = {}
-        self._first_seen: dict[str, str] = {}
+        #: Keyed by entry id *and* identity: re-pointing an entry is a new first use.
+        self._first_seen: dict[tuple[str, tuple[Any, ...]], str] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._errors: dict[str, tuple[float, str]] = {}
 
+    def _current(self, entry: RemoteAgentEntry) -> PinnedCard | None:
+        """The pin, only while it was checked against this entry as it now stands."""
+        pinned = self._pinned.get(entry.id)
+        return pinned if pinned is not None and pinned.identity == pin_identity(entry) else None
+
     def status(self, entry: RemoteAgentEntry) -> dict[str, Any]:
         """For ``GET /studio/registry``: the pin and the last problem, never the card bytes."""
-        pinned = self._pinned.get(entry.id)
+        pinned = self._current(entry)
         error = self._errors.get(entry.id)
         return {
             "digest": pinned.digest if pinned else entry.card_sha256,
@@ -481,7 +501,12 @@ class RemoteCards:
     def forget(self, entry_id: str) -> None:
         """Drop everything known about *entry_id*: an edited entry is fetched and pinned afresh."""
         self._pinned.pop(entry_id, None)
-        self._first_seen.pop(entry_id, None)
+        for key in [k for k in self._first_seen if k[0] == entry_id]:
+            del self._first_seen[key]
+        self._errors.pop(entry_id, None)
+
+    def clear_error(self, entry_id: str) -> None:
+        """Forget the last problem: it was seen on an entry since edited."""
         self._errors.pop(entry_id, None)
 
     def note_error(self, entry: RemoteAgentEntry, reason: str) -> None:
@@ -489,14 +514,14 @@ class RemoteCards:
         self._errors[entry.id] = (time.time(), reason)
 
     async def get(self, entry: RemoteAgentEntry) -> PinnedCard:
-        pinned = self._pinned.get(entry.id)
+        pinned = self._current(entry)
         if pinned is not None and (
             entry.card_refresh_s == 0 or time.time() - pinned.fetched_at < entry.card_refresh_s
         ):
             return pinned
         lock = self._locks.setdefault(entry.id, asyncio.Lock())
         async with lock:
-            pinned = self._pinned.get(entry.id)
+            pinned = self._current(entry)
             if pinned is not None and (
                 entry.card_refresh_s == 0 or time.time() - pinned.fetched_at < entry.card_refresh_s
             ):
@@ -549,10 +574,11 @@ class RemoteCards:
                     f"{entry.id}: the card's trust fields changed (sha256 {digest}, pinned "
                     f"{entry.card_sha256}); review the card and re-pin card_sha256"
                 )
-            return PinnedCard(card, digest, "config", time.time())
-        first = self._first_seen.get(entry.id)
+            return PinnedCard(card, digest, "config", time.time(), pin_identity(entry))
+        key = (entry.id, pin_identity(entry))
+        first = self._first_seen.get(key)
         if first is None:
-            first = self._first_seen[entry.id] = digest
+            first = self._first_seen[key] = digest
             logger.warning(
                 "A2A remote %s pinned on first use, card sha256 %s (set card_sha256 once reviewed)",
                 entry.id,
@@ -563,7 +589,7 @@ class RemoteCards:
                 f"{entry.id}: the card's trust fields changed since this process first saw "
                 f"them (now sha256 {digest}); review it and set card_sha256"
             )
-        return PinnedCard(card, digest, "first_use", time.time())
+        return PinnedCard(card, digest, "first_use", time.time(), pin_identity(entry))
 
 
 # ── The tool ─────────────────────────────────────────────────────────

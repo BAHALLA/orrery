@@ -1392,20 +1392,50 @@ def test_a_registry_edit_is_checked_like_the_file_and_must_name_the_latest_versi
     assert _document(editing_client)["document"] == edited
 
 
-def test_an_edited_remote_is_pinned_afresh(editing_client, monkeypatch):
-    service = _service_of(editing_client.app)
-    forgotten: list[str] = []
-    monkeypatch.setattr(service.cards, "forget", forgotten.append)
+def test_a_card_pin_holds_only_for_the_entry_it_was_checked_against(monkeypatch):
+    from orrery_core.a2a.remote import PinnedCard, RemoteAgentEntry, RemoteCards, pin_identity
+
+    cards = RemoteCards()
+    fetched: list[RemoteAgentEntry] = []
+
+    async def fetch(entry: RemoteAgentEntry) -> PinnedCard:
+        fetched.append(entry)
+        return PinnedCard(MagicMock(skills=[]), "d", "first_use", time.time(), pin_identity(entry))
+
+    monkeypatch.setattr(cards, "_fetch", fetch)
+    entry = RemoteAgentEntry(id="writer", card_url="https://a.example/card.json", skills=["draft"])
+    asyncio.run(cards.get(entry))
+    asyncio.run(cards.get(entry.model_copy(update={"description": "reworded"})))
+    assert len(fetched) == 1  # a description edit keeps the pin
+    moved = entry.model_copy(update={"card_url": "https://b.example/card.json"})
+    assert cards.status(moved)["resolved"] is False
+    asyncio.run(cards.get(moved))
+    assert len(fetched) == 2  # another endpoint is fetched and pinned afresh
+    # A run still on the old entry does not reuse the new endpoint's pin either.
+    asyncio.run(cards.get(entry))
+    assert len(fetched) == 3
+
+
+def test_an_edit_cannot_reach_what_only_the_deployment_binds(editing_client):
     document = _document(editing_client)["document"]
-    document["a2a"][0]["skills"] = ["draft", "review"]
-    body = {"document": document, "version": 0}
-    assert (
-        editing_client.put("/studio/registry/document", headers=ADMIN, json=body).status_code == 200
-    )
-    assert forgotten == ["demo-writer"]
+    writer = document["a2a"][0]
+
+    def put(entry: dict[str, Any]) -> Any:
+        body = {"document": {**document, "a2a": [entry]}, "version": 0}
+        return editing_client.put("/studio/registry/document", headers=ADMIN, json=body)
+
+    # The test remote is on loopback: moving it elsewhere on loopback is refused,
+    refused = put({**writer, "card_url": writer["card_url"].replace("agent-card", "other")})
+    assert refused.status_code == 422 and "registry file" in refused.text
+    # and so is sending a secret, set or not (the answer does not say which).
+    for env in ("PATH", "NOT_SET_ANYWHERE"):
+        refused = put({**writer, "auth": {"bearer_env": env}})
+        assert refused.status_code == 422 and "registry file" in refused.text
+    # Keeping the declared endpoint is fine.
+    assert put({**writer, "skills": ["draft", "review"]}).status_code == 200
 
 
-def test_a_replica_follows_a_registry_saved_elsewhere(editing_client):
+def test_a_stored_version_that_no_longer_validates_is_not_served(editing_client):
     service = _service_of(editing_client.app)
     document = _document(editing_client)["document"]
     changes = {"added": [], "removed": ["a2a:demo-writer"], "changed": []}
@@ -1414,11 +1444,33 @@ def test_a_replica_follows_a_registry_saved_elsewhere(editing_client):
     )
     editing_client.portal.call(service.sync_registry)
     assert service.registry_version == 1 and service.registry.a2a == []
-    # A stored version that no longer validates is not served.
     bad = {"mcp": [{"id": "x", "transport": "stdio", "tools": ["t"]}]}
     service.store.save_registry(bad, expected_version=1, actor="bob", note="", changes=changes)
     editing_client.portal.call(service.sync_registry)
+    # The newest version that validates is served; the head is reported.
     assert service.registry_version == 1
+    view = _document(editing_client)
+    assert view["version"] == 2 and view["serving_version"] == 1 and view["head_error"]
+    # An admin saves over the bad head.
+    body = {"document": document, "version": 2, "note": "restore"}
+    saved = editing_client.put("/studio/registry/document", headers=ADMIN, json=body)
+    assert saved.status_code == 200, saved.text
+    assert service.registry_version == 3 and service.registry.a2a
+    # A replica that starts afresh serves the newest valid version too.
+    service.store.save_registry(bad, expected_version=3, actor="bob", note="", changes=changes)
+    service.registry_head, service._registry_synced = 0, False
+    editing_client.portal.call(service.sync_registry)
+    assert service.registry_version == 3 and service.registry_head == 4
+
+
+def test_stored_versions_are_ignored_while_editing_is_off(client):
+    service = _service_of(client.app)
+    changes = {"added": [], "removed": ["a2a:demo-writer"], "changed": []}
+    service.store.save_registry(
+        {"mcp": [], "a2a": []}, expected_version=0, actor="bob", note="", changes=changes
+    )
+    client.portal.call(service.sync_registry)
+    assert service.registry_version == 0 and service.registry.a2a
 
 
 def test_an_expired_action_is_never_sent(principals, acting_registry, stub, memory, remote):

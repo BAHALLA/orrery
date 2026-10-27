@@ -17,6 +17,8 @@ function client(doc: Partial<RegistryDocument> = {}, over: Record<string, unknow
       version: 0,
       source: "file",
       editable: true,
+      serving_version: 0,
+      head_error: null,
       document: DOCUMENT,
       ...doc,
     }),
@@ -97,8 +99,63 @@ describe("RegistryDialog", () => {
     render(<RegistryDialog client={c} onSaved={() => {}} onClose={() => {}} />);
     await editor();
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    await userEvent.click(await screen.findByRole("button", { name: "reload the latest" }));
+    fireEvent.change(await editor(), { target: { value: '{"a2a": []}' } });
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reload the latest" }));
     await waitFor(() => expect(c.registryDocument).toHaveBeenCalledTimes(2));
+    // The unsaved text survives the reload; Discard shows the latest.
+    expect(await editor()).toHaveValue('{"a2a": []}');
+    await userEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(await editor()).toHaveValue(JSON.stringify(DOCUMENT, null, 2));
+    expect(screen.queryByText(/Someone saved/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the confirmation when the saved version is read back", async () => {
+    const c = client();
+    vi.mocked(c.registryDocument)
+      .mockResolvedValueOnce({
+        version: 0,
+        source: "file",
+        editable: true,
+        serving_version: 0,
+        head_error: null,
+        document: DOCUMENT,
+      })
+      .mockResolvedValue({
+        version: 1,
+        source: "stored",
+        editable: true,
+        serving_version: 1,
+        head_error: null,
+        document: { a2a: [] },
+      });
+    render(<RegistryDialog client={c} onSaved={() => {}} onClose={() => {}} />);
+    fireEvent.change(await editor(), { target: { value: '{"a2a": []}' } });
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(c.registryDocument).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Editing version 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Saved as version 1/)).toBeInTheDocument();
+  });
+
+  it("says when the newest version is not the one that runs", async () => {
+    const c = client({ version: 2, source: "stored", serving_version: 1, head_error: "a2a: bad." });
+    render(<RegistryDialog client={c} onSaved={() => {}} onClose={() => {}} />);
+    expect(
+      await screen.findByText(/Version 2 no longer passes the checks, so version 1 runs/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the history listed when one version cannot be read", async () => {
+    const c = client(
+      { version: 1, source: "stored" },
+      { registryVersion: vi.fn().mockRejectedValue(new ApiError(500, "boom")) },
+    );
+    render(<RegistryDialog client={c} onSaved={() => {}} onClose={() => {}} />);
+    await editor();
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Show version 1" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("describe the writer")).toBeInTheDocument();
   });
 
   it("is read-only, without history, when editing is off", async () => {
@@ -107,6 +164,9 @@ describe("RegistryDialog", () => {
     expect(await screen.findByLabelText("The registry document")).toHaveTextContent("writer");
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "History" })).toBeDisabled();
+    // The arrow keys do not land on it either.
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Document" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("lists saved versions with who, why and what changed, and shows one", async () => {

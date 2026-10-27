@@ -220,9 +220,14 @@ export interface RegistryChanges {
 
 /** `GET /studio/registry/document`: the registry as written. */
 export interface RegistryDocument {
+  /** The newest version: what a save names. */
   version: number;
   source: "file" | "stored";
   editable: boolean;
+  /** The version that runs: older than `version` when the newest no longer validates. */
+  serving_version: number;
+  /** Why the newest version is not served, if it is not. */
+  head_error: string | null;
   document: Record<string, unknown>;
 }
 
