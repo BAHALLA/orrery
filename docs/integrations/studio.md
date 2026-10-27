@@ -53,6 +53,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_RUNNING_PER_USER` | `2` | Runs one person may have in flight; more is a 429. |
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
+| `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` | `900` | How long a `human_approval` waits for its person; undecided by then, it expires and the run ends `rejected`. |
 | `ORRERY_A2A_PRIVATE_ALLOW` | — | Hosts and CIDRs a `private_network` entry may reach (comma-separated). |
 | `ORRERY_A2A_CA_FILE` | — | One extra CA bundle trusted for outbound A2A (an internal CA). |
 | `ORRERY_STUDIO_EGRESS_PROXY` | — | A forward proxy (`http://host:port`) for public registry destinations, MCP and A2A, through `CONNECT` (below). Never read from `HTTPS_PROXY`. |
@@ -224,6 +225,7 @@ every P0a spec still validates and runs the same way.
 | **Supervisor** | A `supervisor` node lists `children` (`llm_agent` or `supervisor` ids, at most 3 levels). Each child is a tool the supervisor's model calls (an ADK `AgentTool`); each call counts as a delegation against `max_delegations`. Children have no edges; their `node.enter`/`node.exit` carry `parent`. |
 | **Per-node models** | `"model": "<name>"` on an `llm_agent` or `supervisor`, from `ORRERY_STUDIO_MODELS`. No fallback chain: a failing model fails the node. Gemini's safety filters follow the node's model, not `MODEL_PROVIDER`. `run.end` totals tokens by model. |
 | **Screening** | `"screen": true` on an edge runs the injection screen over the text it carries. |
+| **Human approval** | A `human_approval` node (`"prompt": "Publish these notes?"`) stops the run until the person who started it approves or rejects the text it receives (below). Its edges carry `when: "approved"` or `when: "rejected"`; a `rejected` edge back to an earlier node is a loop like any other (`max_iterations`). |
 
 The `pattern` values are `pipeline`, `router`, `critic_loop`,
 `fan_out_fan_in`, `supervisor`, `debate`, `map_reduce` and
@@ -231,8 +233,8 @@ The `pattern` values are `pipeline`, `router`, `critic_loop`,
 (`pattern_mismatch`: a `pipeline` has no labels, fan-out or loops, a
 `critic_loop` needs a loop, a `router` a `when` edge, `fan_out_fan_in` and
 `map_reduce` a parallel node and its join, `supervisor` a supervisor,
-`debate` parallel speakers or a loop). `handoff` and the `human_approval` and `remote_a2a` node
-kinds parse but are refused with `not_supported_yet`.
+`debate` parallel speakers or a loop). `handoff` and the `remote_a2a` node
+kind parse but are refused with `not_supported_yet`.
 
 **Templates.** `deploy/studio-demo/specs/` has one tested spec per pattern:
 `pipeline.json` (P0a's `release-notes.spec.json`, unchanged; the console's
@@ -240,7 +242,9 @@ release-notes template is a copy, and `web/src/studio/validate.test.ts` holds
 them equal), `router.json`, `critic-loop.json` (the compose demo: that
 pipeline with the critic sending drafts back), `fan-out-fan-in.json`, `supervisor.json`,
 `debate.json`, `map-reduce.json` (a fixed fan-out: the map width is the number
-of branches) and `plan-and-execute.json`. CI runs each with a stub model
+of branches), `plan-and-execute.json` and `human-review.json` (the demo with
+you as the critic; the console's human-review template is a copy, held equal
+the same way). CI runs each with a stub model
 (`core/tests/test_studio_patterns.py`).
 
 ### Validation
@@ -254,7 +258,7 @@ problem at once, each with the path of the field that caused it:
    "msg": "remote agent 'demo-writer' is not registered for skill 'deploy'",
    "code": "unknown_tool"},
   {"loc": ["spec", "nodes", 3, "kind"],
-   "msg": "node kind 'human_approval' is not supported yet (P0c)",
+   "msg": "node kind 'remote_a2a' is not supported yet (P1; use an llm_agent with an a2a: tool)",
    "code": "not_supported_yet"}
 ]}}
 ```
@@ -276,7 +280,41 @@ tools that reach the model under the same name (`tool_name_collision`:
 `mcp:my-x.t` and `mcp:my_x.t` are both `mcp_my_x_t`, and a catalogue alias may
 match another tool's name), a tool named like a supervisor's child (`n_<id>`),
 and an MCP tool whose model-facing name is over 64 characters
-(`tool_name_too_long`). Two nodes may each use the same tool.
+(`tool_name_too_long`). Two nodes may each use the same tool. A
+`human_approval` must have `when: "approved"`/`"rejected"` on each edge (one
+per label), may not sit on a `parallel` branch (put it after the join), and may
+not be followed by a `router` (its edges already route).
+
+### Human approval
+
+A `human_approval` node is the one place a run waits for a person. The design
+is deliberately narrow:
+
+- **Only the run's owner decides**, through
+  `POST /studio/runs/{id}/approvals/{approval_id}`. Nothing a model writes,
+  and nothing sent into the run, can answer it: the run's task waits on a
+  future only that route resolves.
+- **Approve names what was read.** `GET /studio/runs/{id}/approvals` returns
+  the text under review (redacted: credentials and email addresses, cut to
+  64 KiB) with its SHA-256 `digest`; an approval must send that digest, and a
+  different one is a 409. Reject needs none.
+- **Once.** A second decision on the same approval is a 409.
+- **Default deny.** Undecided after `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS`,
+  it expires and the run ends `rejected`, whatever edges exist. Cancelling the
+  run cancels it.
+- **A person's time is not the run's budget.** The run's `timeout_s` is paused
+  while an approval waits, and resumes when it is decided.
+- **Rejected** takes the `rejected` edge, whose node gets the reviewer's
+  comment and the text that was rejected. With no `rejected` edge the run
+  ends `rejected` there. A loop through an approval is capped by its
+  `max_iterations`, and a run asks for at most 12 approvals.
+- **The text is held in memory only**, on the replica running the run, and
+  dropped when it is decided. Events carry its digest and size, and its
+  content only with `ORRERY_STUDIO_CAPTURE_CONTENT`. Like cancel, a decision
+  must reach that replica (another answers 409).
+
+Each decision is written to the audit log (`studio_approval_decided`: run,
+approval, node, decision, who).
 
 ## Remote agents as tools
 
@@ -325,7 +363,8 @@ The first budget to run out emits `budget.hit` and ends the run as
 
 **Outcomes:** `succeeded`, `failed` (an error, a model call that failed, or a
 labelled node that answered without one of its labels: the run stops at that
-node), `cancelled`, `budget_exhausted`.
+node), `cancelled`, `budget_exhausted`, `rejected` (a human approval rejected
+with no `rejected` edge, or expired).
 
 **Cancel** cancels the run's task: model and HTTP calls in flight stop and
 toolsets close. A synchronous tool already running in a worker thread cannot
@@ -366,6 +405,8 @@ All routes need a human admin's bearer token.
 | `GET /studio/runs/{id}` | | The run's summary (below) |
 | `GET /studio/runs/{id}/events` | `Last-Event-ID` header to resume | `text/event-stream`: every event so far, then each new one, until `run.end` |
 | `POST /studio/runs/{id}/cancel` | | The summary; `status` becomes `cancelled` once the task stops; 409 when another replica runs it |
+| `GET /studio/runs/{id}/approvals` | | `{"approvals": [{approval_id, node_id, kind, prompt, digest, size, requested_at, expires_at, text}…]}`: the run's pending approvals, with the text under review; 409 when another replica runs it |
+| `POST /studio/runs/{id}/approvals/{approval_id}` | `{"decision": "approve", "digest": "<64 hex>", "comment"?: "…"}` or `{"decision": "reject", "comment"?: "…"}` (comment ≤ 2000 chars) | 200 `{"approval_id", "decision"}`; 404 for an unknown approval; 409 when it was already decided or expired, the digest is not the text's, or another replica runs it; 422 for a bad body |
 | `POST /studio/validate` | `{"spec": {…}}` | 200 `{"ok": true, "spec_digest": "…", "warnings": [{loc, msg, code}]}`, or the same 422 as a run. Never calls a model or a remote |
 | `GET /studio/compositions` | | `{"compositions": [{id, name, description, pattern, version, created_by, created_at, updated_by, updated_at}…]}` |
 | `POST /studio/compositions` | `{"spec": {…}}` | 201, the composition with `spec` and `versions`; 422 as a run |
@@ -386,14 +427,14 @@ minute per person, and `?resolve=true` on the registry to 6 a minute (429 with
 
 ```json
 {"node_kinds": ["llm_agent", "router", "parallel", "join", "supervisor"],
- "unsupported_node_kinds": {"remote_a2a": "P1; …", "human_approval": "P0c"},
+ "unsupported_node_kinds": {"remote_a2a": "P1; …"},
  "patterns": ["pipeline", "fan_out_fan_in", "router", "supervisor", "critic_loop",
               "debate", "map_reduce", "plan_and_execute"],
  "unsupported_patterns": {"handoff": "…"},
  "routing": true, "loops": true, "parallel": true, "supervisor": true,
  "edge_screen": true, "per_node_models": true,
  "models": ["anthropic/claude-sonnet-4-5", "gemini-2.5-flash"],
- "human_approval": false, "stored_compositions": true,
+ "human_approval": true, "approval_timeout_s": 900, "stored_compositions": true,
  "limits": {"max_nodes": 30, "max_parallel_branches": 6, "max_supervisor_depth": 3,
             "max_loop_iterations": 5, "max_loop_depth": 2, "max_input_chars": 8192}}
 ```
@@ -417,7 +458,7 @@ The run summary:
  "spec_digest": "5815…", "pattern": "critic_loop", "composition_id": "c-…",
  "composition_version": 2, "created_at": 1792871739.6, "ended_at": 1792871752.1,
  "error": null, "totals": {…}, "event_count": 11, "dropped_events": 0,
- "cancellable": false}
+ "cancellable": false, "pending_approvals": []}
 ```
 
 The SSE stream sends one frame per event, `id` being its `seq`, and a
@@ -448,13 +489,15 @@ Every event has `type`, `seq` (1, 2, … within the run), `run_id` and `ts`
 |---|---|
 | `run.start` | `spec_name`, `spec_digest` (JCS SHA-256), `pattern`, `nodes` (ids in graph order), `budgets` (resolved), `composition_id`, `composition_version`, `content`? |
 | `node.enter` | `node_id`, `kind`, `model`, `parent` (the supervisor, for a child) |
-| `node.exit` | `node_id`, `kind`, `model`, `parent`, `tokens` `{input, output, total}`, `elapsed_ms`, `outcome` (`ok` · `failed` · `cancelled` · `budget_exhausted`), `content`? |
+| `node.exit` | `node_id`, `kind`, `model`, `parent`, `tokens` `{input, output, total}`, `elapsed_ms`, `outcome` (`ok` · `failed` · `cancelled` · `budget_exhausted` · `rejected`), `content`? |
 | `route.decision` | `node_id` (where the choice was made: the labelled node, or its `router`), `source` (the labelled node), `label`, `alternatives` (its labels), `to` (absent when no edge takes the label and the branch ends) |
 | `loop.iteration` | `edge` (`"critic->writer"`), `from_node`, `to_node`, `iteration` (1…cap), `cap`, `stopped` (true at the cap: the edge is not taken) |
 | `mcp.call` | `node_id`, `entry`, `tool`, `classification`, `outcome` (`success` · `failure` · `refused`), `status`, `elapsed_ms` |
 | `a2a.message` | `node_id`, `remote`, `skill`, `direction` (`outbound` · `inbound`), `method`, `task_id`, `context_id`, `task_state`, `states` (each state seen), `parts` `[{kind, size}]`, `elapsed_ms`, `status`, `card_digest`, `content`? |
+| `approval.requested` | `node_id`, `approval_id`, `kind` (`approval`), `prompt`, `digest`, `size`, `expires_at`, `content`? |
+| `approval.decided` | `node_id`, `approval_id`, `kind`, `decision` (`approved` · `rejected` · `expired` · `cancelled`), `waited_ms`, `content`? (the comment) |
 | `budget.hit` | `budget` (`max_tokens` · `max_tool_calls` · `max_delegations` · `max_remote_calls` · `timeout_s`), `limit`, `used` |
-| `run.end` | `outcome` (`succeeded` · `failed` · `cancelled` · `budget_exhausted`), `error`, `totals` `{tokens, tokens_by_model, tool_calls, delegations, remote_calls, wall_ms}`, `dropped_events`, `content`? |
+| `run.end` | `outcome` (`succeeded` · `failed` · `cancelled` · `budget_exhausted` · `rejected`), `error`, `totals` `{tokens, tokens_by_model, tool_calls, delegations, remote_calls, wall_ms}`, `dropped_events`, `content`? |
 
 **No content by default.** Events carry names, ids, states, sizes, counts and
 timings, never arguments, results or message text. With
@@ -476,7 +519,8 @@ branches' events interleave: each branch's `node.enter` comes before any of
 them exits.
 
 **At most 2000 events per run.** Past that, events are dropped (the last few
-slots are kept for `budget.hit` and `run.end`), and `run.end` says how many.
+slots are kept for `budget.hit`, the approval events and `run.end`), and
+`run.end` says how many.
 
 ## The demo
 
@@ -559,15 +603,19 @@ pattern gallery one click away.
   spec has for it. On screens narrower than 1280px the palette is a rail of
   icons (each keeps its name and blurb for screen readers and as a tooltip).
 - **Edges.** Drag from a node's right handle to another node's left handle.
-  Delete or Backspace removes the selected nodes or edges.
+  Delete or Backspace removes the selected nodes or edges. An edge out of a
+  human approval takes the first free label (*approved*, then *rejected*), and
+  one back to an earlier node starts as a loop capped at 2; the edge's
+  inspector swaps the two labels.
 - **Inspector.** Edit a node's id (edges follow a rename), description,
   instruction and tools. Tools are picked from the registry: MCP tools, remote
   skills and catalogue tools. Anything not classified read-only is shown but
   cannot be added, since runs are L2. The model field lists the server's
   `models` (`ORRERY_STUDIO_MODELS`), and a model outside that list is flagged
   as the server would refuse it.
-- **Patterns.** The gallery holds pipeline, release-notes, router, fan-out,
-  supervisor, critic loop, debate, map-reduce, handoff and plan-execute. A
+- **Patterns.** The gallery holds pipeline, release-notes, human review,
+  router, fan-out, supervisor, critic loop, debate, map-reduce, handoff and
+  plan-execute. A
   pattern the server cannot run (handoff, today) is marked with the phase
   that brings it: you can look at it but not load it.
 - **Layout.** The graph flows left to right, or top to bottom when the canvas
@@ -603,6 +651,12 @@ the event stream:
   with `run.end`;
 - a `budget.hit` is shown as its own card, naming the budget and its limit,
   and marks the node that was running;
+- a human approval shows a card with the prompt, the text under review (read
+  from `GET /studio/runs/{id}/approvals`, not from the stream), a comment box
+  and the time left. *Approve* sends the digest of the text shown, and is off
+  until that text has been read; *Reject* sends the comment back. The node is
+  marked *awaiting you* on the canvas, and the card goes when the run's
+  `approval.decided` arrives;
 - if the stream drops, it reconnects (0.5 s, then 1, 2, 4 and 8 s) with
   `Last-Event-ID`, and events already seen are ignored, so nothing is played
   twice;
@@ -661,8 +715,8 @@ uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browse
 ## Not yet
 
 - `handoff`, `remote_a2a` nodes, a dynamic map width, and an MCP "try it" call.
-- Human approval, answering a remote's `input-required`, `acting` remotes and
-  registry editing (P0c).
+- Answering a remote's `input-required`, `acting` remotes and registry editing
+  (the rest of P0c).
 - `tasks/cancel` to a remote when a run is cancelled.
 - Auth for registry MCP entries (only `ORRERY_STUDIO_SECRET_*` will be allowed).
 - In the console: a validate-only call (validation before a run is the
