@@ -4,7 +4,7 @@ import { flatten } from "../chat/trace";
 import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
 import { useDeferredDelete } from "../conversations/useDeferredDelete";
-import { AgentsDashboard } from "./AgentsDashboard";
+import { AgentsDashboard } from "./agents/AgentsDashboard";
 import { useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
