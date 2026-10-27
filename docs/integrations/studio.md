@@ -53,7 +53,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_RUNNING_PER_USER` | `2` | Runs one person may have in flight; more is a 429. |
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
-| `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` | `900` | How long a `human_approval` waits for its person; undecided by then, it expires and the run ends `rejected`. |
+| `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` | `900` | How long a `human_approval` waits for its person (at most `86400`); undecided by then, it expires and the run ends `rejected`. A waiting run keeps its run slot, toolsets and connections. |
 | `ORRERY_A2A_PRIVATE_ALLOW` | — | Hosts and CIDRs a `private_network` entry may reach (comma-separated). |
 | `ORRERY_A2A_CA_FILE` | — | One extra CA bundle trusted for outbound A2A (an internal CA). |
 | `ORRERY_STUDIO_EGRESS_PROXY` | — | A forward proxy (`http://host:port`) for public registry destinations, MCP and A2A, through `CONNECT` (below). Never read from `HTTPS_PROXY`. |
@@ -295,10 +295,17 @@ is deliberately narrow:
   and nothing sent into the run, can answer it: the run's task waits on a
   future only that route resolves.
 - **Approve names what was read.** `GET /studio/runs/{id}/approvals` returns
-  the text under review (redacted: credentials and email addresses, cut to
-  64 KiB) with its SHA-256 `digest`; an approval must send that digest, and a
-  different one is a 409. Reject needs none.
-- **Once.** A second decision on the same approval is a 409.
+  the text under review exactly as the next node will get it, with its
+  SHA-256 `digest`. It is deliberately **not redacted**: approving
+  `[REDACTED_EMAIL]` would let the real address through unseen, and only the
+  run's owner can read it. An approval must send that digest (the console
+  computes it from the text it shows and checks it against the server's), and
+  a different one is a 409. Text over 128 KiB is served only in part
+  (`complete: false`) and can only be rejected. Reject needs no digest.
+- **Once.** A second decision on the same approval is a 409. A decision, the
+  expiry and a cancel all settle one future, and the first stands: a decision
+  that loses the race gets a 409, never a 200 for something that did not
+  happen.
 - **Default deny.** Undecided after `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS`,
   it expires and the run ends `rejected`, whatever edges exist. Cancelling the
   run cancels it.
@@ -307,14 +314,16 @@ is deliberately narrow:
 - **Rejected** takes the `rejected` edge, whose node gets the reviewer's
   comment and the text that was rejected. With no `rejected` edge the run
   ends `rejected` there. A loop through an approval is capped by its
-  `max_iterations`, and a run asks for at most 12 approvals.
+  `max_iterations`; a rejection past the cap ends the run `rejected` (never
+  `succeeded` with the draft that was turned down). A run asks for at most
+  12 approvals.
 - **The text is held in memory only**, on the replica running the run, and
-  dropped when it is decided. Events carry its digest and size, and its
+  dropped when it is decided. Events carry its digest and size, and (redacted)
   content only with `ORRERY_STUDIO_CAPTURE_CONTENT`. Like cancel, a decision
   must reach that replica (another answers 409).
 
-Each decision is written to the audit log (`studio_approval_decided`: run,
-approval, node, decision, who).
+Each decision is written to the audit log (`studio_approval_decided`:
+`subject`, `run_id`, `approval_id`, `node_id`, `decision`).
 
 ## Remote agents as tools
 
@@ -405,8 +414,8 @@ All routes need a human admin's bearer token.
 | `GET /studio/runs/{id}` | | The run's summary (below) |
 | `GET /studio/runs/{id}/events` | `Last-Event-ID` header to resume | `text/event-stream`: every event so far, then each new one, until `run.end` |
 | `POST /studio/runs/{id}/cancel` | | The summary; `status` becomes `cancelled` once the task stops; 409 when another replica runs it |
-| `GET /studio/runs/{id}/approvals` | | `{"approvals": [{approval_id, node_id, kind, prompt, digest, size, requested_at, expires_at, text}…]}`: the run's pending approvals, with the text under review; 409 when another replica runs it |
-| `POST /studio/runs/{id}/approvals/{approval_id}` | `{"decision": "approve", "digest": "<64 hex>", "comment"?: "…"}` or `{"decision": "reject", "comment"?: "…"}` (comment ≤ 2000 chars) | 200 `{"approval_id", "decision"}`; 404 for an unknown approval; 409 when it was already decided or expired, the digest is not the text's, or another replica runs it; 422 for a bad body |
+| `GET /studio/runs/{id}/approvals` | | `{"approvals": [{approval_id, node_id, kind, prompt, digest, size, requested_at, expires_at, complete, text}…]}`: the run's pending approvals, with the text under review; 409 when another replica runs it |
+| `POST /studio/runs/{id}/approvals/{approval_id}` | `{"decision": "approve", "digest": "<64 hex>", "comment"?: "…"}` or `{"decision": "reject", "comment"?: "…"}` (comment ≤ 2000 chars) | 200 `{"approval_id", "decision"}`; 404 for an unknown approval; 409 when it was already settled (decided, expired, cancelled), the digest is not the text's, the text is too long to approve, or another replica runs it; 422 for a bad body |
 | `POST /studio/validate` | `{"spec": {…}}` | 200 `{"ok": true, "spec_digest": "…", "warnings": [{loc, msg, code}]}`, or the same 422 as a run. Never calls a model or a remote |
 | `GET /studio/compositions` | | `{"compositions": [{id, name, description, pattern, version, created_by, created_at, updated_by, updated_at}…]}` |
 | `POST /studio/compositions` | `{"spec": {…}}` | 201, the composition with `spec` and `versions`; 422 as a run |
@@ -652,11 +661,15 @@ the event stream:
 - a `budget.hit` is shown as its own card, naming the budget and its limit,
   and marks the node that was running;
 - a human approval shows a card with the prompt, the text under review (read
-  from `GET /studio/runs/{id}/approvals`, not from the stream), a comment box
-  and the time left. *Approve* sends the digest of the text shown, and is off
-  until that text has been read; *Reject* sends the comment back. The node is
-  marked *awaiting you* on the canvas, and the card goes when the run's
-  `approval.decided` arrives;
+  from `GET /studio/runs/{id}/approvals`, not from the stream; it scrolls with
+  the keyboard), a comment box and the time left. *Approve* sends the SHA-256
+  the page computes of the text it shows, after checking it against the
+  server's (without Web Crypto, on plain http to another host, the server's
+  stands). It stays off, with the reason shown, until the text is read and
+  checked, for text too long to show whole, and once the approval is
+  expiring. *Reject* sends the comment back. The node is marked *awaiting
+  you*, the timeout meter leaves out the time spent waiting (as the server
+  does), and the card goes when the run's `approval.decided` arrives;
 - if the stream drops, it reconnects (0.5 s, then 1, 2, 4 and 8 s) with
   `Last-Event-ID`, and events already seen are ignored, so nothing is played
   twice;

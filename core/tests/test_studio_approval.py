@@ -8,6 +8,8 @@ on what, how often, and what happens to the run around the wait.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 from typing import Any
 
@@ -170,6 +172,18 @@ def test_a_rejected_draft_goes_back_with_the_reviewers_comment(principals, stub)
     assert stub.inputs["publisher"] == ["draft 2"]
 
 
+def test_rejecting_past_the_loops_cap_ends_the_run_rejected(principals, stub):
+    # Never "succeeded" with the draft the person just turned down.
+    with TestClient(make_app(stub)) as client:
+        run_id = start(client, REVIEWED)
+        for _ in range(3):  # max_iterations 2: the third rejection is past it
+            assert decide(client, run_id, pending(client, run_id), "reject").status_code == 200
+        summary = finish(client, run_id)
+    assert summary["status"] == "rejected", summary
+    assert "past its loop's cap" in summary["error"]
+    assert "publisher" not in stub.inputs
+
+
 def test_with_capture_on_the_events_carry_the_text_and_the_comment(principals, stub):
     with TestClient(make_app(stub, capture_content=True)) as client:
         run_id = start(client, GATED)
@@ -182,16 +196,34 @@ def test_with_capture_on_the_events_carry_the_text_and_the_comment(principals, s
     assert requested["content"] == "draft 1" and decided["content"] == "Not yet."
 
 
-def test_the_text_under_review_is_redacted_but_the_digest_is_of_what_runs_on(principals, stub):
-    stub.script["writer"] = lambda _n, _t: "Mail jane.doe@example.com the draft."
+def test_the_person_reviews_exactly_the_text_that_runs_on(principals, stub):
+    # Not redacted: approving "[REDACTED_EMAIL]" would let the address through unseen.
+    text = "Mail jane.doe@example.com the draft."
+    stub.script["writer"] = lambda _n, _t: text
     with TestClient(make_app(stub)) as client:
         run_id = start(client, GATED)
         approval = pending(client, run_id)
-        assert "jane.doe@example.com" not in approval["text"]
-        assert approval["digest"] == digest_of("Mail jane.doe@example.com the draft.")
+        assert approval["text"] == text and approval["complete"] is True
+        # The console can check the digest against the text it shows.
+        assert approval["digest"] == digest_of(approval["text"])
         decide(client, run_id, approval, "approve")
         finish(client, run_id)
-    assert stub.inputs["publisher"] == ["Mail jane.doe@example.com the draft."]
+    assert stub.inputs["publisher"] == [text]
+
+
+def test_text_too_long_to_review_whole_can_only_be_rejected(principals, stub):
+    from orrery_core.studio.approval import MAX_REVIEW_BYTES
+
+    stub.script["writer"] = lambda _n, _t: "x" * (MAX_REVIEW_BYTES + 10)
+    with TestClient(make_app(stub)) as client:
+        run_id = start(client, GATED)
+        approval = pending(client, run_id)
+        assert approval["complete"] is False
+        assert len(approval["text"].encode()) <= MAX_REVIEW_BYTES
+        refused = decide(client, run_id, approval, "approve")
+        assert refused.status_code == 409 and "only be rejected" in refused.json()["detail"]
+        assert decide(client, run_id, approval, "reject").status_code == 200
+        assert finish(client, run_id)["status"] == "rejected"
 
 
 # ── Who decides, on what, how often ──────────────────────────────────
@@ -296,6 +328,9 @@ def test_cancelling_a_waiting_run_cancels_its_approval(principals, stub):
     decided = next(e for e in trace if e["type"] == "approval.decided")
     assert decided["decision"] == "cancelled"
     assert late.status_code in (404, 409)
+    # The gate's enter has its exit.
+    exits = [e for e in trace if e["type"] == "node.exit" and e["node_id"] == "gate"]
+    assert [e["outcome"] for e in exits] == ["cancelled"]
 
 
 def test_a_run_asks_for_a_bounded_number_of_approvals(principals, stub):
@@ -381,3 +416,57 @@ def test_a_router_does_not_follow_an_approval():
         "router",
     )
     assert any("cannot follow human approval" in e for e in _errors(spec))
+
+
+# ── The future decides races ─────────────────────────────────────────
+
+
+def _approvals(timeout_s: float) -> tuple[Any, list[Any]]:
+    from orrery_core.studio.approval import RunApprovals
+
+    emitted: list[Any] = []
+    return RunApprovals(timeout_s=timeout_s, emit=emitted.append, capture=lambda _t: None), emitted
+
+
+async def _asked(approvals: Any) -> str:
+    while not approvals.pending():
+        await asyncio.sleep(0)
+    return approvals.pending()[0].approval_id
+
+
+@pytest.mark.asyncio
+async def test_a_decision_after_a_cancel_is_refused_not_taken():
+    from orrery_core.studio.approval import ApprovalConflict
+
+    approvals, emitted = _approvals(60)
+    task = asyncio.create_task(approvals.request(node_id="g", prompt="?", text="t"))
+    approval_id = await _asked(approvals)
+    approvals.cancel_all()
+    with pytest.raises(ApprovalConflict):
+        approvals.decide(approval_id, approve=True, digest=digest_of("t"))
+    assert (await task).decision == "cancelled"
+    assert emitted[-1].decision == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_the_expiry_settles_the_approval_and_a_late_decision_is_refused():
+    from orrery_core.studio.approval import ApprovalConflict, ApprovalNotFound
+
+    approvals, _ = _approvals(0.05)
+    task = asyncio.create_task(approvals.request(node_id="g", prompt="?", text="t"))
+    approval_id = await _asked(approvals)
+    assert (await task).decision == "expired"
+    with pytest.raises((ApprovalConflict, ApprovalNotFound)):
+        approvals.decide(approval_id, approve=False)
+
+
+@pytest.mark.asyncio
+async def test_a_decision_settled_first_stands_through_a_cancel():
+    approvals, emitted = _approvals(60)
+    task = asyncio.create_task(approvals.request(node_id="g", prompt="?", text="t"))
+    approval_id = await _asked(approvals)
+    approvals.decide(approval_id, approve=False, comment="no")
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert emitted[-1].decision == "rejected"

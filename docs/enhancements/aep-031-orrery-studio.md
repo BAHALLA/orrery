@@ -546,19 +546,29 @@ client or a model to forge; the cost is the same as cancel's: a decision must
 reach the running replica (elsewhere, 409).
 
 - **Approve names a digest.** The person reads the text from
-  `GET /studio/runs/{id}/approvals` (redacted, cut to 64 KiB, held in memory
-  only) and approves its SHA-256; another digest is a 409. Reject needs none.
+  `GET /studio/runs/{id}/approvals` (held in memory only, owner only) and
+  approves its SHA-256; another digest is a 409. The text is **not redacted**:
+  the first cut redacted credentials and emails while the digest, and the
+  next node, had the original, so a person could approve
+  `[REDACTED_EMAIL]` and send the real address on. Now what is shown is what
+  runs on, the console recomputes the digest from what it shows, and text over
+  128 KiB (served in part) can only be rejected. Reject needs no digest.
 - **Once**, and **default deny**: a second decision is a 409; an approval
-  undecided after `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` (900) expires, and
-  an expiry always ends the run `rejected`, never takes an edge. A cancelled
-  run cancels its approvals.
+  undecided after `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` (900, at most a
+  day) expires, and an expiry always ends the run `rejected`, never takes an
+  edge. The approval's future is the one arbiter: the expiry (`call_later`),
+  a cancel (`cancel_all()`, called before the task is cancelled) and a
+  decision each settle it, and a decision that loses gets a 409 rather than a
+  200 the audit log would then contradict.
 - **The deadline pauses.** The run's `timeout_s` is an `asyncio.timeout` the
   runner owns (the gateway's turn timeout is off for Studio runs), rescheduled
   while any approval waits; the ledger's deadline check subtracts the paused
   time. A person's time is not the run's compute budget.
 - **Graph.** The node is an async `FunctionNode` that routes on
   `approved`/`rejected`. A rejection with a `rejected` edge sends that node the
-  comment and the rejected text; without one the run ends `rejected`.
+  comment and the rejected text; without one the run ends `rejected`, and so
+  does a rejection past the loop's `max_iterations` (a loop's "stop" would
+  otherwise end the branch with the turned-down draft as the run's output).
   Approvals may not sit on a parallel branch or feed a `router`, and a run asks
   for at most 12 (a loop around one is also capped by `max_iterations`).
 - **Trace.** `approval.requested` and `approval.decided` carry ids, the digest,

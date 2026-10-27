@@ -63,6 +63,10 @@ export interface ApprovalAsk {
   expiresAt: number;
   /** `null` while it waits. */
   decision: ApprovalDecision | null;
+  /** Unix seconds: when it was asked. */
+  requestedAt: number;
+  /** How long the person took, once decided. */
+  waitedMs: number | null;
   /** The text under review, when the server captures content. */
   content: string | null;
 }
@@ -257,6 +261,8 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
             size: event.size,
             expiresAt: event.expires_at,
             decision: null,
+            requestedAt: event.ts,
+            waitedMs: null,
             content: event.content ?? null,
           },
         ],
@@ -267,7 +273,9 @@ export function reduceRun(view: RunView, event: StudioEvent): RunView {
           status: n.status === "awaiting" ? "active" : n.status,
         })),
         approvals: next.approvals.map((a) =>
-          a.approvalId === event.approval_id ? { ...a, decision: event.decision } : a,
+          a.approvalId === event.approval_id
+            ? { ...a, decision: event.decision, waitedMs: event.waited_ms }
+            : a,
         ),
       };
     case "budget.hit":
@@ -363,6 +371,20 @@ export function tokensSoFar(view: RunView): TokenCount {
  * calls (MCP calls plus remote calls), remote calls, and wall time. Delegations
  * are only in the totals. Exact once `run.end` arrives.
  */
+/**
+ * Seconds the run has spent waiting for people: not compute time, so the
+ * server pauses `timeout_s` while it lasts, and the meter leaves it out too.
+ */
+export function humanWaitS(view: RunView, now: number): number {
+  let ms = 0;
+  for (const a of view.approvals) {
+    if (a.waitedMs !== null) ms += a.waitedMs;
+    else if (a.decision === null && !isFinished(view))
+      ms += Math.max(0, now - a.requestedAt) * 1000;
+  }
+  return ms / 1000;
+}
+
 export function budgetUse(
   view: RunView,
   now: number,
@@ -374,13 +396,15 @@ export function budgetUse(
         max_tool_calls: view.totals.tool_calls,
         max_delegations: view.totals.delegations,
         max_remote_calls: view.totals.remote_calls,
-        timeout_s: Math.round(view.totals.wall_ms / 1000),
+        timeout_s: Math.max(0, Math.round(view.totals.wall_ms / 1000 - humanWaitS(view, now))),
       }
     : {
         max_tokens: tokensSoFar(view).total,
         max_tool_calls: view.mcp.length + remote,
         max_remote_calls: remote,
-        timeout_s: view.startedAt ? Math.max(0, Math.round(now - view.startedAt)) : 0,
+        timeout_s: view.startedAt
+          ? Math.max(0, Math.round(now - view.startedAt - humanWaitS(view, now)))
+          : 0,
       };
   if (view.budgetHit) used[view.budgetHit.budget] = view.budgetHit.used;
   return Object.entries(view.budgets)

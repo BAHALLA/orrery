@@ -220,7 +220,13 @@ export interface PendingApproval {
   size: number;
   requested_at: number;
   expires_at: number;
-  /** The text under review, redacted: in the approvals list only, never in events. */
+  /** Whether `text` is all of it: only then can it be approved. */
+  complete: boolean;
+  /**
+   * The text under review, exactly as the next node gets it (not redacted, so
+   * what is approved is what was read): in the approvals list only, never in
+   * events. Its SHA-256 is `digest` when `complete`.
+   */
   text?: string;
 }
 

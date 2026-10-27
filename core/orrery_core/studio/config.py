@@ -15,6 +15,8 @@ STUDIO_ENABLED_ENV = "ORRERY_STUDIO_ENABLED"
 STUDIO_REGISTRY_ENV = "ORRERY_STUDIO_REGISTRY"
 STUDIO_CAPTURE_CONTENT_ENV = "ORRERY_STUDIO_CAPTURE_CONTENT"
 STUDIO_MODELS_ENV = "ORRERY_STUDIO_MODELS"
+#: The longest a ``human_approval`` may wait (a day).
+MAX_APPROVAL_TIMEOUT_S = 86_400
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,12 @@ class StudioConfig:
         for name, value in vars(self.ceilings).items():
             if value < 1:
                 raise ValueError(f"Studio ceiling {name} must be at least 1")
+        if self.approval_timeout_s > MAX_APPROVAL_TIMEOUT_S:
+            # A waiting run holds its slot, toolsets and connections, up to
+            # MAX_APPROVALS_PER_RUN times this.
+            raise ValueError(
+                f"Studio setting approval_timeout_s must be at most {MAX_APPROVAL_TIMEOUT_S}"
+            )
         for name in (
             "max_runs",
             "max_runs_per_user",

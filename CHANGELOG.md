@@ -11,19 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Studio: human approval (AEP-031 P0c).** A `human_approval` node stops a
   run until the person who started it approves or rejects the text it
-  receives, through `GET`/`POST /studio/runs/{id}/approvals[/{aid}]`. Approve
-  names the SHA-256 of the text that was read (another digest is a 409); a
-  decision is accepted once; an approval undecided after
-  `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` (900) expires and the run ends
-  `rejected`. The run's deadline is paused while it waits. A `rejected` edge
-  sends the reviewer's comment back (a loop, capped like any other); without
-  one, the run ends `rejected`. New events `approval.requested` and
+  receives, through `GET`/`POST /studio/runs/{id}/approvals[/{aid}]`. The
+  owner sees the text exactly as the next node gets it (held in memory only)
+  and approves its SHA-256 (another digest is a 409; text over 128 KiB can
+  only be rejected); a decision is accepted once; an approval undecided after
+  `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` (900, at most 86400) expires and
+  the run ends `rejected`. The run's deadline is paused while it waits. A
+  `rejected` edge sends the reviewer's comment back (a loop, capped like any
+  other; a rejection past the cap ends the run `rejected`); without one, the
+  run ends `rejected`. New events `approval.requested` and
   `approval.decided`, a `rejected` outcome, `pending_approvals` in the run
-  summary, and an audit line per decision. The text under review is redacted
-  and held in memory only.
+  summary, and an audit line per decision.
 - Studio console: an approval card in the Run tab (the text, a comment, the
-  time left; Approve is off until the text is read), *awaiting you* on the
-  node, label-aware edges out of an approval, and a human-review template
+  time left; Approve is off until the text is read and its digest checked in
+  the browser), *awaiting you* on the node, a timeout meter that leaves out
+  the wait, label-aware edges out of an approval, and a human-review template
   (`deploy/studio-demo/specs/human-review.json`).
 
 ### Fixed

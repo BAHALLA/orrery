@@ -253,6 +253,16 @@ describe("approvals", () => {
     expect(done.approvals[0]?.decision).toBe("approved");
   });
 
+  it("leaves the time spent waiting for a person out of the timeout meter", () => {
+    const timeout = (v: RunView, now: number) =>
+      budgetUse(v, now).find((b) => b.name === "timeout_s")?.used;
+    const waiting = fold([...start, enter, requested]);
+    // Started at 100, asked at 101.1: at 401.1 the run has used 1 s of compute.
+    expect(timeout(waiting, 401.1)).toBe(1);
+    const resumed = reduceRun(waiting, decided("approved")); // waited 18.9 s
+    expect(timeout(resumed, 130)).toBe(11);
+  });
+
   it("asks nothing of a finished run, and settles a node still awaiting", () => {
     const end = releaseNotesRun().at(-1)!;
     const ended = reduceRun(fold([...start, enter, requested]), {

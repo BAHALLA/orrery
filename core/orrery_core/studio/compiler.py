@@ -44,6 +44,7 @@ Only call this on a spec :func:`~.spec.validate_spec` accepted.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -147,10 +148,11 @@ class RouteFailed(Exception):
 class ApprovalRejected(Exception):
     """A person rejected (or let expire) an approval with no edge to take on it."""
 
-    def __init__(self, node_id: str, outcome: ApprovalOutcome) -> None:
+    def __init__(self, node_id: str, outcome: ApprovalOutcome, detail: str = "") -> None:
         super().__init__(
             f"approval {node_id!r} "
             + ("expired" if outcome.decision == "expired" else "was rejected")
+            + detail
         )
         self.node_id = node_id
         self.outcome = outcome
@@ -463,6 +465,9 @@ def compile_spec(
         state = loop_counts
         inner = plan.inner_loops(j)
         judged = _judged_by(spec, plan, edge.from_)
+        # A person's rejection never turns into a result: past the cap, the
+        # run ends rejected rather than with the draft they turned down.
+        by_person = by_id[edge.from_].kind == "human_approval"
 
         def loop(ctx: Context, node_input: Any) -> Any:
             state[j] += 1
@@ -481,6 +486,12 @@ def compile_spec(
                     stopped=stopped,
                 )
             )
+            if stopped and by_person:
+                raise ApprovalRejected(
+                    edge.from_,
+                    ApprovalOutcome("rejected"),
+                    f" {cap + 1} times, past its loop's cap",
+                )
             ctx.route = "stop" if stopped else "continue"
             if stopped and judged is not None and (text := sink.answer_of(judged)) is not None:
                 # No edge for "stop": the branch ends. Its answer is what the
@@ -520,7 +531,24 @@ def compile_spec(
             text = _text_of(node_input)
             sink.emit_event(NodeEnter(node_id=node.id, kind=node.kind, model=""))
             started = time.monotonic()
-            outcome = await sink.request_approval(node.id, node.prompt, text)
+            try:
+                outcome = await sink.request_approval(node.id, node.prompt, text)
+            except BaseException as exc:
+                # A cancel, the deadline or too many approvals: the enter
+                # still gets its exit.
+                sink.emit_event(
+                    NodeExit(
+                        node_id=node.id,
+                        kind=node.kind,
+                        model="",
+                        tokens=TokenCount(),
+                        elapsed_ms=int((time.monotonic() - started) * 1000),
+                        outcome="cancelled"
+                        if isinstance(exc, asyncio.CancelledError)
+                        else "failed",
+                    )
+                )
+                raise
             label = "approved" if outcome.approved else "rejected"
             # Only a decision routes: an expiry is a reject that ends the run,
             # never a lap round a loop that would ask (and wait) again.
@@ -534,7 +562,11 @@ def compile_spec(
                     model="",
                     tokens=TokenCount(),
                     elapsed_ms=int((time.monotonic() - started) * 1000),
-                    outcome="ok" if outcome.approved else "rejected",
+                    outcome="ok"
+                    if outcome.approved
+                    else "cancelled"
+                    if outcome.decision == "cancelled"
+                    else "rejected",
                 )
             )
             if ends:

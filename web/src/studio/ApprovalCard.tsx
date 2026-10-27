@@ -4,6 +4,7 @@ import { CheckIcon, CloseIcon, ShieldIcon } from "../components/icons";
 import { toneChip, toneText } from "../components/severity";
 import { describeApiError } from "../system/useSystem";
 import type { StudioClient } from "./api";
+import { sha256Hex } from "./digest";
 import {
   fieldLabel,
   formatBytes,
@@ -22,9 +23,12 @@ const MAX_COMMENT = 2000;
  * The decisions a run is waiting for, one card each (P0c).
  *
  * The text under review comes from `GET /studio/runs/{id}/approvals`, never
- * from the event stream (which carries it only when the server captures
- * content). Approve sends the digest of exactly that text, so the server
- * refuses an approval of anything the person did not read here. The card goes
+ * from the event stream (which carries only a redacted copy, and only when
+ * the server captures content). It is shown exactly as the next node gets
+ * it. Approve sends the SHA-256 this page computes of the text it shows
+ * (checked against the server's), so the server refuses an approval of
+ * anything the person did not read here; text the server could not send
+ * whole can only be rejected. The card goes
  * away when the run's `approval.decided` event arrives, not when the POST
  * returns: the stream is the one source of what the run did.
  */
@@ -72,7 +76,14 @@ export function ApprovalCards({
       {loadError ? (
         <p role="alert" className="text-xs text-crit-fg">
           {loadError}{" "}
-          <button type="button" className="underline" onClick={() => setReload((n) => n + 1)}>
+          <button
+            type="button"
+            className="underline"
+            onClick={() => {
+              setLoadError(null);
+              setReload((n) => n + 1);
+            }}
+          >
             Try again
           </button>
         </p>
@@ -114,13 +125,45 @@ function ApprovalCard({
   const [sending, setSending] = useState<"approve" | "reject" | null>(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const text = pending?.text ?? ask.content;
+  const textId = useId();
+  const hintId = useId();
+  // The digest of the text shown, computed here: approving names it.
+  const [checked, setChecked] = useState<{ text: string; digest: string | null } | null>(null);
+  const text = pending?.text;
+  useEffect(() => {
+    if (text === undefined) return;
+    let live = true;
+    void sha256Hex(text).then((digest) => {
+      if (live) setChecked({ text, digest });
+    });
+    return () => {
+      live = false;
+    };
+  }, [text]);
   const expired = ask.expiresAt - now <= 0;
   const busy = sending !== null || sent;
+  const ownDigest = checked && checked.text === text ? checked.digest : undefined;
+  // Without Web Crypto (plain http) the server's digest stands: it is of the text it sent.
+  const approveDigest =
+    pending?.complete && ownDigest !== undefined
+      ? ownDigest === null || ownDigest === pending.digest
+        ? pending.digest
+        : null
+      : null;
+  const blocked = !pending
+    ? "Approve is available once the text has been read."
+    : !pending.complete
+      ? `The text is ${formatBytes(pending.size)}, too long to show in full: it can only be rejected.`
+      : ownDigest === undefined
+        ? "Checking the text…"
+        : approveDigest === null
+          ? "The text shown does not match the server's digest: reload it before approving."
+          : expired
+            ? "This approval is expiring: the run will end rejected."
+            : null;
 
   const decide = async (decision: "approve" | "reject") => {
-    // Approving names the digest of the text read here; without it, nothing to approve.
-    if (decision === "approve" && !pending) return;
+    if (decision === "approve" && (blocked || !approveDigest)) return;
     setSending(decision);
     setError(null);
     const note = comment.trim();
@@ -129,8 +172,8 @@ function ApprovalCard({
       await client.decide(
         runId,
         ask.approvalId,
-        decision === "approve" && pending
-          ? { decision, digest: pending.digest, ...extra }
+        decision === "approve" && approveDigest
+          ? { decision, digest: approveDigest, ...extra }
           : { decision: "reject", ...extra },
       );
       setSent(true);
@@ -170,8 +213,13 @@ function ApprovalCard({
         {ask.nodeId} · {formatBytes(ask.size)}
       </p>
 
-      {text !== null && text !== undefined ? (
-        <pre className="orrery-scroll mt-2 max-h-64 overflow-auto rounded-lg bg-slate-50 p-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-800 dark:bg-slate-950 dark:text-slate-200">
+      {text !== undefined ? (
+        <pre
+          id={textId}
+          tabIndex={0}
+          aria-label={`Text under review for ${ask.nodeId}`}
+          className="orrery-scroll mt-2 max-h-64 overflow-auto rounded-lg bg-slate-50 p-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:bg-slate-950 dark:text-slate-200"
+        >
           {text}
         </pre>
       ) : (
@@ -204,8 +252,8 @@ function ApprovalCard({
         <button
           type="button"
           className={primaryButton}
-          disabled={busy || !pending}
-          title={pending ? undefined : "Read the text before approving it"}
+          disabled={busy || blocked !== null}
+          aria-describedby={blocked ? hintId : undefined}
           onClick={() => void decide("approve")}
         >
           <CheckIcon size={14} />
@@ -226,6 +274,11 @@ function ApprovalCard({
           </span>
         ) : null}
       </div>
+      {blocked && !busy ? (
+        <p id={hintId} className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+          {blocked}
+        </p>
+      ) : null}
     </article>
   );
 }

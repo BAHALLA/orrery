@@ -598,16 +598,23 @@ class _Deadline:
         if timeout is None:
             return
         loop = asyncio.get_running_loop()
+        if timeout.expired():
+            return  # the deadline already fired: the run is ending on it
         if waiting and self._paused_at is None:
             when = timeout.when()
-            self._remaining = max(0.0, when - loop.time()) if when is not None else 0.0
-            timeout.reschedule(None)
+            remaining = max(0.0, when - loop.time()) if when is not None else 0.0
+            try:
+                timeout.reschedule(None)
+            except RuntimeError:  # expiring: its cancel is on the way
+                return
+            self._remaining = remaining
             self._paused_at = time.monotonic()
             self._run.paused_remaining = self._remaining
         elif not waiting and self._paused_at is not None:
             self.paused += time.monotonic() - self._paused_at
             self._paused_at = None
-            timeout.reschedule(loop.time() + self._remaining)
+            with contextlib.suppress(RuntimeError):  # the run is unwinding
+                timeout.reschedule(loop.time() + self._remaining)
             self._run.paused_remaining = None
             self._run.deadline_at = time.time() + self._remaining
 
@@ -929,6 +936,10 @@ class StudioService:
                     "(route the console's requests to one replica, sticky sessions)"
                 )
             return
+        if run.approvals is not None:
+            # Settled first, so a decision arriving before the task unwinds is
+            # refused rather than reported as taken.
+            run.approvals.cancel_all()
         if run.task is not None and not run.task.done():
             run.task.cancel()
 
@@ -958,12 +969,14 @@ class StudioService:
             raise ApprovalNotFound(approval_id)
         if run.approvals is None:
             raise ApprovalNotFound(approval_id)
+        node_id = run.approvals.node_of(approval_id)
         outcome = run.approvals.decide(approval_id, approve=approve, digest=digest, comment=comment)
         audit_event(
             "studio_approval_decided",
             subject=auth.subject,
             run_id=run.run_id,
             approval_id=approval_id,
+            node_id=node_id,
             decision=outcome.decision,
         )
         return outcome
@@ -1043,7 +1056,6 @@ class StudioService:
             timeout_s=self.config.approval_timeout_s,
             emit=run.emit,
             capture=run.capture,
-            redact_ips=run.redact_ips,
         )
         approvals.on_waiting = deadline.waiting
         outcome: RunOutcome = "failed"
