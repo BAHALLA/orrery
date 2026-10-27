@@ -467,7 +467,7 @@ def compile_spec(
         judged = _judged_by(spec, plan, edge.from_)
         # A person's rejection never turns into a result: past the cap, the
         # run ends rejected rather than with the draft they turned down.
-        by_person = by_id[edge.from_].kind == "human_approval"
+        by_person = by_id[edge.from_].kind == "human_approval" and edge.when == "rejected"
 
         def loop(ctx: Context, node_input: Any) -> Any:
             state[j] += 1
@@ -569,6 +569,8 @@ def compile_spec(
                     else "rejected",
                 )
             )
+            if outcome.decision == "cancelled":
+                raise asyncio.CancelledError  # the run is being cancelled: never "rejected"
             if ends:
                 raise ApprovalRejected(node.id, outcome)
             sink.emit_event(
