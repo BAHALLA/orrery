@@ -54,6 +54,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
 | `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` | `900` | How long a `human_approval` waits for its person (at most `86400`); undecided by then, it expires and the run ends `rejected`. A waiting run keeps its run slot, toolsets and connections. |
+| `ORRERY_STUDIO_ACTING_REMOTES` | `false` | Allow registry A2A entries with `effect: acting` (remotes that change things). Off, a registry that has one fails startup. On, every call to one waits for the run's owner to confirm the exact request. |
 | `ORRERY_A2A_PRIVATE_ALLOW` | — | Hosts and CIDRs a `private_network` entry may reach (comma-separated). |
 | `ORRERY_A2A_CA_FILE` | — | One extra CA bundle trusted for outbound A2A (an internal CA). |
 | `ORRERY_STUDIO_EGRESS_PROXY` | — | A forward proxy (`http://host:port`) for public registry destinations, MCP and A2A, through `CONNECT` (below). Never read from `HTTPS_PROXY`. |
@@ -92,7 +93,7 @@ a2a:
     card_url: https://demo-writer.studio.internal:8443/.well-known/agent-card.json
     card_sha256: "029d85…"            # optional: pin from config (see Pinning)
     skills: [draft]                   # the card's skills this entry may use
-    effect: read_only                 # `acting` is refused until P0c
+    effect: read_only                 # `acting` needs ORRERY_STUDIO_ACTING_REMOTES
     private_network: true             # and the host must be in ORRERY_A2A_PRIVATE_ALLOW
     auth: { bearer_env: ORRERY_STUDIO_SECRET_DEMO_WRITER }
 ```
@@ -113,7 +114,7 @@ listed in `read_only` can be used in a P0a composition.
 | `card_url` | — | https (plain http only loopback to loopback). No credentials in the URL. |
 | `card_sha256` | — | The pinned digest. Unset: pinned on first use and logged. |
 | `skills` | — | At least one. A skill the card does not declare is refused when the card is fetched. |
-| `effect` | `read_only` | `acting` is refused with "not supported yet (P0c)". |
+| `effect` | `read_only` | `acting`: a remote that changes things. Refused at startup unless `ORRERY_STUDIO_ACTING_REMOTES=true`; then each call is confirmed by the run's owner (below). |
 | `private_network` | `false` | Allow a private address, for a host or address listed in `ORRERY_A2A_PRIVATE_ALLOW`. |
 | `service_origins` | `[]` | Extra origins the card's RPC interface may point to (default: the card's own origin). |
 | `auth.bearer_env` | — | An env var whose name starts with `ORRERY_STUDIO_SECRET_`. Sent only to the entry's origins (the card's own, plus `service_origins`); a redirect or another origin never gets it. Unset at startup: startup fails. |
@@ -374,6 +375,21 @@ marks it as written by an external agent: never answer with secrets.
 Unlike an approval, a declined or expired question does not end the run: the
 node goes on without the answer. Each message's timeout (`total_timeout_s`)
 covers the remote, not the person.
+
+**A remote that acts is confirmed per call.** An `effect: acting` entry is
+`@destructive` to every gate. A Studio run stays at L2: only the acting
+remotes its spec names are let through, and the run's own confirmation gate
+asks its owner before each call (`kind: "action"`, the exact request as the
+text under review, approved against its digest like any approval). Confirmed,
+the request is sent; refused, expired, past the run's 12 approvals or
+cancelled, nothing is sent and the model gets `BLOCKED` ("do not retry it").
+The node goes on either way. Any other tool that changes things is refused
+outright. A refused attempt still counts against `max_remote_calls`, so a
+model that keeps retrying runs out. A confirmation that arrives after the run's
+budget ran out (or a node failed) sends nothing, and the owner is never asked
+about a request the remote would refuse anyway (empty or over 8192
+characters). A refused action does not fail the run: read the run's
+`approval.decided` events to see what was not done.
 
 ## Runs
 
@@ -750,7 +766,7 @@ uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browse
 ## Not yet
 
 - `handoff`, `remote_a2a` nodes, a dynamic map width, and an MCP "try it" call.
-- `acting` remotes and registry editing (the rest of P0c).
+- Registry editing (the rest of P0c).
 - `tasks/cancel` to a remote when a run is cancelled.
 - Auth for registry MCP entries (only `ORRERY_STUDIO_SECRET_*` will be allowed).
 - In the console: a validate-only call (validation before a run is the

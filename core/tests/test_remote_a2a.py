@@ -32,7 +32,11 @@ from orrery_core.plugins.delegation_guard_plugin import DelegationGuardPlugin  #
 from orrery_core.plugins.pii_plugin import PIIRedactionPlugin  # noqa: E402
 from orrery_core.plugins.progress_plugin import ProgressPlugin, progress_scope  # noqa: E402
 from orrery_core.plugins.safety_plugin import FILTER_MARKER, SafetyScreenPlugin  # noqa: E402
-from orrery_core.security.guardrails import get_guard_level, is_guarded  # noqa: E402
+from orrery_core.security.guardrails import (  # noqa: E402
+    LEVEL_DESTRUCTIVE,
+    get_guard_level,
+    is_guarded,
+)
 from orrery_core.security.redaction import REDACTED_EMAIL  # noqa: E402
 from orrery_core.serving.a2a_config import HOP_HEADER  # noqa: E402
 from orrery_core.tools import mcp_network  # noqa: E402
@@ -167,9 +171,12 @@ def test_an_unregistered_skill_is_refused():
         GuardedRemoteA2aTool(entry, "deploy", cards=RemoteCards())
 
 
-def test_acting_remotes_are_refused_for_now():
-    with pytest.raises(ValidationError, match="acting is not supported yet"):
-        RemoteAgentEntry(id="wr", card_url="https://w.example.com/c", skills=["s"], effect="acting")
+def test_an_acting_remote_is_destructive_to_every_gate():
+    entry = RemoteAgentEntry(
+        id="wr", card_url="https://w.example.com/c", skills=["s"], effect="acting"
+    )
+    tool = GuardedRemoteA2aTool(entry, "s", cards=RemoteCards())
+    assert get_guard_level(tool) == LEVEL_DESTRUCTIVE
 
 
 def test_a_matching_pin_is_accepted_and_a_changed_digest_refused(writer):

@@ -42,7 +42,9 @@ value is ignored.
 
 from __future__ import annotations
 
+import copy
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from google.adk.plugins.base_plugin import BasePlugin
@@ -138,6 +140,17 @@ class AutonomyPlugin(BasePlugin):
         # Explicit overrides on top of the decorator-based classification.
         self._l2_whitelist = set(l2_whitelist or [])
         self._l3_blacklist = set(l3_blacklist or [])
+
+    def allowing_at_l2(self, names: Iterable[str]) -> AutonomyPlugin:
+        """A copy that also lets the tools named *names* run at L2; this one is unchanged.
+
+        For a caller that gates them itself: a Studio run allows its acting
+        remotes, each call of which its owner confirms first. A copy, so the
+        exception can never outlive the run, even on a shared plugin.
+        """
+        widened = copy.copy(self)
+        widened._l2_whitelist = self._l2_whitelist | set(names)
+        return widened
 
     @staticmethod
     def _normalise(level: str) -> str:

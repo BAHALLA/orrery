@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Studio: remotes that act (AEP-031 P0c).** A registry A2A entry may be
+  `effect: acting` when the deployment sets `ORRERY_STUDIO_ACTING_REMOTES=true`
+  (otherwise startup fails). The run stays at L2; each call to an acting
+  remote waits for the run's owner to confirm the exact request (an approval
+  of kind `action`, against its digest), and a refusal or expiry sends
+  nothing. The console shows a *Confirm and send* / *Don't send* card and
+  marks acting skills in the tool picker.
 - **Studio: human approval (AEP-031 P0c).** A `human_approval` node stops a
   run until the person who started it approves or rejects the text it
   receives, through `GET`/`POST /studio/runs/{id}/approvals[/{aid}]`. The

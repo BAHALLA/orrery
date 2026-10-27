@@ -15,11 +15,77 @@ import {
   toolbarButton,
 } from "./format";
 import type { ApprovalAsk } from "./runState";
-import type { PendingApproval } from "./types";
+import type { ApprovalKind, PendingApproval } from "./types";
 
 const MAX_COMMENT = 2000;
 /** A remote request's own cap (`MAX_REQUEST_CHARS`): an answer is sent to the remote as one. */
 export const MAX_ANSWER = 8192;
+
+/** What a card says, by what is being decided. */
+interface Wording {
+  /** The thing under review: "text", "question", "request". */
+  noun: string;
+  heading: (ask: ApprovalAsk) => string;
+  label: (ask: ApprovalAsk) => string;
+  textLabel: (ask: ApprovalAsk) => string;
+  /** Shown under the text, or null. */
+  notice: string | null;
+  approve: [idle: string, busy: string];
+  reject: [idle: string, busy: string];
+  /** "Before approving it" and "it can only be rejected", in this kind's words. */
+  approving: string;
+  rejected: string;
+  expiring: string;
+  timerTitle: string;
+}
+
+const remoteName = (ask: ApprovalAsk) => ask.remote ?? "a remote agent";
+
+export const WORDING: Record<ApprovalKind, Wording> = {
+  approval: {
+    noun: "text",
+    heading: (ask) => ask.prompt || "Approve this to continue?",
+    label: (ask) => `Approval for ${ask.nodeId}`,
+    textLabel: (ask) => `Text under review for ${ask.nodeId}`,
+    notice: null,
+    approve: ["Approve", "Approving…"],
+    reject: ["Reject", "Rejecting…"],
+    approving: "approving",
+    rejected: "rejected",
+    expiring: "This approval is expiring: the run will end rejected.",
+    timerTitle: "Undecided by then, it expires and the run ends rejected",
+  },
+  input: {
+    noun: "question",
+    heading: (ask) => `${ask.remote ?? "A remote agent"} asks:`,
+    label: (ask) => `Question from ${remoteName(ask)}`,
+    textLabel: () => "The remote's question",
+    notice:
+      "This question was written by an external agent, not by Orrery. Answer only what the " +
+      "task needs; never send secrets or credentials.",
+    approve: ["Send answer", "Sending…"],
+    reject: ["Decline", "Declining…"],
+    approving: "answering",
+    rejected: "declined",
+    expiring: "This question is expiring: the remote will be sent nothing.",
+    timerTitle: "Unanswered by then, the remote is sent nothing and the node goes on without it",
+  },
+  action: {
+    noun: "request",
+    heading: (ask) => `${ask.nodeId} wants ${remoteName(ask)} to act on this request:`,
+    label: (ask) => `Action for ${remoteName(ask)}`,
+    textLabel: () => "The request that would be sent",
+    notice:
+      "This request was written by a model and goes to an external agent that changes " +
+      "things. Confirm only what you mean to happen.",
+    approve: ["Confirm and send", "Sending…"],
+    reject: ["Don't send", "Refusing…"],
+    approving: "confirming",
+    rejected: "refused",
+    expiring: "This request is expiring: it will not be sent.",
+    timerTitle: "Unconfirmed by then, nothing is sent and the node goes on without it",
+  },
+};
 
 /**
  * The decisions a run is waiting for, one card each (P0c).
@@ -129,11 +195,13 @@ function ApprovalCard({
   const [comment, setComment] = useState("");
   const [answer, setAnswer] = useState("");
   const asking = ask.kind === "input";
+  const words = WORDING[ask.kind];
   const [sending, setSending] = useState<"approve" | "reject" | null>(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textId = useId();
   const hintId = useId();
+  const noticeId = useId();
   // The digest of the text shown, computed here: approving names it.
   const [checked, setChecked] = useState<{ text: string; digest: string | null } | null>(null);
   const text = pending?.text;
@@ -158,19 +226,15 @@ function ApprovalCard({
         : null
       : null;
   const blocked = !pending
-    ? asking
-      ? "You can answer once the question has been read."
-      : "Approve is available once the text has been read."
+    ? `You can decide once the ${words.noun} has been read.`
     : !pending.complete
-      ? `The ${asking ? "question" : "text"} is ${formatBytes(pending.size)}, too long to show in full: it can only be ${asking ? "declined" : "rejected"}.`
+      ? `The ${words.noun} is ${formatBytes(pending.size)}, too long to show in full: it can only be ${words.rejected}.`
       : ownDigest === undefined
-        ? "Checking the text…"
+        ? `Checking the ${words.noun}…`
         : approveDigest === null
-          ? `The ${asking ? "question" : "text"} shown does not match the server's digest: reload it before ${asking ? "answering" : "approving"}.`
+          ? `The ${words.noun} shown does not match the server's digest: reload it before ${words.approving}.`
           : expired
-            ? asking
-              ? "This question is expiring: the remote will be sent nothing."
-              : "This approval is expiring: the run will end rejected."
+            ? words.expiring
             : asking && !answer.trim()
               ? "Write your answer to send it."
               : null;
@@ -180,13 +244,14 @@ function ApprovalCard({
     setSending(decision);
     setError(null);
     const note = comment.trim();
-    const extra = asking
-      ? decision === "approve"
-        ? { answer }
-        : {}
-      : note
-        ? { comment: note }
-        : {};
+    const extra =
+      ask.kind === "input"
+        ? decision === "approve"
+          ? { answer }
+          : {}
+        : ask.kind === "approval" && note
+          ? { comment: note }
+          : {};
     try {
       await client.decide(
         runId,
@@ -214,24 +279,16 @@ function ApprovalCard({
 
   return (
     <article
-      aria-label={
-        asking ? `Question from ${ask.remote ?? "a remote agent"}` : `Approval for ${ask.nodeId}`
-      }
+      aria-label={words.label(ask)}
       className={`${panelCard} border-2 border-warn-border p-3`}
     >
       <div className="flex items-baseline gap-2">
         <p className="min-w-0 flex-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
-          {asking
-            ? `${ask.remote ?? "A remote agent"} asks:`
-            : ask.prompt || "Approve this to continue?"}
+          {words.heading(ask)}
         </p>
         <span
           className={`font-mono text-[11px] tabular-nums ${expired ? toneText.crit : toneText.warn}`}
-          title={
-            asking
-              ? "Unanswered by then, the remote is sent nothing and the node goes on without it"
-              : "Undecided by then, it expires and the run ends rejected"
-          }
+          title={words.timerTitle}
         >
           {timeLeft(ask.expiresAt, now)}
         </span>
@@ -244,23 +301,24 @@ function ApprovalCard({
         <pre
           id={textId}
           tabIndex={0}
-          aria-label={asking ? "The remote's question" : `Text under review for ${ask.nodeId}`}
+          aria-label={words.textLabel(ask)}
           className="orrery-scroll mt-2 max-h-64 overflow-auto rounded-lg bg-slate-50 p-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:bg-slate-950 dark:text-slate-200"
         >
           {text}
         </pre>
       ) : (
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          Reading the text under review…
+          Reading the {words.noun} under review…
         </p>
       )}
 
+      {words.notice ? (
+        <p id={noticeId} className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+          {words.notice}
+        </p>
+      ) : null}
       {asking ? (
         <>
-          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-            This question was written by an external agent, not by Orrery. Answer only what the task
-            needs; never send secrets or credentials.
-          </p>
           <label htmlFor={commentId} className={`${fieldLabel} mt-2`}>
             Your answer{" "}
             <span className="font-normal text-slate-500">(sent to the remote, nothing else)</span>
@@ -275,7 +333,7 @@ function ApprovalCard({
             className={`${input} mt-1 resize-y`}
           />
         </>
-      ) : (
+      ) : ask.kind === "approval" ? (
         <>
           <label htmlFor={commentId} className={`${fieldLabel} mt-2`}>
             Comment{" "}
@@ -291,7 +349,7 @@ function ApprovalCard({
             className={`${input} mt-1 resize-y`}
           />
         </>
-      )}
+      ) : null}
 
       {error ? (
         <p role="alert" className={`mt-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.crit}`}>
@@ -304,17 +362,14 @@ function ApprovalCard({
           type="button"
           className={primaryButton}
           disabled={busy || blocked !== null}
-          aria-describedby={blocked ? hintId : undefined}
+          aria-describedby={
+            [blocked ? hintId : null, words.notice ? noticeId : null].filter(Boolean).join(" ") ||
+            undefined
+          }
           onClick={() => void decide("approve")}
         >
           <CheckIcon size={14} />
-          {asking
-            ? sending === "approve"
-              ? "Sending…"
-              : "Send answer"
-            : sending === "approve"
-              ? "Approving…"
-              : "Approve"}
+          {words.approve[sending === "approve" ? 1 : 0]}
         </button>
         <button
           type="button"
@@ -323,13 +378,7 @@ function ApprovalCard({
           onClick={() => void decide("reject")}
         >
           <CloseIcon size={14} />
-          {asking
-            ? sending === "reject"
-              ? "Declining…"
-              : "Decline"
-            : sending === "reject"
-              ? "Rejecting…"
-              : "Reject"}
+          {words.reject[sending === "reject" ? 1 : 0]}
         </button>
         {sent ? (
           <span className="text-[11px] text-slate-500 dark:text-slate-400">

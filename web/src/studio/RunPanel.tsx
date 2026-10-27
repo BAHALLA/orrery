@@ -446,12 +446,14 @@ const eventTone: Record<string, string> = {
   "approval.decided": tonePill.neutral,
 };
 
-/** A question is answered or declined; an approval is approved or rejected. */
+/** A question is answered or declined, an action confirmed or refused, an approval approved or rejected. */
 function decisionWord(e: Extract<StudioEvent, { type: "approval.decided" }>): string {
-  if (e.kind !== "input") return e.decision;
-  if (e.decision === "approved") return "answered";
-  if (e.decision === "rejected") return "declined";
-  return `question ${e.decision}`;
+  if (e.kind === "approval") return e.decision;
+  const [noun, yes, no] =
+    e.kind === "input" ? ["question", "answered", "declined"] : ["action", "confirmed", "refused"];
+  if (e.decision === "approved") return yes;
+  if (e.decision === "rejected") return no;
+  return `${noun} ${e.decision}`;
 }
 
 /** One line per event: what happened, in plain words. */
@@ -470,9 +472,11 @@ function describeEvent(e: StudioEvent): string {
         ? `${e.node_id} → ${e.remote}.${e.skill} ${e.method}${e.parts?.length ? ` · ${e.parts.map((p) => `${p.kind} ${formatBytes(p.size)}`).join(", ")}` : ""}`
         : `${e.remote} → ${e.node_id}: ${e.task_state ?? e.status ?? "reply"}${e.elapsed_ms != null ? ` · ${formatMs(e.elapsed_ms)}` : ""}`;
     case "approval.requested":
-      return e.kind === "input"
-        ? `${e.remote ?? "a remote agent"} asked you a question (${e.node_id})`
-        : `${e.node_id} is waiting for a person: ${e.prompt}`;
+      if (e.kind === "input")
+        return `${e.remote ?? "a remote agent"} asked you a question (${e.node_id})`;
+      if (e.kind === "action")
+        return `${e.node_id} wants to act through ${e.remote ?? "a remote agent"}: confirm or refuse`;
+      return `${e.node_id} is waiting for a person: ${e.prompt}`;
     case "approval.decided":
       return `${e.node_id} ${decisionWord(e)}${e.waited_ms != null ? ` after ${formatMs(e.waited_ms)}` : ""}`;
     case "budget.hit":

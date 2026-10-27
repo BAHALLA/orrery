@@ -226,3 +226,14 @@ async def test_invalid_server_set_override_normalises_to_l2(fake_tool, fake_ctx)
     state: dict = {}
     set_autonomy_level(state, "banana")
     assert plugin._active_level(fake_ctx(state=state)) == "L2"
+
+
+@pytest.mark.asyncio
+async def test_allowing_at_l2_widens_a_copy_only(fake_tool, fake_ctx):
+    shared = AutonomyPlugin(level="L2")
+    tool = _destructive_tool(fake_tool)
+    widened = shared.allowing_at_l2([tool.name])
+    allowed = await widened.before_tool_callback(tool=tool, tool_args={}, tool_context=fake_ctx())
+    assert allowed is None
+    refused = await shared.before_tool_callback(tool=tool, tool_args={}, tool_context=fake_ctx())
+    assert refused is not None and refused["status"] == "BLOCKED"

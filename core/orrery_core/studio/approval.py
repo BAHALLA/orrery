@@ -2,7 +2,8 @@
 
 A run pauses where a person must decide: at a ``human_approval`` node
 (kind ``approval``), or when a remote agent's task needs input (kind
-``input``: the person's answer is sent on the remote's task). The
+``input``: the person's answer is sent on the remote's task), or before an
+acting remote is called (kind ``action``: the request it would send). The
 run's task waits here, on a future only :meth:`RunApprovals.decide` resolves,
 and that is reached only through ``POST /studio/runs/{id}/approvals/{aid}``,
 called by the human admin who started the run. Nothing a model writes, and
@@ -49,7 +50,7 @@ from typing import Any, Literal
 from ..a2a.remote import MAX_REQUEST_CHARS
 from .events import MAX_APPROVALS_PER_RUN, ApprovalDecided, ApprovalRequested
 
-ApprovalKind = Literal["approval", "input"]
+ApprovalKind = Literal["approval", "input", "action"]
 Decision = Literal["approved", "rejected", "expired", "cancelled"]
 
 #: Text served whole for review, in UTF-8 bytes; longer text can only be rejected.
@@ -241,6 +242,10 @@ class RunApprovals:
             # decision or the expiry settled it first.
             _settle(pending.future, ApprovalOutcome("cancelled"))
             outcome = pending.future.result()
+            if outcome.approved and (task := asyncio.current_task()) and task.cancelling():
+                # Approved, then the run was cancelled before acting on it:
+                # nothing happens, and the trace says so.
+                outcome = ApprovalOutcome("cancelled")
             self._pending.pop(pending.approval_id, None)
             self._remember(pending.approval_id, outcome.decision)
             self._emit(
