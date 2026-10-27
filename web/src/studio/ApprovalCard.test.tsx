@@ -146,7 +146,8 @@ describe("ApprovalCards", () => {
     expect(await screen.findByText(question)).toBeInTheDocument();
     expect(screen.getByText("demo-writer.draft asks:")).toBeInTheDocument();
     expect(screen.getByText(/written by an external agent/)).toBeInTheDocument();
-    expect(screen.getByText("Write your answer to send it.")).toBeInTheDocument();
+    // Once the question's digest is checked (async: Web Crypto).
+    expect(await screen.findByText("Write your answer to send it.")).toBeInTheDocument();
     const send = screen.getByRole("button", { name: "Send answer" });
     expect(send).toBeDisabled();
     await userEvent.type(screen.getByLabelText(/Your answer/), "0.11");
