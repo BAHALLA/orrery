@@ -700,6 +700,10 @@ def mount_studio(
         editing = service.config.registry_editing
         return {
             **registry_source(),
+            # The source of the document shown, which is the head when editing.
+            "source": "stored"
+            if editing and service.registry_head
+            else registry_source()["source"],
             "version": service.registry_head if editing else service.registry_version,
             "serving_version": service.registry_version,
             "head_error": service.registry_head_error if editing else None,

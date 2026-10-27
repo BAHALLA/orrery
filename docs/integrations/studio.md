@@ -196,7 +196,8 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   `private_network` and `bearer_env` (for MCP, the same `url` and
   `private_network`). Its skills, tools, description and limits stay
   editable. This is checked first, so a refusal never says whether a secret is
-  set.
+  set, and again whenever a stored version is served: taking an endpoint out
+  of the file takes it out of every stored version on the next restart.
 - **Versioned, never overwritten.** The file is version 0. A save names the
   version it was edited from; if someone saved since, it is a 409 and nothing
   changes. Every version is kept (the latest 200) with who saved it, when,
@@ -209,12 +210,14 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   origins and network flag; for MCP the URL, transport and network flag), so
   an entry whose endpoint changed is fetched and pinned afresh, a run still on
   the old endpoint never pins for the new one, and a description edit keeps
-  its pin. A removed entry's pins are dropped.
+  its pin. A removed entry's pins are dropped, so removing and re-adding an
+  entry (or changing its card URL) trusts its card on first use again; set
+  `card_sha256` to keep a pin across edits.
 - **Across replicas and restarts.** Versions live in the Studio store
   (PostgreSQL with `DATABASE_URL`); each replica polls the version every 10 s
   and serves the newest. Without a database, edits live in the process and a
   restart goes back to the file. A stored version that stops validating (a
-  secret unset, the allowlist narrowed) is not served: every replica serves
+  secret unset, the allowlist narrowed, an endpoint gone from the file) is not served: every replica serves
   the newest version that still does (the file when none does), and the
   document view reports the newest as `version` with `serving_version` and
   `head_error`, so an admin saves a fixed version over it.

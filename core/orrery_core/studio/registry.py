@@ -191,18 +191,28 @@ def _is_loopback(url: Any) -> bool:
         return False
 
 
+def _text(value: Any) -> str | None:
+    """A malformed value never matches (the schema refuses it next) nor raises here."""
+    return value if isinstance(value, str) else None
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def _a2a_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
     auth = item.get("auth")
+    origins = item.get("service_origins")
     return (
-        item.get("card_url"),
-        tuple(sorted(item.get("service_origins") or [])),
+        _text(item.get("card_url")),
+        tuple(sorted(map(str, origins))) if isinstance(origins, list) else (),
         bool(item.get("private_network")),
-        auth.get("bearer_env") if isinstance(auth, Mapping) else None,
+        _text(auth.get("bearer_env")) if isinstance(auth, Mapping) else None,
     )
 
 
 def _mcp_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
-    return (item.get("url"), bool(item.get("private_network")))
+    return (_text(item.get("url")), bool(item.get("private_network")))
 
 
 def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
@@ -218,21 +228,25 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
     """
     if not isinstance(document, Mapping):
         return
-    bound_a2a = {_a2a_endpoint(i) for i in file_document.get("a2a") or [] if isinstance(i, Mapping)}
-    bound_mcp = {_mcp_endpoint(i) for i in file_document.get("mcp") or [] if isinstance(i, Mapping)}
+    bound_a2a = {
+        _a2a_endpoint(i) for i in _list(file_document.get("a2a")) if isinstance(i, Mapping)
+    }
+    bound_mcp = {
+        _mcp_endpoint(i) for i in _list(file_document.get("mcp")) if isinstance(i, Mapping)
+    }
     problems: list[str] = []
-    for item in document.get("a2a") or []:
+    for item in _list(document.get("a2a")):
         if not isinstance(item, Mapping):
             continue
         sensitive = (
             item.get("auth") is not None
             or bool(item.get("private_network"))
             or _is_loopback(item.get("card_url"))
-            or any(_is_loopback(o) for o in item.get("service_origins") or [])
+            or any(_is_loopback(o) for o in _list(item.get("service_origins")))
         )
         if sensitive and _a2a_endpoint(item) not in bound_a2a:
             problems.append(f"a2a entry {item.get('id')!r}")
-    for item in document.get("mcp") or []:
+    for item in _list(document.get("mcp")):
         if not isinstance(item, Mapping):
             continue
         sensitive = bool(item.get("private_network")) or _is_loopback(item.get("url"))

@@ -1431,8 +1431,33 @@ def test_an_edit_cannot_reach_what_only_the_deployment_binds(editing_client):
     for env in ("PATH", "NOT_SET_ANYWHERE"):
         refused = put({**writer, "auth": {"bearer_env": env}})
         assert refused.status_code == 422 and "registry file" in refused.text
+    # Malformed values are refused, never a server error.
+    assert (
+        put({**writer, "auth": {"bearer_env": "X"}, "service_origins": [1, "a"]}).status_code == 422
+    )
+    assert put({**writer, "auth": {"bearer_env": "X"}, "card_url": ["x"]}).status_code == 422
     # Keeping the declared endpoint is fine.
     assert put({**writer, "skills": ["draft", "review"]}).status_code == 200
+
+
+def test_a_stored_version_stops_being_served_once_the_file_drops_its_endpoint(editing_client):
+    service = _service_of(editing_client.app)
+    document = _document(editing_client)["document"]
+    document["a2a"][0]["skills"] = ["draft", "review"]
+    body = {"document": document, "version": 0}
+    assert (
+        editing_client.put("/studio/registry/document", headers=ADMIN, json=body).status_code == 200
+    )
+    assert service.registry_version == 1
+    # The operator takes the loopback remote out of the file and restarts.
+    service.file_document = {**service.file_document, "a2a": []}
+    service._file_registry = service._parse_registry(service.file_document)
+    service.registry_head, service._registry_synced = 0, False
+    editing_client.portal.call(service.sync_registry)
+    assert service.registry_version == 0 and service.registry.a2a == []
+    view = _document(editing_client)
+    assert view["version"] == 1 and view["serving_version"] == 0
+    assert view["source"] == "stored" and "registry file" in view["head_error"]
 
 
 def test_a_stored_version_that_no_longer_validates_is_not_served(editing_client):

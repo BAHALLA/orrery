@@ -25,6 +25,12 @@ const MAX_NOTE = 500;
 
 const pretty = (doc: unknown) => JSON.stringify(doc, null, 2);
 
+/** Unsaved text, and the version it was started from. */
+interface Draft {
+  text: string;
+  base: number;
+}
+
 /**
  * The registry as written, and (with `ORRERY_STUDIO_REGISTRY_EDITING`) an
  * editor for it (P0c). A save names the version it was edited from, so two
@@ -51,7 +57,7 @@ export function RegistryDialog({
   // Held here, not in the editor, so a reload (which remounts it) keeps
   // both the confirmation of a save and text the admin has not saved.
   const [saved, setSaved] = useState<RegistryVersionSummary | null>(null);
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -116,7 +122,9 @@ export function RegistryDialog({
             client={client}
             current={current}
             draft={draft}
-            onDraft={setDraft}
+            onDraft={(text) =>
+              setDraft((d) => (text === null ? null : { text, base: d?.base ?? current.version }))
+            }
             saved={saved}
             onSaved={(record) => {
               setSaved(record);
@@ -149,7 +157,7 @@ function DocumentEditor({
   client: StudioClient;
   current: RegistryDocument;
   /** Unsaved text, kept across a reload; null shows the document read. */
-  draft: string | null;
+  draft: Draft | null;
   onDraft: (text: string | null) => void;
   /** The last save, shown until the next attempt or a reload. */
   saved: RegistryVersionSummary | null;
@@ -158,7 +166,10 @@ function DocumentEditor({
 }) {
   const textId = useId();
   const noteId = useId();
-  const text = draft ?? pretty(current.document);
+  const text = draft?.text ?? pretty(current.document);
+  // Text kept across a conflict was written against an older version: a
+  // save would replace what someone else saved, so it says so.
+  const stale = draft !== null && draft.base !== current.version ? draft.base : null;
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
@@ -284,6 +295,13 @@ function DocumentEditor({
           : your text stays here, so check it against what changed (History) before saving again.
         </p>
       ) : null}
+      {stale !== null && !conflict ? (
+        <p role="alert" className={`mt-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.warn}`}>
+          Your text was written against version {stale}; version {current.version} is the latest.
+          Saving replaces it with your text, including anything you did not mean to undo: compare
+          them in History first, or Discard to start from the latest.
+        </p>
+      ) : null}
       {shownSaved ? (
         <p role="status" className={`mt-2 rounded-lg border px-2 py-1.5 text-xs ${toneChip.ok}`}>
           Saved as version {shownSaved.version}: {describeChanges(shownSaved.changes)}.
@@ -296,7 +314,7 @@ function DocumentEditor({
           disabled={saving}
           onClick={() => void save()}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Saving…" : stale !== null ? `Save over version ${current.version}` : "Save"}
         </button>
         <button
           type="button"

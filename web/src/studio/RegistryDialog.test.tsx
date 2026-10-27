@@ -96,18 +96,39 @@ describe("RegistryDialog", () => {
 
   it("on a conflict, offers the latest version instead of overwriting it", async () => {
     const c = client({}, { saveRegistry: vi.fn().mockRejectedValue(new ApiError(409, "x")) });
+    const latest = { a2a: [{ id: "writer", card_url: "https://w.example.com/c", skills: ["x"] }] };
+    vi.mocked(c.registryDocument)
+      .mockResolvedValueOnce({
+        version: 0,
+        source: "file",
+        editable: true,
+        serving_version: 0,
+        head_error: null,
+        document: DOCUMENT,
+      })
+      .mockResolvedValue({
+        version: 1,
+        source: "stored",
+        editable: true,
+        serving_version: 1,
+        head_error: null,
+        document: latest,
+      });
     render(<RegistryDialog client={c} onSaved={() => {}} onClose={() => {}} />);
-    await editor();
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     fireEvent.change(await editor(), { target: { value: '{"a2a": []}' } });
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await userEvent.click(await screen.findByRole("button", { name: "Reload the latest" }));
     await waitFor(() => expect(c.registryDocument).toHaveBeenCalledTimes(2));
-    // The unsaved text survives the reload; Discard shows the latest.
+    // The unsaved text survives the reload, and saving it says what it replaces.
     expect(await editor()).toHaveValue('{"a2a": []}');
+    expect(
+      screen.getByText(/written against version 0; version 1 is the latest/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save over version 1" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(await editor()).toHaveValue(JSON.stringify(DOCUMENT, null, 2));
+    expect(await editor()).toHaveValue(JSON.stringify(latest, null, 2));
     expect(screen.queryByText(/Someone saved/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
   });
 
   it("keeps the confirmation when the saved version is read back", async () => {

@@ -879,9 +879,11 @@ class StudioService:
         """Serve the newest stored registry that validates; note a head that does not.
 
         A stored version can stop validating (a secret unset, the allowlist
-        narrowed). It is not served: the newest version that still validates
-        is (the file, when none does), on every replica alike, and an admin
-        can save over the bad head.
+        narrowed, or the file no longer declaring an endpoint it binds). It
+        is not served: the newest version that still validates is (the file,
+        when none does), on every replica alike, and an admin can save over
+        the bad head. The binding check runs here too, so taking an endpoint
+        out of the file takes it out of every stored version.
         """
         if not self.config.registry_editing:
             return
@@ -895,13 +897,14 @@ class StudioService:
             target: tuple[StudioRegistry, dict[str, Any], int] | None = None
             for record in records:
                 try:
+                    check_deployment_bound(record.document, self.file_document)
                     target = (
                         self._parse_registry(record.document),
                         record.document,
                         record.version,
                     )
                     break
-                except (ValueError, ValidationError) as exc:
+                except (ValueError, TypeError, ValidationError) as exc:
                     if head_error is None:
                         head_error = str(exc)
                     logger.error(
@@ -944,7 +947,7 @@ class StudioService:
             raise SpecInvalid(
                 [replace(e, loc=("document", *e.loc)) for e in errors_from_validation(exc)]
             ) from None
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise SpecInvalid([SpecError(("document",), str(exc))]) from None
 
     async def update_registry(
