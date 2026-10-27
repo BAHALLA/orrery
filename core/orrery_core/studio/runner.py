@@ -34,7 +34,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from google.adk.models.llm_response import LlmResponse
@@ -42,6 +42,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools.set_model_response_tool import SetModelResponseTool
 from google.genai import types
+from pydantic import ValidationError
 
 from ..a2a.remote import InputUnavailable, RemoteCards, RemoteExchange
 from ..observability.audit import audit_event
@@ -94,12 +95,13 @@ from .events import (
     capture,
 )
 from .ledger import CompositionLedger, Exhausted
-from .registry import StudioRegistry
+from .registry import StudioRegistry, parse_registry, registry_changes
 from .spec import (
     CompositionSpec,
     SpecError,
     SpecInvalid,
     ValidationContext,
+    errors_from_validation,
     graph_order,
     parse_spec,
     validate_spec,
@@ -107,6 +109,8 @@ from .spec import (
 from .store import (
     CompositionRecord,
     InMemoryStudioStore,
+    RegistryConflict,
+    RegistryVersion,
     RunRecord,
     StudioStore,
 )
@@ -728,6 +732,14 @@ FOLLOW_MAX_INTERVAL = 5.0
 MAX_FOLLOWS_PER_USER = 4
 #: Seconds between retention purges.
 PURGE_INTERVAL = 3600.0
+#: Seconds between reads of the stored registry's version (edits on other replicas).
+REGISTRY_POLL_INTERVAL = 10.0
+#: Longest note on a registry edit.
+MAX_REGISTRY_NOTE = 500
+
+
+class RegistryEditingDisabled(Exception):
+    """``ORRERY_STUDIO_REGISTRY_EDITING`` is off: the registry is the deployment's file."""
 
 
 class StudioService:
@@ -745,9 +757,16 @@ class StudioService:
         plugin_factory: Callable[[], list[BasePlugin]] = studio_plugins,
         caller_identity: Callable[[AuthContext], CallerIdentity | None] | None = None,
         store: StudioStore | None = None,
+        registry_document: Mapping[str, Any] | None = None,
     ) -> None:
         self.config = config
         self.registry = registry
+        #: The registry as written (the file's, or the stored version's), its
+        #: version (0: the deployment's file) and where it came from.
+        self.registry_document: dict[str, Any] = dict(registry_document or {})
+        self.registry_version = 0
+        self._registry_lock = asyncio.Lock()
+        self._registry_follower: asyncio.Task[None] | None = None
         self.cards = cards
         self._catalogue = catalogue or dict
         self._model_factory = model_factory
@@ -787,9 +806,124 @@ class StudioService:
 
     # ── background work ──
     async def start_background(self) -> None:
-        """Purge old runs now and every hour (the app's lifespan calls this)."""
+        """Purge old runs now and every hour; follow registry edits (the app's lifespan calls this)."""
         if self._purger is None:
             self._purger = asyncio.create_task(self._purge_loop(), name="studio-purge")
+        if self.config.registry_editing and self._registry_follower is None:
+            await self.sync_registry()
+            self._registry_follower = asyncio.create_task(
+                self._follow_registry(), name="studio-registry"
+            )
+
+    # ── the registry (P0c editing) ──
+    def _parse_registry(self, document: Any) -> StudioRegistry:
+        return parse_registry(
+            document, network=self.cards.network, allow_acting=self.config.acting_remotes
+        )
+
+    def _swap_registry(
+        self, registry: StudioRegistry, document: dict[str, Any], version: int
+    ) -> None:
+        """Serve *registry* from now on; an entry it changed or dropped is pinned afresh.
+
+        Runs already started keep the entries they were compiled with.
+        """
+        changes = registry_changes(self.registry_document, document)
+        for key in (*changes["changed"], *changes["removed"]):
+            section, _, entry_id = key.partition(":")
+            if section == "a2a":
+                self.cards.forget(entry_id)
+            else:
+                self.mcp_pins.forget(entry_id)
+                self.mcp_errors.pop(entry_id, None)
+        self.registry, self.registry_document, self.registry_version = registry, document, version
+
+    async def sync_registry(self) -> None:
+        """Serve the newest stored registry, when another replica (or a restart) has one."""
+        if not self.config.registry_editing:
+            return
+        async with self._registry_lock:
+            version = await asyncio.to_thread(self.store.registry_version)
+            if version == self.registry_version:
+                return
+            record = await asyncio.to_thread(self.store.latest_registry)
+            if record is None:
+                return
+            try:
+                registry = self._parse_registry(record.document)
+            except (ValueError, ValidationError) as exc:
+                # Valid when saved; no longer (a secret unset, the allowlist
+                # narrowed). Keep serving what was last good, loudly.
+                logger.error(
+                    "Stored Studio registry version %d no longer validates; still serving "
+                    "version %d: %s",
+                    record.version,
+                    self.registry_version,
+                    exc,
+                )
+                return
+            self._swap_registry(registry, record.document, record.version)
+            logger.info("Studio registry now at version %d", record.version)
+
+    async def _follow_registry(self) -> None:
+        while True:
+            await asyncio.sleep(REGISTRY_POLL_INTERVAL)
+            try:
+                await self.sync_registry()
+            except Exception:  # noqa: BLE001 - a dead follower would serve a stale registry
+                logger.warning("Studio registry poll failed", exc_info=True)
+
+    async def update_registry(
+        self, document: Any, *, expected_version: int, note: str, auth: AuthContext
+    ) -> RegistryVersion:
+        """Validate *document* exactly as the file is at startup, save it, and serve it.
+
+        Raises :class:`RegistryEditingDisabled`, :class:`SpecInvalid` (the
+        problems, under ``document``), or :class:`RegistryConflict` when the
+        registry moved past *expected_version*. Audited with before and after.
+        """
+        if not self.config.registry_editing:
+            raise RegistryEditingDisabled()
+        if len(note) > MAX_REGISTRY_NOTE:
+            raise SpecInvalid(
+                [SpecError(("note",), f"at most {MAX_REGISTRY_NOTE} characters", "too_long")]
+            )
+        try:
+            registry = self._parse_registry(document)
+        except ValidationError as exc:
+            raise SpecInvalid(
+                [replace(e, loc=("document", *e.loc)) for e in errors_from_validation(exc)]
+            ) from None
+        except ValueError as exc:
+            raise SpecInvalid([SpecError(("document",), str(exc))]) from None
+        async with self._registry_lock:
+            before, before_version = self.registry_document, self.registry_version
+            if expected_version != before_version:
+                raise RegistryConflict(before_version)
+            changes = registry_changes(before, document)
+            if not any(changes.values()):
+                raise SpecInvalid([SpecError(("document",), "nothing changed", "unchanged")])
+            record = await asyncio.to_thread(
+                self.store.save_registry,
+                document,
+                expected_version=expected_version,
+                actor=auth.subject,
+                note=note,
+                changes=changes,
+            )
+            self._swap_registry(registry, document, record.version)
+        audit_event(
+            "studio_registry_updated",
+            subject=auth.subject,
+            from_version=before_version,
+            version=record.version,
+            note=note,
+            changes=changes,
+            # Documents name secrets' env vars, never their values.
+            before=before,
+            after=document,
+        )
+        return record
 
     async def _purge_loop(self) -> None:
         while True:
@@ -1093,11 +1227,12 @@ class StudioService:
                     await asyncio.gather(*writers, return_exceptions=True)
         for task in writers:
             task.cancel()
-        if self._purger is not None:
-            self._purger.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._purger
-            self._purger = None
+        for background in (self._purger, self._registry_follower):
+            if background is not None:
+                background.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await background
+        self._purger = self._registry_follower = None
 
     def _on_exchange(
         self,

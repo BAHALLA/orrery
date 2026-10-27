@@ -107,6 +107,10 @@ export interface ServerCapabilities {
   human_approval?: boolean;
   /** Seconds an approval waits before it expires (P0c). */
   approval_timeout_s?: number;
+  /** Whether registry A2A entries may be `effect: acting` (P0c). */
+  acting_remotes?: boolean;
+  /** Whether admins may edit the registry here (P0c). */
+  registry_editing?: boolean;
 }
 
 /** `GET /studio/schema`. */
@@ -201,6 +205,34 @@ export interface StudioRegistry {
   mcp: RegistryMcpServer[];
   a2a: RegistryA2aEntry[];
   catalog: RegistryCatalogTool[];
+  /** The registry's version: 0 is the deployment's file (P0c; absent before). */
+  version?: number;
+  source?: "file" | "stored";
+  editable?: boolean;
+}
+
+/** Entries a registry save added, removed and changed (`mcp:<id>`, `a2a:<id>`). */
+export interface RegistryChanges {
+  added: string[];
+  removed: string[];
+  changed: string[];
+}
+
+/** `GET /studio/registry/document`: the registry as written. */
+export interface RegistryDocument {
+  version: number;
+  source: "file" | "stored";
+  editable: boolean;
+  document: Record<string, unknown>;
+}
+
+/** One saved registry version: who, when, why and what changed. */
+export interface RegistryVersionSummary {
+  version: number;
+  actor: string;
+  created_at: number;
+  note: string;
+  changes: RegistryChanges;
 }
 
 // ── Runs ─────────────────────────────────────────────────────────────

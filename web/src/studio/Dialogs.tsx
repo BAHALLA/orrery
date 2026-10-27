@@ -3,7 +3,7 @@ import { useFocusTrap } from "../components/a11y";
 import { CopyButton } from "../components/CopyButton";
 import { CloseIcon } from "../components/icons";
 import { toneChip } from "../components/severity";
-import { input, primaryButton, toolbarButton } from "./format";
+import { input, primaryButton, segmentTab, toolbarButton } from "./format";
 import { DownloadIcon, UploadIcon } from "./icons";
 import { TemplateGallery } from "./Library";
 import type { Capabilities } from "./kinds";
@@ -152,11 +152,7 @@ export function SpecDialog({
       {...tabs.tabProps(t)}
       id={`${panelId}-${t}`}
       aria-controls={panelId}
-      className={`rounded-md px-3 py-1 text-sm font-medium focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
-        tab === t
-          ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white"
-          : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
-      }`}
+      className={segmentTab(tab === t)}
     >
       {label}
     </button>

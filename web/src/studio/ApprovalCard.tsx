@@ -41,7 +41,7 @@ interface Wording {
 
 const remoteName = (ask: ApprovalAsk) => ask.remote ?? "a remote agent";
 
-export const WORDING: Record<ApprovalKind, Wording> = {
+const WORDING: Record<ApprovalKind, Wording> = {
   approval: {
     noun: "text",
     heading: (ask) => ask.prompt || "Approve this to continue?",

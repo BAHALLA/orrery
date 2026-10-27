@@ -25,6 +25,7 @@ from orrery_core.studio.store import (  # noqa: E402
     CompositionConflict,
     CompositionNotFound,
     InMemoryStudioStore,
+    RegistryConflict,
     RunRecord,
     SqlStudioStore,
     create_studio_store,
@@ -95,6 +96,27 @@ def test_compositions_are_versioned_and_edits_must_name_the_latest(store):
     assert store.get_composition(created.id) is None
     with pytest.raises(CompositionNotFound):
         store.update_composition(created.id, {}, expected_version=2, actor="alice")
+
+
+def test_the_registry_is_versioned_and_a_save_must_name_the_latest(store):
+    assert store.registry_version() == 0 and store.latest_registry() is None
+    doc = {"a2a": [{"id": "w", "card_url": "https://w.example.com/c", "skills": ["s"]}]}
+    changes = {"added": ["a2a:w"], "removed": [], "changed": []}
+    first = store.save_registry(
+        doc, expected_version=0, actor="alice", note="add w", changes=changes
+    )
+    assert first.version == 1 and store.registry_version() == 1
+    with pytest.raises(RegistryConflict) as conflict:
+        store.save_registry({}, expected_version=0, actor="bob", note="", changes=changes)
+    assert conflict.value.current_version == 1
+    store.save_registry({}, expected_version=1, actor="bob", note="", changes=changes)
+    latest = store.latest_registry()
+    assert latest is not None and latest.version == 2 and latest.document == {}
+    old = store.get_registry(1)
+    assert old is not None and old.document == doc and old.actor == "alice"
+    assert old.note == "add w" and old.changes == changes
+    assert [r.version for r in store.registry_history()] == [2, 1]
+    assert store.get_registry(9) is None
 
 
 def test_runs_are_listed_per_owner_and_composition_newest_first(store):

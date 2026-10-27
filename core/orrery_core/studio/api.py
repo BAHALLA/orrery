@@ -46,6 +46,17 @@ The rest:
 - ``GET /studio/registry`` → the registry without secrets: MCP tools, their
   classification and (once seen) description and input schema; A2A skills and
   card digests. ``?resolve=true`` fetches cards and MCP tool lists first.
+
+The registry, when ``ORRERY_STUDIO_REGISTRY_EDITING`` is on (P0c):
+
+- ``GET /studio/registry/document`` → ``{version, source, editable, document}``:
+  the registry as written (version 0 is the deployment's file).
+- ``PUT /studio/registry/document`` ``{document, version, note?}`` → the saved
+  version and what it changed. Validated exactly as the file is at startup
+  (422 with paths under ``document``); 409 when the registry moved past
+  ``version``; 404 when editing is off. Audited with before and after.
+- ``GET /studio/registry/history`` → saved versions, newest first: who, when,
+  why and which entries changed; ``/history/{version}`` adds the document.
 """
 
 from __future__ import annotations
@@ -76,7 +87,14 @@ from .approval import (
 )
 from .compiler import registry_toolset
 from .events import events_json_schema
-from .runner import MAX_FOLLOWS_PER_USER, RunElsewhere, StudioService, TooManyRuns
+from .runner import (
+    MAX_FOLLOWS_PER_USER,
+    MAX_REGISTRY_NOTE,
+    RegistryEditingDisabled,
+    RunElsewhere,
+    StudioService,
+    TooManyRuns,
+)
 from .spec import (
     MAX_INPUT_CHARS,
     MAX_LOOP_DEPTH,
@@ -96,7 +114,7 @@ from .spec import (
     errors_from_validation,
     spec_json_schema,
 )
-from .store import CompositionConflict, CompositionNotFound, RunRecord
+from .store import CompositionConflict, CompositionNotFound, RegistryConflict, RunRecord
 
 #: Seconds between SSE keepalive comments.
 KEEPALIVE_SECONDS = 15.0
@@ -165,6 +183,16 @@ def _conflict(exc: CompositionConflict) -> HTTPException:
     )
 
 
+class RegistryWrite(BaseModel):
+    """``PUT /studio/registry/document``: the document, the version it was edited from, and why."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document: dict[str, Any]
+    version: int = Field(ge=0)
+    note: str = Field(default="", max_length=MAX_REGISTRY_NOTE)
+
+
 def warnings_for(spec: CompositionSpec) -> list[dict[str, Any]]:
     """Things that run, but probably not as meant (``POST /studio/validate``)."""
     warnings: list[dict[str, Any]] = []
@@ -207,6 +235,7 @@ def capabilities(service: StudioService) -> dict[str, Any]:
         "approval_timeout_s": service.config.approval_timeout_s,
         "acting_remotes": service.config.acting_remotes,
         "stored_compositions": True,
+        "registry_editing": service.config.registry_editing,
         "limits": {
             "max_nodes": MAX_NODES,
             "max_parallel_branches": MAX_PARALLEL_BRANCHES,
@@ -642,7 +671,79 @@ def mount_studio(
                 {"ref": ref, "read_only": get_guard_level(tool) is None}
                 for ref, tool in sorted(catalogue.items())
             ],
+            **registry_source(),
         }
+
+    def registry_source() -> dict[str, Any]:
+        return {
+            "version": service.registry_version,
+            "source": "stored" if service.registry_version else "file",
+            "editable": service.config.registry_editing,
+        }
+
+    def editing_on() -> None:
+        if not service.config.registry_editing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Registry editing is off (ORRERY_STUDIO_REGISTRY_EDITING)",
+            )
+
+    @api.get("/studio/registry/document")
+    async def registry_document(auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
+        await service.sync_registry()
+        return {**registry_source(), "document": service.registry_document}
+
+    @api.put("/studio/registry/document")
+    async def update_registry_document(
+        request: Request,
+        auth: AuthContext = Depends(studio_admin),  # noqa: B008
+    ) -> Any:
+        editing_on()
+        limiter.hit(write_rate, f"studio-write:{auth.subject}")
+        try:
+            write = RegistryWrite.model_validate(await json_body(request))
+            await service.sync_registry()
+            record = await service.update_registry(
+                write.document, expected_version=write.version, note=write.note, auth=auth
+            )
+        except ValidationError as exc:
+            return _errors_response(SpecInvalid(errors_from_validation(exc)))
+        except SpecInvalid as exc:
+            return _errors_response(exc)
+        except RegistryEditingDisabled:
+            editing_on()
+            raise
+        except RegistryConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "the registry changed since you read it; reload and reapply",
+                    "current_version": exc.current_version,
+                },
+            ) from None
+        return record.summary()
+
+    @api.get("/studio/registry/history")
+    async def registry_history(
+        limit: int = 50,
+        auth: AuthContext = Depends(studio_admin),  # noqa: B008
+    ) -> Any:
+        editing_on()
+        records = await asyncio.to_thread(
+            service.store.registry_history, limit=max(1, min(limit, 200))
+        )
+        return {"versions": [r.summary() for r in records]}
+
+    @api.get("/studio/registry/history/{version}")
+    async def registry_history_version(
+        version: int,
+        auth: AuthContext = Depends(studio_admin),  # noqa: B008
+    ) -> Any:
+        editing_on()
+        record = await asyncio.to_thread(service.store.get_registry, version)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such version")
+        return {**record.summary(), "document": record.document}
 
 
 class _Invalid(Exception):

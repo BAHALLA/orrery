@@ -1,5 +1,6 @@
 import type { StatusTone } from "../components/severity";
 import type { NodeRunStatus, RunStatus } from "./runState";
+import type { RegistryChanges } from "./types";
 
 /** Shared styling and number formatting for the Studio's panels. */
 
@@ -21,6 +22,14 @@ export const primaryButton =
 
 export const subtleButton =
   "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white";
+
+/** One tab of a segmented control (a dialog's two or three views). */
+export const segmentTab = (active: boolean) =>
+  `rounded-md px-3 py-1 text-sm font-medium focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-40 ${
+    active
+      ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white"
+      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
+  }`;
 
 export const panelCard =
   "rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900";
@@ -118,4 +127,12 @@ export function timeLeft(expiresAt: number, now: number): string {
   const m = Math.floor(left / 60);
   const s = String(left % 60).padStart(2, "0");
   return `${m}:${s}`;
+}
+
+/** "changed a2a:writer · added mcp:docs", or "no entry changed". */
+export function describeChanges(changes: RegistryChanges): string {
+  const parts = (["added", "removed", "changed"] as const)
+    .filter((k) => changes[k].length)
+    .map((k) => `${k} ${changes[k].join(", ")}`);
+  return parts.length ? parts.join(" · ") : "no entry changed";
 }

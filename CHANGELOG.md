@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Studio: registry editing (AEP-031 P0c).** With
+  `ORRERY_STUDIO_REGISTRY_EDITING=true`, the Studio's admins edit the registry
+  from the console (**Registry**), validated exactly as the file is at startup.
+  Every save names the version it was edited from (a stale one is a 409), is
+  kept with who, when, a note and what it changed (a History tab), is audited
+  with before and after, and applies to the next run; an edited entry is
+  pinned afresh. Replicas follow the stored version. Off, the console shows
+  the registry read-only.
 - **Studio: remotes that act (AEP-031 P0c).** A registry A2A entry may be
   `effect: acting` when the deployment sets `ORRERY_STUDIO_ACTING_REMOTES=true`
   (otherwise startup fails). The run stays at L2; each call to an acting

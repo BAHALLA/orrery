@@ -478,6 +478,12 @@ class RemoteCards:
             ],
         }
 
+    def forget(self, entry_id: str) -> None:
+        """Drop everything known about *entry_id*: an edited entry is fetched and pinned afresh."""
+        self._pinned.pop(entry_id, None)
+        self._first_seen.pop(entry_id, None)
+        self._errors.pop(entry_id, None)
+
     def note_error(self, entry: RemoteAgentEntry, reason: str) -> None:
         """Record a problem seen outside :meth:`get` (a caller's own timeout)."""
         self._errors[entry.id] = (time.time(), reason)

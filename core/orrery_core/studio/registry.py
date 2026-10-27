@@ -39,6 +39,7 @@ Every entry goes through the network guard: public addresses only, unless
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -129,6 +130,41 @@ class StudioRegistry(BaseModel):
                 entry.auth.token()  # an unset secret fails startup, not the first call
 
 
+def parse_registry(
+    raw: Any, *, network: RemoteNetwork | None = None, allow_acting: bool = False
+) -> StudioRegistry:
+    """Validate a registry document: the schema, the acting opt-in, the network, the secrets.
+
+    The one check, for the file at startup and for every edit (P0c): an edit
+    can never hold what the deployment's file could not.
+    """
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("the registry is a mapping with `mcp` and `a2a` lists")
+    registry = StudioRegistry.model_validate(raw)
+    if not allow_acting and (acting := [e.id for e in registry.a2a if e.effect == "acting"]):
+        raise ValueError(
+            f"a2a entries {acting} are effect: acting; set {STUDIO_ACTING_REMOTES_ENV}=true "
+            "to allow remotes that change things (each call is confirmed by the run's owner)"
+        )
+    registry.check_network((network or RemoteNetwork.from_env()).private_allow)
+    return registry
+
+
+def read_registry_document(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+    """The registry file as written (``ORRERY_STUDIO_REGISTRY`` when *path* is None); ``{}`` if none."""
+    import yaml
+
+    target = path if path is not None else os.getenv(STUDIO_REGISTRY_ENV, "").strip()
+    if not target:
+        return {}
+    raw = yaml.safe_load(Path(target).read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{target}: the registry is a mapping with `mcp` and `a2a` lists")
+    return raw
+
+
 def load_registry(
     path: str | os.PathLike[str] | None = None,
     *,
@@ -141,17 +177,23 @@ def load_registry(
     missing or invalid raises: a typo must not start the Studio without the
     guards the operator thinks it has.
     """
-    import yaml
+    return parse_registry(read_registry_document(path), network=network, allow_acting=allow_acting)
 
-    target = path if path is not None else os.getenv(STUDIO_REGISTRY_ENV, "").strip()
-    if not target:
-        return StudioRegistry()
-    raw = yaml.safe_load(Path(target).read_text(encoding="utf-8")) or {}
-    registry = StudioRegistry.model_validate(raw)
-    if not allow_acting and (acting := [e.id for e in registry.a2a if e.effect == "acting"]):
-        raise ValueError(
-            f"a2a entries {acting} are effect: acting; set {STUDIO_ACTING_REMOTES_ENV}=true "
-            "to allow remotes that change things (each call is confirmed by the run's owner)"
-        )
-    registry.check_network((network or RemoteNetwork.from_env()).private_allow)
-    return registry
+
+def registry_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Entries added, removed and changed between two registry documents (``mcp:<id>``)."""
+
+    def entries(doc: Mapping[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for section in ("mcp", "a2a"):
+            for item in doc.get(section) or []:
+                if isinstance(item, Mapping):
+                    out[f"{section}:{item.get('id')}"] = item
+        return out
+
+    old, new = entries(before), entries(after)
+    return {
+        "added": sorted(new.keys() - old.keys()),
+        "removed": sorted(old.keys() - new.keys()),
+        "changed": sorted(k for k in old.keys() & new.keys() if old[k] != new[k]),
+    }

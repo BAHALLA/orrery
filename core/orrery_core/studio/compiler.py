@@ -223,6 +223,11 @@ class McpPins:
         """Tool -> the description and input schema it was pinned with."""
         return self._seen.setdefault(entry_id, {})
 
+    def forget(self, entry_id: str) -> None:
+        """Drop *entry_id*'s pins: an edited entry is pinned afresh."""
+        self._by_entry.pop(entry_id, None)
+        self._seen.pop(entry_id, None)
+
 
 def registry_toolset(
     server: Any, entry_id: str, names: list[str], *, cards: RemoteCards, pins: McpPins

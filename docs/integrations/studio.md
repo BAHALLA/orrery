@@ -54,6 +54,7 @@ on and it is unset, and when `AUTH_ENABLED` is off.
 | `ORRERY_STUDIO_MAX_RUNNING` | `8` | Runs in flight on the replica. |
 | `ORRERY_STUDIO_RATE_LIMIT` | `10/minute` | `POST /studio/runs` per person. |
 | `ORRERY_STUDIO_APPROVAL_TIMEOUT_SECONDS` | `900` | How long a `human_approval` waits for its person (at most `86400`); undecided by then, it expires and the run ends `rejected`. A waiting run keeps its run slot, toolsets and connections. |
+| `ORRERY_STUDIO_REGISTRY_EDITING` | `false` | Let the Studio's admins edit the registry from the console (below). The file is then only version 0; every save is checked like the file, kept, and audited. Needs `DATABASE_URL` to survive a restart or to be shared by replicas. |
 | `ORRERY_STUDIO_ACTING_REMOTES` | `false` | Allow registry A2A entries with `effect: acting` (remotes that change things). Off, a registry that has one fails startup. On, every call to one waits for the run's owner to confirm the exact request. |
 | `ORRERY_A2A_PRIVATE_ALLOW` | — | Hosts and CIDRs a `private_network` entry may reach (comma-separated). |
 | `ORRERY_A2A_CA_FILE` | — | One extra CA bundle trusted for outbound A2A (an internal CA). |
@@ -78,7 +79,8 @@ PostgreSQL both stay in memory, on each replica, bounded by
 
 A composition can reach only what the registry lists, by id. It is deployment
 config, read at startup like `ORRERY_MCP_CONFIG`; nothing in a request can add
-to it.
+to it. With `ORRERY_STUDIO_REGISTRY_EDITING=true`, admins may also edit it from
+the console ([Editing the registry](#editing-the-registry)).
 
 ```yaml
 mcp:
@@ -173,6 +175,37 @@ still disables the entry.
 `ORRERY_A2A_CA_FILE` as A2A entries. Their tool pins (each tool's description
 and schema, first seen) are kept per process, across runs, so a server that
 changes a tool between runs is caught.
+
+### Editing the registry
+
+Off by default: the registry is the file, and the console shows it read-only.
+With `ORRERY_STUDIO_REGISTRY_EDITING=true`, the Studio's human admins can edit
+it (the console's **Registry** button, or `PUT /studio/registry/document`):
+
+- **The same checks as the file.** A save goes through the startup path
+  (`parse_registry`): the schema and refused keys, https, the network
+  allowlist (`ORRERY_A2A_PRIVATE_ALLOW`), every `bearer_env` set, and `effect:
+  acting` only with `ORRERY_STUDIO_ACTING_REMOTES`. An edit can never hold
+  what the deployment's file could not. Secrets stay environment variables:
+  the document names them, never holds them.
+- **Versioned, never overwritten.** The file is version 0. A save names the
+  version it was edited from; if someone saved since, it is a 409 and nothing
+  changes. Every version is kept (the latest 200) with who saved it, when,
+  their note and which entries it added, removed or changed.
+- **Audited with before and after.** `studio_registry_updated` records the
+  subject, both versions, the note, the changed entries and both documents.
+- **Applies to the next run.** Runs already going keep the entries they
+  started with. An entry that changed or was removed is fetched and pinned
+  afresh (its card digest or MCP tool pins from before do not carry over).
+- **Across replicas and restarts.** Versions live in the Studio store
+  (PostgreSQL with `DATABASE_URL`); each replica polls the version every 10 s
+  and serves the newest. Without a database, edits live in the process and a
+  restart goes back to the file. A stored version that stops validating (a
+  secret unset, the allowlist narrowed) is not served: the replica keeps the
+  last good one and logs an error.
+- **Changing the file later.** Once a version is saved, the stored registry
+  wins over the file. To start again from a changed file, save the file's
+  content as a new version.
 
 ## Compositions
 
@@ -458,13 +491,17 @@ All routes need a human admin's bearer token.
 | `PUT /studio/compositions/{id}` | `{"spec": {…}, "version": <the version edited>}` | 200, the new version; 409 `{"detail": {"message", "current_version"}}` when someone saved since |
 | `DELETE /studio/compositions/{id}` | `?version=<latest>` | 204, every version gone; 409 as `PUT` |
 | `GET /studio/schema` | | `{"spec_version", "spec": <JSON Schema>, "events": <JSON Schema>, "capabilities", "budget_ceilings"}` (below) |
-| `GET /studio/registry` | `?resolve=true` fetches every card and lists every MCP server's tools first, concurrently, at most 5 s each (a slow one shows its error) | MCP servers and their tools, A2A entries with card status, usable catalogue tools. Never secrets or env var names |
+| `GET /studio/registry` | `?resolve=true` fetches every card and lists every MCP server's tools first, concurrently, at most 5 s each (a slow one shows its error) | MCP servers and their tools, A2A entries with card status, usable catalogue tools, and `version`, `source` (`file` or `stored`), `editable`. Never secrets or env var names |
+| `GET /studio/registry/document` | | `{"version", "source", "editable", "document"}`: the registry as written, env var names included (never their values) |
+| `PUT /studio/registry/document` | `{"document", "version", "note"?}` | The saved version: `{version, actor, created_at, note, changes}`; 422 with paths under `document`; 409 `{current_version}` when stale; 404 when editing is off |
+| `GET /studio/registry/history` | `?limit=` (≤ 200) | `{"versions": [...]}`, newest first, without documents; 404 when editing is off |
+| `GET /studio/registry/history/{version}` | | One version with its `document` |
 
 Compositions are shared by the deployment's admins (anyone may edit, and
 `updated_by` says who did); runs are their owner's alone. Every save makes a new
 version and keeps the latest 50, so a run can name the one it ran. Saving
-validates the spec as a run would. Saves and deletes are limited to 30 a
-minute per person, and `?resolve=true` on the registry to 6 a minute (429 with
+validates the spec as a run would. Saves and deletes (registry saves too) are
+limited to 30 a minute per person, and `?resolve=true` on the registry to 6 a minute (429 with
 `Retry-After`).
 
 `capabilities` says what this server runs, so a console offers only that:
@@ -766,7 +803,6 @@ uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browse
 ## Not yet
 
 - `handoff`, `remote_a2a` nodes, a dynamic map width, and an MCP "try it" call.
-- Registry editing (the rest of P0c).
 - `tasks/cancel` to a remote when a run is cancelled.
 - Auth for registry MCP entries (only `ORRERY_STUDIO_SECRET_*` will be allowed).
 - In the console: a validate-only call (validation before a run is the

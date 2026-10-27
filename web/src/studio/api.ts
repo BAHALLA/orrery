@@ -4,6 +4,8 @@ import { config } from "../config";
 import type {
   CompositionSpec,
   PendingApproval,
+  RegistryDocument,
+  RegistryVersionSummary,
   RunSummary,
   SpecErrorWire,
   StudioEvent,
@@ -109,6 +111,56 @@ export class StudioClient {
       undefined,
       signal,
     );
+  }
+
+  /** The registry as written, its version and whether it may be edited here. */
+  registryDocument(signal?: AbortSignal): Promise<RegistryDocument> {
+    return this.json<RegistryDocument>("/studio/registry/document", undefined, signal);
+  }
+
+  /**
+   * Save an edited registry. Throws {@link SpecRefused} on a 422 (paths under
+   * `document`) and {@link ApiError} 409 when it moved past *version*.
+   */
+  async saveRegistry(body: {
+    document: Record<string, unknown>;
+    version: number;
+    note: string;
+  }): Promise<RegistryVersionSummary> {
+    const res = await this.send("/studio/registry/document", {
+      method: "PUT",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    if (res.status === 422) {
+      const errors = specErrors(
+        await res
+          .clone()
+          .json()
+          .catch(() => null),
+      );
+      if (errors) throw new SpecRefused(errors);
+    }
+    if (!res.ok) throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
+    return (await res.json()) as RegistryVersionSummary;
+  }
+
+  /** Saved registry versions, newest first. */
+  async registryHistory(signal?: AbortSignal): Promise<RegistryVersionSummary[]> {
+    const body = await this.json<{ versions: RegistryVersionSummary[] }>(
+      "/studio/registry/history",
+      undefined,
+      signal,
+    );
+    return body.versions;
+  }
+
+  /** One saved version, with its document. */
+  registryVersion(
+    version: number,
+    signal?: AbortSignal,
+  ): Promise<RegistryVersionSummary & { document: Record<string, unknown> }> {
+    return this.json(`/studio/registry/history/${version}`, undefined, signal);
   }
 
   /** Start a run. Throws {@link SpecRefused} with the server's field errors on a 422. */
