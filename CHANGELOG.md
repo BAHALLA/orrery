@@ -24,6 +24,11 @@ Upgrade notes:
   lists your runs on the server: *Replay* rebuilds a finished one from its
   events, with its composition on the canvas, and *Follow* picks a run still
   going back up after a reload.
+- **Console: a Studio run that needs you says so everywhere.** While a live
+  run waits for an approval or a remote's question, the Studio's Run tab
+  shows *N waiting*, the sidebar's Studio entry *N waiting for you*, and the
+  browser tab's title starts with *(N) Approval needed*, so an approval is
+  not left to expire while its person is in the chat or another tab.
 
 ### Security
 

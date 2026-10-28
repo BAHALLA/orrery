@@ -11,7 +11,7 @@ import { Canvas } from "./Canvas";
 import { CompositionsDialog } from "./CompositionsDialog";
 import { SpecDialog, TemplatesDialog } from "./Dialogs";
 import { RegistryDialog } from "./RegistryDialog";
-import { primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
+import { panelCard, primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
 import {
   addNode,
   connect,
@@ -42,7 +42,7 @@ import { capabilitiesFrom, idStem, newNode } from "./kinds";
 import { Palette, TemplateGallery } from "./Library";
 import { McpInspector } from "./McpInspector";
 import { RunPanel } from "./RunPanel";
-import { isFinished } from "./runState";
+import { isFinished, waitingApprovals } from "./runState";
 import { TEMPLATES, type Template } from "./templates";
 import type {
   CompositionRecord,
@@ -120,6 +120,12 @@ interface Props {
    * run keeps streaming) but stops its clock, so it does not re-render.
    */
   active?: boolean;
+  /**
+   * How many decisions the live run waits for (approvals, a remote's
+   * question): the console shows it outside the Studio, so a run is not left
+   * to expire while its person is in the chat or another tab.
+   */
+  onAttention?: (waiting: number) => void;
 }
 
 /**
@@ -128,7 +134,7 @@ interface Props {
  * watch it run. Admins only; lazy-loaded, so none of it is in the chat
  * console's first load.
  */
-export default function StudioView({ token, active = true }: Props) {
+export default function StudioView({ token, active = true, onAttention }: Props) {
   // One client for the view's life: a silent token renewal swaps its token
   // instead of making a new client, which would refetch the registry (losing
   // resolved cards) and strand a stream being followed on the old token.
@@ -372,6 +378,13 @@ export default function StudioView({ token, active = true }: Props) {
     },
     [run, spec, replaceGraph],
   );
+
+  const liveView = run.history.find((r) => r.runId === run.liveRunId)?.view ?? null;
+  const waiting = liveView ? waitingApprovals(liveView).length : 0;
+  useEffect(() => {
+    onAttention?.(waiting);
+  }, [onAttention, waiting]);
+  useEffect(() => () => onAttention?.(0), [onAttention]);
 
   /** Open a saved composition (one version of it) on the canvas. */
   const openComposition = useCallback(
@@ -825,17 +838,19 @@ export default function StudioView({ token, active = true }: Props) {
             >
               {TABS.map((t) => {
                 const badge =
-                  t.id === "run" && view
-                    ? isFinished(view)
-                      ? null
-                      : "●"
-                    : t.id === "a2a" && view?.a2a.length
-                      ? String(view.a2a.length)
-                      : t.id === "mcp" && view?.mcp.length
-                        ? String(view.mcp.length)
-                        : t.id === "history" && run.history.length
-                          ? String(run.history.length)
-                          : null;
+                  t.id === "run" && waiting
+                    ? `${waiting} waiting`
+                    : t.id === "run" && view
+                      ? isFinished(view)
+                        ? null
+                        : "●"
+                      : t.id === "a2a" && view?.a2a.length
+                        ? String(view.a2a.length)
+                        : t.id === "mcp" && view?.mcp.length
+                          ? String(view.mcp.length)
+                          : t.id === "history" && run.history.length
+                            ? String(run.history.length)
+                            : null;
                 return (
                   <button
                     key={t.id}
@@ -850,9 +865,10 @@ export default function StudioView({ token, active = true }: Props) {
                     }`}
                   >
                     {t.label}
+                    {badge ? <span className="sr-only">, </span> : null}
                     {badge ? (
                       <span
-                        className={`rounded-full px-1.5 text-[10px] tabular-nums ${badge === "●" ? "text-running-fg motion-safe:animate-pulse" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
+                        className={`rounded-full px-1.5 text-[10px] tabular-nums ${badge === "●" ? "text-running-fg motion-safe:animate-pulse" : t.id === "run" && waiting ? `font-semibold ${tonePill.warn}` : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
                       >
                         {badge}
                       </span>
@@ -869,6 +885,25 @@ export default function StudioView({ token, active = true }: Props) {
               aria-labelledby={`studio-tab-${tab}`}
               className="orrery-scroll min-h-0 flex-1 p-4 lg:overflow-y-auto"
             >
+              {waiting && view?.runId !== run.liveRunId && run.liveRunId ? (
+                // The badge counts the live run's decisions; its cards are
+                // in the Run tab only while it is the run on show.
+                <div
+                  role="status"
+                  className={`${panelCard} mb-3 flex items-center gap-2 border-warn-border bg-warn-bg p-2.5 text-xs text-warn-fg`}
+                >
+                  <span className="flex-1">
+                    The live run is waiting for you ({waiting}). Decide before it expires.
+                  </span>
+                  <button
+                    type="button"
+                    className="font-semibold underline underline-offset-2"
+                    onClick={() => showRun(run.liveRunId as string)}
+                  >
+                    Go to the live run
+                  </button>
+                </div>
+              ) : null}
               {tab === "inspect" ? (
                 selected ? (
                   <NodeInspector
