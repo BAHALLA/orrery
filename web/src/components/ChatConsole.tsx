@@ -22,6 +22,9 @@ import { useSystem } from "../system/useSystem";
 // first visit, so none of it is in the chat console's first load.
 const StudioView = lazy(() => import("../studio/StudioView"));
 
+/** The page title (index.html); a Studio run waiting for a person prefixes it. */
+const BASE_TITLE = "Orrery Console";
+
 export type ConsoleView = "chat" | "agents" | "studio";
 
 interface Props {
@@ -58,12 +61,16 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   // an approval left unseen expires and ends the run rejected.
   const [studioWaiting, setStudioWaiting] = useState(0);
   useEffect(() => {
-    const base = "Orrery Console";
-    document.title = studioWaiting ? `(${studioWaiting}) Approval needed · ${base}` : base;
-    return () => {
-      document.title = base;
-    };
+    document.title = studioWaiting
+      ? `(${studioWaiting}) Approval needed · ${BASE_TITLE}`
+      : BASE_TITLE;
   }, [studioWaiting]);
+  useEffect(
+    () => () => {
+      document.title = BASE_TITLE;
+    },
+    [],
+  );
   // Read by the triage effect, which must not re-run when only this changes.
   const agentsDirtyRef = useRef(false);
   const onAgentsDirty = useCallback((dirty: boolean) => {
@@ -227,6 +234,12 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         {/* The one live region for a turn: "working", then "answer ready". */}
         <p role="status" className="sr-only">
           {announcement}
+        </p>
+        {/* Its own region, so a turn's announcements never drown it out. */}
+        <p role="status" className="sr-only">
+          {studioWaiting
+            ? `${studioWaiting} Studio decision${studioWaiting === 1 ? "" : "s"} waiting for you.`
+            : ""}
         </p>
         <header className="flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80">
           <button

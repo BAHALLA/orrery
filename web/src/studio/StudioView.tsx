@@ -11,7 +11,7 @@ import { Canvas } from "./Canvas";
 import { CompositionsDialog } from "./CompositionsDialog";
 import { SpecDialog, TemplatesDialog } from "./Dialogs";
 import { RegistryDialog } from "./RegistryDialog";
-import { primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
+import { panelCard, primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
 import {
   addNode,
   connect,
@@ -865,6 +865,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                     }`}
                   >
                     {t.label}
+                    {badge ? <span className="sr-only">, </span> : null}
                     {badge ? (
                       <span
                         className={`rounded-full px-1.5 text-[10px] tabular-nums ${badge === "●" ? "text-running-fg motion-safe:animate-pulse" : t.id === "run" && waiting ? `font-semibold ${tonePill.warn}` : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
@@ -884,6 +885,25 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               aria-labelledby={`studio-tab-${tab}`}
               className="orrery-scroll min-h-0 flex-1 p-4 lg:overflow-y-auto"
             >
+              {waiting && view?.runId !== run.liveRunId && run.liveRunId ? (
+                // The badge counts the live run's decisions; its cards are
+                // in the Run tab only while it is the run on show.
+                <div
+                  role="alert"
+                  className={`${panelCard} mb-3 flex items-center gap-2 border-warn-border bg-warn-bg p-2.5 text-xs text-warn-fg`}
+                >
+                  <span className="flex-1">
+                    The live run is waiting for you ({waiting}). Decide before it expires.
+                  </span>
+                  <button
+                    type="button"
+                    className="font-semibold underline underline-offset-2"
+                    onClick={() => showRun(run.liveRunId as string)}
+                  >
+                    Go to the live run
+                  </button>
+                </div>
+              ) : null}
               {tab === "inspect" ? (
                 selected ? (
                   <NodeInspector

@@ -211,7 +211,7 @@ export const Sidebar = memo(function Sidebar({
               onClick={then(onOpenStudio)}
               title="Compose agents, remote A2A agents and MCP tools, and run them apart from the live system"
             >
-              <StudioIcon /> Studio
+              <StudioIcon /> Studio{" "}
               {studioWaiting ? (
                 <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-warn-fg">
                   <span
