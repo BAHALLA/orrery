@@ -38,7 +38,9 @@ Every entry goes through the network guard: public addresses only, unless
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -215,6 +217,47 @@ def _mcp_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
     return (_text(item.get("url")), bool(item.get("private_network")))
 
 
+def _a2a_loosened(item: RemoteAgentEntry, bound: RemoteAgentEntry) -> list[str]:
+    """How *item* trusts its remote more than the file's *bound* entry does (parsed entries)."""
+    why: list[str] = []
+    if bound.effect == "acting" and item.effect != "acting":
+        why.append("`effect: acting` dropped")
+    if extra := sorted(set(item.skills) - set(bound.skills)):
+        why.append(f"skills added {extra}")
+    if bound.card_sha256 is not None and item.card_sha256 != bound.card_sha256:
+        why.append("`card_sha256` changed or dropped")
+    # 0 is "never fetched again": a card that changed would go unseen.
+    if bound.card_refresh_s and not 0 < item.card_refresh_s <= bound.card_refresh_s:
+        why.append(f"`card_refresh_s` above {bound.card_refresh_s:g}")
+    return why
+
+
+def _mcp_loosened(item: McpServerConfig, bound: McpServerConfig) -> list[str]:
+    """How *item* trusts its server more than the file's *bound* entry does (parsed entries)."""
+    why: list[str] = []
+    tools = set(item.tools)
+    if extra := sorted(tools - set(bound.tools)):
+        why.append(f"tools added {extra}")
+    if extra := sorted(set(item.read_only) - set(bound.read_only)):
+        why.append(f"read_only added {extra}")
+    if dropped := sorted((set(bound.destructive) & tools) - set(item.destructive)):
+        why.append(f"destructive dropped {dropped}")
+    if item.trust_annotations and not bound.trust_annotations:
+        why.append("`trust_annotations` turned on")
+    if moved := sorted(
+        t for t, d in bound.pinned.items() if t in tools and item.pinned.get(t) != d
+    ):
+        why.append(f"pins changed or dropped {moved}")
+    return why
+
+
+def _parsed(section: str, item: Mapping[str, Any]) -> RemoteAgentEntry | McpServerConfig:
+    """One entry as the schema reads it: coerced and normalised, as a run would see it."""
+    if section == "a2a":
+        return RemoteAgentEntry.model_validate(item)
+    return McpServerConfig.model_validate(_mcp_entry(dict(item)))
+
+
 def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
     """Refuse an edit that reaches what only the deployment may bind.
 
@@ -225,16 +268,45 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
     the deployment's file already declares (the same URLs, origins, network
     flag and secret). Checked before anything else, so a refusal never says
     whether a secret is set.
+
+    Such an entry may also only be *tightened*: what the operator decided
+    about a remote reached with their secret or network (that it acts, which
+    skills or tools, how they are classed, what is pinned) holds for every
+    edit. Fewer skills or tools, more confirmation, are fine; anything looser
+    needs the file.
     """
     if not isinstance(document, Mapping):
         return
-    bound_a2a = {
-        _a2a_endpoint(i) for i in _list(file_document.get("a2a")) if isinstance(i, Mapping)
-    }
-    bound_mcp = {
-        _mcp_endpoint(i) for i in _list(file_document.get("mcp")) if isinstance(i, Mapping)
-    }
+    bound_a2a: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
+    for i in _list(file_document.get("a2a")):
+        if isinstance(i, Mapping):
+            bound_a2a.setdefault(_a2a_endpoint(i), []).append(i)
+    bound_mcp: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
+    for i in _list(file_document.get("mcp")):
+        if isinstance(i, Mapping):
+            bound_mcp.setdefault(_mcp_endpoint(i), []).append(i)
     problems: list[str] = []
+    loosened: list[str] = []
+
+    def tightest(
+        section: str, item: Mapping[str, Any], bound: list[Mapping[str, Any]], check: Any
+    ) -> None:
+        # Compared as parsed, never as raw values: the schema coerces (a
+        # `trust_annotations: "true"` is True) and normalises (pins are
+        # lowercased), and the comparison must see what a run would.
+        try:
+            edited = _parsed(section, item)
+        except ValueError:
+            # Fail closed here, whatever runs next: an entry that does not
+            # parse cannot be shown to be no looser.
+            loosened.append(f"{item.get('id')!r}: not a valid {section} entry")
+            return
+        # Several file entries may share an endpoint: matching any one is enough.
+        reasons = [check(edited, _parsed(section, b)) for b in bound]
+        if all(reasons):
+            first = min(reasons, key=len)
+            loosened.append(f"{item.get('id')!r}: {'; '.join(first)}")
+
     for item in _list(document.get("a2a")):
         if not isinstance(item, Mapping):
             continue
@@ -244,14 +316,22 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
             or _is_loopback(item.get("card_url"))
             or any(_is_loopback(o) for o in _list(item.get("service_origins")))
         )
-        if sensitive and _a2a_endpoint(item) not in bound_a2a:
+        if not sensitive:
+            continue
+        if (bound := bound_a2a.get(_a2a_endpoint(item))) is None:
             problems.append(f"a2a entry {item.get('id')!r}")
+        else:
+            tightest("a2a", item, bound, _a2a_loosened)
     for item in _list(document.get("mcp")):
         if not isinstance(item, Mapping):
             continue
         sensitive = bool(item.get("private_network")) or _is_loopback(item.get("url"))
-        if sensitive and _mcp_endpoint(item) not in bound_mcp:
+        if not sensitive:
+            continue
+        if (bound := bound_mcp.get(_mcp_endpoint(item))) is None:
             problems.append(f"mcp entry {item.get('id')!r}")
+        else:
+            tightest("mcp", item, bound, _mcp_loosened)
     if problems:
         raise ValueError(
             f"{', '.join(problems)}: an entry that sends a secret, is private_network or "
@@ -259,22 +339,53 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
             "(same URLs, service_origins, private_network and bearer_env); change those in "
             f"the file ({STUDIO_REGISTRY_ENV})"
         )
+    if loosened:
+        raise ValueError(
+            "an entry on an endpoint the deployment binds (a secret, a private network or "
+            "loopback) can only be made stricter than the file's: "
+            + ", ".join(loosened)
+            + f"; loosen it in the file ({STUDIO_REGISTRY_ENV})"
+        )
+
+
+def _entries(doc: Mapping[str, Any]) -> dict[str, Any]:
+    """A registry document's entries by key (``mcp:<id>``, ``a2a:<id>``)."""
+    out: dict[str, Any] = {}
+    for section in ("mcp", "a2a"):
+        for item in _list(doc.get(section)):
+            if isinstance(item, Mapping):
+                out[f"{section}:{item.get('id')}"] = item
+    return out
 
 
 def registry_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, list[str]]:
     """Entries added, removed and changed between two registry documents (``mcp:<id>``)."""
-
-    def entries(doc: Mapping[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for section in ("mcp", "a2a"):
-            for item in doc.get(section) or []:
-                if isinstance(item, Mapping):
-                    out[f"{section}:{item.get('id')}"] = item
-        return out
-
-    old, new = entries(before), entries(after)
+    old, new = _entries(before), _entries(after)
     return {
         "added": sorted(new.keys() - old.keys()),
         "removed": sorted(old.keys() - new.keys()),
         "changed": sorted(k for k in old.keys() & new.keys() if old[k] != new[k]),
     }
+
+
+def document_digest(doc: Mapping[str, Any]) -> str:
+    """SHA-256 of the document's canonical JSON: names a version in an audit line."""
+    canonical = json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def changed_entries(
+    before: Mapping[str, Any], after: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Only the entries an edit touched, as they were and as they are now.
+
+    What an audit line keeps of an edit: each entry is bounded by the schema,
+    while two whole documents (up to 256 KiB each) made one line per save;
+    the full documents stay in the version history.
+    """
+    old, new = _entries(before), _entries(after)
+    touched = {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
+    return (
+        {k: old[k] for k in sorted(touched) if k in old},
+        {k: new[k] for k in sorted(touched) if k in new},
+    )

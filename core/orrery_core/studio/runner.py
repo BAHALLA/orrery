@@ -98,7 +98,9 @@ from .events import (
 from .ledger import CompositionLedger, Exhausted
 from .registry import (
     StudioRegistry,
+    changed_entries,
     check_deployment_bound,
+    document_digest,
     parse_registry,
     registry_changes,
 )
@@ -990,6 +992,7 @@ class StudioService:
                 reason=str(exc)[:1000],
             )
             raise
+        was, now = changed_entries(before, document)
         audit_event(
             "studio_registry_updated",
             subject=auth.subject,
@@ -997,9 +1000,13 @@ class StudioService:
             version=record.version,
             note=note,
             changes=changes,
-            # Documents name secrets' env vars, never their values.
-            before=before,
-            after=document,
+            # The touched entries and digests of both documents, never two
+            # whole documents per line (those are in the version history).
+            # Entries name secrets' env vars, never their values.
+            before_digest=document_digest(before),
+            after_digest=document_digest(document),
+            before=was,
+            after=now,
         )
         return record
 
