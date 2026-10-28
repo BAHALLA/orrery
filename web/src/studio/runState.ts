@@ -374,24 +374,33 @@ export function tokensSoFar(view: RunView): TokenCount {
 }
 
 /**
+ * Seconds the run has spent waiting for people: not compute time, so the
+ * server pauses `timeout_s` while it lasts, and the meter leaves it out too.
+ * Overlapping waits (two branches asking at once) count once, as the server
+ * pauses once for them.
+ */
+export function humanWaitS(view: RunView, now: number): number {
+  const spans: [number, number][] = [];
+  for (const a of view.approvals) {
+    if (a.waitedMs !== null) spans.push([a.requestedAt, a.requestedAt + a.waitedMs / 1000]);
+    else if (a.decision === null && !isFinished(view)) spans.push([a.requestedAt, now]);
+  }
+  spans.sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let end = -Infinity;
+  for (const [from, to] of spans) {
+    const start = Math.max(from, end);
+    if (to > start) total += to - start;
+    end = Math.max(end, to);
+  }
+  return total;
+}
+
+/**
  * How much of each budget is used, as far as the events tell: tokens, tool
  * calls (MCP calls plus remote calls), remote calls, and wall time. Delegations
  * are only in the totals. Exact once `run.end` arrives.
  */
-/**
- * Seconds the run has spent waiting for people: not compute time, so the
- * server pauses `timeout_s` while it lasts, and the meter leaves it out too.
- */
-export function humanWaitS(view: RunView, now: number): number {
-  let ms = 0;
-  for (const a of view.approvals) {
-    if (a.waitedMs !== null) ms += a.waitedMs;
-    else if (a.decision === null && !isFinished(view))
-      ms += Math.max(0, now - a.requestedAt) * 1000;
-  }
-  return ms / 1000;
-}
-
 export function budgetUse(
   view: RunView,
   now: number,
