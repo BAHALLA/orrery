@@ -1363,8 +1363,12 @@ def test_an_admin_edits_the_registry_and_every_save_is_kept_and_audited(
     assert one["document"] == document
     name, entry = next(a for a in audited if a[0] == "studio_registry_updated")
     assert entry["subject"] == "alice" and entry["from_version"] == 0 and entry["version"] == 1
-    assert "description" not in entry["before"]["a2a"][0]
-    assert entry["after"]["a2a"][0]["description"] == "drafts release notes"
+    # Only what the edit touched, plus digests naming both documents.
+    assert list(entry["before"]) == list(entry["after"]) == ["a2a:demo-writer"]
+    assert "description" not in entry["before"]["a2a:demo-writer"]
+    assert entry["after"]["a2a:demo-writer"]["description"] == "drafts release notes"
+    assert len(entry["before_digest"]) == len(entry["after_digest"]) == 64
+    assert entry["before_digest"] != entry["after_digest"]
 
 
 def test_a_registry_edit_is_checked_like_the_file_and_must_name_the_latest_version(
@@ -1436,14 +1440,17 @@ def test_an_edit_cannot_reach_what_only_the_deployment_binds(editing_client):
         put({**writer, "auth": {"bearer_env": "X"}, "service_origins": [1, "a"]}).status_code == 422
     )
     assert put({**writer, "auth": {"bearer_env": "X"}, "card_url": ["x"]}).status_code == 422
-    # Keeping the declared endpoint is fine.
-    assert put({**writer, "skills": ["draft", "review"]}).status_code == 200
+    # Keeping the declared endpoint and tightening the entry is fine,
+    assert put({**writer, "description": "stricter", "max_reply_chars": 500}).status_code == 200
+    # but trusting the remote more than the file does is not.
+    refused = put({**writer, "skills": ["draft", "review"]})
+    assert refused.status_code == 422 and "only be made stricter" in refused.text
 
 
 def test_a_stored_version_stops_being_served_once_the_file_drops_its_endpoint(editing_client):
     service = _service_of(editing_client.app)
     document = _document(editing_client)["document"]
-    document["a2a"][0]["skills"] = ["draft", "review"]
+    document["a2a"][0]["description"] = "edited"
     body = {"document": document, "version": 0}
     assert (
         editing_client.put("/studio/registry/document", headers=ADMIN, json=body).status_code == 200

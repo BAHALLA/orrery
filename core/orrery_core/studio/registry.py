@@ -38,7 +38,9 @@ Every entry goes through the network guard: public addresses only, unless
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -215,6 +217,47 @@ def _mcp_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
     return (_text(item.get("url")), bool(item.get("private_network")))
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _names(value: Any) -> set[str]:
+    return {v for v in _list(value) if isinstance(v, str)}
+
+
+def _a2a_loosened(item: Mapping[str, Any], bound: Mapping[str, Any]) -> list[str]:
+    """How *item* trusts its remote more than the file's *bound* entry does."""
+    why: list[str] = []
+    if bound.get("effect", "read_only") == "acting" and item.get("effect", "read_only") != "acting":
+        why.append("`effect: acting` dropped")
+    if extra := sorted(_names(item.get("skills")) - _names(bound.get("skills"))):
+        why.append(f"skills added {extra}")
+    pin = _text(bound.get("card_sha256"))
+    if pin is not None and _text(item.get("card_sha256")) != pin:
+        why.append("`card_sha256` changed or dropped")
+    return why
+
+
+def _mcp_loosened(item: Mapping[str, Any], bound: Mapping[str, Any]) -> list[str]:
+    """How *item* trusts its server more than the file's *bound* entry does."""
+    why: list[str] = []
+    tools = _names(item.get("tools"))
+    if extra := sorted(tools - _names(bound.get("tools"))):
+        why.append(f"tools added {extra}")
+    if extra := sorted(_names(item.get("read_only")) - _names(bound.get("read_only"))):
+        why.append(f"read_only added {extra}")
+    if dropped := sorted(
+        (_names(bound.get("destructive")) & tools) - _names(item.get("destructive"))
+    ):
+        why.append(f"destructive dropped {dropped}")
+    if item.get("trust_annotations") is True and bound.get("trust_annotations") is not True:
+        why.append("`trust_annotations` turned on")
+    pins, bound_pins = _mapping(item.get("pinned")), _mapping(bound.get("pinned"))
+    if moved := sorted(t for t, d in bound_pins.items() if t in tools and pins.get(t) != d):
+        why.append(f"pins changed or dropped {moved}")
+    return why
+
+
 def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
     """Refuse an edit that reaches what only the deployment may bind.
 
@@ -225,16 +268,33 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
     the deployment's file already declares (the same URLs, origins, network
     flag and secret). Checked before anything else, so a refusal never says
     whether a secret is set.
+
+    Such an entry may also only be *tightened*: what the operator decided
+    about a remote reached with their secret or network (that it acts, which
+    skills or tools, how they are classed, what is pinned) holds for every
+    edit. Fewer skills or tools, more confirmation, are fine; anything looser
+    needs the file.
     """
     if not isinstance(document, Mapping):
         return
-    bound_a2a = {
-        _a2a_endpoint(i) for i in _list(file_document.get("a2a")) if isinstance(i, Mapping)
-    }
-    bound_mcp = {
-        _mcp_endpoint(i) for i in _list(file_document.get("mcp")) if isinstance(i, Mapping)
-    }
+    bound_a2a: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
+    for i in _list(file_document.get("a2a")):
+        if isinstance(i, Mapping):
+            bound_a2a.setdefault(_a2a_endpoint(i), []).append(i)
+    bound_mcp: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
+    for i in _list(file_document.get("mcp")):
+        if isinstance(i, Mapping):
+            bound_mcp.setdefault(_mcp_endpoint(i), []).append(i)
     problems: list[str] = []
+    loosened: list[str] = []
+
+    def tightest(item: Mapping[str, Any], bound: list[Mapping[str, Any]], check: Any) -> None:
+        # Several file entries may share an endpoint: matching any one is enough.
+        reasons = [check(item, b) for b in bound]
+        if all(reasons):
+            first = min(reasons, key=len)
+            loosened.append(f"{item.get('id')!r}: {'; '.join(first)}")
+
     for item in _list(document.get("a2a")):
         if not isinstance(item, Mapping):
             continue
@@ -244,14 +304,22 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
             or _is_loopback(item.get("card_url"))
             or any(_is_loopback(o) for o in _list(item.get("service_origins")))
         )
-        if sensitive and _a2a_endpoint(item) not in bound_a2a:
+        if not sensitive:
+            continue
+        if (bound := bound_a2a.get(_a2a_endpoint(item))) is None:
             problems.append(f"a2a entry {item.get('id')!r}")
+        else:
+            tightest(item, bound, _a2a_loosened)
     for item in _list(document.get("mcp")):
         if not isinstance(item, Mapping):
             continue
         sensitive = bool(item.get("private_network")) or _is_loopback(item.get("url"))
-        if sensitive and _mcp_endpoint(item) not in bound_mcp:
+        if not sensitive:
+            continue
+        if (bound := bound_mcp.get(_mcp_endpoint(item))) is None:
             problems.append(f"mcp entry {item.get('id')!r}")
+        else:
+            tightest(item, bound, _mcp_loosened)
     if problems:
         raise ValueError(
             f"{', '.join(problems)}: an entry that sends a secret, is private_network or "
@@ -259,22 +327,53 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
             "(same URLs, service_origins, private_network and bearer_env); change those in "
             f"the file ({STUDIO_REGISTRY_ENV})"
         )
+    if loosened:
+        raise ValueError(
+            "an entry on an endpoint the deployment binds (a secret, a private network or "
+            "loopback) can only be made stricter than the file's: "
+            + ", ".join(loosened)
+            + f"; loosen it in the file ({STUDIO_REGISTRY_ENV})"
+        )
+
+
+def _entries(doc: Mapping[str, Any]) -> dict[str, Any]:
+    """A registry document's entries by key (``mcp:<id>``, ``a2a:<id>``)."""
+    out: dict[str, Any] = {}
+    for section in ("mcp", "a2a"):
+        for item in _list(doc.get(section)):
+            if isinstance(item, Mapping):
+                out[f"{section}:{item.get('id')}"] = item
+    return out
 
 
 def registry_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, list[str]]:
     """Entries added, removed and changed between two registry documents (``mcp:<id>``)."""
-
-    def entries(doc: Mapping[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for section in ("mcp", "a2a"):
-            for item in doc.get(section) or []:
-                if isinstance(item, Mapping):
-                    out[f"{section}:{item.get('id')}"] = item
-        return out
-
-    old, new = entries(before), entries(after)
+    old, new = _entries(before), _entries(after)
     return {
         "added": sorted(new.keys() - old.keys()),
         "removed": sorted(old.keys() - new.keys()),
         "changed": sorted(k for k in old.keys() & new.keys() if old[k] != new[k]),
     }
+
+
+def document_digest(doc: Mapping[str, Any]) -> str:
+    """SHA-256 of the document's canonical JSON: names a version in an audit line."""
+    canonical = json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def changed_entries(
+    before: Mapping[str, Any], after: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Only the entries an edit touched, as they were and as they are now.
+
+    What an audit line keeps of an edit: each entry is bounded by the schema,
+    while two whole documents (up to 256 KiB each) made one line per save;
+    the full documents stay in the version history.
+    """
+    old, new = _entries(before), _entries(after)
+    touched = {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
+    return (
+        {k: old[k] for k in sorted(touched) if k in old},
+        {k: new[k] for k in sorted(touched) if k in new},
+    )

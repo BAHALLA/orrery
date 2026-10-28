@@ -303,6 +303,9 @@ def mount_studio(
     async def start_run(request: Request, auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
         limiter.hit(rate, f"studio:{auth.subject}")
         body = await json_body(request)
+        # Runs on the newest registry, not one a poll behind: an entry another
+        # replica just removed or tightened is never used here meanwhile.
+        await service.sync_registry()
         try:
             run_request = RunRequest.model_validate(body)
         except ValidationError as exc:
@@ -564,6 +567,7 @@ def mount_studio(
     @api.post("/studio/validate")
     async def validate(request: Request, auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
         """The checks a run makes before any model call, and nothing else."""
+        await service.sync_registry()
         try:
             body = _SpecOnly.model_validate(await json_body(request))
             spec = checked(body.spec)

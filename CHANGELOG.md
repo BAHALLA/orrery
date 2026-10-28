@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Upgrade notes:
+- A stored registry version that loosens an entry the deployment binds (see
+  *Security*) no longer validates, so it is not served: the newest version
+  that still does is (the file, when none does). Save over it to fix it.
+- `studio_registry_updated` audit lines carry the touched entries and the
+  documents' digests instead of both whole documents.
+
+### Security
+
+- **Studio registry editing: a bound entry can only be tightened.** An entry
+  that sends the deployment's secret, is `private_network` or targets
+  loopback already had to keep the file's endpoint; an edit could still drop
+  its `effect: acting` (so calls ran without the owner confirming each one),
+  add skills or tools, move tools into `read_only`, drop pins or turn
+  `trust_annotations` on. Each of those now needs the file.
+- Runs and `/studio/validate` read the newest stored registry first, so an
+  entry another replica just removed or tightened is never used meanwhile.
+
 ## [0.11.0] - 2026-10-27
 
 **Orrery Studio, P0c: a person in the loop.** A `human_approval` node stops a
