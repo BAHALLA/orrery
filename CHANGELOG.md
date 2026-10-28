@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-28
+
+**Orrery Studio: compositions you keep.** The console saves and opens
+versioned compositions, replays your stored runs (or follows one still going
+after a reload), and says outside the Studio when a run waits for you. The
+registry's deployment-bound entries can only be tightened by an edit.
+
 Upgrade notes:
 - A stored registry version that loosens an entry the deployment binds (see
   *Security*) no longer validates, so it is not served: the newest version
@@ -49,7 +56,10 @@ Upgrade notes:
   add skills or tools, move tools into `read_only`, drop pins or turn
   `trust_annotations` on. Each of those now needs the file.
 - Runs and `/studio/validate` read the newest stored registry first, so an
-  entry another replica just removed or tightened is never used meanwhile.
+  entry another replica just removed or tightened is never used meanwhile
+  (best effort: with the store down, a run goes on, after 2 s at most, with
+  the registry already served).
+- Dependencies: `nltk` 3.10.4 (GHSA-j456-xh4h-cpf2).
 
 ## [0.11.0] - 2026-10-27
 
@@ -1747,7 +1757,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/BAHALLA/orrery/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/BAHALLA/orrery/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/BAHALLA/orrery/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/BAHALLA/orrery/compare/v0.9.0...v0.9.1
