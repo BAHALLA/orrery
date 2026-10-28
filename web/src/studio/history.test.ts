@@ -6,6 +6,7 @@ import { RELEASE_NOTES } from "./templates";
 
 const record = (runId: string): RunRecord => ({
   runId,
+  name: RELEASE_NOTES.name,
   spec: RELEASE_NOTES,
   input: "kafka",
   startedAt: 0,
@@ -58,5 +59,17 @@ describe("compareRuns", () => {
     const b = releaseNotesRun("b").slice(0, 4).reduce(reduceRun, initialRun("b"));
     const critic = compareRuns(a, b).nodes.find((r) => r.label === "critic · latency");
     expect(critic).toMatchObject({ a: 1200, b: null, delta: null });
+  });
+});
+
+describe("MemoryHistory eviction", () => {
+  it("drops the oldest finished run first, keeping a run still going", () => {
+    const done = (id: string): RunRecord => ({
+      ...record(id),
+      view: { ...initialRun(id), status: "succeeded" },
+    });
+    let h = new MemoryHistory([], 2).put(record("live")).put(done("old"));
+    h = h.put(done("new"));
+    expect(h.list().map((r) => r.runId)).toEqual(["new", "live"]);
   });
 });

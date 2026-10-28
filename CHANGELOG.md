@@ -14,6 +14,17 @@ Upgrade notes:
 - `studio_registry_updated` audit lines carry the touched entries and the
   documents' digests instead of both whole documents.
 
+### Added
+
+- **Studio console: save, open and replay.** *Save* (Ctrl/Cmd+S) keeps the
+  canvas on the server as a versioned composition shared by the Studio's
+  admins, *Open* lists them (latest or any version, delete), and a save that
+  another admin's save overtook is reported as a conflict, never written over
+  it. A run of an unchanged saved version is filed under it. The History tab
+  lists your runs on the server: *Replay* rebuilds a finished one from its
+  events, with its composition on the canvas, and *Follow* picks a run still
+  going back up after a reload.
+
 ### Security
 
 - **Studio registry editing: a bound entry can only be tightened.** An entry

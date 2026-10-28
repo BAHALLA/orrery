@@ -803,11 +803,31 @@ error. *Fetch cards* calls `GET /studio/registry?resolve=true`.
 their classification, and the MCP calls made in the run. There is no try-it
 call yet.
 
-**History.** The runs of this browser tab, newest first (the last 20, in
-memory only). *Show* puts a past run back on the canvas with the spec it ran
-(undoable from the banner) and opens it in the *Run* tab. Tick two runs to
-compare them: A is the earlier, and the table gives totals and per-node tokens
-and latency, with B − A.
+**Save and Open.** *Save* (Ctrl/Cmd+S) keeps the canvas on the server as a
+composition (`POST /studio/compositions`), shared by every Studio admin; the
+toolbar then shows its version and *unsaved changes* after an edit. Saving
+again makes a new version (`PUT`, naming the newest version known, so another
+admin's save in between is a conflict, never overwritten). *Save copy*
+(Ctrl/Cmd+Shift+S) starts a new composition. *Open* lists the saved ones,
+newest first, with a filter: open the latest, pick an older version (saving
+it then reads *Restore*: it becomes the newest), or delete one, which names
+the version listed. A template or an import is never linked to the
+composition that was open, so *Save* never overwrites it with something else;
+*Undo* puts back the canvas and its link. A run of an unchanged saved version
+is started by id (`composition_id` and `version`), so it is filed under it.
+
+**History.** *In this tab*: the runs started or opened here, newest first
+(the last 20; a run still going is never dropped). *Show* puts a past run back
+on the canvas with the spec it ran (undoable from the banner) and opens it in
+the *Run* tab. Tick two runs to compare them: A is the earlier, and the table
+gives totals and per-node tokens and latency, with B − A.
+*Your runs on the server* lists `GET /studio/runs` (optionally only the runs
+of the composition on the canvas). *Replay* reads a finished run's events
+from the start and puts its composition version on the canvas, when it ran a
+saved one (a run of an unsaved canvas from another tab replays on the canvas
+as it is, nodes with the same ids marked). *Follow* picks a run still going on
+this replica back up as the live run, with *Cancel run* and *Reconnect*, for
+example after a reload.
 
 **Export and import.** *Export* copies or downloads the spec as JSON
 (`<name>.spec.json`). *Import* takes pasted JSON or a file. It rejects what
@@ -840,4 +860,4 @@ uv run --with playwright==1.55.0 python web/scripts/studio_smoke.py   # --browse
 - Auth for registry MCP entries (only `ORRERY_STUDIO_SECRET_*` will be allowed).
 - In the console: a validate-only call (validation before a run is the
   client's own), an MCP try-it call and tool schemas, ADK Python export,
-  history that outlives the tab, and editing on a phone.
+  and editing on a phone.
