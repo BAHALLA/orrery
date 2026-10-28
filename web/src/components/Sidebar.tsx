@@ -6,6 +6,7 @@ import type { ConsoleView } from "./ChatConsole";
 import {
   AgentsIcon,
   CloseIcon,
+  PanelLeftIcon,
   PlusIcon,
   RadarIcon,
   ShieldIcon,
@@ -34,6 +35,9 @@ interface Props {
   /** Drawer state on narrow screens; ignored from `lg` up, where the rail is static. */
   open: boolean;
   onClose: () => void;
+  /** From `lg` up, the rail folds to its icons; a drawer never does. */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onNewChat: () => void;
   onRunTriage: () => void;
   onOpenSystem: () => void;
@@ -71,7 +75,7 @@ function historyLabel(c: ConversationSummary): string {
 }
 
 const secondaryButton =
-  "flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white";
+  "relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm whitespace-nowrap text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white";
 
 /** Left rail: brand, primary actions, conversation history, identity footer.
  * Memoized: every prop is stable while an answer streams. */
@@ -87,6 +91,8 @@ export const Sidebar = memo(function Sidebar({
   isSending,
   open,
   onClose,
+  collapsed,
+  onToggleCollapsed,
   onNewChat,
   onRunTriage,
   onOpenSystem,
@@ -102,6 +108,10 @@ export const Sidebar = memo(function Sidebar({
   // stays), and inert while closed so Tab can't wander into it off-screen.
   const wide = useMediaQuery(BREAKPOINT_LG);
   const drawer = !wide;
+  const folded = wide && collapsed;
+  // Folded, a label stays for screen readers and the button's title shows it.
+  const label = folded ? "sr-only" : "min-w-0 truncate";
+  const fold = folded ? "justify-center px-0" : "";
   const ref = useRef<HTMLElement>(null);
   useFocusTrap(ref, drawer && open);
 
@@ -133,15 +143,27 @@ export const Sidebar = memo(function Sidebar({
         aria-label="Navigation"
         inert={drawer && !open}
         {...(drawer && open ? { role: "dialog", "aria-modal": true } : {})}
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 lg:static lg:z-auto lg:translate-x-0 dark:border-slate-800 dark:bg-slate-900 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-x-hidden border-r border-slate-200 bg-white transition-[width,translate] duration-200 ease-out motion-reduce:transition-none lg:static lg:z-auto lg:translate-x-0 dark:border-slate-800 dark:bg-slate-900 ${
           open ? "translate-x-0" : "-translate-x-full"
-        }`}
+        } ${folded ? "lg:w-16" : ""}`}
       >
-        <div className="flex items-center gap-2.5 px-4 py-4">
-          <OrreryMark className="h-7 w-7 text-slate-900 dark:text-slate-100" />
-          <span className="font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+        <div className={`flex items-center gap-2.5 py-4 ${folded ? "flex-col px-0" : "px-4"}`}>
+          <OrreryMark className="h-7 w-7 shrink-0 text-slate-900 dark:text-slate-100" />
+          <span
+            className={`font-semibold tracking-tight whitespace-nowrap text-slate-900 dark:text-slate-100 ${folded ? "sr-only" : ""}`}
+          >
             Orrery <span className="font-normal text-slate-500 dark:text-slate-400">Console</span>
           </span>
+          <button
+            type="button"
+            aria-label={folded ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!folded}
+            title={`${folded ? "Expand" : "Collapse"} sidebar (Ctrl+B)`}
+            onClick={onToggleCollapsed}
+            className={`hidden rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none lg:inline-flex dark:hover:bg-slate-800 dark:hover:text-slate-200 ${folded ? "" : "ml-auto"}`}
+          >
+            <PanelLeftIcon size={18} />
+          </button>
           <button
             type="button"
             aria-label="Close menu"
@@ -152,37 +174,38 @@ export const Sidebar = memo(function Sidebar({
           </button>
         </div>
 
-        <div className="flex flex-col gap-1 px-3">
+        <div className={`flex flex-col gap-1 ${folded ? "px-2" : "px-3"}`}>
           <button
             type="button"
-            className="mb-1 flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none dark:focus-visible:ring-offset-slate-900"
+            title="New chat"
+            className="mb-1 flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 whitespace-nowrap text-sm font-medium text-white shadow-sm hover:bg-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none dark:focus-visible:ring-offset-slate-900"
             onClick={then(onNewChat)}
           >
-            <PlusIcon /> New chat
+            <PlusIcon className="shrink-0" /> <span className={label}>New chat</span>
           </button>
           <button
             type="button"
             disabled={isSending}
-            className={secondaryButton}
+            className={`${secondaryButton} ${fold}`}
             onClick={then(onRunTriage)}
             title={sweepTitle}
           >
-            <RadarIcon /> Run triage
+            <RadarIcon className="shrink-0" /> <span className={label}>Run triage</span>
           </button>
           <button
             type="button"
-            className={secondaryButton}
+            className={`${secondaryButton} ${fold}`}
             onClick={then(onOpenSystem)}
             title="Check which integrations are wired and what this deployment will let you do"
           >
-            <ShieldIcon /> Check my environment
+            <ShieldIcon className="shrink-0" /> <span className={label}>Check my environment</span>
           </button>
           {/* Admins only — and the server enforces it; this only hides the entry. */}
           {me?.role === "admin" ? (
             <button
               type="button"
               aria-current={view === "agents" ? "page" : undefined}
-              className={`${secondaryButton} ${
+              className={`${secondaryButton} ${fold} ${
                 view === "agents"
                   ? "bg-brand-50 text-brand-900 hover:bg-brand-50 dark:bg-brand-950/60 dark:text-brand-100 dark:hover:bg-brand-950/60"
                   : ""
@@ -190,11 +213,13 @@ export const Sidebar = memo(function Sidebar({
               onClick={then(onOpenAgents)}
               title="Which agents and tools the coordinator can reach, and their guards"
             >
-              <AgentsIcon /> Agents{" "}
+              <AgentsIcon className="shrink-0" /> <span className={label}>Agents</span>{" "}
               {agentsDirty ? (
-                <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-warn-fg">
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-warn-fg ${folded ? "absolute top-1.5 right-2" : "ml-auto"}`}
+                >
                   <span className="h-1.5 w-1.5 rounded-full bg-warn-solid" aria-hidden="true" />
-                  unsaved
+                  <span className={folded ? "sr-only" : ""}>unsaved</span>
                 </span>
               ) : null}
             </button>
@@ -203,7 +228,7 @@ export const Sidebar = memo(function Sidebar({
             <button
               type="button"
               aria-current={view === "studio" ? "page" : undefined}
-              className={`${secondaryButton} ${
+              className={`${secondaryButton} ${fold} ${
                 view === "studio"
                   ? "bg-brand-50 text-brand-900 hover:bg-brand-50 dark:bg-brand-950/60 dark:text-brand-100 dark:hover:bg-brand-950/60"
                   : ""
@@ -211,16 +236,18 @@ export const Sidebar = memo(function Sidebar({
               onClick={then(onOpenStudio)}
               title="Compose agents, remote A2A agents and MCP tools, and run them apart from the live system"
             >
-              <StudioIcon /> Studio{" "}
+              <StudioIcon className="shrink-0" /> <span className={label}>Studio</span>{" "}
               {studioWaiting ? (
-                <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-warn-fg">
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-warn-fg ${folded ? "absolute top-1.5 right-2" : "ml-auto"}`}
+                >
                   <span
                     className="h-1.5 w-1.5 rounded-full bg-warn-solid motion-safe:animate-pulse"
                     aria-hidden="true"
                   />
-                  {studioWaiting} waiting for you
+                  <span className={folded ? "sr-only" : ""}>{studioWaiting} waiting for you</span>
                 </span>
-              ) : (
+              ) : folded ? null : (
                 <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold tracking-wide text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
                   preview
                 </span>
@@ -231,6 +258,7 @@ export const Sidebar = memo(function Sidebar({
 
         <nav
           aria-label="Conversation history"
+          hidden={folded}
           className="orrery-scroll relative mt-5 min-h-0 flex-1 overflow-y-auto px-2"
         >
           <p className="px-2 pb-1.5 text-[11px] font-semibold tracking-wider text-slate-500 uppercase dark:text-slate-400">
@@ -281,9 +309,12 @@ export const Sidebar = memo(function Sidebar({
           </ul>
         </nav>
 
-        <div className="flex flex-col gap-3 border-t border-slate-200 p-3 dark:border-slate-800">
-          <IdentityBadge identity={identity} me={me} onSignOut={onSignOut} />
-          <ThemeToggle />
+        {folded ? <div className="flex-1" /> : null}
+        <div
+          className={`flex flex-col gap-3 border-t border-slate-200 dark:border-slate-800 ${folded ? "px-2 py-3" : "p-3"}`}
+        >
+          <IdentityBadge identity={identity} me={me} onSignOut={onSignOut} compact={folded} />
+          {folded ? null : <ThemeToggle />}
         </div>
       </aside>
     </>

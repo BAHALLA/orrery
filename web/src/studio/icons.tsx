@@ -51,6 +51,15 @@ export const GridIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** The registry: servers the compositions may reach. */
+export const ServerIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="4" y="4" width="16" height="6.5" rx="1.5" />
+    <rect x="4" y="13.5" width="16" height="6.5" rx="1.5" />
+    <path d="M8 7.25h.01M8 16.75h.01" />
+  </Icon>
+);
+
 export const LayoutIcon = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="9" width="5" height="6" rx="1.5" />
