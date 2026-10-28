@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { MeResponse } from "../api/types";
 import type { Identity } from "../auth/token";
 import type { ConversationSummary } from "../conversations/useConversations";
@@ -112,6 +112,18 @@ export const Sidebar = memo(function Sidebar({
   // Folded, a label stays for screen readers and the button's title shows it.
   const label = folded ? "sr-only" : "min-w-0 truncate";
   const fold = folded ? "justify-center px-0" : "";
+
+  // Folding removes the history and the theme switch: if focus was on one,
+  // it lands on the fold toggle rather than nowhere.
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const wasFolded = useRef(folded);
+  useEffect(() => {
+    if (wasFolded.current === folded) return;
+    wasFolded.current = folded;
+    if (document.activeElement === null || document.activeElement === document.body) {
+      toggleRef.current?.focus();
+    }
+  }, [folded]);
   const ref = useRef<HTMLElement>(null);
   useFocusTrap(ref, drawer && open);
 
@@ -155,6 +167,7 @@ export const Sidebar = memo(function Sidebar({
             Orrery <span className="font-normal text-slate-500 dark:text-slate-400">Console</span>
           </span>
           <button
+            ref={toggleRef}
             type="button"
             aria-label={folded ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!folded}

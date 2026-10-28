@@ -176,6 +176,14 @@ export default function StudioView({ token, active = true, onAttention }: Props)
     setShownTab(tab);
     setPanelCollapsed(false);
   }
+  // Folding swaps the panel for its strip, unmounting whatever held focus:
+  // a toggle says where focus goes once the other side has rendered.
+  const foldFocus = useRef<"strip" | "panel" | null>(null);
+  const showPanelRef = useRef<HTMLButtonElement>(null);
+  const foldPanel = (fold: boolean) => {
+    foldFocus.current = fold ? "strip" : "panel";
+    setPanelCollapsed(fold);
+  };
   const [input, setInput] = useState("");
   const [pinned, setPinned] = useState<PinnedIssue[]>([]);
   const [dialog, setDialog] = useState<
@@ -213,6 +221,13 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   const focusPanel = useCallback(() => {
     requestAnimationFrame(() => panelRef.current?.focus());
   }, []);
+
+  useEffect(() => {
+    const target = foldFocus.current;
+    foldFocus.current = null;
+    if (target === "strip") showPanelRef.current?.focus();
+    else if (target === "panel") panelRef.current?.focus();
+  }, [panelFolded]);
 
   // A new direction lays out only a graph nobody has arranged by hand (see
   // reorient); otherwise it waits for the next load or Tidy.
@@ -340,9 +355,10 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       setGraph((g) => addNode(g, newNode(kind, id)));
       setSelectedId(id);
       setTab("inspect");
+      setPanelCollapsed(false);
       announce(`Added ${id}.`);
     },
-    [graph.nodes, announce],
+    [graph.nodes, announce, setPanelCollapsed],
   );
 
   const onRun = useCallback(async () => {
@@ -467,6 +483,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       if ("issues" in result) {
         setPinned(result.issues.map((issue) => ({ issue, ...anchorOf(issue, spec, input) })));
         setTab("inspect");
+        setPanelCollapsed(false);
         setSaveProblem(
           `Not saved: the server found ${result.issues.length} problem${result.issues.length === 1 ? "" : "s"}, marked on the canvas.`,
         );
@@ -478,7 +495,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         setSaveProblem(result.error);
       }
     },
-    [composition, spec, input, announce],
+    [composition, spec, input, announce, setPanelCollapsed],
   );
 
   // Ctrl/Cmd+S saves, rather than the browser saving the page.
@@ -860,6 +877,8 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               onDirection={onDirection}
               onRemoved={() => {
                 setTab("inspect");
+                // Focus goes to the panel, so it must be there.
+                setPanelCollapsed(false);
                 announce("Removed from the composition.");
                 focusPanel();
               }}
@@ -882,10 +901,11 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               <div className="orrery-scroll flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto py-1.5">
                 <button
                   type="button"
+                  ref={showPanelRef}
                   aria-label="Show the panel"
                   aria-expanded={false}
                   title="Show the panel"
-                  onClick={() => setPanelCollapsed(false)}
+                  onClick={() => foldPanel(false)}
                   className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 >
                   <PanelRightIcon size={17} />
@@ -899,7 +919,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                       title={badge && badge !== "●" ? `${t.label} (${badge})` : t.label}
                       onClick={() => {
                         setTab(t.id);
-                        setPanelCollapsed(false);
+                        foldPanel(false);
                       }}
                       className={`relative rounded-md px-1.5 py-2.5 text-xs font-medium [writing-mode:vertical-rl] focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
                         tab === t.id
@@ -970,7 +990,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                       aria-label="Hide the panel"
                       aria-expanded={true}
                       title="Hide the panel, to give the canvas the room"
-                      onClick={() => setPanelCollapsed(true)}
+                      onClick={() => foldPanel(true)}
                       className="mr-1.5 mb-1 shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                     >
                       <PanelRightIcon size={17} />

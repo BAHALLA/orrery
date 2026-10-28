@@ -55,7 +55,8 @@ export function IdentityBadge({ identity, me, onSignOut, compact = false }: Prop
   if (compact) {
     const who = `${identity.subject} · ${role}${autonomy ? ` · ${autonomy}` : ""}`;
     return (
-      <div role="status" className="flex flex-col items-center gap-1.5">
+      // No live region here: folding the rail would read the name out each time.
+      <div className="flex flex-col items-center gap-1.5">
         <span
           title={who}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-semibold text-white"

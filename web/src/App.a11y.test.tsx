@@ -103,8 +103,20 @@ describe("accessibility", () => {
     const again = await screen.findByRole("complementary", { name: "Navigation" });
     expect(within(again).getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
 
-    // Ctrl+B unfolds it.
+    // Ctrl+B unfolds it; folding again from the theme switch, which goes
+    // away, leaves focus on the toggle rather than nowhere.
     await user.keyboard("{Control>}b{/Control}");
-    expect(within(again).getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+    within(again).getByRole("radio", { name: "Dark theme" }).focus();
+    await user.keyboard("{Control>}b{/Control}");
+    expect(within(again).getByRole("button", { name: "Expand sidebar" })).toHaveFocus();
+  });
+
+  it("leaves Ctrl+B alone where the navigation is a drawer", async () => {
+    stubQuiet();
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("complementary", { name: "Navigation" });
+    await user.keyboard("{Control>}b{/Control}");
+    expect(localStorage.getItem(storageKeys.navCollapsed)).toBe("0");
   });
 });

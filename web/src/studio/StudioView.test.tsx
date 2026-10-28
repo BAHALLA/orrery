@@ -239,7 +239,8 @@ describe("Studio layout", () => {
 
     await user.click(screen.getByRole("button", { name: "Hide the panel" }));
     expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show the panel" })).toBeInTheDocument();
+    // Focus follows the toggle across the swap instead of dropping to the page.
+    expect(screen.getByRole("button", { name: "Show the panel" })).toHaveFocus();
 
     // Folded, it stays folded across a reload.
     unmount();
@@ -247,10 +248,10 @@ describe("Studio layout", () => {
     await loadDemo(user);
     expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
 
-    // A folded tab opens the panel on itself.
+    // A folded tab opens the panel on itself, focus in it.
     await user.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("tab", { name: /history/i })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel")).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel")).toHaveFocus();
 
     // Picking a node on the canvas opens the inspector even when folded.
     await user.click(screen.getByRole("button", { name: "Hide the panel" }));

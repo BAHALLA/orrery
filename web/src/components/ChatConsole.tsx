@@ -5,7 +5,7 @@ import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
 import { useDeferredDelete } from "../conversations/useDeferredDelete";
 import { AgentsDashboard } from "./agents/AgentsDashboard";
-import { useTurnAnnouncement } from "./a11y";
+import { BREAKPOINT_LG, useMediaQuery, useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { pendingPlacement } from "../chat/pending";
@@ -103,17 +103,21 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     setVerdictWaiting(false);
   }, []);
 
-  // Ctrl/Cmd+B folds the rail, as in most editors.
+  // Ctrl/Cmd+B folds the rail, as in most editors. Only where it folds (below
+  // `lg` it is a drawer), by key position so any layout has it, and not under
+  // a dialog, which owns the keyboard.
+  const wide = useMediaQuery(BREAKPOINT_LG);
   useEffect(() => {
+    if (!wide) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
-        e.preventDefault();
-        toggleNavCollapsed();
-      }
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyB") return;
+      e.preventDefault();
+      if (e.repeat || document.querySelector('[aria-modal="true"]')) return;
+      toggleNavCollapsed();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleNavCollapsed]);
+  }, [wide, toggleNavCollapsed]);
 
   // Escape closes whichever overlay is on top.
   useEffect(() => {
@@ -259,10 +263,11 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
             ? `${studioWaiting} Studio decision${studioWaiting === 1 ? "" : "s"} waiting for you.`
             : ""}
         </p>
-        {/* The Studio's own toolbar names the page: from `lg` up this row would
-            only repeat it, and the canvas needs the height. */}
+        {/* The Studio's own toolbar shows the page: from `lg` up this row would
+            only repeat it, and the canvas needs the height. It stays for
+            screen readers, as the page's heading. */}
         <header
-          className={`flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80 ${view === "studio" ? "lg:hidden" : ""}`}
+          className={`flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80 ${view === "studio" ? "lg:sr-only" : ""}`}
         >
           <button
             type="button"
