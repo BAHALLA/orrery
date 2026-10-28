@@ -603,4 +603,44 @@ describe("Studio saved compositions", () => {
       input: "lag",
     });
   });
+
+  it("unlinks the canvas when the composition on it is deleted", async () => {
+    const summary = {
+      id: "c1",
+      name: "research-pipeline",
+      version: 1,
+      pattern: "pipeline",
+      description: "",
+      created_by: "ada",
+      created_at: 1,
+      updated_by: "ada",
+      updated_at: 1,
+    };
+    stubStudio({
+      other: (url, init) => {
+        if (url === "/studio/compositions" && init.method === "POST") {
+          const { spec } = JSON.parse(String(init.body)) as { spec: unknown };
+          return json({ ...summary, versions: [1], spec }, 201);
+        }
+        if (url === "/studio/compositions") return json({ compositions: [summary] });
+        if (url.startsWith("/studio/compositions/c1?version=1") && init.method === "DELETE")
+          return new Response(null, { status: 204 });
+        return undefined;
+      },
+    });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/· v1/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open" }));
+    const dialog = await screen.findByRole("dialog", { name: "Open a composition" });
+    expect(await within(dialog).findByText("on the canvas")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Delete research-pipeline" }));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(screen.queryByText(/· v1/)).not.toBeInTheDocument());
+    // Unlinked: Save makes it a new composition again.
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
 });

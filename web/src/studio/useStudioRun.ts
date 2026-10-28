@@ -338,6 +338,9 @@ export function useStudioRun(client: StudioClient): StudioRunController {
 
   const show = useCallback((runId: string) => setShownId(runId), []);
 
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+
   /** Read a past run's events from the start; the server ends the stream after `run.end`. */
   const replay = useCallback(
     async (summary: RunSummary) => {
@@ -355,7 +358,8 @@ export function useStudioRun(client: StudioClient): StudioRunController {
       } catch (err) {
         if (controller.signal.aborted) return;
         update(runId, (view) => markLost(applySummary(view, summary)));
-        if (mounted.current) {
+        // The banner is the live run's while one is going: a replay never hides it.
+        if (mounted.current && !busyRef.current) {
           setError(
             describeApiError(err, "The run's events could not be read.") +
               " Its outcome and totals come from the run's summary.",
@@ -367,9 +371,6 @@ export function useStudioRun(client: StudioClient): StudioRunController {
     },
     [client, apply, update],
   );
-
-  const busyRef = useRef(false);
-  busyRef.current = busy;
 
   const open = useCallback(
     (summary: RunSummary, spec: CompositionSpec | null) => {

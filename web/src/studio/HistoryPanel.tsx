@@ -11,7 +11,7 @@ import {
 } from "./format";
 import type { StudioClient } from "./api";
 import { compareRuns, type CompareRow, type RunRecord } from "./history";
-import { tokensSoFar } from "./runState";
+import { isFinished, tokensSoFar } from "./runState";
 import { SavedRuns } from "./SavedRuns";
 import type { RunSummary } from "./types";
 
@@ -42,6 +42,7 @@ export function HistoryPanel({
   records,
   shownId,
   compositionId,
+  locked,
   onShow,
   onOpenSaved,
 }: {
@@ -49,6 +50,8 @@ export function HistoryPanel({
   records: RunRecord[];
   shownId: string | null;
   compositionId: string | null;
+  /** A run is live: nothing here may replace the canvas under it. */
+  locked: boolean;
   onShow: (runId: string) => void;
   onOpenSaved: (summary: RunSummary) => void;
 }) {
@@ -69,6 +72,7 @@ export function HistoryPanel({
       client={client}
       compositionId={compositionId}
       openedIds={openedIds}
+      locked={locked}
       onOpen={onOpenSaved}
     />
   );
@@ -137,6 +141,8 @@ export function HistoryPanel({
                   type="button"
                   className={subtleButton}
                   aria-current={r.runId === shownId ? "true" : undefined}
+                  // While a run is live only it may be shown: another would replace the canvas.
+                  disabled={locked && isFinished(r.view)}
                   onClick={() => onShow(r.runId)}
                 >
                   {r.runId === shownId ? "Shown" : "Show"}

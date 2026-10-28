@@ -15,12 +15,14 @@ export function CompositionsDialog({
   client,
   currentId,
   onOpen,
+  onDeleted,
   onClose,
 }: {
   client: StudioClient;
   /** The composition on the canvas, marked in the list. */
   currentId: string | null;
   onOpen: (record: CompositionRecord) => void;
+  onDeleted: (id: string) => void;
   onClose: () => void;
 }) {
   const [items, setItems] = useState<CompositionSummary[] | null>(null);
@@ -67,6 +69,10 @@ export function CompositionsDialog({
   };
 
   const listVersions = async (id: string) => {
+    if (id in versions) {
+      setVersions(({ [id]: _, ...rest }) => rest);
+      return;
+    }
     setBusyId(id);
     try {
       const record = await client.composition(id);
@@ -85,6 +91,7 @@ export function CompositionsDialog({
       await client.deleteComposition(c.id, c.version);
       setItems((list) => list?.filter((x) => x.id !== c.id) ?? null);
       setConfirmDelete(null);
+      onDeleted(c.id);
     } catch (err) {
       setError(
         err instanceof VersionConflict

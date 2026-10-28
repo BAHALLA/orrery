@@ -381,8 +381,11 @@ export default function StudioView({ token, active = true }: Props) {
   );
 
   /** A run from the server's list: its composition version on the canvas when known, then replayed. */
+  const openRequest = useRef(0);
   const openSavedRun = useCallback(
     async (summary: RunSummary) => {
+      // Two quick Replays: only the last one asked for reaches the canvas.
+      const request = ++openRequest.current;
       if (run.history.some((r) => r.runId === summary.run_id)) {
         showRun(summary.run_id);
         return;
@@ -394,6 +397,7 @@ export default function StudioView({ token, active = true }: Props) {
             summary.composition_id,
             summary.composition_version,
           );
+          if (request !== openRequest.current) return;
           spec = record.spec;
           openComposition(
             record,
@@ -401,6 +405,7 @@ export default function StudioView({ token, active = true }: Props) {
           );
         } catch {
           // Deleted since: the run still replays, its nodes marked where ids match.
+          if (request !== openRequest.current) return;
         }
       }
       run.open(summary, spec);
@@ -416,13 +421,13 @@ export default function StudioView({ token, active = true }: Props) {
 
   const onSave = useCallback(
     async (asNew = false) => {
-      if (!graph.nodes.length || composition.saving) return;
       setSaveProblem(null);
       const result = await composition.save(spec, asNew);
       if (result.ok) {
         announce(`Saved ${spec.name}.`);
         return;
       }
+      if ("skipped" in result) return;
       if ("issues" in result) {
         setPinned(result.issues.map((issue) => ({ issue, ...anchorOf(issue, spec, input) })));
         setTab("inspect");
@@ -431,13 +436,13 @@ export default function StudioView({ token, active = true }: Props) {
         );
       } else if ("conflict" in result) {
         setSaveProblem(
-          `Not saved: someone saved ${spec.name} since you opened it${result.conflict ? ` (now v${result.conflict})` : ""}. Save as a new composition, or open the newest version and redo your change.`,
+          `Not saved: ${spec.name} has a newer version than the one on the canvas${result.conflict ? ` (v${result.conflict})` : ""}. Save a copy, or open the newest version and redo your change.`,
         );
       } else {
         setSaveProblem(result.error);
       }
     },
-    [graph.nodes.length, composition, spec, input, announce],
+    [composition, spec, input, announce],
   );
 
   // Ctrl/Cmd+S saves, rather than the browser saving the page.
@@ -446,12 +451,12 @@ export default function StudioView({ token, active = true }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        if (!dialog) void onSave(e.shiftKey);
+        if (!dialog && !e.repeat && !live) void onSave(e.shiftKey);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, dialog, onSave]);
+  }, [active, dialog, live, onSave]);
 
   const selected = graph.nodes.find((n) => n.id === selectedId)?.data.spec ?? null;
   const problemCount = issues.count;
@@ -571,7 +576,7 @@ export default function StudioView({ token, active = true }: Props) {
             <button
               type="button"
               className={toolbarButton}
-              disabled={live}
+              disabled={live || composition.saving}
               onClick={() => setDialog("open")}
               title="Open a saved composition"
             >
@@ -581,11 +586,7 @@ export default function StudioView({ token, active = true }: Props) {
             <button
               type="button"
               className={toolbarButton}
-              disabled={
-                !graph.nodes.length ||
-                composition.saving ||
-                (!!composition.saved && !composition.dirty)
-              }
+              disabled={!composition.canSave}
               onClick={() => void onSave()}
               title={
                 composition.saved
@@ -619,7 +620,7 @@ export default function StudioView({ token, active = true }: Props) {
             <button
               type="button"
               className={toolbarButton}
-              disabled={live}
+              disabled={live || composition.saving}
               onClick={() => setDialog("templates")}
             >
               <GridIcon size={15} />
@@ -650,7 +651,7 @@ export default function StudioView({ token, active = true }: Props) {
             <button
               type="button"
               className={toolbarButton}
-              disabled={live}
+              disabled={live || composition.saving}
               onClick={() => setDialog("import")}
             >
               <UploadIcon size={15} />
@@ -931,6 +932,7 @@ export default function StudioView({ token, active = true }: Props) {
                   records={run.history}
                   shownId={view?.runId ?? null}
                   compositionId={composition.saved?.id ?? null}
+                  locked={live}
                   onShow={showRun}
                   onOpenSaved={(summary) => void openSavedRun(summary)}
                 />
@@ -945,6 +947,10 @@ export default function StudioView({ token, active = true }: Props) {
           client={client}
           currentId={composition.saved?.id ?? null}
           onOpen={(record) => openComposition(record)}
+          onDeleted={(id) => {
+            // The canvas stays, unlinked: Save makes it a new composition.
+            if (composition.saved?.id === id) composition.restore(null);
+          }}
           onClose={() => setDialog(null)}
         />
       ) : null}

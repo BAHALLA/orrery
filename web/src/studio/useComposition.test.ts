@@ -64,12 +64,13 @@ describe("useComposition", () => {
 
   it("reports a conflict and field errors instead of saving over them", async () => {
     const { client, asClient } = fakeClient();
-    const { result } = renderHook(() => useComposition(asClient, RELEASE_NOTES));
+    const edited = { ...RELEASE_NOTES, name: "edited" };
+    const { result } = renderHook(() => useComposition(asClient, edited));
     act(() => result.current.adopt(record(1), RELEASE_NOTES));
     client.updateComposition.mockRejectedValueOnce(new VersionConflict("changed", 5));
     let outcome: unknown;
     await act(async () => {
-      outcome = await result.current.save(RELEASE_NOTES);
+      outcome = await result.current.save(edited);
     });
     expect(outcome).toEqual({ ok: false, conflict: 5 });
 
@@ -77,10 +78,48 @@ describe("useComposition", () => {
       new SpecRefused([{ loc: ["spec", "nodes", 0, "id"], msg: "bad", code: "invalid" }]),
     );
     await act(async () => {
-      outcome = await result.current.save(RELEASE_NOTES, true);
+      outcome = await result.current.save(edited, true);
     });
     expect(outcome).toMatchObject({ ok: false, issues: [{ loc: ["nodes", 0, "id"] }] });
     // Neither failure moved the link.
     expect(result.current.saved?.version).toBe(1);
+  });
+
+  it("offers a restore right after an older version is opened, and skips a save of nothing", async () => {
+    const { client, asClient } = fakeClient();
+    const { result } = renderHook(() => useComposition(asClient, RELEASE_NOTES));
+    act(() => result.current.adopt(record(1, [1]), RELEASE_NOTES));
+    expect(result.current.canSave).toBe(false);
+    await act(async () => {
+      expect(await result.current.save(RELEASE_NOTES)).toEqual({ ok: false, skipped: true });
+    });
+    expect(client.updateComposition).not.toHaveBeenCalled();
+
+    act(() => result.current.adopt(record(2, [1, 2, 3]), RELEASE_NOTES));
+    expect(result.current.dirty).toBe(false);
+    expect(result.current.canSave).toBe(true);
+  });
+
+  it("sends one save at a time, and a save the canvas moved away from does not relink it", async () => {
+    const { client, asClient } = fakeClient();
+    let finish!: (r: CompositionRecord) => void;
+    client.createComposition.mockReturnValue(new Promise((r) => (finish = r)));
+    const { result } = renderHook(() => useComposition(asClient, RELEASE_NOTES));
+    let first!: Promise<unknown>;
+    act(() => {
+      first = result.current.save(RELEASE_NOTES);
+    });
+    await act(async () => {
+      expect(await result.current.save(RELEASE_NOTES)).toEqual({ ok: false, skipped: true });
+    });
+    expect(client.createComposition).toHaveBeenCalledTimes(1);
+    // Another composition is opened while the save is out.
+    const other = { ...record(7), id: "c2" };
+    act(() => result.current.adopt(other, RELEASE_NOTES));
+    await act(async () => {
+      finish(record(1));
+      await first;
+    });
+    expect(result.current.saved?.id).toBe("c2");
   });
 });
