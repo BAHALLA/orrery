@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { tonePill } from "../components/severity";
 import {
   formatCount,
@@ -9,8 +9,11 @@ import {
   sectionTitle,
   subtleButton,
 } from "./format";
+import type { StudioClient } from "./api";
 import { compareRuns, type CompareRow, type RunRecord } from "./history";
 import { tokensSoFar } from "./runState";
+import { SavedRuns } from "./SavedRuns";
+import type { RunSummary } from "./types";
 
 function value(row: CompareRow, v: number | null): string {
   if (v === null) return "—";
@@ -30,17 +33,24 @@ function delta(row: CompareRow): { text: string; tone: string } {
 }
 
 /**
- * This session's runs, newest first. Pick one to show it again on the canvas
- * and in the Run tab, or two to compare their totals and per-node cost.
+ * The runs open in this tab, newest first: pick one to show it again on the
+ * canvas and in the Run tab, or two to compare their totals and per-node
+ * cost. Below, the caller's runs on the server, to replay into this list.
  */
 export function HistoryPanel({
+  client,
   records,
   shownId,
+  compositionId,
   onShow,
+  onOpenSaved,
 }: {
+  client: StudioClient;
   records: RunRecord[];
   shownId: string | null;
+  compositionId: string | null;
   onShow: (runId: string) => void;
+  onOpenSaved: (summary: RunSummary) => void;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const toggle = (id: string) =>
@@ -53,12 +63,24 @@ export function HistoryPanel({
     .sort((x, y) => x.startedAt - y.startedAt);
   const compared = a && b ? compareRuns(a.view, b.view) : null;
 
+  const openedIds = useMemo(() => new Set(records.map((r) => r.runId)), [records]);
+  const saved = (
+    <SavedRuns
+      client={client}
+      compositionId={compositionId}
+      openedIds={openedIds}
+      onOpen={onOpenSaved}
+    />
+  );
+
   if (!records.length) {
     return (
-      <p className={`${panelCard} border-dashed p-4 text-xs text-slate-500 dark:text-slate-400`}>
-        Runs you start in this session are kept here, so two of them can be compared side by side.
-        They are not saved yet: stored runs and replay come with P0b.
-      </p>
+      <div className="flex flex-col gap-4">
+        <p className={`${panelCard} border-dashed p-4 text-xs text-slate-500 dark:text-slate-400`}>
+          Runs you start or replay are listed here, so two of them can be compared side by side.
+        </p>
+        {saved}
+      </div>
     );
   }
 
@@ -66,7 +88,7 @@ export function HistoryPanel({
     <div className="flex flex-col gap-4">
       <section aria-labelledby="studio-history">
         <h3 id="studio-history" className={sectionTitle}>
-          This session ({records.length})
+          In this tab ({records.length})
         </h3>
         <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
           Tick two runs to compare them.
@@ -84,13 +106,13 @@ export function HistoryPanel({
                   type="checkbox"
                   checked={on}
                   onChange={() => toggle(r.runId)}
-                  aria-label={`Compare run ${r.runId.slice(0, 8)} of ${r.spec.name}`}
+                  aria-label={`Compare run ${r.runId.slice(0, 8)} of ${r.name}`}
                   className="mt-1 accent-brand-600"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="truncate font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">
-                      {r.spec.name}
+                      {r.name}
                     </span>
                     <span
                       className={`rounded-full px-1.5 py-px text-[10px] font-semibold ${tonePill[tone]}`}
@@ -102,8 +124,9 @@ export function HistoryPanel({
                     className="mt-0.5 truncate text-[11px] text-slate-500 dark:text-slate-400"
                     title={r.input}
                   >
-                    {new Date(r.startedAt).toLocaleTimeString()} · {r.spec.nodes.length} nodes · “
-                    {r.input}”
+                    {new Date(r.startedAt).toLocaleTimeString()}
+                    {r.spec ? ` · ${r.spec.nodes.length} nodes` : ""}
+                    {r.input ? ` · “${r.input}”` : ""}
                   </p>
                   <p className="font-mono text-[11px] text-slate-600 tabular-nums dark:text-slate-300">
                     {formatCount(tokensSoFar(r.view).total)} tok ·{" "}
@@ -187,6 +210,7 @@ export function HistoryPanel({
           </table>
         </section>
       ) : null}
+      {saved}
     </div>
   );
 }

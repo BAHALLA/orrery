@@ -240,6 +240,27 @@ export interface RegistryVersionSummary {
   changes: RegistryChanges;
 }
 
+// ── Compositions ─────────────────────────────────────────────────────
+
+/** A saved composition, as listed: everything but its spec. Shared by every Studio admin. */
+export interface CompositionSummary {
+  id: string;
+  name: string;
+  version: number;
+  pattern: string;
+  description: string;
+  created_by: string;
+  created_at: number;
+  updated_by: string;
+  updated_at: number;
+}
+
+/** One version of a saved composition, with its spec and every version it has. */
+export interface CompositionRecord extends CompositionSummary {
+  spec: CompositionSpec;
+  versions: number[];
+}
+
 // ── Runs ─────────────────────────────────────────────────────────────
 
 export type RunOutcome = "succeeded" | "failed" | "cancelled" | "budget_exhausted" | "rejected";
@@ -280,12 +301,18 @@ export interface RunSummary {
   status: "running" | RunOutcome;
   spec_name: string;
   spec_digest: string;
+  pattern?: string;
+  /** The saved composition the run was started from, if any. */
+  composition_id?: string | null;
+  composition_version?: number | null;
   created_at: number;
   ended_at: number | null;
   error: string | null;
   totals: Totals | null;
   event_count: number;
   dropped_events: number;
+  /** This replica runs it, so it can be cancelled from here. */
+  cancellable?: boolean;
   /** What waits for a person, without the text (P0c servers). */
   pending_approvals?: PendingApproval[];
 }

@@ -36,6 +36,8 @@ interface Routes {
   start?: () => Response;
   events?: (init: RequestInit, call: number) => Response;
   schema?: () => Response;
+  /** Anything under `/studio/compositions` or `GET /studio/runs?…`; undefined falls through. */
+  other?: (url: string, init: RequestInit) => Response | undefined;
 }
 
 function stubStudio(routes: Routes = {}) {
@@ -47,6 +49,8 @@ function stubStudio(routes: Routes = {}) {
     if (url.endsWith("/studio/schema"))
       return routes.schema?.() ?? json({ ...schema, capabilities: P0A_CAPS });
     if (url.startsWith("/studio/registry")) return json(DEMO_REGISTRY);
+    const other = routes.other?.(url, init);
+    if (other) return other;
     if (url.endsWith("/studio/runs") && init.method === "POST") {
       return routes.start?.() ?? json({ run_id: "run-1" }, 202);
     }
@@ -545,5 +549,58 @@ describe("Studio lifecycle", () => {
 
     drop("llm_agent");
     expect(await screen.findByRole("group", { name: /^LLM agent agent/ })).toBeInTheDocument();
+  });
+});
+
+describe("Studio saved compositions", () => {
+  it("saves the canvas, then runs the unchanged saved version by id", async () => {
+    let saved: Record<string, unknown> | null = null;
+    const calls = stubStudio({
+      other: (url, init) => {
+        if (url === "/studio/compositions" && init.method === "POST") {
+          const { spec } = JSON.parse(String(init.body)) as { spec: Record<string, unknown> };
+          saved = spec;
+          return json(
+            {
+              id: "c1",
+              name: spec.name,
+              version: 1,
+              versions: [1],
+              pattern: "pipeline",
+              description: "",
+              created_by: "ada",
+              created_at: 1,
+              updated_by: "ada",
+              updated_at: 1,
+              spec,
+            },
+            201,
+          );
+        }
+        return undefined;
+      },
+    });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await loadDemo(user);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(saved).not.toBeNull());
+    expect(await screen.findByText(/· v1/)).toBeInTheDocument();
+    // Nothing changed since: Save is off until an edit.
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    await user.type(screen.getByLabelText("Run input"), "lag");
+    await user.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^run$/i }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url === "/studio/runs" && c.init.method === "POST")).toBe(true),
+    );
+    const start = calls.find((c) => c.url === "/studio/runs" && c.init.method === "POST");
+    expect(JSON.parse(String(start?.init.body))).toEqual({
+      composition_id: "c1",
+      version: 1,
+      input: "lag",
+    });
   });
 });

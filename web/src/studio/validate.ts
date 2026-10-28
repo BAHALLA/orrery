@@ -31,7 +31,9 @@ export type Target =
 /** Server errors as issues: `loc` loses its `"spec"` prefix (the request body's). */
 export function fromServer(errors: SpecErrorWire[]): Issue[] {
   return errors.map((e) => ({
-    loc: e.loc[0] === "spec" ? e.loc.slice(1) : e.loc,
+    // A run of a saved composition reports paths under `composition`: the
+    // canvas holds that same spec, so they point at the same places.
+    loc: e.loc[0] === "spec" || e.loc[0] === "composition" ? e.loc.slice(1) : e.loc,
     msg: e.msg,
     code: e.code,
     source: "server",
