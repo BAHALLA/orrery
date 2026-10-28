@@ -166,6 +166,69 @@ describe("agents dashboard", () => {
     expect(screen.queryByText(/^Unsaved:/)).not.toBeInTheDocument();
   });
 
+  it("reports a save that went through as saved, even if reading the agents back fails", async () => {
+    let version = 0;
+    let saved = false;
+    const catalogBody = () => ({
+      editing_enabled: true,
+      applied_version: version,
+      catalog: { version, disabled_specialists: [], agents: [], updated_by: "", updated_at: 0 },
+      specialists: [
+        {
+          key: "docker",
+          agent_name: "docker_agent",
+          description: "",
+          source: "builtin",
+          available: true,
+        },
+      ],
+      tools: [],
+      file_agents: [],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/admin/catalog") && init?.method === "PUT") {
+          version += 1;
+          saved = true;
+          return jsonResponse(catalogBody());
+        }
+        if (url.endsWith("/admin/catalog")) return jsonResponse(catalogBody());
+        if (url.endsWith("/admin/agents")) {
+          return saved ? new Response("{}", { status: 503 }) : jsonResponse({ agents: [] });
+        }
+        if (url.endsWith("/me")) {
+          return jsonResponse({
+            subject: "alice",
+            role: "admin",
+            autonomy_level: null,
+            model_provider: "gemini",
+            model_name: "",
+            self_test_available: true,
+          });
+        }
+        return jsonResponse({
+          sessions: [],
+          entries: [],
+          pending: null,
+          severity: null,
+          report: null,
+        });
+      }),
+    );
+    localStorage.setItem(storageKeys.token, makeToken({ sub: "alice", roles: ["admin"] }));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /^agents$/i }));
+    await user.click(await screen.findByRole("switch", { name: "Enable docker" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText(/saved as version 1/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not save/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Unsaved:/)).not.toBeInTheDocument();
+  });
+
   it("shows what is running: versions, model, package and the approval gate", async () => {
     vi.stubGlobal(
       "fetch",

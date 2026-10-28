@@ -32,6 +32,9 @@ export interface SystemController {
   saveCatalog: (update: CatalogUpdate) => Promise<string | null>;
 }
 
+/** After a save, how long before reading the served agents again when the first read failed. */
+const AGENTS_RETRY_MS = 2000;
+
 /** Turn a failure into something that tells the operator what to do about it. */
 export function describeApiError(err: unknown, fallback: string): string {
   if (!(err instanceof ApiError)) return fallback;
@@ -129,17 +132,25 @@ export function useSystem(token: string | null): SystemController {
     async (update: CatalogUpdate) => {
       try {
         setCatalog(await client.updateCatalog(update));
-        // The tree being served changed.
-        const res = await client.agents();
-        setAgents(res.agents);
-        setDeployment(res.deployment ?? null);
-        return null;
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) void loadCatalog();
         return describeApiError(err, "Could not save the agent catalog.");
       }
+      // Saved. The tree being served changed: reading it back is best effort,
+      // and a failure here must not report the save as failed (the draft would
+      // then be carried onto a version that already holds it).
+      try {
+        const res = await client.agents();
+        setAgents(res.agents);
+        setDeployment(res.deployment ?? null);
+      } catch {
+        // One more try shortly; if that fails too, the inventory says so
+        // (agentsError) rather than showing the old tree as current.
+        window.setTimeout(() => void loadAgents(), AGENTS_RETRY_MS);
+      }
+      return null;
     },
-    [client, loadCatalog],
+    [client, loadCatalog, loadAgents],
   );
 
   const runSelfTest = useCallback(async () => {

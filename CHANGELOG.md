@@ -25,6 +25,16 @@ Upgrade notes:
   events, with its composition on the canvas, and *Follow* picks a run still
   going back up after a reload.
 
+### Fixed
+
+- **Agents page: a save that went through is reported as saved.** When the
+  catalog saved but reading the agents back failed, the page said "could not
+  save" and carried the draft onto the version that already held it; a save
+  that threw also left the button stuck on *Saving*.
+- **Studio console: the human-wait meter** counts overlapping waits once (the
+  server pauses the run's timeout once for them), so the compute meter no
+  longer under-reports with parallel approvals.
+
 ### Security
 
 - **Studio registry editing: a bound entry can only be tightened.** An entry

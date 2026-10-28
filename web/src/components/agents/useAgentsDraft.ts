@@ -198,13 +198,17 @@ export function useAgentsDraft({
   const save = async () => {
     if (!catalog) return;
     setSaving(true);
-    await onSave({
-      version: catalog.catalog.version,
-      disabled_specialists: disabled,
-      agents: composed,
-    });
-    // On success this component is remounted with the new version.
-    setSaving(false);
+    try {
+      await onSave({
+        version: catalog.catalog.version,
+        disabled_specialists: disabled,
+        agents: composed,
+      });
+    } finally {
+      // On success this component is remounted with the new version; on a
+      // throw, Save must not stay stuck on "saving".
+      setSaving(false);
+    }
   };
 
   const discard = () => {

@@ -3,6 +3,7 @@ import { releaseNotesRun } from "./fixtures/events";
 import {
   applySummary,
   budgetUse,
+  humanWaitS,
   markLost,
   initialRun,
   isFinished,
@@ -274,5 +275,41 @@ describe("approvals", () => {
     expect(ended.status).toBe("rejected");
     expect(waitingApprovals(ended)).toEqual([]);
     expect(ended.nodes.review?.status).not.toBe("awaiting");
+  });
+});
+
+describe("humanWaitS", () => {
+  const ask = (id: string, requestedAt: number, waitedMs: number | null) => ({
+    approvalId: id,
+    nodeId: "n",
+    kind: "approval" as const,
+    remote: null,
+    prompt: "",
+    digest: "",
+    size: 0,
+    expiresAt: 9999,
+    decision: waitedMs === null ? null : ("approved" as const),
+    requestedAt,
+    waitedMs,
+    content: null,
+  });
+  const running = (approvals: ReturnType<typeof ask>[]): RunView => ({
+    ...initialRun("run-1"),
+    status: "running",
+    approvals,
+  });
+
+  it("counts overlapping waits once, as the server pauses once", () => {
+    // 100→110 and 105→120 overlap: 20 s of waiting, not 25.
+    expect(humanWaitS(running([ask("a", 100, 10_000), ask("b", 105, 15_000)]), 200)).toBe(20);
+  });
+
+  it("handles nested, zero-length and unsorted waits", () => {
+    const waits = [ask("c", 150, 0), ask("b", 102, 3_000), ask("a", 100, 10_000)];
+    expect(humanWaitS(running(waits), 200)).toBe(10);
+  });
+
+  it("adds waits apart, and counts one still open up to now", () => {
+    expect(humanWaitS(running([ask("a", 100, 5_000), ask("b", 200, null)]), 230)).toBe(35);
   });
 });
