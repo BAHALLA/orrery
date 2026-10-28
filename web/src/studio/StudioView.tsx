@@ -889,7 +889,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 // The badge counts the live run's decisions; its cards are
                 // in the Run tab only while it is the run on show.
                 <div
-                  role="alert"
+                  role="status"
                   className={`${panelCard} mb-3 flex items-center gap-2 border-warn-border bg-warn-bg p-2.5 text-xs text-warn-fg`}
                 >
                   <span className="flex-1">
