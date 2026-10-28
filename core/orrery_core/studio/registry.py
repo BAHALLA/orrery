@@ -217,45 +217,45 @@ def _mcp_endpoint(item: Mapping[str, Any]) -> tuple[Any, ...]:
     return (_text(item.get("url")), bool(item.get("private_network")))
 
 
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _names(value: Any) -> set[str]:
-    return {v for v in _list(value) if isinstance(v, str)}
-
-
-def _a2a_loosened(item: Mapping[str, Any], bound: Mapping[str, Any]) -> list[str]:
-    """How *item* trusts its remote more than the file's *bound* entry does."""
+def _a2a_loosened(item: RemoteAgentEntry, bound: RemoteAgentEntry) -> list[str]:
+    """How *item* trusts its remote more than the file's *bound* entry does (parsed entries)."""
     why: list[str] = []
-    if bound.get("effect", "read_only") == "acting" and item.get("effect", "read_only") != "acting":
+    if bound.effect == "acting" and item.effect != "acting":
         why.append("`effect: acting` dropped")
-    if extra := sorted(_names(item.get("skills")) - _names(bound.get("skills"))):
+    if extra := sorted(set(item.skills) - set(bound.skills)):
         why.append(f"skills added {extra}")
-    pin = _text(bound.get("card_sha256"))
-    if pin is not None and _text(item.get("card_sha256")) != pin:
+    if bound.card_sha256 is not None and item.card_sha256 != bound.card_sha256:
         why.append("`card_sha256` changed or dropped")
+    # 0 is "never fetched again": a card that changed would go unseen.
+    if bound.card_refresh_s and not 0 < item.card_refresh_s <= bound.card_refresh_s:
+        why.append(f"`card_refresh_s` above {bound.card_refresh_s:g}")
     return why
 
 
-def _mcp_loosened(item: Mapping[str, Any], bound: Mapping[str, Any]) -> list[str]:
-    """How *item* trusts its server more than the file's *bound* entry does."""
+def _mcp_loosened(item: McpServerConfig, bound: McpServerConfig) -> list[str]:
+    """How *item* trusts its server more than the file's *bound* entry does (parsed entries)."""
     why: list[str] = []
-    tools = _names(item.get("tools"))
-    if extra := sorted(tools - _names(bound.get("tools"))):
+    tools = set(item.tools)
+    if extra := sorted(tools - set(bound.tools)):
         why.append(f"tools added {extra}")
-    if extra := sorted(_names(item.get("read_only")) - _names(bound.get("read_only"))):
+    if extra := sorted(set(item.read_only) - set(bound.read_only)):
         why.append(f"read_only added {extra}")
-    if dropped := sorted(
-        (_names(bound.get("destructive")) & tools) - _names(item.get("destructive"))
-    ):
+    if dropped := sorted((set(bound.destructive) & tools) - set(item.destructive)):
         why.append(f"destructive dropped {dropped}")
-    if item.get("trust_annotations") is True and bound.get("trust_annotations") is not True:
+    if item.trust_annotations and not bound.trust_annotations:
         why.append("`trust_annotations` turned on")
-    pins, bound_pins = _mapping(item.get("pinned")), _mapping(bound.get("pinned"))
-    if moved := sorted(t for t, d in bound_pins.items() if t in tools and pins.get(t) != d):
+    if moved := sorted(
+        t for t, d in bound.pinned.items() if t in tools and item.pinned.get(t) != d
+    ):
         why.append(f"pins changed or dropped {moved}")
     return why
+
+
+def _parsed(section: str, item: Mapping[str, Any]) -> RemoteAgentEntry | McpServerConfig:
+    """One entry as the schema reads it: coerced and normalised, as a run would see it."""
+    if section == "a2a":
+        return RemoteAgentEntry.model_validate(item)
+    return McpServerConfig.model_validate(_mcp_entry(dict(item)))
 
 
 def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
@@ -288,9 +288,21 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
     problems: list[str] = []
     loosened: list[str] = []
 
-    def tightest(item: Mapping[str, Any], bound: list[Mapping[str, Any]], check: Any) -> None:
+    def tightest(
+        section: str, item: Mapping[str, Any], bound: list[Mapping[str, Any]], check: Any
+    ) -> None:
+        # Compared as parsed, never as raw values: the schema coerces (a
+        # `trust_annotations: "true"` is True) and normalises (pins are
+        # lowercased), and the comparison must see what a run would.
+        try:
+            edited = _parsed(section, item)
+        except ValueError:
+            # Fail closed here, whatever runs next: an entry that does not
+            # parse cannot be shown to be no looser.
+            loosened.append(f"{item.get('id')!r}: not a valid {section} entry")
+            return
         # Several file entries may share an endpoint: matching any one is enough.
-        reasons = [check(item, b) for b in bound]
+        reasons = [check(edited, _parsed(section, b)) for b in bound]
         if all(reasons):
             first = min(reasons, key=len)
             loosened.append(f"{item.get('id')!r}: {'; '.join(first)}")
@@ -309,7 +321,7 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
         if (bound := bound_a2a.get(_a2a_endpoint(item))) is None:
             problems.append(f"a2a entry {item.get('id')!r}")
         else:
-            tightest(item, bound, _a2a_loosened)
+            tightest("a2a", item, bound, _a2a_loosened)
     for item in _list(document.get("mcp")):
         if not isinstance(item, Mapping):
             continue
@@ -319,7 +331,7 @@ def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[s
         if (bound := bound_mcp.get(_mcp_endpoint(item))) is None:
             problems.append(f"mcp entry {item.get('id')!r}")
         else:
-            tightest(item, bound, _mcp_loosened)
+            tightest("mcp", item, bound, _mcp_loosened)
     if problems:
         raise ValueError(
             f"{', '.join(problems)}: an entry that sends a secret, is private_network or "

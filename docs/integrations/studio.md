@@ -197,7 +197,10 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   `private_network`). Such an entry can also only be made *stricter* than the
   file's: it keeps `effect: acting`, its `card_sha256` and its MCP pins, adds
   no skill or tool, moves no tool into `read_only` or out of `destructive`,
-  and never turns `trust_annotations` on (each refusal names what loosened).
+  never turns `trust_annotations` on, and keeps its card refetched at least
+  as often (each refusal names what loosened). Entries are compared as the
+  schema reads them, so `"true"` counts as `true` and pins compare
+  lowercased.
   Fewer skills or tools, a description and tighter limits stay editable.
   This is checked first, so a refusal never says whether a secret is
   set, and again whenever a stored version is served: taking an endpoint out
@@ -214,7 +217,8 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
 - **Applies to the next run.** A run validates and runs on the registry of
   the moment it started (a run or validate call first reads the newest
   stored version, so another replica's edit applies at once, not a poll
-  later); runs already going keep theirs. Card and MCP tool
+  later; with the store slow or down it goes on, after 2 s at most, with the
+  registry already served); runs already going keep theirs. Card and MCP tool
   pins are keyed by the entry's endpoint (card URL, `card_sha256`, skills,
   origins and network flag; for MCP the URL, transport and network flag), so
   an entry whose endpoint changed is fetched and pinned afresh, a run still on

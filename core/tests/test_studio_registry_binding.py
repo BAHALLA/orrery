@@ -61,7 +61,7 @@ def test_a_bound_a2a_entry_cannot_be_loosened(a2a: dict[str, Any], why: str) -> 
     ("mcp", "why"),
     [
         ({**MCP, "tools": [*MCP["tools"], "delete"]}, "tools added"),
-        ({**MCP, "read_only": ["get", "list", "restart"]}, "read_only added"),
+        ({**MCP, "read_only": ["get", "list", "restart"], "destructive": []}, "read_only added"),
         ({**MCP, "destructive": []}, "destructive dropped"),
         ({**MCP, "trust_annotations": True}, "trust_annotations"),
         ({**MCP, "pinned": {}}, "pins changed"),
@@ -75,7 +75,7 @@ def test_a_bound_mcp_entry_cannot_be_loosened(mcp: dict[str, Any], why: str) -> 
 
 
 def test_a_pin_of_a_tool_no_longer_exposed_may_go() -> None:
-    _check(mcp={**MCP, "tools": ["list"], "read_only": ["list"], "pinned": {}})
+    _check(mcp={**MCP, "tools": ["list"], "read_only": ["list"], "destructive": [], "pinned": {}})
 
 
 def test_any_one_file_entry_on_the_endpoint_is_enough() -> None:
@@ -88,3 +88,27 @@ def test_any_one_file_entry_on_the_endpoint_is_enough() -> None:
 def test_an_unbound_public_entry_is_the_admins_to_class() -> None:
     public = {"id": "pub", "card_url": "https://pub.example/card.json", "skills": ["x"]}
     check_deployment_bound({"a2a": [public]}, {})
+
+
+@pytest.mark.parametrize("truthy", [True, "true", 1, "yes", "on"])
+def test_values_the_schema_coerces_are_compared_as_coerced(truthy: Any) -> None:
+    with pytest.raises(ValueError, match="trust_annotations"):
+        _check(mcp={**MCP, "trust_annotations": truthy})
+    _check(mcp={**MCP, "trust_annotations": "false"})
+
+
+def test_digests_compare_as_the_schema_normalises_them() -> None:
+    _check(a2a={**A2A, "card_sha256": ("A" * 64) + "  "})
+    _check(mcp={**MCP, "pinned": {"get": "B" * 64}})
+
+
+def test_a_bound_card_keeps_being_refetched() -> None:
+    _check(a2a={**A2A, "card_refresh_s": 60})
+    for slower in (0, 600):
+        with pytest.raises(ValueError, match="card_refresh_s"):
+            _check(a2a={**A2A, "card_refresh_s": slower})
+
+
+def test_an_entry_that_does_not_parse_is_refused_here() -> None:
+    with pytest.raises(ValueError, match="not a valid a2a entry"):
+        _check(a2a={**A2A, "skills": "draft"})

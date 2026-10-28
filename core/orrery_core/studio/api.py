@@ -64,6 +64,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import weakref
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
@@ -116,8 +117,12 @@ from .spec import (
 )
 from .store import CompositionConflict, CompositionNotFound, RegistryConflict, RunRecord
 
+logger = logging.getLogger(__name__)
+
 #: Seconds between SSE keepalive comments.
 KEEPALIVE_SECONDS = 15.0
+#: Seconds a run or validation waits to catch up with the stored registry.
+REGISTRY_FRESH_TIMEOUT_S = 2.0
 
 #: Seconds one card fetch (or MCP tool listing) may take on ``?resolve=true``.
 RESOLVE_TIMEOUT = 5.0
@@ -291,6 +296,19 @@ def mount_studio(
         except ValueError:
             raise HTTPException(status_code=400, detail="Body must be JSON") from None
 
+    async def fresh_registry() -> None:
+        """Catch up with another replica's registry edit before a run or a validation.
+
+        So an entry just removed or tightened elsewhere is not used for up to
+        a poll interval. Best effort: with the store slow or down, the request
+        goes on with the registry already served (what the poller would serve
+        meanwhile anyway), rather than failing a run that needs no store.
+        """
+        try:
+            await asyncio.wait_for(service.sync_registry(), REGISTRY_FRESH_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - logged; the served registry still applies
+            logger.warning("Studio registry sync before a request failed", exc_info=True)
+
     def checked(raw: dict[str, Any], prefix: tuple[str, ...] = ("spec",)) -> CompositionSpec:
         try:
             return service.check(raw)
@@ -303,9 +321,7 @@ def mount_studio(
     async def start_run(request: Request, auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
         limiter.hit(rate, f"studio:{auth.subject}")
         body = await json_body(request)
-        # Runs on the newest registry, not one a poll behind: an entry another
-        # replica just removed or tightened is never used here meanwhile.
-        await service.sync_registry()
+        await fresh_registry()
         try:
             run_request = RunRequest.model_validate(body)
         except ValidationError as exc:
@@ -567,7 +583,7 @@ def mount_studio(
     @api.post("/studio/validate")
     async def validate(request: Request, auth: AuthContext = Depends(studio_admin)) -> Any:  # noqa: B008
         """The checks a run makes before any model call, and nothing else."""
-        await service.sync_registry()
+        await fresh_registry()
         try:
             body = _SpecOnly.model_validate(await json_body(request))
             spec = checked(body.spec)

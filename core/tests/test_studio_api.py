@@ -1567,3 +1567,17 @@ def test_a_confirmation_after_the_budget_ran_out_sends_nothing(
     assert acting_client.post(url, headers=ADMIN, json=body).status_code == 200
     _finish(acting_client, run_id)
     assert remote["received"] == []
+
+
+def test_a_store_outage_never_fails_a_run_on_the_registry_sync(editing_client, monkeypatch):
+    service = _service_of(editing_client.app)
+
+    async def down() -> None:
+        raise ConnectionError("store down")
+
+    monkeypatch.setattr(service, "sync_registry", down)
+    spec = editing_client.get("/studio/schema", headers=ADMIN)
+    assert spec.status_code == 200
+    answer = editing_client.post("/studio/validate", headers=ADMIN, json={"spec": {}})
+    # The spec's own errors, not a 500 from the sync.
+    assert answer.status_code == 422
