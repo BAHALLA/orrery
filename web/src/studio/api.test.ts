@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { API_PREFIXES } from "../api/paths";
-import { SpecRefused, specErrors, StudioClient } from "./api";
+import { SpecRefused, specErrors, StudioClient, VersionConflict } from "./api";
 import { RELEASE_NOTES } from "./templates";
 import type { StudioEvent } from "./types";
 
@@ -91,5 +91,58 @@ describe("specErrors", () => {
     ]);
     expect(specErrors({ detail: [{ loc: ["body"], msg: "m" }] })).toBeNull();
     expect(specErrors(null)).toBeNull();
+  });
+});
+
+describe("StudioClient compositions and saved runs", () => {
+  it("maps a versioned write's 409 to VersionConflict, with the current version", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({ detail: { message: "the composition changed", current_version: 4 } }, 409),
+      ),
+    );
+    const err = await new StudioClient("t")
+      .updateComposition("c1", RELEASE_NOTES, 2)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VersionConflict);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as VersionConflict).currentVersion).toBe(4);
+  });
+
+  it("keeps a 409 with a plain message an ApiError, not a version conflict", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ detail: "on another replica" }, 409)),
+    );
+    const err = await new StudioClient("t").cancel("r").catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(VersionConflict);
+    expect((err as ApiError).message).toBe("on another replica");
+  });
+
+  it("runs a saved version by id, and lists runs filtered by composition", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).includes("/studio/runs?") ? json({ runs: [] }) : json({ run_id: "r" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new StudioClient("t");
+    await client.startRun({ compositionId: "c1", version: 3 }, "go");
+    await client.runs({ compositionId: "c1", limit: 10 });
+    const [start, list] = fetchMock.mock.calls as unknown as [string, RequestInit][];
+    expect(JSON.parse(String(start[1].body))).toEqual({
+      composition_id: "c1",
+      version: 3,
+      input: "go",
+    });
+    expect(list[0]).toBe("/studio/runs?limit=10&composition_id=c1");
+  });
+
+  it("deletes with the listed version and resolves on a 204", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new StudioClient("t").deleteComposition("a/b", 2)).resolves.toBeUndefined();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/studio/compositions/a%2Fb?version=2");
+    expect(init.method).toBe("DELETE");
   });
 });

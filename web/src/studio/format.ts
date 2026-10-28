@@ -136,3 +136,12 @@ export function describeChanges(changes: RegistryChanges): string {
     .map((k) => `${k} ${changes[k].join(", ")}`);
   return parts.length ? parts.join(" · ") : "no entry changed";
 }
+
+/** "just now", "5 min ago", "3 h ago", then the date: for server timestamps (epoch seconds). */
+export function ago(epochSeconds: number, nowMs: number = Date.now()): string {
+  const s = Math.max(0, Math.round(nowMs / 1000 - epochSeconds));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return new Date(epochSeconds * 1000).toLocaleDateString();
+}

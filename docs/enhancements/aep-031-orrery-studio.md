@@ -444,8 +444,11 @@ Where the code differs from, or pins down, the design above:
 - **Validation** is the client's own copy of the schema (a JSON Schema subset)
   and of the pipeline rules, against `/studio/schema` and the registry. The
   server's 422 is mapped by `loc`.
-- **Not built:** ADK Python export, the MCP try-it call, replay from stored
-  runs (P0b), editing on a phone. History is per tab, in memory.
+- **Saved compositions and stored runs** (after P0c): Save/Open with
+  versions, optimistic saves (a 409 is reported, never overwritten), runs of
+  an unchanged saved version started by id, and the caller's stored runs
+  replayed (or followed again, when still going) from the History tab.
+- **Not built:** ADK Python export, the MCP try-it call, editing on a phone.
 - **Open items for the API:** a validate-only call; capabilities and budget
   ceilings in `/studio/schema`; MCP tool schemas and a read-only try-it call;
   a flag in `/me` that the Studio is on, so the entry is hidden instead of

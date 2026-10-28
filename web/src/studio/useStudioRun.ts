@@ -36,14 +36,30 @@ export interface StudioRunController {
   /** A cancel is on its way (or waiting for the run id, when asked during the POST). */
   cancelling: boolean;
   history: RunRecord[];
-  /** Start a run. Resolves to the server's field errors on a 422, else null. */
-  start: (spec: CompositionSpec, input: string) => Promise<Issue[] | null>;
+  /**
+   * Start a run of *spec*, or of the saved composition version it is
+   * unchanged from (`saved`), so the run is filed under that composition.
+   * Resolves to the server's field errors on a 422, else null.
+   */
+  start: (spec: CompositionSpec, input: string, saved?: SavedRef) => Promise<Issue[] | null>;
+  /**
+   * Open a run from the server's list: show it if it is here already,
+   * reattach to it as the live run when it is still going on this replica
+   * and nothing else is, else replay its events. *spec* is what it ran, when known.
+   */
+  open: (summary: RunSummary, spec: CompositionSpec | null) => void;
   cancel: () => Promise<void>;
   /** Follow the live run's stream again, from the last event seen. */
   reconnect: () => void;
   /** Show a past run of this session (its graph state, timeline and totals). */
   show: (runId: string) => void;
   clearError: () => void;
+}
+
+/** A saved composition version: what a run of an unchanged canvas is a run of. */
+export interface SavedRef {
+  compositionId: string;
+  version: number;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -90,12 +106,18 @@ export function useStudioRun(client: StudioClient): StudioRunController {
   const following = useRef<string | null>(null);
   /** The last `seq` seen, per run. */
   const seqs = useRef(new Map<string, number>());
+  /** Replays of past runs under way, aborted on unmount. */
+  const replays = useRef(new Set<AbortController>());
+  const historyRef = useRef(history);
+  historyRef.current = history;
 
   useEffect(() => {
     mounted.current = true;
+    const running = replays.current;
     return () => {
       mounted.current = false;
       abort.current?.abort();
+      for (const controller of running) controller.abort();
     };
   }, []);
 
@@ -242,14 +264,14 @@ export function useStudioRun(client: StudioClient): StudioRunController {
   );
 
   const start = useCallback(
-    async (spec: CompositionSpec, input: string): Promise<Issue[] | null> => {
+    async (spec: CompositionSpec, input: string, saved?: SavedRef): Promise<Issue[] | null> => {
       setError(null);
       setPosting(true);
       postingRef.current = true;
       pendingCancel.current = false;
       let runId: string;
       try {
-        ({ run_id: runId } = await client.startRun(spec, input));
+        ({ run_id: runId } = await client.startRun(saved ?? spec, input));
       } catch (err) {
         postingRef.current = false;
         pendingCancel.current = false;
@@ -267,7 +289,15 @@ export function useStudioRun(client: StudioClient): StudioRunController {
       liveRef.current = runId;
       seqs.current.set(runId, 0);
       setHistory((h) =>
-        h.put({ runId, spec, input, startedAt: Date.now(), view: initialRun(runId) }),
+        h.put({
+          runId,
+          name: spec.name,
+          spec,
+          source: saved,
+          input,
+          startedAt: Date.now(),
+          view: initialRun(runId),
+        }),
       );
       setLiveId(runId);
       setShownId(runId);
@@ -307,6 +337,75 @@ export function useStudioRun(client: StudioClient): StudioRunController {
   }, [followAnew]);
 
   const show = useCallback((runId: string) => setShownId(runId), []);
+
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+
+  /** Read a past run's events from the start; the server ends the stream after `run.end`. */
+  const replay = useCallback(
+    async (summary: RunSummary) => {
+      const runId = summary.run_id;
+      const controller = new AbortController();
+      replays.current.add(controller);
+      try {
+        const result = await client.events(runId, {
+          after: 0,
+          signal: controller.signal,
+          onEvent: (event) => apply(runId, event),
+        });
+        // The summary still says how it ended when some events are gone.
+        if (result !== "ended") update(runId, (view) => applySummary(view, summary));
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        update(runId, (view) => markLost(applySummary(view, summary)));
+        // The banner is the live run's while one is going: a replay never hides it.
+        if (mounted.current && !busyRef.current) {
+          setError(
+            describeApiError(err, "The run's events could not be read.") +
+              " Its outcome and totals come from the run's summary.",
+          );
+        }
+      } finally {
+        replays.current.delete(controller);
+      }
+    },
+    [client, apply, update],
+  );
+
+  const open = useCallback(
+    (summary: RunSummary, spec: CompositionSpec | null) => {
+      const runId = summary.run_id;
+      setShownId(runId);
+      if (historyRef.current.list().some((r) => r.runId === runId)) return;
+      seqs.current.set(runId, 0);
+      setHistory((h) =>
+        h.put({
+          runId,
+          name: summary.spec_name,
+          spec,
+          source:
+            summary.composition_id && summary.composition_version
+              ? { compositionId: summary.composition_id, version: summary.composition_version }
+              : undefined,
+          input: "",
+          startedAt: summary.created_at * 1000,
+          view: initialRun(runId),
+        }),
+      );
+      // Still going here (a reload mid-run, say), and nothing else is live:
+      // it becomes the live run again, with Cancel and Reconnect.
+      if (summary.status === "running" && summary.cancellable !== false && !busyRef.current) {
+        setError(null);
+        liveRef.current = runId;
+        setLiveId(runId);
+        setConnection("live");
+        followAnew(runId);
+        return;
+      }
+      void replay(summary);
+    },
+    [followAnew, replay],
+  );
   const clearError = useCallback(() => setError(null), []);
 
   return useMemo(
@@ -319,6 +418,7 @@ export function useStudioRun(client: StudioClient): StudioRunController {
       cancelling,
       history: records,
       start,
+      open,
       cancel,
       reconnect,
       show,
@@ -333,6 +433,7 @@ export function useStudioRun(client: StudioClient): StudioRunController {
       cancelling,
       records,
       start,
+      open,
       cancel,
       reconnect,
       show,
