@@ -267,3 +267,37 @@ describe("useStudioRun", () => {
     expect(client.events).not.toHaveBeenCalled();
   });
 });
+
+describe("useStudioRun.open", () => {
+  it("replays a finished run's events from the start", async () => {
+    const { client, asClient } = fakeClient();
+    client.events.mockImplementation((runId, opts) =>
+      Promise.resolve((eventsOf(runId).forEach(opts.onEvent), "ended")),
+    );
+    const { result } = renderHook(() => useStudioRun(asClient));
+    act(() => result.current.open(summary("old", "succeeded"), null));
+    await waitFor(() => expect(result.current.view?.status).toBe("succeeded"));
+    expect(client.events.mock.calls[0]?.[1].after).toBe(0);
+    expect(result.current.liveRunId).toBeNull();
+    expect(result.current.busy).toBe(false);
+    expect(result.current.history[0]).toMatchObject({ runId: "old", spec: null });
+  });
+
+  it("follows a run still going here as the live run again", async () => {
+    const { client, asClient } = fakeClient();
+    client.events.mockImplementation((_runId, opts) => openStream(opts));
+    const { result } = renderHook(() => useStudioRun(asClient));
+    act(() => result.current.open({ ...summary("going", "running"), cancellable: true }, null));
+    expect(result.current.liveRunId).toBe("going");
+    expect(result.current.busy).toBe(true);
+  });
+
+  it("falls back to the summary when the events can't be read", async () => {
+    const { client, asClient } = fakeClient();
+    client.events.mockRejectedValue(new ApiError(500, "boom"));
+    const { result } = renderHook(() => useStudioRun(asClient));
+    act(() => result.current.open(summary("old", "failed"), null));
+    await waitFor(() => expect(result.current.view?.status).toBe("failed"));
+    expect(result.current.error).toMatch(/summary/);
+  });
+});

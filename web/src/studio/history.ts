@@ -1,19 +1,25 @@
-import { tokensSoFar, type RunView } from "./runState";
+import { isFinished, tokensSoFar, type RunView } from "./runState";
 import type { CompositionSpec } from "./types";
 
 /**
- * This session's runs, and comparing two of them.
+ * The runs on show in this tab, and comparing two of them.
  *
- * In memory for now: runs live on the server for an hour and only on the
- * replica that started them (P0a), so there is nothing to list yet. P0b stores
- * compositions, runs and events in Postgres; a {@link RunHistory} backed by
- * that API then replaces {@link MemoryHistory} without the panel changing.
+ * Runs started here are put in as they start; past ones are put in when
+ * opened from the server's list (`GET /studio/runs`), their events replayed.
  */
 
 export interface RunRecord {
   runId: string;
-  /** The spec exactly as it was sent: what this run is a run *of*. */
-  spec: CompositionSpec;
+  /** The composition's name, as the run reported it. */
+  name: string;
+  /**
+   * The spec the run is a run *of*: exactly as sent for a run started here,
+   * the saved version for one opened from the server, or null when that is
+   * not known (a run of an unsaved canvas, from another tab).
+   */
+  spec: CompositionSpec | null;
+  /** The saved composition version it ran, when it ran one. */
+  source?: { compositionId: string; version: number } | undefined;
   input: string;
   /** Browser clock, ms. */
   startedAt: number;
@@ -43,7 +49,14 @@ export class MemoryHistory implements RunHistory {
     const rest = this.records.filter((r) => r.runId !== record.runId);
     const at = this.records.findIndex((r) => r.runId === record.runId);
     const next = at === -1 ? [record, ...rest] : [...rest.slice(0, at), record, ...rest.slice(at)];
-    return new MemoryHistory(next.slice(0, this.cap), this.cap);
+    // Over the cap, the oldest *finished* run goes: a run still going is
+    // being followed, and dropping it would unlock the canvas mid-run.
+    while (next.length > this.cap) {
+      let drop = next.length - 1;
+      while (drop >= 0 && !isFinished(next[drop].view)) drop -= 1;
+      next.splice(drop === -1 ? next.length - 1 : drop, 1);
+    }
+    return new MemoryHistory(next, this.cap);
   }
 }
 

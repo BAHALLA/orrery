@@ -2,7 +2,9 @@ import { ApiError, extractError, retryAfterSeconds } from "../api/client";
 import { readSse } from "../api/sse";
 import { config } from "../config";
 import type {
+  CompositionRecord,
   CompositionSpec,
+  CompositionSummary,
   PendingApproval,
   RegistryDocument,
   RegistryVersionSummary,
@@ -52,6 +54,32 @@ export function specErrors(body: unknown): SpecErrorWire[] | null {
   });
 }
 
+/**
+ * A 409 from a versioned write: someone saved after the version this edit
+ * started from. `currentVersion` is theirs, when the server says.
+ */
+export class VersionConflict extends ApiError {
+  readonly currentVersion: number | null;
+
+  constructor(message: string, currentVersion: number | null) {
+    super(409, message);
+    this.name = "VersionConflict";
+    this.currentVersion = currentVersion;
+  }
+}
+
+/** `{"detail": {"message", "current_version"}}`, the shape of a versioned write's 409. */
+function conflictOf(body: unknown): VersionConflict | null {
+  if (!body || typeof body !== "object" || !("detail" in body)) return null;
+  const { detail } = body;
+  if (!detail || typeof detail !== "object") return null;
+  const { message, current_version } = detail as Record<string, unknown>;
+  return new VersionConflict(
+    typeof message === "string" ? message : "It changed since you read it.",
+    typeof current_version === "number" ? current_version : null,
+  );
+}
+
 interface EventsOptions {
   /** The last `seq` already seen: sent as `Last-Event-ID`, so the server resumes after it. */
   after: number;
@@ -89,13 +117,36 @@ export class StudioClient {
   }
 
   private async json<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(path, { method: body === undefined ? "GET" : "POST", body, signal });
+  }
+
+  /**
+   * One JSON call. A 422 carrying field errors throws {@link SpecRefused}, a
+   * 409 carrying a version {@link VersionConflict}, anything else not ok an
+   * {@link ApiError}; a 204 resolves to undefined.
+   */
+  private async request<T>(
+    path: string,
+    { method, body, signal }: { method: string; body?: unknown; signal?: AbortSignal | undefined },
+  ): Promise<T> {
     const res = await this.send(path, {
-      method: body === undefined ? "GET" : "POST",
+      method,
       headers: this.headers(body === undefined ? {} : { "Content-Type": "application/json" }),
       body: body === undefined ? null : JSON.stringify(body),
       signal: signal ?? null,
     });
+    if (res.status === 422 || res.status === 409) {
+      const parsed: unknown = await res
+        .clone()
+        .json()
+        .catch(() => null);
+      const errors = res.status === 422 ? specErrors(parsed) : null;
+      if (errors) throw new SpecRefused(errors);
+      const conflict = res.status === 409 ? conflictOf(parsed) : null;
+      if (conflict) throw conflict;
+    }
     if (!res.ok) throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
+    if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
 
@@ -122,27 +173,12 @@ export class StudioClient {
    * Save an edited registry. Throws {@link SpecRefused} on a 422 (paths under
    * `document`) and {@link ApiError} 409 when it moved past *version*.
    */
-  async saveRegistry(body: {
+  saveRegistry(body: {
     document: Record<string, unknown>;
     version: number;
     note: string;
   }): Promise<RegistryVersionSummary> {
-    const res = await this.send("/studio/registry/document", {
-      method: "PUT",
-      headers: this.headers({ "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-    });
-    if (res.status === 422) {
-      const errors = specErrors(
-        await res
-          .clone()
-          .json()
-          .catch(() => null),
-      );
-      if (errors) throw new SpecRefused(errors);
-    }
-    if (!res.ok) throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
-    return (await res.json()) as RegistryVersionSummary;
+    return this.request("/studio/registry/document", { method: "PUT", body });
   }
 
   /** Saved registry versions, newest first. */
@@ -164,23 +200,75 @@ export class StudioClient {
   }
 
   /** Start a run. Throws {@link SpecRefused} with the server's field errors on a 422. */
-  async startRun(spec: CompositionSpec, input: string): Promise<{ run_id: string }> {
-    const res = await this.send("/studio/runs", {
-      method: "POST",
-      headers: this.headers({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ spec, input }),
+  startRun(
+    source: CompositionSpec | { compositionId: string; version: number },
+    input: string,
+  ): Promise<{ run_id: string }> {
+    const body =
+      "compositionId" in source
+        ? { composition_id: source.compositionId, version: source.version, input }
+        : { spec: source, input };
+    return this.request("/studio/runs", { method: "POST", body });
+  }
+
+  /** The caller's runs, newest first: this replica's and the stored ones. */
+  async runs(
+    { compositionId, limit = 50 }: { compositionId?: string | undefined; limit?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<RunSummary[]> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (compositionId) query.set("composition_id", compositionId);
+    const body = await this.json<{ runs: RunSummary[] }>(
+      `/studio/runs?${query}`,
+      undefined,
+      signal,
+    );
+    return body.runs;
+  }
+
+  // ── compositions (shared by every Studio admin) ──
+
+  async compositions(signal?: AbortSignal): Promise<CompositionSummary[]> {
+    const body = await this.json<{ compositions: CompositionSummary[] }>(
+      "/studio/compositions",
+      undefined,
+      signal,
+    );
+    return body.compositions;
+  }
+
+  /** One version (the latest when unset), with the list of every version. */
+  composition(id: string, version?: number, signal?: AbortSignal): Promise<CompositionRecord> {
+    const query = version === undefined ? "" : `?version=${version}`;
+    return this.json(`/studio/compositions/${encodeURIComponent(id)}${query}`, undefined, signal);
+  }
+
+  /** Save a new composition. Throws {@link SpecRefused} on a 422. */
+  createComposition(spec: CompositionSpec): Promise<CompositionRecord> {
+    return this.request("/studio/compositions", { method: "POST", body: { spec } });
+  }
+
+  /**
+   * Save a new version of *id*, edited from *version*. Throws
+   * {@link SpecRefused} on a 422 and {@link VersionConflict} when someone
+   * saved since.
+   */
+  updateComposition(
+    id: string,
+    spec: CompositionSpec,
+    version: number,
+  ): Promise<CompositionRecord> {
+    return this.request(`/studio/compositions/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: { spec, version },
     });
-    if (res.status === 422) {
-      const errors = specErrors(
-        await res
-          .clone()
-          .json()
-          .catch(() => null),
-      );
-      if (errors) throw new SpecRefused(errors);
-    }
-    if (!res.ok) throw new ApiError(res.status, await extractError(res), retryAfterSeconds(res));
-    return (await res.json()) as { run_id: string };
+  }
+
+  /** Delete *id*, if *version* is still its latest (else {@link VersionConflict}). */
+  deleteComposition(id: string, version: number): Promise<void> {
+    return this.request(`/studio/compositions/${encodeURIComponent(id)}?version=${version}`, {
+      method: "DELETE",
+    });
   }
 
   run(runId: string, signal?: AbortSignal): Promise<RunSummary> {

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Studio console: save, open and replay.** *Save* (Ctrl/Cmd+S) keeps the
+  canvas on the server as a versioned composition shared by the Studio's
+  admins, *Open* lists them (latest or any version, delete), and a save that
+  another admin's save overtook is reported as a conflict, never written over
+  it. A run of an unchanged saved version is filed under it. The History tab
+  lists your runs on the server: *Replay* rebuilds a finished one from its
+  events, with its composition on the canvas, and *Follow* picks a run still
+  going back up after a reload.
 - **Console: a Studio run that needs you says so everywhere.** While a live
   run waits for an approval or a remote's question, the Studio's Run tab
   shows *N waiting*, the sidebar's Studio entry *N waiting for you*, and the

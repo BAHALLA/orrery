@@ -8,6 +8,7 @@ import { describeApiError } from "../system/useSystem";
 import { A2aInspector } from "./A2aInspector";
 import { StudioClient } from "./api";
 import { Canvas } from "./Canvas";
+import { CompositionsDialog } from "./CompositionsDialog";
 import { SpecDialog, TemplatesDialog } from "./Dialogs";
 import { RegistryDialog } from "./RegistryDialog";
 import { primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
@@ -27,7 +28,15 @@ import {
   type StudioGraph,
 } from "./graph";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, GridIcon, LayoutIcon, PlayIcon, UploadIcon } from "./icons";
+import {
+  DownloadIcon,
+  FolderIcon,
+  GridIcon,
+  LayoutIcon,
+  PlayIcon,
+  SaveIcon,
+  UploadIcon,
+} from "./icons";
 import { CompositionInspector, NodeInspector } from "./Inspector";
 import { capabilitiesFrom, idStem, newNode } from "./kinds";
 import { Palette, TemplateGallery } from "./Library";
@@ -35,7 +44,16 @@ import { McpInspector } from "./McpInspector";
 import { RunPanel } from "./RunPanel";
 import { isFinished, waitingApprovals } from "./runState";
 import { TEMPLATES, type Template } from "./templates";
-import type { CompositionSpec, NodeKind, SpecNode, StudioRegistry, StudioSchema } from "./types";
+import type {
+  CompositionRecord,
+  CompositionSpec,
+  NodeKind,
+  RunSummary,
+  SpecNode,
+  StudioRegistry,
+  StudioSchema,
+} from "./types";
+import { useComposition, type Saved } from "./useComposition";
 import { useStudioRun } from "./useStudioRun";
 import { useNow } from "./useNow";
 import { useTabs } from "./useTabs";
@@ -133,12 +151,19 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
   const [graph, setGraph] = useState<StudioGraph>(() => specToGraph(EMPTY));
-  const [undo, setUndo] = useState<{ graph: StudioGraph; label: string } | null>(null);
+  const [undo, setUndo] = useState<{
+    graph: StudioGraph;
+    label: string;
+    saved: Saved | null;
+  } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("inspect");
   const [input, setInput] = useState("");
   const [pinned, setPinned] = useState<PinnedIssue[]>([]);
-  const [dialog, setDialog] = useState<null | "templates" | "export" | "import" | "registry">(null);
+  const [dialog, setDialog] = useState<
+    null | "templates" | "export" | "import" | "registry" | "open"
+  >(null);
+  const [saveProblem, setSaveProblem] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -240,6 +265,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   }, [client]);
 
   const spec = useMemo(() => graphToSpec(graph), [graph]);
+  const composition = useComposition(client, spec);
   const clientIssues = useMemo(
     () => (spec.nodes.length ? validate(spec, schema?.spec ?? null, { caps, registry }) : []),
     [spec, schema, caps, registry],
@@ -255,16 +281,27 @@ export default function StudioView({ token, active = true, onAttention }: Props)
 
   const edit = useCallback((update: (g: StudioGraph) => StudioGraph) => setGraph(update), []);
 
+  /**
+   * Put *next* on the canvas, keeping the previous canvas (and the saved
+   * composition it belonged to) for Undo. *saved* is what *next* belongs to:
+   * nothing for a template or an import, so a Save never overwrites the
+   * composition that was open with something else.
+   */
+  /** Bumped by anything that changes the canvas: a Replay still fetching then gives up. */
+  const openRequest = useRef(0);
   const replaceGraph = useCallback(
-    (next: StudioGraph, label: string) => {
-      setUndo(graph.nodes.length ? { graph, label } : null);
+    (next: StudioGraph, label: string, saved: Saved | null = null) => {
+      openRequest.current += 1;
+      setUndo(graph.nodes.length ? { graph, label, saved: composition.saved } : null);
+      composition.restore(saved);
+      setSaveProblem(null);
       setGraph(next);
       setSelectedId(null);
       setPinned([]);
       setDialog(null);
       refit();
     },
-    [graph, refit],
+    [graph, refit, composition],
   );
 
   const loadTemplate = useCallback(
@@ -297,7 +334,8 @@ export default function StudioView({ token, active = true, onAttention }: Props)
     }
     setTab("run");
     setPinned([]);
-    const refused = await run.start(spec, input);
+    openRequest.current += 1;
+    const refused = await run.start(spec, input, composition.runSource);
     if (refused?.length) {
       setPinned(refused.map((issue) => ({ issue, ...anchorOf(issue, spec, input) })));
       const first = refused.find((i) => i.loc[0] === "nodes" && typeof i.loc[1] === "number");
@@ -311,13 +349,29 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         `The server refused the composition: ${refused.length} problem${refused.length === 1 ? "" : "s"}, marked on the canvas.`,
       );
     }
-  }, [input, run, spec, announce]);
+  }, [input, run, spec, announce, composition.runSource]);
 
   const showRun = useCallback(
     (runId: string) => {
       const record = run.history.find((r) => r.runId === runId);
-      if (record && JSON.stringify(record.spec) !== JSON.stringify(spec)) {
-        replaceGraph(specToGraph(record.spec, directionRef.current), "Opened a past run");
+      if (record?.spec && JSON.stringify(record.spec) !== JSON.stringify(spec)) {
+        const next = specToGraph(record.spec, directionRef.current);
+        // A run of a saved version stays linked to it; a save is then checked
+        // against that version, so a newer one is a conflict, not overwritten.
+        const source = record.source;
+        replaceGraph(
+          next,
+          "Opened a past run",
+          source
+            ? {
+                id: source.compositionId,
+                version: source.version,
+                latest: source.version,
+                versions: [source.version],
+                baseline: JSON.stringify(graphToSpec(next)),
+              }
+            : null,
+        );
       }
       run.show(runId);
       setTab("run");
@@ -331,6 +385,94 @@ export default function StudioView({ token, active = true, onAttention }: Props)
     onAttention?.(waiting);
   }, [onAttention, waiting]);
   useEffect(() => () => onAttention?.(0), [onAttention]);
+
+  /** Open a saved composition (one version of it) on the canvas. */
+  const openComposition = useCallback(
+    (record: CompositionRecord, label = `Opened ${record.name} v${record.version}`) => {
+      const next = specToGraph(record.spec, directionRef.current);
+      replaceGraph(next, label);
+      composition.adopt(record, graphToSpec(next));
+      announce(`${label}.`);
+    },
+    [replaceGraph, composition, announce],
+  );
+
+  /** A run from the server's list: its composition version on the canvas when known, then replayed. */
+  const openSavedRun = useCallback(
+    async (summary: RunSummary) => {
+      // Two quick Replays: only the last one asked for reaches the canvas.
+      const request = ++openRequest.current;
+      if (run.history.some((r) => r.runId === summary.run_id)) {
+        showRun(summary.run_id);
+        return;
+      }
+      let spec: CompositionSpec | null = null;
+      if (summary.composition_id && summary.composition_version) {
+        try {
+          const record = await client.composition(
+            summary.composition_id,
+            summary.composition_version,
+          );
+          if (request !== openRequest.current) return;
+          spec = record.spec;
+          openComposition(
+            record,
+            `Opened the run's composition, ${record.name} v${record.version}`,
+          );
+        } catch {
+          // Deleted since: the run still replays, its nodes marked where ids match.
+          if (request !== openRequest.current) return;
+        }
+      }
+      run.open(summary, spec);
+      setTab("run");
+      if (!spec) {
+        announce(
+          "This run's composition is not saved, so the canvas is unchanged: nodes with the same ids show its progress.",
+        );
+      }
+    },
+    [client, run, showRun, openComposition, announce],
+  );
+
+  const onSave = useCallback(
+    async (asNew = false) => {
+      setSaveProblem(null);
+      const result = await composition.save(spec, asNew);
+      if (result.ok) {
+        announce(`Saved ${spec.name}.`);
+        return;
+      }
+      if ("skipped" in result) return;
+      if ("issues" in result) {
+        setPinned(result.issues.map((issue) => ({ issue, ...anchorOf(issue, spec, input) })));
+        setTab("inspect");
+        setSaveProblem(
+          `Not saved: the server found ${result.issues.length} problem${result.issues.length === 1 ? "" : "s"}, marked on the canvas.`,
+        );
+      } else if ("conflict" in result) {
+        setSaveProblem(
+          `Not saved: ${spec.name} has a newer version than the one on the canvas${result.conflict ? ` (v${result.conflict})` : ""}. Save a copy, or open the newest version and redo your change.`,
+        );
+      } else {
+        setSaveProblem(result.error);
+      }
+    },
+    [composition, spec, input, announce],
+  );
+
+  // Ctrl/Cmd+S saves, rather than the browser saving the page.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (!dialog && !e.repeat) void onSave(e.shiftKey);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, dialog, onSave]);
 
   const selected = graph.nodes.find((n) => n.id === selectedId)?.data.spec ?? null;
   const problemCount = issues.count;
@@ -417,6 +559,10 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               <span className="block text-[10px] font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400">
                 {(graph.meta.pattern ?? "pipeline").replace(/_/g, " ")} · {graph.nodes.length} node
                 {graph.nodes.length === 1 ? "" : "s"}
+                {composition.saved ? ` · v${composition.saved.version}` : ""}
+                {composition.saved && composition.dirty ? (
+                  <span className="ml-1 text-warn-fg normal-case">· unsaved changes</span>
+                ) : null}
               </span>
             </span>
           </span>
@@ -446,7 +592,51 @@ export default function StudioView({ token, active = true, onAttention }: Props)
             <button
               type="button"
               className={toolbarButton}
-              disabled={live}
+              disabled={live || composition.saving}
+              onClick={() => setDialog("open")}
+              title="Open a saved composition"
+            >
+              <FolderIcon size={15} />
+              <span className="sr-only sm:not-sr-only">Open</span>
+            </button>
+            <button
+              type="button"
+              className={toolbarButton}
+              disabled={!composition.canSave}
+              onClick={() => void onSave()}
+              title={
+                composition.saved
+                  ? `Save a new version of ${spec.name} (Ctrl+S; Ctrl+Shift+S saves a copy)`
+                  : "Save on the server, for every Studio admin (Ctrl+S)"
+              }
+            >
+              <SaveIcon size={15} />
+              <span className="sr-only sm:not-sr-only">
+                {composition.saving
+                  ? "Saving…"
+                  : composition.saved && composition.saved.version < composition.saved.latest
+                    ? "Restore"
+                    : "Save"}
+              </span>
+            </button>
+            {composition.saved ? (
+              <button
+                type="button"
+                className={toolbarButton}
+                disabled={!graph.nodes.length || composition.saving}
+                onClick={() => void onSave(true)}
+                title="Save the canvas as a new composition"
+              >
+                <span className="sr-only sm:not-sr-only">Save copy</span>
+                <span className="sm:hidden" aria-hidden="true">
+                  +
+                </span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={toolbarButton}
+              disabled={live || composition.saving}
               onClick={() => setDialog("templates")}
             >
               <GridIcon size={15} />
@@ -477,7 +667,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
             <button
               type="button"
               className={toolbarButton}
-              disabled={live}
+              disabled={live || composition.saving}
               onClick={() => setDialog("import")}
             >
               <UploadIcon size={15} />
@@ -511,9 +701,12 @@ export default function StudioView({ token, active = true, onAttention }: Props)
             <span>{undo.label}: the previous canvas is kept.</span>
             <button
               type="button"
-              className="font-semibold underline underline-offset-2"
+              className="font-semibold underline underline-offset-2 disabled:opacity-50"
+              disabled={composition.saving || live}
               onClick={() => {
+                openRequest.current += 1;
                 setGraph(reorient(undo.graph, directionRef.current));
+                composition.restore(undo.saved);
                 setUndo(null);
                 setSelectedId(null);
                 refit();
@@ -526,6 +719,22 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               aria-label="Dismiss"
               className="ml-auto rounded p-0.5 opacity-70 hover:opacity-100"
               onClick={() => setUndo(null)}
+            >
+              <CloseIcon size={12} />
+            </button>
+          </div>
+        ) : null}
+        {saveProblem ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2 border-b border-crit-border bg-crit-bg px-4 py-1.5 text-xs text-crit-fg"
+          >
+            <span className="flex-1">{saveProblem}</span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              className="rounded p-0.5 opacity-70 hover:opacity-100"
+              onClick={() => setSaveProblem(null)}
             >
               <CloseIcon size={12} />
             </button>
@@ -739,9 +948,19 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 <McpInspector registry={registry} view={view} />
               ) : (
                 <HistoryPanel
+                  client={client}
                   records={run.history}
                   shownId={view?.runId ?? null}
+                  compositionId={composition.saved?.id ?? null}
+                  locked={live}
+                  // While a start is out, the last live run is over: nothing is exempt.
+                  liveRunId={
+                    run.history.some((r) => r.runId === run.liveRunId && !isFinished(r.view))
+                      ? run.liveRunId
+                      : null
+                  }
                   onShow={showRun}
+                  onOpenSaved={(summary) => void openSavedRun(summary)}
                 />
               )}
             </div>
@@ -749,6 +968,19 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         </div>
       </div>
 
+      {dialog === "open" ? (
+        <CompositionsDialog
+          client={client}
+          currentId={composition.saved?.id ?? null}
+          onOpen={(record) => openComposition(record)}
+          onDeleted={(id) => {
+            // The canvas stays, unlinked: Save makes it a new composition.
+            if (composition.saved?.id === id) composition.restore(null);
+            setUndo((u) => (u?.saved?.id === id ? { ...u, saved: null } : u));
+          }}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
       {dialog === "templates" ? (
         <TemplatesDialog
           templates={TEMPLATES}
