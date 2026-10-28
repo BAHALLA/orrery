@@ -201,7 +201,9 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   as often (each refusal names what loosened). Entries are compared as the
   schema reads them, so `"true"` counts as `true` and pins compare
   lowercased.
-  Fewer skills or tools, a description and tighter limits stay editable.
+  Fewer skills or tools, a description, and the limits (timeouts, reply
+  and card sizes, tool-list caching) stay the admins' to edit: what is bound
+  is what the deployment trusts, not how much a call may cost.
   This is checked first, so a refusal never says whether a secret is
   set, and again whenever a stored version is served: taking an endpoint out
   of the file takes it out of every stored version on the next restart.
