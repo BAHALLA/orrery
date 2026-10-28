@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-29
+
+**Console: room to work.** The navigation and the Studio's side panel fold
+away, and the Studio lays itself out by the space it actually has, so a
+laptop-sized screen gets a usable canvas.
+
+### Added
+
+- **Collapsible navigation.** From the `lg` breakpoint up, the console's left
+  rail folds to its icons (its toggle, or Ctrl/Cmd+B) and stays folded across
+  reloads. Studio and Agents badges become dots; labels remain for screen
+  readers.
+- **Collapsible Studio panel.** The Inspect/Run/A2A/MCP/History panel folds to
+  a strip of vertical tabs. Picking a node, adding or removing one, starting a
+  run or a save refused for problems opens it again.
+
+### Changed
+
+- The Studio sizes its toolbar, node palette and panel by its own width
+  (container queries) rather than the window's, so folding either rail brings
+  the labels back. The page header row is hidden on the Studio from `lg` up
+  (it stays as the page's heading for screen readers); Registry has its own
+  icon, and every toolbar button a tooltip.
+
+### Fixed
+
+- The Studio's "Compose a run" card was sized to the window and spilled over
+  the side panel on mid-sized screens; it now fits the canvas.
+- When the canvas flipped between vertical and horizontal layout, edges kept
+  leaving from the nodes' old handle positions.
+
 ## [0.12.0] - 2026-10-28
 
 **Orrery Studio: compositions you keep.** The console saves and opens
@@ -1757,7 +1788,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/BAHALLA/orrery/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/BAHALLA/orrery/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/BAHALLA/orrery/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/BAHALLA/orrery/compare/v0.9.1...v0.10.0
