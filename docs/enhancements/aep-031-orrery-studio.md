@@ -635,7 +635,7 @@ one version cannot both land); the file is version 0. A save is validated by
 `parse_registry`, the one function the startup path also uses, so an edit can
 never hold what the file could not. It is refused unless it names the latest
 version (409), saved with the actor, a note and the entries it changed, and
-audited (`studio_registry_updated`) with both documents. The service swaps the
+audited (`studio_registry_updated`) with the touched entries and both documents' digests. An entry the deployment binds may only be tightened by an edit. The service swaps the
 registry under a lock; runs already going keep the entries they compiled, and
 an entry that changed or was removed loses its card and MCP tool pins
 (`RemoteCards.forget`, `McpPins.forget`), so it is pinned afresh rather than

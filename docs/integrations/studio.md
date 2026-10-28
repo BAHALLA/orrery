@@ -194,8 +194,17 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   secret (`auth`), is `private_network`, or targets loopback must keep an
   endpoint the file declares: the same `card_url`, `service_origins`,
   `private_network` and `bearer_env` (for MCP, the same `url` and
-  `private_network`). Its skills, tools, description and limits stay
-  editable. This is checked first, so a refusal never says whether a secret is
+  `private_network`). Such an entry can also only be made *stricter* than the
+  file's: it keeps `effect: acting`, its `card_sha256` and its MCP pins, adds
+  no skill or tool, moves no tool into `read_only` or out of `destructive`,
+  never turns `trust_annotations` on, and keeps its card refetched at least
+  as often (each refusal names what loosened). Entries are compared as the
+  schema reads them, so `"true"` counts as `true` and pins compare
+  lowercased.
+  Fewer skills or tools, a description, and the limits (timeouts, reply
+  and card sizes, tool-list caching) stay the admins' to edit: what is bound
+  is what the deployment trusts, not how much a call may cost.
+  This is checked first, so a refusal never says whether a secret is
   set, and again whenever a stored version is served: taking an endpoint out
   of the file takes it out of every stored version on the next restart.
 - **Versioned, never overwritten.** The file is version 0. A save names the
@@ -203,9 +212,15 @@ it (the console's **Registry** button, or `PUT /studio/registry/document`):
   changes. Every version is kept (the latest 200) with who saved it, when,
   their note and which entries it added, removed or changed.
 - **Audited with before and after.** `studio_registry_updated` records the
-  subject, both versions, the note, the changed entries and both documents.
+  subject, both versions, the note, the changed entries, each touched entry
+  as it was and as it is (`before`, `after`, keyed `a2a:<id>`), and the
+  SHA-256 of both documents (`before_digest`, `after_digest`); the whole
+  documents are in the version history, not in the log line.
 - **Applies to the next run.** A run validates and runs on the registry of
-  the moment it started; runs already going keep theirs. Card and MCP tool
+  the moment it started (a run or validate call first reads the newest
+  stored version, so another replica's edit applies at once, not a poll
+  later; with the store slow or down it goes on, after 2 s at most, with the
+  registry already served); runs already going keep theirs. Card and MCP tool
   pins are keyed by the entry's endpoint (card URL, `card_sha256`, skills,
   origins and network flag; for MCP the URL, transport and network flag), so
   an entry whose endpoint changed is fetched and pinned afresh, a run still on
