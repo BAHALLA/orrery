@@ -229,6 +229,37 @@ describe("Studio canvas", () => {
   });
 });
 
+describe("Studio layout", () => {
+  it("folds the panel away for the canvas, remembers it, and opens it again on a pick", async () => {
+    stubWideScreen();
+    stubStudio();
+    const user = userEvent.setup();
+    const { unmount } = render(<StudioView token="t" />);
+    await loadDemo(user);
+
+    await user.click(screen.getByRole("button", { name: "Hide the panel" }));
+    expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+    // Focus follows the toggle across the swap instead of dropping to the page.
+    expect(screen.getByRole("button", { name: "Show the panel" })).toHaveFocus();
+
+    // Folded, it stays folded across a reload.
+    unmount();
+    render(<StudioView token="t" />);
+    await loadDemo(user);
+    expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+
+    // A folded tab opens the panel on itself, focus in it.
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("tab", { name: /history/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveFocus();
+
+    // Picking a node on the canvas opens the inspector even when folded.
+    await user.click(screen.getByRole("button", { name: "Hide the panel" }));
+    fireEvent.click(node(/^LLM agent writer/));
+    expect(screen.getByRole("heading", { name: "writer" })).toBeInTheDocument();
+  });
+});
+
 describe("Studio runs", () => {
   it("runs the demo against a live stream and animates the graph", async () => {
     const stream = controlledStream();

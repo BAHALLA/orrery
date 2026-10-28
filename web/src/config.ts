@@ -40,12 +40,15 @@ export const isOidcEnabled = oidcConfig.issuer.length > 0;
 
 /** localStorage keys — namespaced to avoid collisions with other apps on the host.
  *
- * Only the token mode's bearer token is stored. Conversation history is not:
+ * Only the token mode's bearer token and layout preferences are stored. Conversation history is not:
  * it lives in the session store and is fetched per browser session, so a shared
  * machine holds no transcripts on disk and no thread is capped to fit a quota.
  */
 export const storageKeys = {
   token: "orrery.console.token",
+  /** Layout preferences: no content, just whether a rail is folded away. */
+  navCollapsed: "orrery.console.navCollapsed",
+  studioPanelCollapsed: "orrery.console.studioPanelCollapsed",
 } as const;
 
 /** Keys earlier builds wrote and this one doesn't. Purged on load (see

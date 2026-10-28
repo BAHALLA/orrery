@@ -5,7 +5,7 @@ import { useChat } from "../chat/useChat";
 import { useConversations } from "../conversations/useConversations";
 import { useDeferredDelete } from "../conversations/useDeferredDelete";
 import { AgentsDashboard } from "./agents/AgentsDashboard";
-import { useTurnAnnouncement } from "./a11y";
+import { BREAKPOINT_LG, useMediaQuery, useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { pendingPlacement } from "../chat/pending";
@@ -15,6 +15,8 @@ import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
+import { useStoredFlag } from "./storedFlag";
+import { storageKeys } from "../config";
 import { resolveSpecialists } from "../specialists";
 import { useSystem } from "../system/useSystem";
 
@@ -49,6 +51,8 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("tools");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useStoredFlag(storageKeys.navCollapsed);
+  const toggleNavCollapsed = useCallback(() => setNavCollapsed((c) => !c), [setNavCollapsed]);
   const [view, setView] = useState<ConsoleView>("chat");
   // The Agents page mounts on first visit and then stays mounted (hidden), so
   // an unsaved catalog draft survives a trip back to the chat.
@@ -98,6 +102,22 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     setView("chat");
     setVerdictWaiting(false);
   }, []);
+
+  // Ctrl/Cmd+B folds the rail, as in most editors. Only where it folds (below
+  // `lg` it is a drawer), by key position so any layout has it, and not under
+  // a dialog, which owns the keyboard.
+  const wide = useMediaQuery(BREAKPOINT_LG);
+  useEffect(() => {
+    if (!wide) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.code !== "KeyB") return;
+      e.preventDefault();
+      if (e.repeat || document.querySelector('[aria-modal="true"]')) return;
+      toggleNavCollapsed();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [wide, toggleNavCollapsed]);
 
   // Escape closes whichever overlay is on top.
   useEffect(() => {
@@ -218,6 +238,8 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         isSending={chat.isSending}
         open={navOpen}
         onClose={closeNav}
+        collapsed={navCollapsed}
+        onToggleCollapsed={toggleNavCollapsed}
         onNewChat={onNewChat}
         onRunTriage={onRunTriage}
         onOpenSystem={onOpenSystem}
@@ -241,7 +263,12 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
             ? `${studioWaiting} Studio decision${studioWaiting === 1 ? "" : "s"} waiting for you.`
             : ""}
         </p>
-        <header className="flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80">
+        {/* The Studio's own toolbar shows the page: from `lg` up this row would
+            only repeat it, and the canvas needs the height. It stays for
+            screen readers, as the page's heading. */}
+        <header
+          className={`flex items-center gap-2 border-b border-slate-200/80 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4 dark:border-slate-800/80 dark:bg-slate-900/80 ${view === "studio" ? "lg:sr-only" : ""}`}
+        >
           <button
             type="button"
             aria-label="Open menu"

@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { ApiError } from "../api/client";
 import { BREAKPOINT_LG, useMediaQuery } from "../components/a11y";
-import { AlertIcon, CheckIcon, CloseIcon, LockIcon, StudioIcon } from "../components/icons";
+import {
+  AlertIcon,
+  CheckIcon,
+  CloseIcon,
+  LockIcon,
+  PanelRightIcon,
+  StudioIcon,
+} from "../components/icons";
+import { useStoredFlag } from "../components/storedFlag";
+import { storageKeys } from "../config";
 import { toneChip, tonePill } from "../components/severity";
 import { describeApiError } from "../system/useSystem";
 import { A2aInspector } from "./A2aInspector";
@@ -35,6 +44,7 @@ import {
   LayoutIcon,
   PlayIcon,
   SaveIcon,
+  ServerIcon,
   UploadIcon,
 } from "./icons";
 import { CompositionInspector, NodeInspector } from "./Inspector";
@@ -158,6 +168,22 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("inspect");
+  // From `lg` up the panel beside the canvas folds away to give the canvas the room.
+  const [panelCollapsed, setPanelCollapsed] = useStoredFlag(storageKeys.studioPanelCollapsed);
+  // Whatever moves to a tab wants it seen: a run starting, a refused save, a pick.
+  const [shownTab, setShownTab] = useState(tab);
+  if (tab !== shownTab) {
+    setShownTab(tab);
+    setPanelCollapsed(false);
+  }
+  // Folding swaps the panel for its strip, unmounting whatever held focus:
+  // a toggle says where focus goes once the other side has rendered.
+  const foldFocus = useRef<"strip" | "panel" | null>(null);
+  const showPanelRef = useRef<HTMLButtonElement>(null);
+  const foldPanel = (fold: boolean) => {
+    foldFocus.current = fold ? "strip" : "panel";
+    setPanelCollapsed(fold);
+  };
   const [input, setInput] = useState("");
   const [pinned, setPinned] = useState<PinnedIssue[]>([]);
   const [dialog, setDialog] = useState<
@@ -174,6 +200,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   const caps = useMemo(() => capabilitiesFrom(schema?.capabilities), [schema]);
   const run = useStudioRun(client);
   const wide = useMediaQuery(BREAKPOINT_LG);
+  const panelFolded = wide && panelCollapsed;
   const live = run.busy;
   const editable = !live;
   const now = useNow(live && active);
@@ -194,6 +221,13 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   const focusPanel = useCallback(() => {
     requestAnimationFrame(() => panelRef.current?.focus());
   }, []);
+
+  useEffect(() => {
+    const target = foldFocus.current;
+    foldFocus.current = null;
+    if (target === "strip") showPanelRef.current?.focus();
+    else if (target === "panel") panelRef.current?.focus();
+  }, [panelFolded]);
 
   // A new direction lays out only a graph nobody has arranged by hand (see
   // reorient); otherwise it waits for the next load or Tidy.
@@ -321,12 +355,14 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       setGraph((g) => addNode(g, newNode(kind, id)));
       setSelectedId(id);
       setTab("inspect");
+      setPanelCollapsed(false);
       announce(`Added ${id}.`);
     },
-    [graph.nodes, announce],
+    [graph.nodes, announce, setPanelCollapsed],
   );
 
   const onRun = useCallback(async () => {
+    setPanelCollapsed(false);
     if (!input.trim()) {
       setTab("run");
       setFocusInput((n) => n + 1);
@@ -349,7 +385,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         `The server refused the composition: ${refused.length} problem${refused.length === 1 ? "" : "s"}, marked on the canvas.`,
       );
     }
-  }, [input, run, spec, announce, composition.runSource]);
+  }, [input, run, spec, announce, composition.runSource, setPanelCollapsed]);
 
   const showRun = useCallback(
     (runId: string) => {
@@ -447,6 +483,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       if ("issues" in result) {
         setPinned(result.issues.map((issue) => ({ issue, ...anchorOf(issue, spec, input) })));
         setTab("inspect");
+        setPanelCollapsed(false);
         setSaveProblem(
           `Not saved: the server found ${result.issues.length} problem${result.issues.length === 1 ? "" : "s"}, marked on the canvas.`,
         );
@@ -458,7 +495,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         setSaveProblem(result.error);
       }
     },
-    [composition, spec, input, announce],
+    [composition, spec, input, announce, setPanelCollapsed],
   );
 
   // Ctrl/Cmd+S saves, rather than the browser saving the page.
@@ -515,8 +552,24 @@ export default function StudioView({ token, active = true, onAttention }: Props)
     );
   }
 
+  /** What a tab's label carries: decisions waiting, a live run, counts. */
+  const tabBadge = (id: Tab): string | null =>
+    id === "run" && waiting
+      ? `${waiting} waiting`
+      : id === "run" && view
+        ? isFinished(view)
+          ? null
+          : "●"
+        : id === "a2a" && view?.a2a.length
+          ? String(view.a2a.length)
+          : id === "mcp" && view?.mcp.length
+            ? String(view.mcp.length)
+            : id === "history" && run.history.length
+              ? String(run.history.length)
+              : null;
+
   const emptyState = (
-    <div className="w-[min(36rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
+    <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Compose a run</p>
       <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
         Start from a pattern, or {wide ? "drag a node from the palette" : "add a node"}. Each node
@@ -542,7 +595,9 @@ export default function StudioView({ token, active = true, onAttention }: Props)
 
   return (
     <ReactFlowProvider>
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* Sized by its own width, not the window's: folding the console's rail
+          or the panel gives the toolbar and palette their labels back. */}
+      <div className="@container/studio flex min-h-0 flex-1 flex-col">
         <p role="status" className="sr-only">
           {notice}
           {view ? ` Run ${runLabel[view.status]}.` : ""}
@@ -572,6 +627,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               onClick={() => {
                 setSelectedId(null);
                 setTab("inspect");
+                setPanelCollapsed(false);
               }}
               className={`ml-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
                 problemCount ? toneChip.crit : toneChip.ok
@@ -597,7 +653,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               title="Open a saved composition"
             >
               <FolderIcon size={15} />
-              <span className="sr-only sm:not-sr-only">Open</span>
+              <span className="sr-only @4xl/studio:not-sr-only">Open</span>
             </button>
             <button
               type="button"
@@ -611,7 +667,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               }
             >
               <SaveIcon size={15} />
-              <span className="sr-only sm:not-sr-only">
+              <span className="sr-only @4xl/studio:not-sr-only">
                 {composition.saving
                   ? "Saving…"
                   : composition.saved && composition.saved.version < composition.saved.latest
@@ -627,8 +683,8 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 onClick={() => void onSave(true)}
                 title="Save the canvas as a new composition"
               >
-                <span className="sr-only sm:not-sr-only">Save copy</span>
-                <span className="sm:hidden" aria-hidden="true">
+                <span className="sr-only @4xl/studio:not-sr-only">Save copy</span>
+                <span className="@4xl/studio:hidden" aria-hidden="true">
                   +
                 </span>
               </button>
@@ -638,9 +694,10 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               className={toolbarButton}
               disabled={live || composition.saving}
               onClick={() => setDialog("templates")}
+              title="Start from a pattern"
             >
               <GridIcon size={15} />
-              <span className="sr-only sm:not-sr-only">Patterns</span>
+              <span className="sr-only @4xl/studio:not-sr-only">Patterns</span>
             </button>
             <button
               type="button"
@@ -653,7 +710,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               title="Lay the graph out again"
             >
               <LayoutIcon size={15} />
-              <span className="sr-only sm:not-sr-only">Tidy</span>
+              <span className="sr-only @4xl/studio:not-sr-only">Tidy</span>
             </button>
             <button
               type="button"
@@ -661,26 +718,28 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               onClick={() => setDialog("registry")}
               title="The MCP servers and remote agents compositions may reach"
             >
-              <GridIcon size={15} />
-              <span className="sr-only sm:not-sr-only">Registry</span>
+              <ServerIcon size={15} />
+              <span className="sr-only @4xl/studio:not-sr-only">Registry</span>
             </button>
             <button
               type="button"
               className={toolbarButton}
               disabled={live || composition.saving}
               onClick={() => setDialog("import")}
+              title="Import a composition from JSON"
             >
               <UploadIcon size={15} />
-              <span className="sr-only sm:not-sr-only">Import</span>
+              <span className="sr-only @4xl/studio:not-sr-only">Import</span>
             </button>
             <button
               type="button"
               className={toolbarButton}
               disabled={!graph.nodes.length}
               onClick={() => setDialog("export")}
+              title="Export the composition as JSON"
             >
               <DownloadIcon size={15} />
-              <span className="sr-only sm:not-sr-only">Export</span>
+              <span className="sr-only @4xl/studio:not-sr-only">Export</span>
             </button>
             <button
               type="button"
@@ -756,11 +815,11 @@ export default function StudioView({ token, active = true, onAttention }: Props)
           {wide ? (
             <aside
               aria-label="Palette"
-              className="orrery-scroll w-14 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-2 xl:w-60 xl:p-3 dark:border-slate-800 dark:bg-slate-900/40"
+              className="orrery-scroll w-14 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-2 @6xl/studio:w-56 @6xl/studio:p-3 dark:border-slate-800 dark:bg-slate-900/40"
             >
               <Palette caps={caps} editable={editable} onAdd={addKind} />
               <p
-                className={`${sectionTitle} mt-5 hidden items-center justify-between px-1 xl:flex`}
+                className={`${sectionTitle} mt-5 hidden items-center justify-between px-1 @6xl/studio:flex`}
               >
                 Registry
                 <button
@@ -771,7 +830,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                   {registry?.editable ? "Edit" : "View"}
                 </button>
               </p>
-              <ul className="mt-1.5 hidden flex-col gap-1 px-1 text-xs text-slate-600 xl:flex dark:text-slate-300">
+              <ul className="mt-1.5 hidden flex-col gap-1 px-1 text-xs text-slate-600 @6xl/studio:flex dark:text-slate-300">
                 <li className="flex justify-between">
                   <span>MCP servers</span>
                   <span className="font-mono tabular-nums">{registry?.mcp.length ?? "…"}</span>
@@ -787,7 +846,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                   </span>
                 </li>
               </ul>
-              <p className="mt-4 hidden px-1 text-[11px] leading-relaxed text-slate-500 xl:block dark:text-slate-400">
+              <p className="mt-4 hidden px-1 text-[11px] leading-relaxed text-slate-500 @6xl/studio:block dark:text-slate-400">
                 Runs are read-only (L2) and never touch the live agents, catalogue, chats or memory.
               </p>
             </aside>
@@ -807,7 +866,10 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               selectedId={selectedId}
               onSelect={(id) => {
                 setSelectedId(id);
-                if (id) setTab("inspect");
+                if (id) {
+                  setTab("inspect");
+                  setPanelCollapsed(false);
+                }
               }}
               now={now}
               empty={emptyState}
@@ -815,6 +877,8 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               onDirection={onDirection}
               onRemoved={() => {
                 setTab("inspect");
+                // Focus goes to the panel, so it must be there.
+                setPanelCollapsed(false);
                 announce("Removed from the composition.");
                 focusPanel();
               }}
@@ -828,162 +892,220 @@ export default function StudioView({ token, active = true, onAttention }: Props)
 
           <aside
             aria-label="Studio panels"
-            className="flex shrink-0 flex-col bg-white lg:w-[22rem] lg:border-l 2xl:w-[25rem] lg:border-slate-200 dark:bg-slate-900 lg:dark:border-slate-800"
+            className={`flex shrink-0 flex-col bg-white lg:border-l lg:border-slate-200 dark:bg-slate-900 lg:dark:border-slate-800 ${
+              panelFolded ? "lg:w-11" : "lg:w-[22rem] @7xl/studio:w-[25rem]"
+            }`}
           >
-            <div
-              role="tablist"
-              aria-label="Studio panels"
-              onKeyDown={tabs.onKeyDown}
-              className="flex gap-0.5 overflow-x-auto border-b border-slate-200 px-2 pt-1.5 dark:border-slate-800"
-            >
-              {TABS.map((t) => {
-                const badge =
-                  t.id === "run" && waiting
-                    ? `${waiting} waiting`
-                    : t.id === "run" && view
-                      ? isFinished(view)
-                        ? null
-                        : "●"
-                      : t.id === "a2a" && view?.a2a.length
-                        ? String(view.a2a.length)
-                        : t.id === "mcp" && view?.mcp.length
-                          ? String(view.mcp.length)
-                          : t.id === "history" && run.history.length
-                            ? String(run.history.length)
-                            : null;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    {...tabs.tabProps(t.id)}
-                    id={`studio-tab-${t.id}`}
-                    aria-controls="studio-tabpanel"
-                    className={`relative -mb-px inline-flex items-center gap-1 border-b-2 px-2 py-2 text-[13px] font-medium whitespace-nowrap 2xl:px-2.5 2xl:text-sm focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
-                      tab === t.id
-                        ? "border-brand-600 text-slate-900 dark:border-brand-400 dark:text-white"
-                        : "border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
-                    }`}
-                  >
-                    {t.label}
-                    {badge ? <span className="sr-only">, </span> : null}
-                    {badge ? (
-                      <span
-                        className={`rounded-full px-1.5 text-[10px] tabular-nums ${badge === "●" ? "text-running-fg motion-safe:animate-pulse" : t.id === "run" && waiting ? `font-semibold ${tonePill.warn}` : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
-                      >
-                        {badge}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            <div
-              ref={panelRef}
-              id="studio-tabpanel"
-              role="tabpanel"
-              tabIndex={0}
-              aria-labelledby={`studio-tab-${tab}`}
-              className="orrery-scroll min-h-0 flex-1 p-4 lg:overflow-y-auto"
-            >
-              {waiting && view?.runId !== run.liveRunId && run.liveRunId ? (
-                // The badge counts the live run's decisions; its cards are
-                // in the Run tab only while it is the run on show.
-                <div
-                  role="status"
-                  className={`${panelCard} mb-3 flex items-center gap-2 border-warn-border bg-warn-bg p-2.5 text-xs text-warn-fg`}
+            {panelFolded ? (
+              // Folded: the tabs stand on their side, each one opens the panel on itself.
+              <div className="orrery-scroll flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto py-1.5">
+                <button
+                  type="button"
+                  ref={showPanelRef}
+                  aria-label="Show the panel"
+                  aria-expanded={false}
+                  title="Show the panel"
+                  onClick={() => foldPanel(false)}
+                  className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 >
-                  <span className="flex-1">
-                    The live run is waiting for you ({waiting}). Decide before it expires.
-                  </span>
-                  <button
-                    type="button"
-                    className="font-semibold underline underline-offset-2"
-                    onClick={() => showRun(run.liveRunId as string)}
+                  <PanelRightIcon size={17} />
+                </button>
+                {TABS.map((t) => {
+                  const badge = tabBadge(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      title={badge && badge !== "●" ? `${t.label} (${badge})` : t.label}
+                      onClick={() => {
+                        setTab(t.id);
+                        foldPanel(false);
+                      }}
+                      className={`relative rounded-md px-1.5 py-2.5 text-xs font-medium [writing-mode:vertical-rl] focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+                        tab === t.id
+                          ? "bg-brand-50 text-brand-900 dark:bg-brand-950/60 dark:text-brand-100"
+                          : "text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                      }`}
+                    >
+                      {t.label}
+                      {badge ? (
+                        <>
+                          <span className="sr-only">, {badge === "●" ? "running" : badge}</span>
+                          <span
+                            aria-hidden="true"
+                            className={`absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full ${
+                              t.id === "run" && waiting
+                                ? "bg-warn-solid motion-safe:animate-pulse"
+                                : badge === "●"
+                                  ? "bg-running-solid motion-safe:animate-pulse"
+                                  : "bg-slate-400 dark:bg-slate-500"
+                            }`}
+                          />
+                        </>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-end border-b border-slate-200 dark:border-slate-800">
+                  <div
+                    role="tablist"
+                    aria-label="Studio panels"
+                    onKeyDown={tabs.onKeyDown}
+                    className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto px-2 pt-1.5"
                   >
-                    Go to the live run
-                  </button>
+                    {TABS.map((t) => {
+                      const badge = tabBadge(t.id);
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          {...tabs.tabProps(t.id)}
+                          id={`studio-tab-${t.id}`}
+                          aria-controls="studio-tabpanel"
+                          className={`relative -mb-px inline-flex items-center gap-1 border-b-2 px-2 py-2 text-[13px] font-medium whitespace-nowrap @7xl/studio:px-2.5 @7xl/studio:text-sm focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+                            tab === t.id
+                              ? "border-brand-600 text-slate-900 dark:border-brand-400 dark:text-white"
+                              : "border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
+                          }`}
+                        >
+                          {t.label}
+                          {badge ? <span className="sr-only">, </span> : null}
+                          {badge ? (
+                            <span
+                              className={`rounded-full px-1.5 text-[10px] tabular-nums ${badge === "●" ? "text-running-fg motion-safe:animate-pulse" : t.id === "run" && waiting ? `font-semibold ${tonePill.warn}` : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}
+                            >
+                              {badge}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {wide ? (
+                    <button
+                      type="button"
+                      aria-label="Hide the panel"
+                      aria-expanded={true}
+                      title="Hide the panel, to give the canvas the room"
+                      onClick={() => foldPanel(true)}
+                      className="mr-1.5 mb-1 shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                    >
+                      <PanelRightIcon size={17} />
+                    </button>
+                  ) : null}
                 </div>
-              ) : null}
-              {tab === "inspect" ? (
-                selected ? (
-                  <NodeInspector
-                    key={selected.id}
-                    graph={graph}
-                    node={selected}
-                    issues={issues.byNode.get(selected.id) ?? []}
-                    registry={registry}
-                    caps={caps}
-                    editable={editable}
-                    onChange={(id: string, next: SpecNode) => {
-                      setGraph((g) => updateNode(g, id, next));
-                      if (next.id !== id) setSelectedId(next.id);
-                    }}
-                    onRemove={(id) => {
-                      setGraph((g) => removeNodes(g, [id]));
-                      setSelectedId(null);
-                      announce(`Removed ${id}.`);
-                      focusPanel();
-                    }}
-                    onConnect={(from, to) => setGraph((g) => connect(g, from, to))}
-                    onDisconnect={(edgeId) => setGraph((g) => removeEdges(g, [edgeId]))}
-                    onRelabel={(edgeId, when) => setGraph((g) => relabel(g, edgeId, when))}
-                  />
-                ) : (
-                  <CompositionInspector
-                    graph={graph}
-                    issues={issues}
-                    caps={caps}
-                    editable={editable}
-                    onMeta={(meta) => setGraph((g) => ({ ...g, meta }))}
-                    onSelectNode={setSelectedId}
-                  />
-                )
-              ) : tab === "run" ? (
-                <RunPanel
-                  client={client}
-                  view={view}
-                  input={input}
-                  onInput={setInput}
-                  focusSignal={focusInput}
-                  inputIssues={issues.input}
-                  problems={clientIssues.length}
-                  busy={run.busy}
-                  cancelling={run.cancelling}
-                  connection={view && view.runId === run.liveRunId ? run.connection : "idle"}
-                  error={run.error}
-                  onClearError={run.clearError}
-                  onRun={() => void onRun()}
-                  onCancel={() => void run.cancel()}
-                  onReconnect={run.reconnect}
-                  now={now}
-                />
-              ) : tab === "a2a" ? (
-                <A2aInspector
-                  registry={registry}
-                  view={view}
-                  resolving={resolving}
-                  onResolve={() => void resolveCards()}
-                />
-              ) : tab === "mcp" ? (
-                <McpInspector registry={registry} view={view} />
-              ) : (
-                <HistoryPanel
-                  client={client}
-                  records={run.history}
-                  shownId={view?.runId ?? null}
-                  compositionId={composition.saved?.id ?? null}
-                  locked={live}
-                  // While a start is out, the last live run is over: nothing is exempt.
-                  liveRunId={
-                    run.history.some((r) => r.runId === run.liveRunId && !isFinished(r.view))
-                      ? run.liveRunId
-                      : null
-                  }
-                  onShow={showRun}
-                  onOpenSaved={(summary) => void openSavedRun(summary)}
-                />
-              )}
-            </div>
+                <div
+                  ref={panelRef}
+                  id="studio-tabpanel"
+                  role="tabpanel"
+                  tabIndex={0}
+                  aria-labelledby={`studio-tab-${tab}`}
+                  className="orrery-scroll min-h-0 flex-1 p-4 lg:overflow-y-auto"
+                >
+                  {waiting && view?.runId !== run.liveRunId && run.liveRunId ? (
+                    // The badge counts the live run's decisions; its cards are
+                    // in the Run tab only while it is the run on show.
+                    <div
+                      role="status"
+                      className={`${panelCard} mb-3 flex items-center gap-2 border-warn-border bg-warn-bg p-2.5 text-xs text-warn-fg`}
+                    >
+                      <span className="flex-1">
+                        The live run is waiting for you ({waiting}). Decide before it expires.
+                      </span>
+                      <button
+                        type="button"
+                        className="font-semibold underline underline-offset-2"
+                        onClick={() => showRun(run.liveRunId as string)}
+                      >
+                        Go to the live run
+                      </button>
+                    </div>
+                  ) : null}
+                  {tab === "inspect" ? (
+                    selected ? (
+                      <NodeInspector
+                        key={selected.id}
+                        graph={graph}
+                        node={selected}
+                        issues={issues.byNode.get(selected.id) ?? []}
+                        registry={registry}
+                        caps={caps}
+                        editable={editable}
+                        onChange={(id: string, next: SpecNode) => {
+                          setGraph((g) => updateNode(g, id, next));
+                          if (next.id !== id) setSelectedId(next.id);
+                        }}
+                        onRemove={(id) => {
+                          setGraph((g) => removeNodes(g, [id]));
+                          setSelectedId(null);
+                          announce(`Removed ${id}.`);
+                          focusPanel();
+                        }}
+                        onConnect={(from, to) => setGraph((g) => connect(g, from, to))}
+                        onDisconnect={(edgeId) => setGraph((g) => removeEdges(g, [edgeId]))}
+                        onRelabel={(edgeId, when) => setGraph((g) => relabel(g, edgeId, when))}
+                      />
+                    ) : (
+                      <CompositionInspector
+                        graph={graph}
+                        issues={issues}
+                        caps={caps}
+                        editable={editable}
+                        onMeta={(meta) => setGraph((g) => ({ ...g, meta }))}
+                        onSelectNode={setSelectedId}
+                      />
+                    )
+                  ) : tab === "run" ? (
+                    <RunPanel
+                      client={client}
+                      view={view}
+                      input={input}
+                      onInput={setInput}
+                      focusSignal={focusInput}
+                      inputIssues={issues.input}
+                      problems={clientIssues.length}
+                      busy={run.busy}
+                      cancelling={run.cancelling}
+                      connection={view && view.runId === run.liveRunId ? run.connection : "idle"}
+                      error={run.error}
+                      onClearError={run.clearError}
+                      onRun={() => void onRun()}
+                      onCancel={() => void run.cancel()}
+                      onReconnect={run.reconnect}
+                      now={now}
+                    />
+                  ) : tab === "a2a" ? (
+                    <A2aInspector
+                      registry={registry}
+                      view={view}
+                      resolving={resolving}
+                      onResolve={() => void resolveCards()}
+                    />
+                  ) : tab === "mcp" ? (
+                    <McpInspector registry={registry} view={view} />
+                  ) : (
+                    <HistoryPanel
+                      client={client}
+                      records={run.history}
+                      shownId={view?.runId ?? null}
+                      compositionId={composition.saved?.id ?? null}
+                      locked={live}
+                      // While a start is out, the last live run is over: nothing is exempt.
+                      liveRunId={
+                        run.history.some((r) => r.runId === run.liveRunId && !isFinished(r.view))
+                          ? run.liveRunId
+                          : null
+                      }
+                      onShow={showRun}
+                      onOpenSaved={(summary) => void openSavedRun(summary)}
+                    />
+                  )}
+                </div>
+              </>
+            )}
           </aside>
         </div>
       </div>

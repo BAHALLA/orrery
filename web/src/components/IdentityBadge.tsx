@@ -7,6 +7,8 @@ interface Props {
   /** The server's own view, once loaded. Authoritative where it disagrees. */
   me: MeResponse | null;
   onSignOut: () => void;
+  /** The folded rail: the avatar (its title says who and what) over sign-out. */
+  compact?: boolean;
 }
 
 const autonomyTitle: Record<string, string> = {
@@ -32,13 +34,40 @@ const roleBadge: Record<Identity["role"], string> = {
  * decoded client-side from the token; the server re-derives the authoritative
  * role via RBAC on every call.
  */
-export function IdentityBadge({ identity, me, onSignOut }: Props) {
+export function IdentityBadge({ identity, me, onSignOut, compact = false }: Props) {
   if (!identity) return null;
   // The server's resolution wins where the two differ — the token badge is the
   // browser's reading of a signature it cannot check.
   const role = me?.role ?? identity.role;
   const autonomy = me?.autonomy_level ?? null;
   const initial = identity.subject.trim().charAt(0).toUpperCase() || "?";
+  const signOut = (
+    <button
+      type="button"
+      onClick={onSignOut}
+      aria-label="Sign out"
+      title="Sign out"
+      className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-200"
+    >
+      <LogOutIcon />
+    </button>
+  );
+  if (compact) {
+    const who = `${identity.subject} · ${role}${autonomy ? ` · ${autonomy}` : ""}`;
+    return (
+      // No live region here: folding the rail would read the name out each time.
+      <div className="flex flex-col items-center gap-1.5">
+        <span
+          title={who}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-semibold text-white"
+        >
+          <span aria-hidden="true">{initial}</span>
+          <span className="sr-only">{who}</span>
+        </span>
+        {signOut}
+      </div>
+    );
+  }
   return (
     <div role="status" className="flex items-center gap-2.5">
       <span
@@ -71,15 +100,7 @@ export function IdentityBadge({ identity, me, onSignOut }: Props) {
           ) : null}
         </span>
       </div>
-      <button
-        type="button"
-        onClick={onSignOut}
-        aria-label="Sign out"
-        title="Sign out"
-        className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:hover:bg-slate-800 dark:hover:text-slate-200"
-      >
-        <LogOutIcon />
-      </button>
+      {signOut}
     </div>
   );
 }

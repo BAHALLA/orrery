@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { storageKeys } from "./config";
 import { makeToken, jsonResponse, restoreGlobals } from "./test/appHarness";
+import { stubWideScreen } from "./test/reactflow";
 
 // Accessibility of the transcript and the inspector drawer.
 
@@ -81,5 +82,41 @@ describe("accessibility", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: /inspector/i })).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
+  });
+
+  it("folds the navigation to its icons on a wide screen, and remembers it", async () => {
+    stubWideScreen();
+    stubQuiet();
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+
+    const nav = await screen.findByRole("complementary", { name: "Navigation" });
+    expect(within(nav).getByRole("navigation", { name: /history/i })).toBeVisible();
+    await user.click(within(nav).getByRole("button", { name: "Collapse sidebar" }));
+    // Labels stay for screen readers; the history list is folded away.
+    expect(within(nav).getByRole("button", { name: /new chat/i })).toBeInTheDocument();
+    expect(within(nav).queryByRole("navigation", { name: /history/i })).not.toBeInTheDocument();
+    expect(localStorage.getItem(storageKeys.navCollapsed)).toBe("1");
+
+    unmount();
+    render(<App />);
+    const again = await screen.findByRole("complementary", { name: "Navigation" });
+    expect(within(again).getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+
+    // Ctrl+B unfolds it; folding again from the theme switch, which goes
+    // away, leaves focus on the toggle rather than nowhere.
+    await user.keyboard("{Control>}b{/Control}");
+    within(again).getByRole("radio", { name: "Dark theme" }).focus();
+    await user.keyboard("{Control>}b{/Control}");
+    expect(within(again).getByRole("button", { name: "Expand sidebar" })).toHaveFocus();
+  });
+
+  it("leaves Ctrl+B alone where the navigation is a drawer", async () => {
+    stubQuiet();
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("complementary", { name: "Navigation" });
+    await user.keyboard("{Control>}b{/Control}");
+    expect(localStorage.getItem(storageKeys.navCollapsed)).toBe("0");
   });
 });

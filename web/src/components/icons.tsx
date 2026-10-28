@@ -139,6 +139,21 @@ export const ChevronIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** A panel with its side rail: collapse/expand the navigation or a side panel. */
+export const PanelLeftIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16" />
+  </Icon>
+);
+
+export const PanelRightIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M15 4v16" />
+  </Icon>
+);
+
 export const LogOutIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10" />

@@ -9,6 +9,7 @@ import {
   applyNodeChanges,
   useReactFlow,
   useStore,
+  useUpdateNodeInternals,
   type Connection,
   type EdgeChange,
   type NodeChange,
@@ -117,6 +118,14 @@ export function Canvas({
   useEffect(() => {
     if (tall !== null) onDirection(tall ? "TB" : "LR");
   }, [tall, onDirection]);
+
+  // A new direction moves every node's handles (top/bottom ↔ left/right).
+  // React Flow caches handle positions when it measures a node, so without
+  // this the edges keep leaving from where the handles used to be.
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    updateNodeInternals(flow.getNodes().map((n) => n.id));
+  }, [vertical, flow, updateNodeInternals]);
 
   // A replaced graph (a template, an import, a past run, a tidy, a new
   // direction) is fitted once its nodes are measured. React Flow's fitView
