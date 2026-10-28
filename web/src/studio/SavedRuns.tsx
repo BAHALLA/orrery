@@ -24,7 +24,7 @@ export function SavedRuns({
   client,
   compositionId,
   openedIds,
-  locked,
+  liveRunId,
   onOpen,
 }: {
   client: StudioClient;
@@ -32,8 +32,8 @@ export function SavedRuns({
   compositionId: string | null;
   /** Runs already in this tab, shown as such. */
   openedIds: ReadonlySet<string>;
-  /** A run is live: opening another one would replace the canvas under it. */
-  locked: boolean;
+  /** The run live now, if any: opening another would replace the canvas under it. */
+  liveRunId: string | null;
   onOpen: (summary: RunSummary) => void;
 }) {
   const [onlyThis, setOnlyThis] = useState(false);
@@ -147,8 +147,12 @@ export function SavedRuns({
                   type="button"
                   className={subtleButton}
                   onClick={() => onOpen(r)}
-                  disabled={locked && !(opened && r.status === "running")}
-                  title={locked ? "Opens once the live run ends" : undefined}
+                  disabled={liveRunId !== null && r.run_id !== liveRunId}
+                  title={
+                    liveRunId !== null && r.run_id !== liveRunId
+                      ? "Opens once the live run ends"
+                      : undefined
+                  }
                   aria-label={`${opened ? "Show" : r.status === "running" ? "Follow" : "Replay"} run ${r.run_id.slice(0, 8)} of ${r.spec_name}`}
                 >
                   {opened ? "Show" : r.status === "running" ? "Follow" : "Replay"}

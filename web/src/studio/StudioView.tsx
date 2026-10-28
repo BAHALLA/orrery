@@ -281,8 +281,11 @@ export default function StudioView({ token, active = true }: Props) {
    * nothing for a template or an import, so a Save never overwrites the
    * composition that was open with something else.
    */
+  /** Bumped by anything that changes the canvas: a Replay still fetching then gives up. */
+  const openRequest = useRef(0);
   const replaceGraph = useCallback(
     (next: StudioGraph, label: string, saved: Saved | null = null) => {
+      openRequest.current += 1;
       setUndo(graph.nodes.length ? { graph, label, saved: composition.saved } : null);
       composition.restore(saved);
       setSaveProblem(null);
@@ -325,6 +328,7 @@ export default function StudioView({ token, active = true }: Props) {
     }
     setTab("run");
     setPinned([]);
+    openRequest.current += 1;
     const refused = await run.start(spec, input, composition.runSource);
     if (refused?.length) {
       setPinned(refused.map((issue) => ({ issue, ...anchorOf(issue, spec, input) })));
@@ -381,7 +385,6 @@ export default function StudioView({ token, active = true }: Props) {
   );
 
   /** A run from the server's list: its composition version on the canvas when known, then replayed. */
-  const openRequest = useRef(0);
   const openSavedRun = useCallback(
     async (summary: RunSummary) => {
       // Two quick Replays: only the last one asked for reaches the canvas.
@@ -451,12 +454,12 @@ export default function StudioView({ token, active = true }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        if (!dialog && !e.repeat && !live) void onSave(e.shiftKey);
+        if (!dialog && !e.repeat) void onSave(e.shiftKey);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, dialog, live, onSave]);
+  }, [active, dialog, onSave]);
 
   const selected = graph.nodes.find((n) => n.id === selectedId)?.data.spec ?? null;
   const problemCount = issues.count;
@@ -685,7 +688,8 @@ export default function StudioView({ token, active = true }: Props) {
             <span>{undo.label}: the previous canvas is kept.</span>
             <button
               type="button"
-              className="font-semibold underline underline-offset-2"
+              className="font-semibold underline underline-offset-2 disabled:opacity-50"
+              disabled={composition.saving}
               onClick={() => {
                 setGraph(reorient(undo.graph, directionRef.current));
                 composition.restore(undo.saved);
@@ -932,7 +936,7 @@ export default function StudioView({ token, active = true }: Props) {
                   records={run.history}
                   shownId={view?.runId ?? null}
                   compositionId={composition.saved?.id ?? null}
-                  locked={live}
+                  liveRunId={live ? run.liveRunId : null}
                   onShow={showRun}
                   onOpenSaved={(summary) => void openSavedRun(summary)}
                 />
@@ -950,6 +954,7 @@ export default function StudioView({ token, active = true }: Props) {
           onDeleted={(id) => {
             // The canvas stays, unlinked: Save makes it a new composition.
             if (composition.saved?.id === id) composition.restore(null);
+            setUndo((u) => (u?.saved?.id === id ? { ...u, saved: null } : u));
           }}
           onClose={() => setDialog(null)}
         />
