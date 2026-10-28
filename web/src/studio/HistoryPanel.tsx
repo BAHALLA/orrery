@@ -42,6 +42,7 @@ export function HistoryPanel({
   records,
   shownId,
   compositionId,
+  locked,
   liveRunId,
   onShow,
   onOpenSaved,
@@ -50,7 +51,8 @@ export function HistoryPanel({
   records: RunRecord[];
   shownId: string | null;
   compositionId: string | null;
-  /** The run live now, if any: nothing else here may replace the canvas under it. */
+  /** A run is live (or starting): only it may be shown, nothing else may replace the canvas. */
+  locked: boolean;
   liveRunId: string | null;
   onShow: (runId: string) => void;
   onOpenSaved: (summary: RunSummary) => void;
@@ -72,6 +74,7 @@ export function HistoryPanel({
       client={client}
       compositionId={compositionId}
       openedIds={openedIds}
+      locked={locked}
       liveRunId={liveRunId}
       onOpen={onOpenSaved}
     />
@@ -142,7 +145,7 @@ export function HistoryPanel({
                   className={subtleButton}
                   aria-current={r.runId === shownId ? "true" : undefined}
                   // While a run is live only it may be shown: another would replace the canvas.
-                  disabled={liveRunId !== null && r.runId !== liveRunId}
+                  disabled={locked && r.runId !== liveRunId}
                   onClick={() => onShow(r.runId)}
                 >
                   {r.runId === shownId ? "Shown" : "Show"}

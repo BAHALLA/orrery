@@ -689,8 +689,9 @@ export default function StudioView({ token, active = true }: Props) {
             <button
               type="button"
               className="font-semibold underline underline-offset-2 disabled:opacity-50"
-              disabled={composition.saving}
+              disabled={composition.saving || live}
               onClick={() => {
+                openRequest.current += 1;
                 setGraph(reorient(undo.graph, directionRef.current));
                 composition.restore(undo.saved);
                 setUndo(null);
@@ -936,7 +937,13 @@ export default function StudioView({ token, active = true }: Props) {
                   records={run.history}
                   shownId={view?.runId ?? null}
                   compositionId={composition.saved?.id ?? null}
-                  liveRunId={live ? run.liveRunId : null}
+                  locked={live}
+                  // While a start is out, the last live run is over: nothing is exempt.
+                  liveRunId={
+                    run.history.some((r) => r.runId === run.liveRunId && !isFinished(r.view))
+                      ? run.liveRunId
+                      : null
+                  }
                   onShow={showRun}
                   onOpenSaved={(summary) => void openSavedRun(summary)}
                 />
