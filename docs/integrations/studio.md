@@ -760,6 +760,9 @@ the event stream:
   expiring. *Reject* sends the comment back. The node is marked *awaiting
   you*, the timeout meter leaves out the time spent waiting (as the server
   does), and the card goes when the run's `approval.decided` arrives;
+- while the live run waits for a decision, the *Run* tab shows *N waiting*,
+  the console's sidebar *N waiting for you* on the Studio entry, and the
+  browser tab's title *(N) Approval needed*, also from the chat;
 - a remote's question shows the same card with the question and an answer
   box: *Send answer* sends it to the remote (and is off until there is one),
   *Decline* sends nothing;

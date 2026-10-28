@@ -54,6 +54,16 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   // Like the Agents page, the Studio stays mounted once opened: its canvas and
   // this session's runs survive a trip to the chat.
   const [studioOpened, setStudioOpened] = useState(false);
+  // Decisions a Studio run waits for, shown in the sidebar and the tab title:
+  // an approval left unseen expires and ends the run rejected.
+  const [studioWaiting, setStudioWaiting] = useState(0);
+  useEffect(() => {
+    const base = "Orrery Console";
+    document.title = studioWaiting ? `(${studioWaiting}) Approval needed · ${base}` : base;
+    return () => {
+      document.title = base;
+    };
+  }, [studioWaiting]);
   // Read by the triage effect, which must not re-run when only this changes.
   const agentsDirtyRef = useRef(false);
   const onAgentsDirty = useCallback((dirty: boolean) => {
@@ -208,6 +218,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         agentsDirty={agentsDirty}
         onOpenAgents={onOpenAgents}
         onOpenStudio={onOpenStudio}
+        studioWaiting={studioWaiting}
         onShowChat={showChat}
         onSignOut={onSignOut}
       />
@@ -309,7 +320,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                 </p>
               }
             >
-              <StudioView token={token} active={view === "studio"} />
+              <StudioView token={token} active={view === "studio"} onAttention={setStudioWaiting} />
             </Suspense>
           </div>
         ) : null}

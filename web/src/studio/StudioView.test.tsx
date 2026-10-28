@@ -547,3 +547,33 @@ describe("Studio lifecycle", () => {
     expect(await screen.findByRole("group", { name: /^LLM agent agent/ })).toBeInTheDocument();
   });
 });
+
+describe("Studio attention", () => {
+  it("tells the console how many decisions the live run waits for", async () => {
+    const stream = controlledStream();
+    stubStudio({ events: () => stream.response });
+    const onAttention = vi.fn<(n: number) => void>();
+    const user = userEvent.setup();
+    render(<StudioView token="t" onAttention={onAttention} />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    await user.type(screen.getByLabelText("Run input"), "lag");
+    await user.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^run$/i }));
+
+    const [start] = releaseNotesRun().map((e) => ({ ...e, run_id: "run-1" }) as StudioEvent);
+    stream.push(start!, {
+      ...start!,
+      seq: 2,
+      type: "approval.requested",
+      node_id: "writer",
+      approval_id: "a1",
+      kind: "approval",
+      prompt: "Publish?",
+      digest: "d".repeat(64),
+      size: 8,
+      expires_at: Date.now() / 1000 + 900,
+    } as StudioEvent);
+    await waitFor(() => expect(onAttention).toHaveBeenLastCalledWith(1));
+    expect(screen.getByRole("tab", { name: /^run.*1 waiting/i })).toBeInTheDocument();
+  });
+});

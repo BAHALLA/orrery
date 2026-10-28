@@ -43,6 +43,8 @@ interface Props {
   agentsDirty: boolean;
   onOpenAgents: () => void;
   onOpenStudio: () => void;
+  /** Decisions a Studio run waits for: a person is needed there. */
+  studioWaiting: number;
   /** Called when a history row is opened, so the main column shows the chat. */
   onShowChat: () => void;
   onSignOut: () => void;
@@ -92,6 +94,7 @@ export const Sidebar = memo(function Sidebar({
   agentsDirty,
   onOpenAgents,
   onOpenStudio,
+  studioWaiting,
   onShowChat,
   onSignOut,
 }: Props) {
@@ -209,9 +212,19 @@ export const Sidebar = memo(function Sidebar({
               title="Compose agents, remote A2A agents and MCP tools, and run them apart from the live system"
             >
               <StudioIcon /> Studio
-              <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold tracking-wide text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
-                preview
-              </span>
+              {studioWaiting ? (
+                <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-warn-fg">
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-warn-solid motion-safe:animate-pulse"
+                    aria-hidden="true"
+                  />
+                  {studioWaiting} waiting for you
+                </span>
+              ) : (
+                <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold tracking-wide text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
+                  preview
+                </span>
+              )}
             </button>
           ) : null}
         </div>
