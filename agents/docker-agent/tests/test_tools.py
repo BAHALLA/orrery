@@ -279,36 +279,84 @@ async def test_get_container_stats_error(mock_run):
 # ── docker_compose_status ─────────────────────────────────────────────
 
 
+def _rows(*rows: dict) -> str:
+    return "\n".join(json.dumps(r) for r in rows)
+
+
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
-async def test_compose_status_success(mock_run):
-    services = [
-        {"Name": "kafka", "State": "running", "Health": "healthy"},
-        {"Name": "zookeeper", "State": "running", "Health": ""},
-    ]
-    mock_run.return_value = (True, "\n".join(json.dumps(s) for s in services))
+async def test_compose_status_lists_projects_from_labels(mock_run):
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "shop", "service": "web", "state": "running"},
+            {"project": "shop", "service": "job", "state": "exited"},
+            {"project": "obs", "service": "prom", "state": "running"},
+        ),
+    )
 
     result = await docker_compose_status()
-    assert result["status"] == "success"
-    assert result["count"] == 2
+
+    # The plain CLI, filtered on the compose label: no compose file or plugin.
+    args = mock_run.call_args[0][0]
+    assert args[:4] == ["ps", "--all", "--filter", "label=com.docker.compose.project"]
+    assert result == {
+        "status": "success",
+        "projects": [
+            {"name": "obs", "containers": 1, "states": {"running": 1}},
+            {"name": "shop", "containers": 2, "states": {"running": 1, "exited": 1}},
+        ],
+        "count": 2,
+    }
 
 
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
-async def test_compose_status_with_project_dir(mock_run):
-    mock_run.return_value = (True, "")
+async def test_compose_status_of_one_project(mock_run):
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "shop", "service": "kafka", "name": "shop-kafka-1", "state": "running"},
+            {"project": "shop", "service": "job", "name": "shop-job-1", "state": "exited"},
+        ),
+    )
 
-    await docker_compose_status(project_dir="/opt/myapp")
-    args = mock_run.call_args[0][0]
-    assert "-f" in args
-    assert "/opt/myapp/docker-compose.yml" in args
+    result = await docker_compose_status(project="shop")
+
+    assert "label=com.docker.compose.project=shop" in mock_run.call_args[0][0]
+    assert result["count"] == 2 and result["project"] == "shop"
+    assert result["services"][1] == {"service": "job", "name": "shop-job-1", "state": "exited"}
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_says_when_a_project_has_no_containers(mock_run):
+    mock_run.return_value = (True, "")
+    result = await docker_compose_status(project="nosuch")
+    assert result["status"] == "error" and "nosuch" in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("project", ["../etc", "-f", "Shop", "a b", "", "x=y"])
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_refuses_a_bad_project_name(mock_run, project):
+    result = await docker_compose_status(project=project)
+    assert result["status"] == "error"
+    mock_run.assert_not_called()
 
 
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
 async def test_compose_status_error(mock_run):
-    mock_run.return_value = (False, "no configuration file provided")
+    mock_run.return_value = (False, "Cannot connect to the Docker daemon")
+    result = await docker_compose_status()
+    assert result["status"] == "error"
 
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_unexpected_output_is_an_error(mock_run):
+    mock_run.return_value = (True, "WARNING: something\n")
     result = await docker_compose_status()
     assert result["status"] == "error"
 
@@ -317,10 +365,8 @@ async def test_compose_status_error(mock_run):
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
 async def test_compose_status_empty(mock_run):
     mock_run.return_value = (True, "")
-
     result = await docker_compose_status()
-    assert result["status"] == "success"
-    assert result["count"] == 0
+    assert result == {"status": "success", "projects": [], "count": 0}
 
 
 # ── stop_container ────────────────────────────────────────────────────
@@ -592,13 +638,6 @@ async def test_get_container_logs_rejects_huge_tail():
 async def test_get_container_stats_rejects_empty_name():
     result = await get_container_stats("")
     assert result["status"] == "error"
-
-
-@pytest.mark.asyncio
-async def test_compose_status_rejects_path_traversal():
-    result = await docker_compose_status(project_dir="../../etc")
-    assert result["status"] == "error"
-    assert "traversal" in result["message"]
 
 
 # ── networks ──────────────────────────────────────────────────────────
