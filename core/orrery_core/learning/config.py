@@ -12,6 +12,9 @@ import os
 
 from ..env import env_flag
 
+SPAN_CONTENT_ENV = "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS"
+OTEL_CONTENT_ENV = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
+
 #: The loggers that log every model response at DEBUG.
 _RESPONSE_LOGGERS = ("google_adk", "LiteLLM")
 
@@ -59,10 +62,16 @@ def unmet_preconditions() -> list[str]:
         _env("WEB_CONCURRENCY") in ("", "1"),
         "WEB_CONCURRENCY must be unset or 1: several workers would split the guard's state",
     )
+    # ADK reads an unset legacy switch as on; activation sets it off first.
     require(
-        _flag("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", default=False) is False,
-        "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS must be off: ADK traces a model response "
+        _flag(SPAN_CONTENT_ENV, default=True) is False,
+        f"{SPAN_CONTENT_ENV} must be off: ADK traces a model response "
         "before the answer guard sees it",
+    )
+    require(
+        _env(OTEL_CONTENT_ENV).lower() in ("", "false", "0", "no", "off", "no_content"),
+        f"{OTEL_CONTENT_ENV} must be unset or NO_CONTENT: ADK's default telemetry "
+        "records a model response before the answer guard sees it",
     )
     level = _env("LOG_LEVEL").upper()
     require(

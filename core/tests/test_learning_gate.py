@@ -95,8 +95,11 @@ _OFF = (
 def good_env(monkeypatch):
     for name in _OFF:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
     for name, value in _GOOD_ENV.items():
         monkeypatch.setenv(name, value)
+    # Activation sets this default before checking (ADK reads unset as on).
+    monkeypatch.setenv("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "false")
 
 
 def test_a_compliant_deployment_has_no_unmet_preconditions(good_env):
@@ -117,12 +120,78 @@ def test_a_compliant_deployment_has_no_unmet_preconditions(good_env):
         ("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "true"),
         ("LOG_LEVEL", "DEBUG"),
         ("ORRERY_STUDIO_ENABLED", "maybe"),  # not a boolean: reported, not ignored
+        ("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true"),
+        ("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "SPAN_ONLY"),
     ],
 )
 def test_each_precondition_is_enforced(good_env, monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     [unmet] = unmet_preconditions()
     assert name in unmet
+
+
+def test_an_unset_span_switch_counts_as_on(good_env, monkeypatch):
+    # ADK's own default: unset copies content into spans.
+    monkeypatch.delenv("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS")
+    [unmet] = unmet_preconditions()
+    assert "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS" in unmet
+
+
+def test_otel_no_content_is_accepted(good_env, monkeypatch):
+    monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "NO_CONTENT")
+    assert unmet_preconditions() == []
+
+
+@pytest.mark.parametrize("name", ["google_adk", "LiteLLM"])
+def test_a_debug_response_logger_is_refused(good_env, name):
+    import logging
+
+    logger = logging.getLogger(name)
+    previous = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
+        [unmet] = unmet_preconditions()
+    finally:
+        logger.setLevel(previous)
+    assert name in unmet
+
+
+def test_the_server_checks_again_after_the_tree_is_built(good_env, monkeypatch, manifest):
+    """A specialist's own .env can override the environment after activation."""
+    _activate(monkeypatch, manifest)
+    monkeypatch.setenv("ORRERY_AUTONOMY_LEVEL", "L3")
+    with (
+        patch("orrery_core.serving.gateway.Runner", return_value=MagicMock()),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.server.create_session_service"),
+        pytest.raises(ValueError, match="ORRERY_AUTONOMY_LEVEL must be L2"),
+    ):
+        create_app(
+            root_agent=MagicMock(name="root"),
+            app_name="t",
+            plugins=[],
+            config=ServerConfig(
+                auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret="s" * 40)
+            ),
+        )
+
+
+def test_the_server_refuses_a_config_that_enables_a_closed_surface(good_env, monkeypatch, manifest):
+    from orrery_core.serving.a2a_config import A2AConfig
+
+    _activate(monkeypatch, manifest)
+    with (
+        patch("orrery_core.serving.gateway.Runner", return_value=MagicMock()),
+        patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
+        patch("orrery_core.serving.server.create_session_service"),
+        pytest.raises(ValueError, match="auth must be enabled; admin editing must be off"),
+    ):
+        create_app(
+            root_agent=MagicMock(name="root"),
+            app_name="t",
+            plugins=[],
+            config=ServerConfig(auth_enabled=False, admin_editing=True, a2a=A2AConfig()),
+        )
 
 
 # ── Narrowed endpoints ───────────────────────────────────────────────
@@ -147,6 +216,8 @@ def server(monkeypatch, manifest):
             patch("orrery_core.serving.gateway.Runner", return_value=MagicMock()),
             patch("orrery_core.serving.gateway.App", return_value=MagicMock()),
             patch("orrery_core.serving.server.create_session_service", return_value=sessions),
+            # Startup checks have their own tests; these read the endpoints.
+            patch("orrery_core.serving.server._check_learning_server"),
         ):
             config = ServerConfig(auth_enabled=False, jwt=JWTConfig(algorithm="HS256", secret="x"))
             return TestClient(
@@ -195,6 +266,11 @@ async def test_the_stream_holds_every_delta_in_learning_mode(monkeypatch, manife
 
     class Gateway:
         async def run(self, msg, *, session_id=None, on_event=None, streaming=False):
+            from orrery_core.plugins.progress_plugin import _SINK, ProgressStep
+
+            sink = _SINK.get()
+            assert sink is not None
+            sink(ProgressStep("c1", "end", "k8s", "get_pod", False, False, "ok", "OOMKilled"))
             for text in ("The lag", " is 5100"):
                 event = MagicMock(partial=True, author="root")
                 event.content.parts = [MagicMock(text=text, thought=None)]
@@ -206,6 +282,8 @@ async def test_the_stream_holds_every_delta_in_learning_mode(monkeypatch, manife
     body = b"".join([frame async for frame in stream_turn(Gateway(), msg, session_id="s-1")])
 
     assert b"event: delta" not in body
+    # A tool's status string may itself be a string target.
+    assert b"event: progress" in body and b"OOMKilled" not in body
     assert b"5100" not in body
     assert b"checked reply" in body
 

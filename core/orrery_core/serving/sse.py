@@ -125,6 +125,13 @@ async def stream_turn(
     # alone (AEP-032 §4). Read once: activation happens before serving.
     hold_deltas = learning_gate.is_active()
 
+    def _step(step: Any) -> dict[str, Any]:
+        frame = step.as_dict()
+        if hold_deltas:
+            # A tool's own status string could be a string target (OOMKilled).
+            frame["status"] = ""
+        return frame
+
     async def on_event(event: Event) -> None:
         if hold_deltas:
             return
@@ -135,7 +142,7 @@ async def stream_turn(
         try:
             # Entered inside the task that runs the agent, so the sink reaches
             # every specialist's sub-Runner (ContextVars copy into child tasks).
-            with progress_scope(lambda step: queue.put_nowait(("progress", step.as_dict()))):
+            with progress_scope(lambda step: queue.put_nowait(("progress", _step(step)))):
                 reply = await gateway.run(
                     msg, session_id=session_id, on_event=on_event, streaming=True
                 )

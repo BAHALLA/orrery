@@ -53,8 +53,9 @@ REVEAL_LEVEL = 3
 _SEPARATORS = ",.'_    "
 _SEP = "[" + re.escape(_SEPARATORS) + "]?"
 # Not preceded by a letter or digit (so v5100 or 25100 is another token), nor
-# by a digit group (1,5100); not followed by a digit or a decimal part. A unit
-# may follow directly: "5100ms" states 5100.
+# by a digit group (1,5100); not followed by a digit or a decimal part (a run
+# of zeros is allowed where a pattern says so: 5100.0). A unit may follow
+# directly: "5100ms" states 5100.
 _BEFORE = r"(?<![0-9A-Za-z])(?<![0-9][.,])"
 _AFTER = r"(?![0-9])(?![.,][0-9])"
 
@@ -119,6 +120,28 @@ def _normalise_words(text: str) -> str:
     return " " + re.sub(r"[^a-z]+", " ", text).strip() + " "
 
 
+_NUMBER_WORDS = frozenset([*_ONES, *_TENS[2:], "hundred", "thousand", "million", "billion"])
+
+
+def _states_words(text: str, words: str) -> bool:
+    """*words* as a whole number in *text*: not part of a longer one.
+
+    "five thousand one hundred" is inside "twenty five thousand one hundred
+    twenty", which states another number.
+    """
+    tokens = _normalise_words(text).split()
+    wanted = words.split()
+    size = len(wanted)
+    for i in range(len(tokens) - size + 1):
+        if tokens[i : i + size] != wanted:
+            continue
+        before = tokens[i - 1] if i else ""
+        after = tokens[i + size] if i + size < len(tokens) else ""
+        if before not in _NUMBER_WORDS and after not in _NUMBER_WORDS:
+            return True
+    return False
+
+
 def _digits_pattern(n: int) -> str:
     """5100 with or without one consistent thousands separator."""
     digits = str(n)
@@ -136,7 +159,11 @@ def _digits_pattern(n: int) -> str:
 def _abbreviations(n: int) -> list[tuple[float, str]]:
     """(scaled value, suffix pattern) pairs a reply might round *n* to."""
     out = []
-    for scale, suffix in ((10**9, "b(?:n|illion)?"), (10**6, "m(?:n|illion)?"), (10**3, "k")):
+    for scale, suffix in (
+        (10**9, "b(?:n|illion)?"),
+        (10**6, "m(?:n|illion)?"),
+        (10**3, "k|thousand"),
+    ):
         if n >= scale:
             out.append((n / scale, suffix))
     return out
@@ -146,14 +173,15 @@ def _states_number(text: str, value: float) -> bool:
     magnitude = abs(value)
     if float(magnitude).is_integer():
         n = int(magnitude)
-        if re.search(_BEFORE + _digits_pattern(n) + _AFTER, text):
+        # "5100.0" and "5,100.00" too: models copy a float-valued tool field.
+        if re.search(_BEFORE + _digits_pattern(n) + r"(?:[.,]0+)?" + _AFTER, text):
             return True
-        if n < 10**12 and f" {number_words(n)} " in _normalise_words(text):
+        if n < 10**12 and _states_words(text, number_words(n)):
             return True
         # "5.1k", "5,1 K", "5k", "1.2M": the value rounded to the decimals
         # written, and close enough to be the value (1k is not 1,450).
         for scaled, suffix in _abbreviations(n):
-            pattern = _BEFORE + r"(\d+(?:[.,]\d+)?)\s?" + f"(?:{suffix})" + r"(?![A-Za-z])"
+            pattern = _BEFORE + r"(\d+(?:[.,]\d+)?)\s?" + f"(?:{suffix})" + r"(?![A-Za-z0-9])"
             for match in re.finditer(pattern, text, re.IGNORECASE):
                 written_text = match.group(1).replace(",", ".")
                 decimals = len(written_text.partition(".")[2])
@@ -162,7 +190,7 @@ def _states_number(text: str, value: float) -> bool:
                     return True
         return False
     whole, _, frac = repr(magnitude).partition(".")
-    body = _digits_pattern(int(whole)) + "[.,]" + re.escape(frac)
+    body = _digits_pattern(int(whole)) + "[.,]" + re.escape(frac) + "0*"
     return re.search(_BEFORE + body + _AFTER, text) is not None
 
 
@@ -180,6 +208,8 @@ _NUDGES = {
     1: "Look for where {descriptor} is reported: which topic, group or alert carries it?",
     2: "You're close: compare the numbers that make up {descriptor} yourself.",
 }
+#: Turns remembered for the one-nudge-per-reply rule; old ones are long over.
+_MAX_TRACKED_TURNS = 1024
 _FALLBACK = "I can't give that value yet. Work it out from the evidence, or ask for a hint."
 
 
@@ -198,8 +228,8 @@ class AnswerGuardPlugin(BasePlugin):
 
     Args:
         store: The manifest in force.
-        root_agent_name: The name of the agent the gateway serves, read per
-            call so it follows ``replace_root_agent()``.
+        root_agent_name: The name of the root agent of the Runner this plugin
+            belongs to (each Runner the gateway builds gets its own guard).
         level_of: The learner's disclosure level for this call.
     """
 
@@ -214,6 +244,8 @@ class AnswerGuardPlugin(BasePlugin):
         self._store = store
         self._root = root_agent_name
         self._level_of = level_of
+        #: Invocations whose reply already holds a nudge (insertion-ordered LRU).
+        self._nudged: dict[str, bool] = {}
 
     async def after_model_callback(
         self, *, callback_context: CallbackContext, llm_response: LlmResponse
@@ -235,9 +267,17 @@ class AnswerGuardPlugin(BasePlugin):
             return None
 
         first = stated[0]
-        replacement = nudge(first, level)
-        if any(states_value(replacement, v.value) for v in self._store.guarded_values()):
-            replacement = _FALLBACK
+        if self._nudged.get(callback_context.invocation_id):
+            # The turn already carries a nudge: the gateway joins every root
+            # response into one reply, so a second one would only repeat it.
+            replacement = ""
+        else:
+            replacement = nudge(first, level)
+            if any(states_value(replacement, v.value) for v in self._store.guarded_values()):
+                replacement = _FALLBACK
+            self._nudged[callback_context.invocation_id] = True
+            while len(self._nudged) > _MAX_TRACKED_TURNS:
+                self._nudged.pop(next(iter(self._nudged)))
         # Keep tool calls (a mixed text-and-call response still runs its tools);
         # drop every text and thought part. Edited in place: see the module doc.
         kept = [p for p in parts if not p.text and p.thought is not True]

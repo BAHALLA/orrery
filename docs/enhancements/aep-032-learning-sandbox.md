@@ -87,8 +87,11 @@ The gate therefore has two parts:
   it imports the agent module. Activation runs the preconditions below and
   then imports `orrery_core.learning`. Because it happens before
   construction, the builders that run next see an activated process:
-  `default_plugins()` adds the learning plugins, and `build_chat_agent()`
-  adds the coach.
+  `AgentGateway` adds the learning plugins when it builds its Runner, and
+  `build_chat_agent()` adds the coach (phase 3). A specialist's own `.env`
+  is loaded after activation and may override the environment, so
+  `create_app()` checks the preconditions again, together with the resolved
+  server config, before it serves.
   - This only works if importing the package does not build the tree
     first. Today `orrery_assistant/__init__.py` is
     `from . import agent as agent`, and uvicorn imports the package before
@@ -122,7 +125,7 @@ Within the HTTP server, `ORRERY_LEARNING_MODE=true` is refused at startup
 | `ORRERY_STUDIO_ENABLED` off | a Studio run builds its own gateway and plugins, so its output is not under the guard; run Studio as a separate deployment (AEP-031 already recommends that for public demos) |
 | `ORRERY_ADMIN_EDITING` off | a catalog edit rebuilds the tree; keeping it off removes one way to change what learners talk to |
 | `ORRERY_MULTI_REPLICA` off, and a single worker (`WEB_CONCURRENCY` unset or 1) | the manifest's reload state and the hint store are per process; `uvicorn --workers N` would split them inside one pod |
-| `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` false | ADK traces the original model response *before* any after-model callback runs, so captured content would export withheld text |
+| `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` false (activation sets it, since ADK reads unset as on), and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` unset or `NO_CONTENT` | ADK traces the original model response *before* any after-model callback runs, so captured content would export withheld text |
 | `google_adk` and LiteLLM loggers above DEBUG | ADK logs every streamed model response at DEBUG |
 
 When the mode is active, `GET /healthz` reports `"mode": "learning"` and

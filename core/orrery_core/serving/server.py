@@ -544,6 +544,31 @@ def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
         )
 
 
+def _check_learning_server(cfg: ServerConfig) -> None:
+    """The learning sandbox's preconditions, again, against the final config.
+
+    Activation checked the environment before the agent tree was imported, and
+    a specialist's own ``.env`` may override it since (``load_agent_env``). So
+    the check runs once more here, plus the resolved config, which is what the
+    server actually does (AEP-032 §1).
+    """
+    from ..learning.config import check_preconditions
+
+    check_preconditions()
+    unmet = [
+        why
+        for bad, why in (
+            (not cfg.auth_enabled, "auth must be enabled"),
+            (cfg.a2a.enabled, "A2A must be off"),
+            (cfg.studio.enabled, "Studio must be off"),
+            (cfg.admin_editing, "admin editing must be off"),
+        )
+        if bad
+    ]
+    if unmet:
+        raise ValueError("ORRERY_LEARNING_MODE cannot start: " + "; ".join(unmet))
+
+
 def create_app(
     *,
     root_agent: Agent | Workflow,
@@ -616,6 +641,8 @@ def create_app(
     # Validate JWT config eagerly when auth is on — fail fast at startup
     # rather than on the first request.
     principal_policy = PrincipalPolicy.from_env()  # a malformed policy fails startup
+    if learning_gate.is_active():
+        _check_learning_server(cfg)
     if cfg.auth_enabled:
         cfg.jwt.validate()
         logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)

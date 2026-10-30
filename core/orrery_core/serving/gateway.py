@@ -367,9 +367,10 @@ class AgentGateway:
         if (learning := learning_gate.runtime()) is not None:
             # First, so no after-model plugin can answer ahead of the answer
             # guard; it edits in place and returns None, so the rest still run.
-            # It reads the served root's name per call, so it follows
-            # replace_root_agent() (AEP-032 §4).
-            plugins = [*learning.plugins(lambda: getattr(self.root_agent, "name", "")), *plugins]
+            # Bound to this Runner's root: a turn still running on the old tree
+            # after replace_root_agent() is checked against its own root.
+            root_name = getattr(root_agent, "name", "")
+            plugins = [*learning.plugins(lambda: root_name), *plugins]
         app = App(
             name=self.app_name,
             root_agent=root_agent,

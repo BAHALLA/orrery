@@ -44,6 +44,10 @@ from orrery_core.serving.gateway import AgentGateway, InboundMessage
         "five thousand one hundred",
         "Five-thousand one hundred messages",
         "five thousand and one hundred",
+        "about 5.1 thousand",
+        "5 thousand messages",
+        "lag: 5100.0",
+        "lag: 5,100.00",
     ],
 )
 def test_states_an_integer_in_the_forms_people_write(text):
@@ -61,6 +65,10 @@ def test_states_an_integer_in_the_forms_people_write(text):
         "about 7k",
         "five thousand",
         "fifty-one hundred",  # an approximation the matcher does not claim
+        "check the 5 k8s nodes",
+        "twenty five thousand one hundred",
+        "five thousand one hundred twenty",
+        "5100.05",
         "",
     ],
 )
@@ -81,6 +89,8 @@ def test_larger_numbers_need_a_consistent_separator():
 def test_decimals_match_with_either_mark():
     assert states_value("p99 is 412.5 ms", 412.5)
     assert states_value("p99 is 412,5 ms", 412.5)
+    assert states_value("p99 is 412.50 ms", 412.5)
+    assert states_value("total 1,234.50", 1234.5)
     assert not states_value("p99 is 412.55 ms", 412.5)
     assert not states_value("p99 is 1412.5 ms", 412.5)
 
@@ -229,6 +239,25 @@ async def test_falls_back_when_the_nudge_would_state_a_value(tmp_path):
 
     text = _first_text(response)
     assert not states_value(text, 4990) and "5k" not in text
+
+
+@pytest.mark.asyncio
+async def test_one_nudge_per_turn(store):
+    plugin = _plugin(store)
+    ctx = _ctx()
+    ctx.invocation_id = "inv-1"
+    first = _response(types.Part.from_text(text="lag is 5100"))
+    second = _response(types.Part.from_text(text="again: 5100"))
+
+    await plugin.after_model_callback(callback_context=ctx, llm_response=first)
+    await plugin.after_model_callback(callback_context=ctx, llm_response=second)
+
+    assert "can't give that value" in _first_text(first)
+    assert _first_text(second) == ""
+    ctx.invocation_id = "inv-2"
+    third = _response(types.Part.from_text(text="5100"))
+    await plugin.after_model_callback(callback_context=ctx, llm_response=third)
+    assert "can't give that value" in _first_text(third)
 
 
 # ── Through a real gateway ───────────────────────────────────────────

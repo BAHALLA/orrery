@@ -9,13 +9,14 @@ show a value (AEP-032 §4–§5).
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.plugins.base_plugin import BasePlugin
 
-from .config import check_preconditions
+from .config import SPAN_CONTENT_ENV, check_preconditions
 from .guard import AnswerGuardPlugin
 from .manifest import ManifestStore
 
@@ -31,6 +32,9 @@ class Runtime:
     @classmethod
     def from_env(cls) -> Runtime:
         """Check the preconditions, then load the manifest. Either failure raises."""
+        # ADK reads an unset switch as "copy content into spans"; the server
+        # sets the same default later, but the check runs before it.
+        os.environ.setdefault(SPAN_CONTENT_ENV, "false")
         check_preconditions()
         store = ManifestStore.from_env()
         manifest = store.current()
