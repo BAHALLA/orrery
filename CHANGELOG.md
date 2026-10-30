@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **AEP-032: Learning Sandbox Mode** (proposal only, no code). An opt-in,
+  read-only sandbox for practice labs that withholds a seeded exercise's
+  answers until the learner asks for hints. Off by default and refused at
+  startup outside an authenticated L2 deployment with a scenario manifest.
+
 ## [0.13.0] - 2026-10-29
 
 **Console: room to work.** The navigation and the Studio's side panel fold
