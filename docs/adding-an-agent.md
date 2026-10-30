@@ -293,6 +293,26 @@ when any of them is `@confirm`/`@destructive`. An unknown or ambiguous tool, or
 a name that collides with an existing agent, stops startup. Admins can see the
 result, with every tool's guard level, in the console's **Agents** tab.
 
+### A shipped example: the lab coach {: #lab-coach }
+
+`agents/orrery-assistant/declarative/lab-coach.yaml` defines `lab_coach`, a
+coach for shared practice labs. It investigates first, then guides the learner
+with one question or hint per reply, climbing a four-step ladder (which
+signal, where to look, what to compare, the cause), and gives the answer only
+when asked for it outright. Its tools are read-only ones from the kafka and
+observability specialists, so it runs at L2 on a deployment that disables
+docker, k8s and elasticsearch. In the image:
+
+```bash
+ORRERY_AGENTS_CONFIG=/app/agents/orrery-assistant/declarative/lab-coach.yaml
+```
+
+Like every specialist, the coach cannot see the conversation. Each reply
+ends with the hint number it gave ("Hint 2 of 4"), and its description asks
+the coordinator to pass that back with the learner's next message, so the
+ladder moves on from where it stopped. `test_lab_coach.py` builds the file
+against the lab's specialist set and fails if a guarded tool is added.
+
 ### Editing from the console {: #admin-editing }
 
 With `ORRERY_ADMIN_EDITING=true`, admins can do the same from the console's

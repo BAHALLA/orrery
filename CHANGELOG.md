@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Lab coach** (`agents/orrery-assistant/declarative/lab-coach.yaml`): a
+  declarative agent for shared practice labs that walks a learner through a
+  Kafka or monitoring diagnosis with questions and a four-step hint ladder,
+  rather than handing over the answer. Read-only tools from the kafka and
+  observability specialists only, so it builds on a deployment that disables
+  the others and runs at L2 with no confirmation gate. Enable it with
+  `ORRERY_AGENTS_CONFIG=/app/agents/orrery-assistant/declarative/lab-coach.yaml`.
+
 ## [0.13.0] - 2026-10-29
 
 **Console: room to work.** The navigation and the Studio's side panel fold
