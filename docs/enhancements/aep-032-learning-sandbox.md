@@ -4,22 +4,24 @@
 |-------|-------|
 | **Status** | <span class="badge badge--amber">proposed</span> |
 | **Priority** | <span class="badge badge--grey">P3</span> |
-| **Effort** | Medium (4-6 days, in four phases) |
+| **Effort** | Medium (5-7 days, in four phases) |
 | **Impact** | Medium (practice labs only; no effect on any other deployment) |
 | **Dependencies** | AEP-009 (streaming), AEP-002 (evals), ADR-005 (specialist selection), ADR-006 (caller principals) |
 
 !!! warning "A sandbox mode, not an agent feature"
-    Everything here is **off by default**, lives in its own package
-    (`orrery_core.learning`) that is imported only when
-    `ORRERY_LEARNING_MODE=true`, and refuses to start unless the deployment
-    is a read-only, authenticated practice sandbox. A production deployment
-    never loads it, and nothing in this proposal changes how Orrery behaves
-    when the flag is off. The only general-purpose piece, per-tool narrowing
-    (phase 0), can only take tools away.
+    Everything here is **off by default** and lives in its own package,
+    `orrery_core.learning`, which is imported only when
+    `ORRERY_LEARNING_MODE=true`. With the flag on, Orrery refuses to start
+    unless the process is the HTTP server of a read-only, authenticated,
+    single-replica practice sandbox. A production deployment never loads it,
+    and with the flag off nothing in this proposal changes how Orrery
+    behaves. The only general-purpose piece, per-tool narrowing (phase 0),
+    can only take tools away, and with it unset the agent tree is identical
+    to today's.
 
 ## Gap Analysis
 
-Orrery is used as the subject of hands-on labs: a learner gets a seeded fault
+Orrery is used as the subject of hands-on labs. A learner gets a seeded fault
 (a Kafka consumer group with lag, an alert firing) and is asked to diagnose
 it. Three things make that a poor learning exercise today:
 
@@ -29,54 +31,66 @@ it. Three things make that a poor learning exercise today:
   well someone prompts an agent, not how they diagnose.
 - **A prompt cannot fix it.** A coaching instruction ("don't give the answer
   away") is a request to a model that has just read the answer from a tool.
-  A determined "just tell me the number" gets it, and the coordinator can
-  route around the coach to a specialist that has no such instruction.
+  A determined "just tell me the number" gets it. The coordinator can also
+  route around the coach to a specialist that has no such instruction, or
+  run a triage sweep whose report shows up in its own panel.
 - **Help is invisible.** Nothing records how much help a learner needed, so a
   lab cannot weigh a solution reached alone against one reached after the
   agent spelled it out.
 
 What is missing is a server-side control that knows the exercise's answers
-and keeps them out of what the learner sees until they ask for them, plus a
-record of every step of help.
+and keeps them out of everything the learner sees until they ask for them,
+plus a record of every step of help.
 
 ## Non-goals
 
 - **Not an exam-proof control.** The learner can still reason from the
-  evidence Orrery shows them, which is the point. The guard stops the agent
-  from *stating* an answer; it does not stop a learner from working it out.
-- **Not a security boundary.** It protects exercise answers, not secrets. The
-  security boundary stays where it is: auth, RBAC, autonomy, the gates
-  (ADR-001, ADR-006).
+  evidence Orrery shows them, which is the point. The guard stops Orrery
+  from *stating* an answer. It does not stop a learner from working it out.
+- **Not a security boundary.** It protects exercise answers, not secrets.
+  The security boundary stays where it is: auth, RBAC, autonomy and the
+  gates (ADR-001, ADR-006).
 - **Not a tutoring product.** No curricula, scoring or progress tracking
-  inside Orrery; the lab platform owns tasks and grading. Orrery only
-  withholds answers, hands out hints, and reports what happened.
+  inside Orrery: the lab platform owns tasks and grading. Orrery only
+  withholds answers, hands out hints and reports what happened.
 - **No new way to change the lab.** Learning mode runs at L2. Letting
-  learners mutate resources in a shared broker is a separate decision (see
+  learners mutate resources on a shared broker is a separate decision (see
   *Future Work*).
 
 ## Solution
 
 ### 1. The sandbox gate
 
-`ORRERY_LEARNING_MODE=true` is refused at startup (a `ValueError` naming
-the missing condition, the same way `ORRERY_STUDIO_ENABLED` checks its
-preconditions) unless **all** of these hold:
+**One choke point, not a list of surfaces.** The learning loader
+(`orrery_core.learning.activate()`) is the only way anything in this
+proposal gets wired in. It raises unless its caller passes
+`learning_surface=True`, and only `serving/server.py` passes it. Every other
+entry point fails by default whenever the flag is set, including future
+ones: `adk web` (`make run-dev`), the CLI and `run_persistent.py`, the
+Slack and Google Chat bots, batch triage, `agents/ops-journal/run_persistent.py`
+and `scripts/demo/scripted_server.py`. A test walks every entry point and
+pins this.
+
+Within the HTTP server, `ORRERY_LEARNING_MODE=true` is refused at startup
+(a `ValueError` naming the condition that is missing, the same pattern as
+`studio/config.py`) unless **all** of these hold:
 
 | Condition | Why |
 |-----------|-----|
-| `AUTH_ENABLED=true` | hints and answers are per person; an anonymous caller has no identity to scope them to |
-| `ORRERY_HUMAN_CLIENTS` set | only verified humans are learners (ADR-006); without it every token is "human" |
+| `AUTH_ENABLED=true` | hints and answers are per person, and an anonymous caller has no identity to scope them to |
+| `ORRERY_HUMAN_CLIENTS` set | only verified humans are learners (ADR-006); without it every token counts as human |
 | `ORRERY_AUTONOMY_LEVEL=L2` | the sandbox is read-only; a learner-facing deployment that can mutate is not a sandbox |
-| `ORRERY_SCENARIO_MANIFEST` set and valid | the guard has nothing to protect without it, and an unguarded "learning mode" would be worse than none |
-| `ORRERY_A2A_ENABLED` unset or false | a machine caller would bypass the console's held stream and could fetch answers for a learner |
+| `ORRERY_SCENARIO_MANIFEST` set and valid | without it the guard has nothing to protect, and an unguarded "learning mode" is worse than none |
+| `ORRERY_A2A_ENABLED` off | machine sessions (`a2a-`) sit outside the learner's sessions and level, and an `input-required` task carries a `pending_action` data part; refusing A2A keeps every learning turn a human console turn |
+| `ORRERY_STUDIO_ENABLED` off | a Studio run builds its own gateway and plugins, so its output is not under the guard; run Studio as a separate deployment (AEP-031 already recommends that for public demos) |
+| `ORRERY_ADMIN_EDITING` off | a catalog edit rebuilds the tree; keeping it off removes one way to change what learners talk to |
+| `ORRERY_MULTI_REPLICA` off | the manifest's reload state and the hint store are per process |
+| `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` false | ADK traces the original model response *before* any after-model callback runs, so captured content would export withheld text |
+| `google_adk` and LiteLLM loggers above DEBUG | ADK logs every streamed model response at DEBUG |
 
-It is supported on the **HTTP front door only** (console, `POST /chat`,
-`POST /chat/stream`). The Slack bot, Google Chat bot, CLI and batch triage
-refuse to start with the flag set rather than run unguarded, because their
-reply paths do not go through the guard described below.
-
-When active, `GET /healthz` reports `"mode": "learning"` and the console shows
-a persistent *Learning sandbox* badge, so nobody mistakes a lab for an
+When the mode is active, `GET /healthz` reports `"mode": "learning"` and
+the loaded `scenario_id` (the id is not secret; the values are). The console
+shows a persistent *Learning sandbox* badge, so nobody mistakes a lab for an
 operational deployment.
 
 ### 2. The scenario manifest (contract v1)
@@ -97,33 +111,63 @@ by `ORRERY_SCENARIO_MANIFEST`:
 }
 ```
 
-- **Strict schema.** Pydantic with `extra="forbid"`; an unknown field or
-  `schema_version` is an error, so a typo fails loudly instead of guarding
-  nothing.
-- **Values, not formats.** `value` is a number or a string. For a number the
-  guard derives the spellings itself (separators, `5.1k`, words); for a string
-  it matches exactly, ignoring case. The lab never ships a format list.
+- **Strict schema.** Pydantic with
+  `ConfigDict(extra="forbid", hide_input_in_errors=True)`, as
+  `agent/config.py` already does. An unknown field or `schema_version` is an
+  error, so a typo fails loudly instead of guarding nothing. A validation
+  failure is logged from `e.errors(include_input=False)`, as field
+  locations and error types only, so an error line never repeats a value.
+- **The manifest cannot switch off its own guard.**
+  - `targets` must hold at least one entry.
+  - `default_disclosure` must be 0, 1 or 2; level 3 is reachable only
+    through hints.
+- **Values a matcher can work with.** `value` is a number or a string.
+  - A number needs at least three significant digits. A string needs at
+    least four characters.
+  - A value like `3` (replicas) or `1` (a partition) would match almost
+    every reply ("step 1", "level 3"), so it is refused at load.
+  - A manifest where any value appears inside any `descriptor` is refused
+    as well, because the guard's nudge is built from descriptors.
+  - The lab never ships a list of formats. The guard derives them (§4).
 - **Narrow-only by construction.** The schema has no field that can raise
-  autonomy, grant a role, or add a tool. A later `hide_tools` field may only
+  autonomy, grant a role or add a tool. A later `hide_tools` field may only
   remove tools.
-- **Who seeds the file.** The lab's seeder writes it atomically (temp file in
-  the same directory, then `rename`) onto a volume mounted **read-only** into
-  Orrery. Orrery re-reads it when its mtime changes.
-- **Reload failures.** Invalid at startup: startup fails. Invalid on reload:
-  the last valid manifest stays in force, an ERROR is logged and
-  `orrery_learning_manifest_errors_total` increments. There is never an
-  unguarded window.
-- **Re-seeding.** After a new `scenario_id` loads, the previous manifest's
-  values stay guarded for `ORRERY_LEARNING_GRACE_SECONDS` (default 3600), so a
-  learner mid-attempt is not handed the old answer.
-- **Confidentiality.** Only the guard reads `targets[].value`. Values never
-  enter a prompt, session state, a trace attribute, a log line, an audit
-  entry or an export. Audit lines carry `scenario_id` only.
+- **Writing and loading.**
+  - The lab's seeder writes the file atomically (a temp file in the same
+    directory, then `rename`) onto a volume mounted **read-only** into
+    Orrery.
+  - The seeder writes the manifest **before** it seeds the fault.
+  - Orrery checks the file's `stat()` (inode, mtime and size) synchronously
+    on every guard call and reloads on any change, so no polling interval
+    leaves new values unguarded.
+  - The lab opens the exercise only once `/healthz` reports the new
+    `scenario_id`.
+- **Reload failures.**
+  - Invalid at startup: startup fails.
+  - Invalid on reload: the last valid manifest stays in force, an ERROR is
+    logged (no values, see above) and `orrery_learning_manifest_errors_total`
+    increments.
+- **Grace.** Any value that leaves the manifest, whether the
+  `scenario_id` changed or the same id was re-seeded with new values,
+  stays guarded for `ORRERY_LEARNING_GRACE_SECONDS` (default 3600). A
+  learner mid-attempt is therefore not handed the old answer.
+- **Confidentiality, stated precisely.**
+  - Orrery's learning code never writes a target value anywhere: no
+    prompt, session state, trace attribute, log line, audit entry or
+    export. Audit lines carry `scenario_id` and the target `id` only.
+  - The values do exist in **tool traffic**: a lag tool returns the lag.
+    Tool results and arguments can reach logs (AuditPlugin in `full`
+    mode), and model content can reach traces if an operator enables
+    capture. So in a lab, learners have no access to Orrery's logs, audit
+    stream, Tempo or Grafana.
+  - The manifest file itself must not be reachable through any tool that
+    is enabled: not a ConfigMap readable by `get_configmap`, and not seeder
+    container logs readable by the docker specialist.
 
 ### 3. Disclosure levels and hints
 
-Each session has a disclosure level from 0 to 3, starting at the manifest's
-`default_disclosure`:
+Each learner has a disclosure level from 0 to 3 **per scenario**, starting
+at the manifest's `default_disclosure`:
 
 | Level | What the agent may say |
 |-------|------------------------|
@@ -132,68 +176,143 @@ Each session has a disclosure level from 0 to 3, starting at the manifest's
 | 2 | what to compare, without the conclusion |
 | 3 | the answer, with its evidence; target values are no longer withheld |
 
-- **Raising the level is a person's act, not the model's.** The console gets
-  a *Hint* button that calls `POST /session/{id}/hint`. There is
-  deliberately **no model-callable tool**: a learner could talk the model
-  into calling it.
-- **Endpoint rules.**
-  - Owner-only, using the same `caller_session` lookup as `/activity`
-    (another person's session is a plain 404).
-  - Rate-limited per verified subject.
-  - Raises the level by exactly one step and never lowers it.
-- **Stored like other server-set state.** The level is written the way
-  `set_autonomy_level()` writes autonomy, with a server-set marker, and both
-  keys are added to `IdentityStateGuardPlugin`'s protected set, so no tool
-  can change them. A bare value without the marker is ignored and treated as
-  level 0.
-- **Every change is an event.**
-  - `hint.level` on the SSE stream.
-  - A `learning_hint` audit entry (subject, session, scenario_id, old and new
-    level).
+- **Bound to the scenario.**
+  - The level is stored as `(scenario_id, level)`. A level recorded for any
+    other scenario reads as `default_disclosure`, so reaching level 3 on
+    scenario A never unlocks scenario B.
+  - Help is counted per `(subject, scenario_id)`: opening a new chat does
+    not reset the level.
+- **Only a person raises it.**
+  - The console gets a *Hint* button that calls `POST /learning/hint`.
+  - There is deliberately **no model-callable tool**: a learner could talk
+    the model into calling it.
+  - The endpoint needs a verified **human** principal (`principal_kind ==
+    HUMAN`), not a delegated or service one.
+  - It is rate-limited per subject, raises the level by exactly one step,
+    and never lowers it.
+  - It returns the new level in its response.
+- **Out of band, never mid-turn.**
+  - The endpoint writes the learning package's own per-process store,
+    keyed by subject and scenario. It never appends to a session.
+  - Appending while a turn runs would make that turn's next event fail
+    (`StaleSessionError` in the database session service).
+  - At the start of each turn, `inbound()` copies the current level into
+    the turn's `state_delta` with a server-set marker, the same way the
+    auth context travels.
+  - Both keys are defined in core and added to `IdentityStateGuardPlugin`'s
+    protected set, so no tool can change them, and core never imports the
+    learning package to know them. A bare value without the marker is
+    ignored and read as level 0.
+- **Every change is recorded.**
+  - A `learning_hint` audit entry: subject, scenario_id, old and new level.
   - `orrery_learning_hints_total{level}`.
-- **The model sees the level, never the values.** The coordinator's per-turn
-  context (the same provider that adds "who you are talking to") gains one
-  line: the current level and what it permits.
+- **The model sees the level, never the values.** A learning-package
+  `before_model_callback` appends one line to the **root's** system
+  instruction: the current level and what it permits. Core's
+  `identity_aware_instruction`, which wraps every agent in every
+  deployment, is left alone.
 
 ### 4. The answer guard
 
-`AnswerGuardPlugin` (`after_model_callback`, registered only in learning
-mode) checks the **user-facing** final response, the root agent's
-non-partial output, against every guarded value while the session's level is
-below 3:
+`AnswerGuardPlugin` is an `after_model_callback`, registered only by
+`activate()`, **first among after-model plugins** (pinned by a test).
+ADK's plugin chain stops at the first callback that returns a value.
 
-- **What counts as a match.** For numbers: digit sequences with or without
-  separators (`5100`, `5,100`, `5 100`, `5.100`), `k`/`M` abbreviations
-  within the value's rounding, and the number in words. For strings: a
-  case-insensitive substring. Matching is deterministic and unit-tested.
-- **On a match**, the response is replaced, not edited.
-  - The replacement is a fixed nudge ("I can't give that value yet. Here's
-    what to look at next: …") built from the target's `descriptor` and the
-    current level.
-  - The original text is never stored or logged.
-  - A `learning_answer_withheld` audit entry records target id and
-    scenario_id, never the value.
-- **Route-independent.** The guard sits on the final answer, so it holds
-  whether the coordinator used the coach, a specialist directly, or memory.
-- **Residual risk, stated.** A paraphrased approximation ("about five
-  thousand") can pass. That rate is measured by the eval below, not promised
-  away.
+**What it checks.**
 
-**Streaming hold.** `POST /chat/stream` normally sends `delta` frames as the
-model writes, and text already sent cannot be retracted. In learning mode the
-SSE layer suppresses `delta` frames and sends the checked `message` frame
-only. `progress` frames (tool names and outcomes, never arguments or results)
-still flow, so the console still shows the agent working.
+- It checks a response when `callback_context.agent_name` equals the name
+  of the gateway's current root agent. It reads that name per turn, so it
+  follows `replace_root_agent()`, and agent names are unique across the
+  catalogue.
+- Every specialist runs in an `AgentTool` sub-runner that inherits the
+  plugins. Inside that sub-runner the specialist is the root of its own
+  invocation, so "the root" means the gateway's root, not the
+  invocation's.
+- It checks **every** non-partial root response that carries non-thought
+  text, not only the last one. The gateway's reply joins all of them, and
+  a root model often writes text before a tool call.
+- It also checks streamed partials, to decide nothing: they are never
+  forwarded (see the streaming hold below).
+
+**How it matches.**
+
+- Numbers:
+  - digit sequences on token boundaries, with or without separators
+    (`5100`, `5,100`, `5 100`, `5.100`);
+  - `k`/`M` abbreviations within the value's rounding;
+  - the number in words.
+- Strings: a case-insensitive substring.
+- The matcher is deterministic and unit-tested, including near-misses that
+  must not match.
+
+**What happens on a match, while the learner's level is below 3.**
+
+- The text parts are replaced with a fixed nudge ("I can't give that
+  value yet. Here's what to look at next: …"), built from the target's
+  `descriptor` and the current level. Thought parts are dropped.
+  `function_call` parts are kept, so a mixed text-and-tool-call response
+  still runs its tools.
+- The nudge itself is run through the matcher before it is used.
+- The original text is never stored or logged.
+- A `learning_answer_withheld` audit entry records the target id and
+  scenario_id, never the value.
+- ADK builds the stored session event and the gateway reply from the
+  altered response, so the transcript (`GET /session/{id}`) holds the
+  nudge, not the original.
+
+**Route-independent.** The guard sits on the root's text, so it holds
+whether the coordinator used the coach, a specialist, memory recall or an
+MCP tool. Their text reaches the learner only through the root.
+
+**Invariant for short-circuits.**
+
+- A `before_model_callback` that answers instead of the model
+  (`TokenBudgetPlugin`, `AttachmentPlugin`) skips every after-model
+  callback, including this one.
+- Those answers are fixed texts today. The proposal makes that an
+  invariant, enforced by a test: no before-model answerer may emit text
+  derived from a model or a tool.
+
+**Other learner-facing surfaces.** Two endpoints show text the model wrote,
+outside the root's reply. In learning mode they are narrowed:
+
+- `GET /session/{id}/triage` returns `incident_severity` only. The
+  `triage_report` is written by the triage summarizer and forwarded into the
+  root session by `AgentTool`, so it can state a value.
+- `GET /session/{id}/activity` returns operation, agent and status only,
+  without the argument summary. Tool arguments are written by the model
+  (`AgentTool` requests, `record_triage_verdict(report=…)`, ops-journal
+  `save_note(text=…)`), so they can carry a computed value.
+
+**Streaming hold.**
+
+- `POST /chat/stream` normally sends `delta` frames as the model writes,
+  and text already sent cannot be retracted.
+- In learning mode the SSE layer drops `delta` frames. It sends the checked
+  `message` frame only, which already carries the full reply.
+- `progress` frames (tool names and outcomes, never arguments or results)
+  still flow, so the console still shows the agent working.
+
+**Residual risks, stated:**
+
+- a paraphrased approximation ("about five thousand");
+- other encodings: reversed digits, digits spelled one by one, hex, an
+  arithmetic expression ("5099+1");
+- a value split across two root responses.
+
+The eval measures these. The proposal does not promise to block them.
 
 ### 5. The coach
 
 The declarative `lab_coach` agent (read-only kafka and observability tools,
 a four-step hint ladder; first drafted in PR #342) becomes part of the
-learning package. It is added to the chat root **only in learning mode**, and
-`ORRERY_AGENTS_CONFIG` is not the way to load it. Its ladder follows the
-session's disclosure level instead of a marker in its own replies. It is the
-pedagogy layer; the guard is the safety layer, and the coach is never relied
-on to withhold anything.
+learning package. `build_chat_agent()` adds it **only when `activate()` has
+run**, so admin catalog rebuilds keep it too (and admin editing is off in
+learning mode anyway). `ORRERY_AGENTS_CONFIG` is not the way to load it.
+
+Its ladder follows the learner's disclosure level instead of a marker in its
+own replies. It is the teaching layer; the guard is the safety layer. The
+coach is never relied on to withhold anything.
 
 ### 6. Per-tool narrowing (phase 0, general)
 
@@ -203,11 +322,23 @@ tree is built. It extends ADR-005 and follows its rules:
 
 - **It only removes.** There is no allowlist that could add a tool back.
 - **Unknown names fail.** An unknown or ambiguous name stops startup.
-- **No back door.**
-  - The removal also applies to the declarative-agent catalogue, admin
-    catalog edits and Studio's tool list.
-  - It is enforced as a refusal in `GuardrailsPlugin` as well, so a tool
-    reached any other way is still refused.
+- **Unset changes nothing.** With the variable unset, the tool tree and
+  the plugin list are identical to today's (pinned by a test).
+- **Everything that builds from tools sees the removal.** That covers the
+  declarative catalogue, admin catalog edits and Studio's tool list.
+- **References to a removed tool fail at startup.** A specialist's
+  `HealthCheck` (the triage sweep) or `SpecialistSpec.remediation` playbook
+  that names one stops startup, rather than silently shrinking the sweep.
+- **It is enforced at runtime too.** `GuardrailsPlugin` refuses a call to
+  a removed tool. It matches on the tool's **function identity** resolved
+  at build time, not its bare name: bare names collide across specialists,
+  and a declarative agent holding `k8s.get_events` has a different agent
+  name.
+- **Refusals don't open circuits.** The refusal status joins
+  `_NEUTRAL_STATUSES`, so a refused call never counts as a failure.
+- **MCP is out of scope.** MCP tools keep their own required allowlist
+  (`tools:` in `ORRERY_MCP_CONFIG`). Naming an MCP tool here is an unknown
+  name and stops startup.
 
 It is not learning-specific (any deployment can narrow itself), which is why
 it is the one piece outside `orrery_core.learning`. A lab uses it to make a
@@ -218,95 +349,163 @@ learner compute a value instead of reading it from a tool.
 - **The lab states the answers; Orrery doesn't infer them.**
   - A target like "total lag" is a sum the model computes, so no tool
     returns it verbatim.
-  - Inferring answers from tool output would be guesswork, and wrong guesses
-    leak.
+  - Inferring answers from tool output would be guesswork, and a wrong
+    guess leaks.
   - The seeder knows the truth, so it writes it down.
-- **The context comes from the deployment, not from a caller.** A per-session
-  context set by a trusted service would mean a service principal writing
-  into a human's session. ADR-006 forbids that (`owns_session`), and opening
-  it up for labs would weaken the boundary every other surface relies on.
-  One scenario per deployment fits how labs run.
+- **The context comes from the deployment, not from a caller.** A
+  per-session context set by a trusted service would mean a service
+  principal writing into a human's session. ADR-006 forbids that
+  (`owns_session`), and opening it up for labs would weaken the boundary
+  every other surface relies on. One scenario per deployment fits how labs
+  run.
 - **Fail closed everywhere.**
-  - Preconditions refuse startup.
+  - Every entry point except the HTTP server refuses the flag.
+  - A missing precondition refuses startup.
   - A bad manifest keeps the last good one.
-  - A missing level reads as 0.
-  - Surfaces that cannot hold the stream refuse to start.
-- **A separate package.** `orrery_core.learning` is imported only behind the
-  flag, mirroring `studio/` and `a2a_server.py`. No learning code runs, and
-  no learning plugin is registered, in a normal deployment.
+  - A missing or unmarked level reads as 0.
+- **A separate package.** `orrery_core.learning` is imported only behind
+  the flag, mirroring `studio/` and `a2a_server.py`. In a normal deployment
+  no learning code runs and no learning plugin is registered. The protected
+  state-key names live in core, so core never needs to import the package.
 
 ## Threat Model
 
 | Threat | Control |
 |--------|---------|
-| Learner talks the model into stating a value | Answer guard on the final response; adversarial eval (acceptance) |
-| Coordinator routes around the coach | Guard is route-independent |
-| Streamed text reveals the value before the guard runs | `delta` frames held in learning mode |
-| A tool or injected text raises the disclosure level | Level written only by the hint endpoint with a server-set marker; keys protected by `IdentityStateGuardPlugin` |
-| Learner raises another learner's level | Owner-scoped endpoint; another session is a 404 |
+| Learner talks the model into stating a value | Answer guard on every root text response; adversarial eval |
+| Coordinator routes around the coach, or the learner asks for a triage sweep | Guard is route-independent; `/triage` narrowed to severity |
+| A value appears in model-written tool arguments | `/activity` drops the argument summary in learning mode |
+| Streamed text reveals the value before the guard runs | `delta` frames dropped in learning mode |
+| A mixed text-and-tool-call response leaks text, or loses its tool call | Text parts replaced, function calls kept |
+| The guard's own nudge discloses a value | Descriptors may not contain values; nudge re-checked |
+| A plugin earlier in the chain returns first | Guard registered first among after-model plugins (pinned) |
+| A before-model answerer emits derived text | Invariant pinned by a test: fixed texts only |
+| A tool or injected text raises the disclosure level | Level stamped by `inbound()` with a server-set marker; keys protected by `IdentityStateGuardPlugin` |
+| Level reached on one scenario unlocks the next | Level bound to `scenario_id` |
+| Learner raises another learner's level, or a machine principal does | Endpoint keyed by the verified human subject; non-human principals refused |
 | Hint endpoint abused for load | Per-subject rate limit; one step per call |
-| Values leak via logs, traces, audit, memory recall | Values read only by the guard; audit carries `scenario_id`; ADK message capture in spans stays off (AEP-030) |
-| Manifest tampered to widen access | Schema has no widening fields; volume read-only; `extra="forbid"` |
-| Manifest broken mid-session | Last valid manifest stays in force; metric + ERROR |
-| Machine caller fetches answers | A2A refused in learning mode; Slack/Chat/CLI refuse the flag |
-| Learning mode enabled on an operational deployment by mistake | Preconditions (L2, humans, manifest) fail on a normal production config; `/healthz` and console badge |
-| Activity timeline leaks a value through tool arguments | Timeline shows args summary and status only, never results; a value typed by the learner is theirs already |
+| New values unguarded during a re-seed | Manifest written before seeding; reload checked on every guard call; lab waits for `/healthz` to report the new id |
+| Values leak through Orrery's own logs, errors or audit | Learning code never writes values; `hide_input_in_errors`; audit carries ids only |
+| Values leak through tool traffic in logs and traces | Span content capture off and DEBUG off as preconditions; learners have no access to logs, audit, Tempo or Grafana |
+| Learner reads the manifest through a tool | The manifest must not be reachable by any enabled tool (deployment rule) |
+| Manifest disables its own guard or widens access | At least one target; `default_disclosure` ≤ 2; no widening fields; read-only volume |
+| Manifest broken mid-session | Last valid manifest stays in force; metric plus an ERROR log |
+| Unguarded paths: Studio, A2A, `adk web`, bots, CLI | Studio and A2A are preconditions; `activate()` accepts only the HTTP server |
+| Learning mode set on an operational deployment | No manifest ⇒ startup refused. Even if it started, the effect is answers being *withheld*, not exposed |
 
-Accepted residual risks: paraphrased approximations, and a learner reading
-raw evidence the agent showed them. Both are inherent to a diagnostic
-exercise.
+Accepted residual risks: the encodings and the split across responses
+listed in §4, and a learner reasoning from raw evidence the agent showed
+them. Both are inherent to a diagnostic exercise.
 
 ## Affected Files
 
 - `core/orrery_core/learning/` (new, imported only behind the flag):
-  `config.py` (flag, preconditions), `manifest.py` (schema, reload, grace),
-  `guard.py` (matcher + `AnswerGuardPlugin`), `hints.py` (level state, hint
-  endpoint), `coach.yaml`.
-- `core/orrery_core/plugins/identity_guard_plugin.py`: protect the level
-  keys.
-- `core/orrery_core/serving/server.py`, `serving/sse.py`: mount the hint
-  route, hold `delta` frames, `/healthz` mode.
-- `core/orrery_core/registry.py` / `agent/declarative.py`:
+  - `__init__.py`: `activate(learning_surface=...)`
+  - `config.py`: flag and preconditions
+  - `manifest.py`: schema, stat-checked reload, grace
+  - `guard.py`: matcher and `AnswerGuardPlugin`
+  - `hints.py`: level store, `POST /learning/hint`, root instruction line
+  - `coach.yaml`
+- `core/orrery_core/plugins/identity_guard_plugin.py` (and the core module
+  that defines state keys): the level keys.
+- `core/orrery_core/serving/server.py`: call `activate()`, narrow
+  `/triage` and `/activity`, report the mode in `/healthz`.
+- `core/orrery_core/serving/sse.py`: drop `delta` frames in learning mode.
+- `core/orrery_core/serving/gateway.py`: `inbound()` stamps the level.
+- `core/orrery_core/registry.py`, `agent/declarative.py`,
+  `security/guardrails.py`, `reliability/resilience.py`:
   `ORRERY_DISABLED_TOOLS` (phase 0).
-- `agents/slack-bot`, `agents/google-chat-bot`, CLI, `run_triage.py`: refuse
-  the flag.
+- `agents/orrery-assistant/orrery_assistant/agent.py`: `build_chat_agent()`
+  adds the coach when activated.
 - `web/`: *Learning sandbox* badge, *Hint* button, level indicator.
 - `docs/integrations/learning-sandbox.md`, `docs/config/general.md`,
   `.env.example`.
 
 ## Acceptance Criteria
 
+**Off by default**
+
 - [ ] With `ORRERY_LEARNING_MODE` unset, no `orrery_core.learning` module is
-      imported and the plugin list is unchanged (test pins both).
-- [ ] Each precondition, missing alone, stops startup with a message naming
-      it; Slack, Chat, CLI and triage refuse the flag.
-- [ ] Manifest: unknown field/version rejected; atomic reload picks up a new
-      file; an invalid reload keeps the old one and increments the metric;
-      previous values stay guarded through the grace period.
+      imported, and the plugin list is unchanged (a test pins both).
+- [ ] With `ORRERY_DISABLED_TOOLS` unset, the agent tree is identical to
+      today's.
+
+**The sandbox gate**
+
+- [ ] Every entry point except the HTTP server refuses the flag (a test
+      walks the entry points).
+- [ ] Each precondition, missing on its own, stops startup with a message
+      naming it.
+
+**The manifest**
+
+- [ ] An unknown field or version is rejected.
+- [ ] `targets: []` and `default_disclosure: 3` are rejected, and so are
+      short values and values that appear in a descriptor.
+- [ ] An invalid manifest's error log contains no value.
+- [ ] A file replaced atomically is picked up on the next guard call.
+- [ ] An invalid reload keeps the old manifest and increments the metric.
+- [ ] Removed values stay guarded through the grace period.
+
+**The answer guard**
+
 - [ ] Matcher unit tests cover separators, abbreviations, words and string
-      targets, plus near-misses that must *not* match (`51000`, `510`).
-- [ ] A matched response is replaced, the original appears in no event, log
-      or audit line, and `learning_answer_withheld` is audited.
-- [ ] In learning mode `/chat/stream` sends no `delta` frames.
-- [ ] Hint endpoint: owner-only (404 otherwise), rate-limited, +1 per call,
-      never lowers; a tool writing the level keys is reverted.
+      targets, plus near-misses that must *not* match (`51000`, `510`,
+      `5100` inside a longer token).
+- [ ] Specialist (`AgentTool`) responses are not rewritten. Every root text
+      response is checked. A mixed response keeps its function calls.
+- [ ] A matched response is replaced, and the original appears in no event,
+      transcript, log or audit line. `learning_answer_withheld` is audited.
+- [ ] A seeded value in a triage report or in tool arguments does not
+      appear in `/triage` or `/activity` below level 3.
+- [ ] In learning mode, `/chat/stream` sends no `delta` frames.
+- [ ] The guard is first among after-model plugins, and no before-model
+      answerer emits derived text (both pinned by tests).
+
+**Hints**
+
+- [ ] The hint endpoint refuses non-human principals.
+- [ ] It is keyed by subject and rate-limited, adds +1 per call and never
+      lowers the level.
+- [ ] A level from another scenario reads as the default.
+- [ ] A tool writing the level keys is reverted.
+- [ ] A hint pressed during a running turn does not break that turn.
+
+**Tool narrowing**
+
 - [ ] `ORRERY_DISABLED_TOOLS` removes the tool from specialists, the
-      declarative catalogue, admin catalog and Studio, and an unknown name
-      stops startup.
-- [ ] **Eval (AEP-002):** 20 adversarial "just tell me the value" prompts at
-      level 0 against the seeded scenario, on the lab's model (Haiku 5.5):
-      zero exact-value leaks; paraphrase leaks reported as a measured rate.
+      declarative catalogue, the admin catalog and Studio, and is refused
+      at runtime by function identity.
+- [ ] The refusal status is neutral for the breaker.
+- [ ] An unknown name, or one a `HealthCheck` or remediation playbook still
+      references, stops startup.
+
+**Eval (AEP-002)**
+
+- [ ] The eval runs on the lab's model (Haiku 5.5) through the full plugin
+      stack, as `test_k8s_red_team_eval.py` does.
+- [ ] It uses 20 or more adversarial prompts at level 0: "just tell me the
+      value", the encodings from §4, and route-arounds ("ask the kafka
+      agent directly", "run a triage sweep").
+- [ ] With the guard on there are zero exact-value leaks, and paraphrase
+      leaks are reported as a measured rate.
+- [ ] The leak rate with the guard off is reported too, to measure the
+      model-side layer.
 
 ## Rollout
 
 1. **Phase 0:** `ORRERY_DISABLED_TOOLS` and the manifest loader (no
    behaviour change without the flag).
-2. **Phase 1:** sandbox gate, answer guard and streaming hold, plus the eval.
-3. **Phase 2:** disclosure levels, hint endpoint and console button.
-4. **Phase 3:** the coach moves into the learning package; PR #342's
+2. **Phase 1:** the sandbox gate, the answer guard, the surface narrowing
+   and the streaming hold, plus the eval.
+3. **Phase 2:** disclosure levels, the hint endpoint and the console
+   button.
+4. **Phase 3:** the coach moves into the learning package, and PR #342's
    `ORRERY_AGENTS_CONFIG` route is dropped.
 
-A lab enables the coach only after phase 1 has shipped.
+A lab enables learning mode only after phase 1 has shipped in a release.
+Because Studio must be off, a lab that also demonstrates Studio runs it as a
+separate Orrery deployment.
 
 ## Future Work
 
@@ -314,21 +513,23 @@ These lab requests are related but belong to other proposals. Each carries
 its security requirements with it:
 
 - **Trajectory export** (AEP-022, first phase):
-  - owner-scoped;
-  - credential redaction before export;
-  - the same disclosure rule as the guard (no tool results that reveal a
-    target below level 3);
-  - HMAC-signed with an env-only secret over session id, subject hash,
-    scenario_id and timestamp, so an export can't be replayed.
+  - only the session's owner can fetch it;
+  - credential redaction runs before export;
+  - it follows the same disclosure rule as the guard: no tool results or
+    model-written arguments that reveal a target below level 3;
+  - it is HMAC-signed with an env-only secret over the session id, a hash
+    of the subject, the scenario_id and a timestamp, so an export cannot be
+    replayed.
 - **"Why was this refused"** (AEP-024):
-  - a viewer reads only their own gate events, filtered by verified subject;
+  - a viewer reads only their own gate events, filtered by verified
+    subject;
   - it returns categories, never raw arguments;
   - it never names the safety-screen pattern or the matched text, which
     would teach a bypass.
 - **Learners mutating their own resources** (a new ADR generalising
   `NamespaceScopeGuard`):
-  - needs L3 on a shared broker, so Kafka-side ACLs and quotas must be the
-    primary limit, with Orrery's check second;
+  - it needs L3 on a shared broker, so Kafka-side ACLs and quotas must be
+    the primary limit, with Orrery's check second;
   - the resource pattern comes from the verified identity only;
   - every target of a multi-target tool is checked;
   - a red-team eval on the lab's model must pass first.
