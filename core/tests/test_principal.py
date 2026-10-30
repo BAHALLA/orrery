@@ -79,6 +79,36 @@ def test_a_bad_ceiling_fails_startup(monkeypatch):
         PrincipalPolicy.from_env()
 
 
+@pytest.mark.parametrize(
+    ("claims", "admitted"),
+    [
+        ({"azp": "console"}, True),
+        ({"client_id": "ci"}, True),
+        ({"azp": "partner", "act": {"sub": "agent-x"}}, False),  # the agent's client is unlisted
+        ({"azp": "stranger"}, False),
+        ({}, False),
+    ],
+)
+def test_reject_unlisted_admits_listed_clients_only(claims, admitted):
+    policy = PrincipalPolicy(
+        human_clients=frozenset({"console"}),
+        service_ceilings={"ci": "viewer"},
+        reject_unlisted=True,
+    )
+    assert policy.admits(claims) is admitted
+    # Off (the default), every verified token is admitted, to be classified.
+    assert PrincipalPolicy(human_clients=frozenset({"console"})).admits(claims)
+
+
+def test_reject_unlisted_from_env(monkeypatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "console")
+    monkeypatch.setenv("ORRERY_REJECT_UNLISTED_CLIENTS", "true")
+    assert PrincipalPolicy.from_env().reject_unlisted
+    monkeypatch.setenv("ORRERY_REJECT_UNLISTED_CLIENTS", "yes please")
+    with pytest.raises(ValueError):
+        PrincipalPolicy.from_env()
+
+
 def test_as_principal_records_the_acting_agent():
     ctx = as_principal(
         AuthContext("alice", "operator", {"azp": "p", "act": {"sub": "bot"}}), STRICT
