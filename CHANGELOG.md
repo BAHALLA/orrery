@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Learning sandbox mode** (AEP-032 phase 1), off by default:
+  `ORRERY_LEARNING_MODE=true` with `ORRERY_SCENARIO_MANIFEST` makes the HTTP
+  server withhold an exercise's answers. `AnswerGuardPlugin` checks every
+  final text response of the coordinator against the manifest's targets
+  (digits with or without one consistent separator and with trailing zero
+  decimals, `k`/`thousand`/`M` roundings, English words, strings) and
+  replaces a match with a nudge in place, keeping tool calls; the stored
+  transcript holds the nudge, and `learning_answer_withheld` audits the
+  target id only. `/chat/stream` sends no `delta` frames, `/session/{id}/triage`
+  returns the severity only, `/session/{id}/activity` drops the argument
+  summary, and `/healthz` reports `mode` and `scenario_id`. Startup is refused
+  unless auth, `ORRERY_HUMAN_CLIENTS` and L2 are set and A2A, Studio, admin
+  editing, multi-replica, several workers, span content capture and DEBUG
+  logging and message-content capture in traces are off, checked again once
+  the agent tree is built. Every other entry point (the bots, the CLI, `adk web`,
+  the batch triage, a specialist on its own) refuses the flag.
 - **`ORRERY_DISABLED_TOOLS`** (AEP-032 phase 0): take single tools out of
   running specialists by qualified name (`observability.get_alert_groups`).
   The specialist's agent is cloned without the tool before anything is built

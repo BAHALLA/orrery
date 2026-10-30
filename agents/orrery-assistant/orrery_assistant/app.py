@@ -1,3 +1,18 @@
+"""The HTTP front door: FastAPI + the web console, serving the chat root.
+
+The only entry point that may run the learning sandbox (AEP-032), so its first
+statement activates it, before any import below builds an agent.
+"""
+
+# ruff: noqa: E402
+# The imports after activation build the agent tree, so they must follow it.
+from orrery_core import learning_gate, load_agent_env
+
+# The flag may live in .env, which agent.py would otherwise load only after
+# activation had already found it unset (and every builder then refuses it).
+load_agent_env(__file__)
+learning_gate.activate_http_server()
+
 from orrery_assistant.admin import ChatAgentAdmin
 from orrery_assistant.agent import _specialists, root_agent
 from orrery_assistant.probes import default_probes
