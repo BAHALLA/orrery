@@ -4,12 +4,12 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from typing import Any
 
 from orrery_core import confirm, destructive
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
-    validate_path,
     validate_positive_int,
     validate_string,
 )
@@ -212,34 +212,73 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
     }
 
 
-async def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
-    """Gets the status of services in a Docker Compose project.
+#: Compose project names: lowercase letters, digits, dashes and underscores,
+#: starting with a letter or digit (the rule ``docker compose -p`` enforces).
+_COMPOSE_PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]*")
+
+_PROJECT_LABEL = "com.docker.compose.project"
+#: One JSON object per container, built by the CLI's own template: the compose
+#: labels are read by key, since the ``Labels`` column joins them with commas
+#: that config-file paths may contain too.
+_COMPOSE_PS_FORMAT = (
+    '{"project":{{json (.Label "com.docker.compose.project")}},'
+    '"service":{{json (.Label "com.docker.compose.service")}},'
+    '"name":{{json .Names}},"state":{{json .State}},'
+    '"status":{{json .Status}},"image":{{json .Image}}}'
+)
+
+
+async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
+    """Gets the status of Docker Compose projects or of one project's services.
+
+    Reads the compose labels the daemon keeps on each container, so it needs no
+    compose file (and no compose plugin) and works against a remote
+    ``DOCKER_HOST``. Stopped containers are included.
 
     Args:
-        project_dir: Path to the directory containing docker-compose.yml.
-                     If not provided, uses the current directory.
+        project: Compose project name. If omitted, lists every project with a
+                 count of its containers by state.
 
     Returns:
-        A dictionary with the status of all compose services.
+        A dictionary with the projects, or with every container of *project*.
     """
-    if project_dir and (err := validate_path(project_dir, "project_dir")):
-        return err
-
-    args = ["compose"]
-    if project_dir:
-        args.extend(["-f", f"{project_dir}/docker-compose.yml"])
-    args.extend(["ps", "--format", "json"])
-
-    ok, output = await _run_docker(args)
+    label = _PROJECT_LABEL
+    if project is not None:
+        if err := validate_string(project, "project", max_len=128, pattern=_COMPOSE_PROJECT):
+            return err
+        label = f"{_PROJECT_LABEL}={project}"
+    ok, output = await _run_docker(
+        ["ps", "--all", "--filter", f"label={label}", "--format", _COMPOSE_PS_FORMAT]
+    )
     if not ok:
         return {"status": "error", "message": output}
+    try:
+        rows = [json.loads(line) for line in output.splitlines() if line.strip()]
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "unexpected output from docker ps"}
+    rows = [r for r in rows if isinstance(r, dict)]
 
-    services = []
-    for line in output.splitlines():
-        if line.strip():
-            services.append(json.loads(line))
+    if project is not None:
+        if not rows:
+            return {"status": "error", "message": f"no containers for compose project {project!r}"}
+        services = [{k: v for k, v in r.items() if k != "project"} for r in rows]
+        return {
+            "status": "success",
+            "project": project,
+            "services": services,
+            "count": len(services),
+        }
 
-    return {"status": "success", "services": services, "count": len(services)}
+    projects: dict[str, dict[str, int]] = {}
+    for row in rows:
+        states = projects.setdefault(str(row.get("project", "")), {})
+        state = str(row.get("state", "unknown"))
+        states[state] = states.get(state, 0) + 1
+    listed = [
+        {"name": name, "containers": sum(states.values()), "states": states}
+        for name, states in sorted(projects.items())
+    ]
+    return {"status": "success", "projects": listed, "count": len(listed)}
 
 
 @confirm("stops a running container")

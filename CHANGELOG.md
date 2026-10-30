@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`docker_compose_status` works in the image.** It ran `docker compose`,
+  which the image does not ship (it failed as "unknown flag: --format"), with
+  a hardcoded `docker-compose.yml` path on the agent's own filesystem. It now
+  reads the compose labels the daemon keeps on each container through the
+  plain CLI (`docker ps --all --filter label=com.docker.compose.project…`):
+  no argument lists every project with its containers by state,
+  `project=NAME` lists that project's containers, stopped ones included, and
+  an unknown project is an error. No compose file or plugin is needed, so it
+  works against a remote `DOCKER_HOST`. The `project_dir` argument is gone.
 - **`get_container_logs` includes the container's stderr.** `docker logs`
   replays a container's stderr on its own stderr, and the tool read stdout
   only, so a service that logs only to stderr (nginx's error log, Prometheus,

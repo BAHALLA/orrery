@@ -10,7 +10,7 @@ A single agent with tools for monitoring and managing Docker containers and imag
 | `inspect_container` | Detailed info: state, image, ports, env, and health | — |
 | `get_container_logs` | Tail container logs with optional tail and since filters | — |
 | `get_container_stats` | Resource usage: CPU, memory, network, and block IO | — |
-| `docker_compose_status`| Status of services in a Docker Compose project | — |
+| `docker_compose_status`| Compose projects, or one project's containers, from the daemon's compose labels (no compose file or plugin needed) | — |
 | `list_images` | List available Docker images on the host | — |
 | `list_networks` | List Docker networks | — |
 | `inspect_network` | Driver, subnets and attached containers | — |

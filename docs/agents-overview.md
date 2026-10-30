@@ -199,7 +199,7 @@ Container inspection and lifecycle via the Docker CLI (subprocess). No Docker SD
 |------|------|-------------|
 | `list_containers`, `inspect_container` | viewer | State + config (env vars redacted) |
 | `get_container_logs`, `get_container_stats` | viewer | Runtime diagnostics |
-| `docker_compose_status` | viewer | `docker compose ps` parsing |
+| `docker_compose_status` | viewer | Compose projects, or one project's containers, from the daemon's compose labels (`docker ps --filter label=…`); no compose file or plugin needed |
 | `list_images` | viewer | Local image inventory |
 | `list_networks`, `inspect_network` | viewer | Driver, subnets, and which containers are attached |
 | `list_volumes`, `inspect_volume` | viewer | Driver, mountpoint, labels |
