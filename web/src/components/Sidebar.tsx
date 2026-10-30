@@ -237,7 +237,9 @@ export const Sidebar = memo(function Sidebar({
               ) : null}
             </button>
           ) : null}
-          {me?.role === "admin" ? (
+          {/* Only where the server mounts it and lets this caller in: a feature
+              the deployment switched off is not shown at all. */}
+          {me?.studio_available === true ? (
             <button
               type="button"
               aria-current={view === "studio" ? "page" : undefined}

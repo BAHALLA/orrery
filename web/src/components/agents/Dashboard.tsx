@@ -110,13 +110,7 @@ export function Dashboard({
         {!editable ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">
             Enable or disable agents with <code>ORRERY_SPECIALISTS</code> and add your own in{" "}
-            <code>ORRERY_AGENTS_CONFIG</code>
-            {catalog ? (
-              <>
-                , or set <code>ORRERY_ADMIN_EDITING=true</code> to edit them here
-              </>
-            ) : null}
-            .
+            <code>ORRERY_AGENTS_CONFIG</code>.
           </p>
         ) : null}
 

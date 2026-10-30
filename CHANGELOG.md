@@ -59,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The console no longer offers a Studio the server does not run.** Every
+  admin saw "Studio" in the navigation, and with `ORRERY_STUDIO_ENABLED`
+  off it opened a "not enabled here" page. The entry now follows `/me`'s
+  `studio_available` (mounted, and the caller a human admin), and a console
+  showing the Studio when it stops being available goes back to the chat.
+  The Agents page no longer suggests `ORRERY_ADMIN_EDITING` when editing is
+  off.
 - **`docker_compose_status` works in the image.** It ran `docker compose`,
   which the image does not ship (it failed as "unknown flag: --format"), with
   a hardcoded `docker-compose.yml` path on the agent's own filesystem. It now

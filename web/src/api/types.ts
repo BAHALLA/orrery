@@ -147,6 +147,12 @@ export interface MeResponse {
    * set. Display only — it never widens or narrows what the server allows.
    */
   specialists?: SpecialistInfo[] | null;
+  /**
+   * The Studio is mounted (`ORRERY_STUDIO_ENABLED`) and this caller may use it
+   * (a human admin). The console offers the Studio only when this is true; a
+   * server that predates the field never mounted one either.
+   */
+  studio_available?: boolean;
 }
 
 /** One enabled specialist, as `/me` lists it. */

@@ -53,7 +53,11 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const [navOpen, setNavOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useStoredFlag(storageKeys.navCollapsed);
   const toggleNavCollapsed = useCallback(() => setNavCollapsed((c) => !c), [setNavCollapsed]);
-  const [view, setView] = useState<ConsoleView>("chat");
+  const [requestedView, setView] = useState<ConsoleView>("chat");
+  // A Studio the server does not offer (switched off, or a role change) is
+  // never shown, whatever was asked for: the chat stands in for it.
+  const studioAvailable = system.me?.studio_available === true;
+  const view: ConsoleView = requestedView === "studio" && !studioAvailable ? "chat" : requestedView;
   // The Agents page mounts on first visit and then stays mounted (hidden), so
   // an unsaved catalog draft survives a trip back to the chat.
   const [agentsOpened, setAgentsOpened] = useState(false);
@@ -165,9 +169,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
     setView("agents");
   }, []);
   const onOpenStudio = useCallback(() => {
+    if (!studioAvailable) return;
     setStudioOpened(true);
     setView("studio");
-  }, []);
+  }, [studioAvailable]);
   // Deleting is held for a few seconds behind an Undo (the store delete is
   // permanent). The row hides at once; if it was the open conversation, a new
   // chat takes its place, and Undo brings it back.
