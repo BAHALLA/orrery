@@ -95,6 +95,8 @@ def test_parses_the_contract():
         (_doc(targets=[_target(id=f"lag_{SECRET}")]), "appears in a target id"),
         (_doc(targets=[_target(unit=str(SECRET))]), "appears in a unit"),
         (_doc(scenario_id=f"lag-{SECRET}"), "appears in a scenario_id"),
+        (_doc(scenario_id=f"v1.{SECRET}"), "appears in a scenario_id"),
+        (_doc(targets=[_target(id=f"lag.{SECRET}")]), "appears in a target id"),
         (_doc(scenario_id="bad id\nwith newline"), "scenario_id"),
         (_doc(targets=[_target(value=42)]), "at least 100"),
         (_doc(targets=[_target(value="abc")]), "at least 4 characters"),
@@ -131,6 +133,14 @@ def test_an_extra_key_is_not_echoed_in_the_error():
     with pytest.raises(ManifestError) as caught:
         parse_manifest(_raw(_doc(**{f"answer_{SECRET}": 1})))
     assert "<extra field>" in str(caught.value)
+    assert str(SECRET) not in str(caught.value)
+
+
+def test_a_failing_target_does_not_name_its_id():
+    # The id could hold another target's value, and this check runs first.
+    doc = _doc(targets=[_target(id=f"lag-{SECRET}", value=50), _target(id="b")])
+    with pytest.raises(ManifestError) as caught:
+        parse_manifest(_raw(doc))
     assert str(SECRET) not in str(caught.value)
 
 
@@ -234,13 +244,30 @@ def test_a_reload_with_an_odd_number_keeps_the_old_manifest(tmp_path):
 def test_a_young_file_is_fingerprinted_by_its_content(tmp_path):
     path = tmp_path / "manifest.json"
     _write(path, _doc())
-    first = manifest_module._fingerprint(path)
-    stat = path.stat()
+    mtime = path.stat().st_mtime_ns / 1e9
+    first = manifest_module._fingerprint(path, now=mtime)
     path.write_text(json.dumps(_doc(scenario_id="kafka-lag-0000")))
-    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
-    second = manifest_module._fingerprint(path)
+    second = manifest_module._fingerprint(path, now=mtime)
     assert first is not None and second is not None
-    assert first[-1] != second[-1]
+    assert first.digest is not None and first.digest != second.digest
+
+
+def test_a_file_that_ages_past_the_racy_window_is_not_reloaded(tmp_path):
+    path = tmp_path / "manifest.json"
+    _write(path, "{broken")
+    _write(path, _doc())
+    wall = _Clock()
+    wall.now = path.stat().st_mtime_ns / 1e9  # the file is young
+    store = ManifestStore(path, wall_clock=wall)
+    _write(path, "{broken")
+    wall.now = path.stat().st_mtime_ns / 1e9
+    before = _errors()
+
+    store.current()
+    wall.now += 10  # the broken file ages; its stat is unchanged
+    store.current()
+
+    assert _errors() == before + 1
 
 
 def test_values_from_a_previous_scenario_stay_guarded_through_the_grace(tmp_path):

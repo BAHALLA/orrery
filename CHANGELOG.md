@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`ORRERY_DISABLED_TOOLS`** (AEP-032 phase 0): take single tools out of
-  running specialists by qualified name (`kafka.describe_consumer_groups`).
+  running specialists by qualified name (`observability.get_alert_groups`).
   The specialist's agent is cloned without the tool before anything is built
   from it, so the coordinator, declarative agents, the admin catalog and the
   Studio never see it, and `GuardrailsPlugin` refuses a call to it by function

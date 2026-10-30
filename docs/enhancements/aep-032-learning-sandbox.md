@@ -364,7 +364,7 @@ coach is never relied on to withhold anything.
 ### 6. Per-tool narrowing (phase 0, general)
 
 `ORRERY_DISABLED_TOOLS` (comma-separated, qualified names like
-`kafka.describe_consumer_groups`) removes tools from their specialists before the
+`observability.get_alert_groups`) removes tools from their specialists before the
 tree is built. It extends ADR-005 and follows its rules:
 
 - **It only removes.** There is no allowlist that could add a tool back.

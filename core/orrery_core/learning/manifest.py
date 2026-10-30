@@ -83,6 +83,17 @@ def _mentions(text: str, value: int | float | str) -> bool:
     return re.search(rf"(?<![\d.]){re.escape(_number_text(value))}(?![\d]|\.\d)", text) is not None
 
 
+def _in_token(token: str, value: int | float | str) -> bool:
+    """Whether an id or unit carries *value*.
+
+    Stricter than :func:`_mentions`: ids allow dots, so ``v1.5100`` must count
+    as stating 5100, where in prose a dot before digits would be a decimal.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in token.lower()
+    return re.search(rf"(?<!\d){re.escape(_number_text(value))}(?!\d)", token) is not None
+
+
 class Target(BaseModel):
     """One answer the exercise asks for."""
 
@@ -98,13 +109,13 @@ class Target(BaseModel):
         if isinstance(self.value, str):
             if len(self.value.strip()) < MIN_STRING_CHARS:
                 raise ValueError(
-                    f"target {self.id!r}: a string value needs at least "
-                    f"{MIN_STRING_CHARS} characters"
+                    # No id in the message: it could hold another target's value,
+                    # and this check runs before the one that would catch that.
+                    f"a string value needs at least {MIN_STRING_CHARS} characters"
                 )
         elif not MIN_NUMBER <= abs(self.value) < MAX_NUMBER:
             raise ValueError(
-                f"target {self.id!r}: a number must be at least {MIN_NUMBER} and below "
-                f"2**53 in absolute value"
+                f"a number must be at least {MIN_NUMBER} and below 2**53 in absolute value"
             )
         return self
 
@@ -132,18 +143,19 @@ class ScenarioManifest(BaseModel):
             raise ValueError(f"duplicate target ids: {dupes}")
         # Every field the learner can see or a log line carries: the ids reach
         # audit lines and /healthz, the descriptors build the guard's nudge.
-        visible = [("scenario_id", self.scenario_id)]
+        tokens = [("scenario_id", self.scenario_id)]
         for t in self.targets:
-            visible += [("target id", t.id), ("descriptor", t.descriptor), ("unit", t.unit)]
+            tokens += [("target id", t.id), ("unit", t.unit)]
         for target in self.targets:
-            for field, text in visible:
-                if _mentions(text, target.value):
-                    # Says which kind of field, not which one: an id here could
-                    # itself be the value.
-                    raise ValueError(
-                        f"a target value appears in a {field}; ids, descriptors and "
-                        "units must not give an answer away"
-                    )
+            found = [f for f, text in tokens if _in_token(text, target.value)]
+            found += ["descriptor" for t in self.targets if _mentions(t.descriptor, target.value)]
+            if found:
+                # Says which kind of field, not which one: an id here could
+                # itself be the value.
+                raise ValueError(
+                    f"a target value appears in a {found[0]}; ids, descriptors and "
+                    "units must not give an answer away"
+                )
         return self
 
 
@@ -224,26 +236,41 @@ class GuardedValue:
 _RACY_SECONDS = 2.0
 
 
-def _fingerprint(path: Path) -> tuple[Any, ...] | None:
-    """What identifies this version of the file.
+@dataclass(frozen=True)
+class _Fingerprint:
+    """What identifies one version of the file.
 
     Device, inode, mtime, ctime and size catch an atomic rename in the usual
     case, but a filesystem may reuse a freed inode and timestamps are coarse,
-    so two seeds in quick succession can share all five. For a file that young
-    the content's hash is added, the way git treats racily clean files.
+    so two seeds in quick succession can share all five. While the file is
+    that young its content's hash is taken too, the way git treats racily
+    clean files.
     """
+
+    stat: tuple[int, ...]
+    digest: str | None = None
+
+    def differs_from(self, other: _Fingerprint | None) -> bool:
+        if other is None or self.stat != other.stat:
+            return True
+        # The hash decides only when both sides have one: a file that merely
+        # aged past the racy window (and so lost its hash) has not changed.
+        return self.digest is not None and other.digest is not None and self.digest != other.digest
+
+
+def _fingerprint(path: Path, now: float) -> _Fingerprint | None:
     try:
         st = path.stat()
     except OSError:
         return None
-    base: tuple[Any, ...] = (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
-    if time.time() - st.st_mtime_ns / 1e9 >= _RACY_SECONDS:
-        return base
+    base = (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+    if now - st.st_mtime_ns / 1e9 >= _RACY_SECONDS:
+        return _Fingerprint(base)
     try:
-        digest = hashlib.sha256(_read(path)).hexdigest()
+        digest: str | None = hashlib.sha256(_read(path)).hexdigest()
     except OSError, ManifestError:
         digest = None
-    return (*base, digest)
+    return _Fingerprint(base, digest)
 
 
 def _count_reload_error() -> None:
@@ -284,14 +311,16 @@ class ManifestStore:
         *,
         grace_seconds: float = DEFAULT_GRACE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         if grace_seconds < 0:
             raise ValueError("grace_seconds must not be negative")
         self._path = Path(path)
         self._grace = grace_seconds
         self._clock = clock
+        self._wall_clock = wall_clock
         self._lock = threading.Lock()
-        self._fingerprint = _fingerprint(self._path)
+        self._fingerprint = _fingerprint(self._path, wall_clock())
         self._manifest = load_manifest(self._path)
         # (target id, scenario id, value) -> (guarded value, expiry on the clock)
         self._retired: dict[tuple[str, str, object], tuple[GuardedValue, float]] = {}
@@ -329,8 +358,10 @@ class ManifestStore:
         ]
 
     def _refresh(self) -> None:
-        fingerprint = _fingerprint(self._path)
-        if fingerprint == self._fingerprint:
+        fingerprint = _fingerprint(self._path, self._wall_clock())
+        if fingerprint is None and self._fingerprint is None:
+            return  # still missing: already counted once
+        if fingerprint is not None and not fingerprint.differs_from(self._fingerprint):
             return
         self._fingerprint = fingerprint
         try:
