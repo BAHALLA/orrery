@@ -1,9 +1,10 @@
 """Unit tests for docker-agent tools.
 
-All subprocess calls are mocked — no real Docker needed.
+Subprocess calls are mocked, or run a fake ``docker`` script: no real Docker needed.
 """
 
 import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -200,6 +201,47 @@ async def test_get_container_logs_timeout(mock_run):
     result = await get_container_logs("stuck")
     assert result["status"] == "error"
     assert "timed out" in result["message"].lower()
+
+
+@pytest.fixture
+def fake_docker(tmp_path, monkeypatch):
+    """A ``docker`` on PATH that writes like ``docker logs``: both streams."""
+    script = tmp_path / "docker"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "out 1"\n'
+        'echo "err 1" >&2\n'
+        'echo "out 2"\n'
+        'if [ "$FAKE_DOCKER_FAIL" = 1 ]; then echo "No such container: x" >&2; exit 1; fi\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    return monkeypatch
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_includes_stderr(fake_docker):
+    result = await get_container_logs("web")
+
+    assert result["status"] == "success"
+    assert result["logs"].splitlines() == ["out 1", "err 1", "out 2"]
+    assert result["lines"] == 3
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_failure_reports_the_cli_message(fake_docker):
+    fake_docker.setenv("FAKE_DOCKER_FAIL", "1")
+    result = await get_container_logs("x")
+    assert result["status"] == "error"
+    assert "No such container: x" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_other_commands_still_read_stdout_only(fake_docker):
+    from docker_agent.tools import _run_docker
+
+    ok, output = await _run_docker(["ps"])
+    assert ok and output.splitlines() == ["out 1", "out 2"]
 
 
 # ── get_container_stats ───────────────────────────────────────────────

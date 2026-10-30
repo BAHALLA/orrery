@@ -36,19 +36,25 @@ def _redact_env_vars(env_list: list[str]) -> list[str]:
     return redacted
 
 
-async def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
-    """Run a docker CLI command asynchronously and return (success, output)."""
+async def _run_docker(
+    args: list[str], timeout: int = 15, *, merge_stderr: bool = False
+) -> tuple[bool, str]:
+    """Run a docker CLI command asynchronously and return (success, output).
+
+    With *merge_stderr*, both streams share one pipe, in the order they were
+    written, and the output is that pipe whether or not the command failed.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker",
             *args,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:
-            return False, stderr.decode().strip()
-        return True, stdout.decode().strip()
+            return False, (stderr or stdout).decode(errors="replace").strip()
+        return True, stdout.decode(errors="replace").strip()
     except FileNotFoundError:
         logger.exception("Docker CLI not found")
         return False, "Docker CLI not found. Is Docker installed?"
@@ -161,7 +167,10 @@ async def get_container_logs(
         args.extend(["--since", since])
     args.append(container_name)
 
-    ok, output = await _run_docker(args, timeout=10)
+    # `docker logs` replays the container's stderr on its own stderr, and many
+    # servers (nginx's error log, Prometheus, most Go and Java services) log
+    # only there: read both, interleaved as the CLI writes them.
+    ok, output = await _run_docker(args, timeout=10, merge_stderr=True)
     if not ok:
         return {"status": "error", "message": output}
 

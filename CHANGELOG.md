@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answers until the learner asks for hints. Off by default and refused at
   startup outside an authenticated L2 deployment with a scenario manifest.
 
+### Fixed
+
+- **`get_container_logs` includes the container's stderr.** `docker logs`
+  replays a container's stderr on its own stderr, and the tool read stdout
+  only, so a service that logs only to stderr (nginx's error log, Prometheus,
+  most Go and Java servers) showed no lines. Both streams are now read
+  through one pipe, interleaved as the CLI writes them.
+
 ## [0.13.0] - 2026-10-29
 
 **Console: room to work.** The navigation and the Studio's side panel fold
