@@ -35,6 +35,9 @@ def test_a_normal_process_never_imports_the_learning_package():
     env["OTEL_TRACING_ENABLED"] = "false"
     # Importing the HTTP app builds the server, which needs an auth setup.
     env["AUTH_ENABLED"] = "false"
+    # The Slack app validates its credentials at import; CI has no .env.
+    env.setdefault("SLACK_BOT_TOKEN", "xoxb-test")
+    env.setdefault("SLACK_SIGNING_SECRET", "test-signing-secret")
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
         capture_output=True,
