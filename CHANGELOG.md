@@ -15,9 +15,10 @@ and hides features its server does not run. Operators can describe the
 platform to the agent and mark auxiliary containers that triage reports
 without letting them change the verdict. Practice labs can run Orrery in a
 sandbox that withholds an exercise's answers (AEP-032 phases 0–1, off by
-default). The Docker specialist's compose status, logs and environment
-output now work as expected against a remote daemon, and a deployment can
-refuse tokens from clients it does not list.
+default). The Docker specialist's compose status now works against a remote
+daemon, its logs include stderr, and `inspect_container` redacts credentials
+in env values; a deployment can also refuse tokens from clients it does not
+list.
 
 ### Added
 
@@ -43,7 +44,8 @@ refuse tokens from clients it does not list.
   `ORRERY_SERVICE_CLIENTS` gets 401, the same answer as an invalid token, on
   the console API and A2A, instead of becoming a viewer service principal.
   Setting it without `ORRERY_HUMAN_CLIENTS` stops startup.
-- **Learning sandbox mode** ([AEP-032](docs/enhancements/aep-032-learning-sandbox.md) phase 1), off by default:
+- **Learning sandbox mode**
+  ([AEP-032](docs/enhancements/aep-032-learning-sandbox.md) phase 1), off by default:
   `ORRERY_LEARNING_MODE=true` with `ORRERY_SCENARIO_MANIFEST` makes the HTTP
   server withhold an exercise's answers. `AnswerGuardPlugin` checks every
   final text response of the coordinator against the manifest's targets
