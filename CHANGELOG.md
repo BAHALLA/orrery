@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose
+  client (`azp`, else `client_id`) is in neither `ORRERY_HUMAN_CLIENTS` nor
+  `ORRERY_SERVICE_CLIENTS` gets 401, the same answer as an invalid token, on
+  the console API and A2A, instead of becoming a viewer service principal.
+  Setting it without `ORRERY_HUMAN_CLIENTS` stops startup.
 - **Learning sandbox mode** (AEP-032 phase 1), off by default:
   `ORRERY_LEARNING_MODE=true` with `ORRERY_SCENARIO_MANIFEST` makes the HTTP
   server withhold an exercise's answers. `AnswerGuardPlugin` checks every

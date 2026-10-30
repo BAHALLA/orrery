@@ -209,3 +209,36 @@ def test_legacy_mode_keeps_every_token_without_act_a_person(monkeypatch):
         sid = _say(client, ALICE, "secret plan")["session_id"]
         assert sid in _listed(client, SERVICE)
         assert _say(client, SERVICE, "and?", sid)["session_id"] == sid
+
+
+# ── ORRERY_REJECT_UNLISTED_CLIENTS ───────────────────────────────────
+
+NO_CLIENT = _bearer({})
+
+
+def test_unlisted_clients_are_viewers_by_default(client):
+    # The default stays as it was: an unlisted client is a viewer service.
+    assert client.get("/me", headers=SERVICE).status_code == 200
+
+
+def test_reject_unlisted_refuses_a_client_in_neither_list(monkeypatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+    monkeypatch.setenv("ORRERY_SERVICE_CLIENTS", "partner=viewer")
+    monkeypatch.setenv("ORRERY_REJECT_UNLISTED_CLIENTS", "true")
+    with _make_client() as client:
+        for headers in (SERVICE, NO_CLIENT):
+            res = client.get("/me", headers=headers)
+            # The same answer as a bad token: nothing about the lists leaks.
+            assert res.status_code == 401
+            assert res.json() == {"detail": "Invalid token"}
+            assert client.post("/chat", headers=headers, json={"message": "hi"}).status_code == 401
+        assert client.get("/me", headers=ALICE).status_code == 200
+        # A delegated token's client is the agent's: listed, so admitted.
+        assert client.get("/me", headers=AGENT_X).status_code == 200
+
+
+def test_reject_unlisted_needs_the_human_list(monkeypatch):
+    monkeypatch.delenv("ORRERY_HUMAN_CLIENTS", raising=False)
+    monkeypatch.setenv("ORRERY_REJECT_UNLISTED_CLIENTS", "true")
+    with pytest.raises(ValueError, match="ORRERY_HUMAN_CLIENTS"):
+        _make_client()

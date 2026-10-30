@@ -50,6 +50,7 @@ The HTTP front door (`ServerConfig.from_env()`, `JWTConfig.from_env()`) reads:
 | `ORRERY_CSP_EXTRA_ORIGINS` | unset | Origins the console may connect to besides its own and `JWT_ISSUER`'s. |
 | `ORRERY_HUMAN_CLIENTS` | unset | Clients people sign in through. See [People, agents and services](#people-agents-and-services-adr-006). |
 | `ORRERY_SERVICE_CLIENTS` | unset | `client=role` ceilings for machine clients ([ADR-006](../adr/006-caller-principals.md)). |
+| `ORRERY_REJECT_UNLISTED_CLIENTS` | `false` | Answer 401 to a verified token whose client is in neither `ORRERY_HUMAN_CLIENTS` nor `ORRERY_SERVICE_CLIENTS` (a delegated token's client is the agent's), on the console API and A2A. Off, such a token is a **viewer** service principal. Needs `ORRERY_HUMAN_CLIENTS`. |
 | `ORRERY_PROTECTED_NAMESPACES` | unset | Comma-separated namespace globs where only admins may mutate ([ADR-001](../adr/001-rbac.md)). Reads are never scoped. |
 | `ORRERY_AUTONOMY_LEVEL` | unset | `L2`, `L3` or `L4`. See [Autonomy levels](#autonomy-levels). |
 
@@ -175,6 +176,12 @@ ORRERY_SERVICE_CLIENTS=ci-bot=viewer,partner-agent=operator  # machine clients a
     Unset, every console token counts as a person (the behaviour before
     ADR-006), so a client-credentials token with the operator role could
     approve its own action. The server logs a warning at startup.
+
+!!! tip "Refuse unlisted clients outright"
+    An unlisted client still gets read access as a viewer. Where reads are
+    sensitive too (logs, for one), set `ORRERY_REJECT_UNLISTED_CLIENTS=true`
+    and every client must be listed: its token is otherwise answered with the
+    same 401 as an invalid one.
 
 A machine caller's message is never recorded as a decision, whatever it
 says. To approve an action an agent raised for you, use the console or:

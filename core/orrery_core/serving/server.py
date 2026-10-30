@@ -81,6 +81,7 @@ from ..security.auth import (
 )
 from ..security.identity import CallerIdentity, caller_scope, identity_from_claims
 from ..security.principal import (
+    REJECT_UNLISTED_ENV,
     PrincipalKind,
     PrincipalPolicy,
     as_principal,
@@ -648,6 +649,8 @@ def create_app(
         logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)
         warn_if_unclassified(principal_policy)
     else:
+        if principal_policy.reject_unlisted:
+            logger.warning("%s has no effect with auth disabled", REJECT_UNLISTED_ENV)
         logger.warning(
             "Auth DISABLED. Do not run this configuration in production — "
             "RBAC is meaningless without verified identity."
@@ -827,6 +830,18 @@ def create_app(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
+        if not principal_policy.admits(verified.claims):
+            # Same answer as a bad token: a caller learns nothing about the lists.
+            logger.info(
+                "Auth rejected: client %r is not listed (%s)",
+                verified.claims.get("azp") or verified.claims.get("client_id"),
+                REJECT_UNLISTED_ENV,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return as_principal(verified, principal_policy)
 
     def caller_identity(auth: AuthContext) -> CallerIdentity | None:
