@@ -50,6 +50,7 @@ from orrery_core import (
     resolve_planner,
 )
 from orrery_core.agent.declarative import build_declarative_agents, load_agents_config
+from orrery_core.agent.platform import platform_context_section, scope_rule
 from orrery_core.knowledge import knowledge_tool
 from orrery_core.registry import Specialist, discover_specialists, one_line
 
@@ -156,7 +157,7 @@ def _checker_instruction(system: str, checks: str, criteria: str) -> str:
         f"Severity: {criteria} "
         "The status must come only from what the tools returned this run. If a check "
         "failed, name what is unverified and cap STATUS at 'unknown' for that area — "
-        "missing data is never 'healthy'."
+        "missing data is never 'healthy'.\n\n" + scope_rule() + platform_context_section()
     )
 
 
@@ -248,7 +249,9 @@ triage_summarizer = create_agent(
         "verbatim); one line each for healthy systems\n"
         "3. Next actions, most urgent first, each naming a concrete target\n\n"
         "Then call record_triage_verdict EXACTLY ONCE with overall_status "
-        "('healthy'|'degraded'|'critical') and report set to your full report text."
+        "('healthy'|'degraded'|'critical') and report set to your full report text.\n\n"
+        + scope_rule()
+        + platform_context_section()
     ),
     tools=[record_triage_verdict],
 )
@@ -329,7 +332,7 @@ def build_triage_agent(specialists: Sequence[Specialist]) -> Any | None:
             "Report: overall status + deciding reason first, then per-system findings with "
             "exact names and numbers from tool output, then next actions with concrete "
             "targets. Call record_triage_verdict EXACTLY ONCE with overall_status and the "
-            "full report text."
+            "full report text.\n\n" + scope_rule() + platform_context_section()
         ),
         tools=[*tools, record_triage_verdict],
     )
@@ -392,6 +395,12 @@ _KNOWLEDGE_INSTRUCTION = (
 )
 
 
+def _example_system(specialists: Sequence[Specialist]) -> str:
+    """A system the coordinator can reach, for its instruction's examples."""
+    checks = [s.health_check for s in sweepable(specialists)]
+    return next((c.system for c in checks if c is not None), "the database")
+
+
 def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequence[Any]) -> Any:
     """The interactive coordinator over *specialists* and *declarative_agents*.
 
@@ -405,6 +414,9 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     # Only offer what the coordinator can do: with the journal switched off, a
     # "want me to save this?" ends in a tool it doesn't have.
     journal = _journal(specialists)
+    # Examples name a system this deployment runs: "is Kafka up?" on a
+    # deployment without Kafka teaches the model a question it cannot answer.
+    system = _example_system(specialists)
     return create_agent(
         name="orrery_chat_agent",
         description="Conversational DevOps orchestrator that routes queries to specialist agents.",
@@ -452,13 +464,15 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
             "reported problem, symptom, or alert (to check whether a similar incident "
             "was seen before), or when the user references something earlier ('like last "
             "time', 'the usual issue', 'again'). **When to skip it:** greetings, "
-            "capability questions, and simple one-off status checks ('is Kafka up?') — "
+            f"capability questions, and simple one-off status checks ('is {system} up?') — "
             "don't spend a lookup there. **How to query:** pass a short, specific query "
-            "describing the system and symptom (e.g. 'Kafka consumer lag on orders "
-            "topic', 'K8s CrashLoopBackOff payment-service'), not the user's whole "
-            "message. Call it at most once per turn, then correlate with any genuine "
-            "match — cite it only when it actually fits; if nothing matches, proceed "
-            "normally without mentioning memory." + _KNOWLEDGE_INSTRUCTION + _MCP_INSTRUCTION
+            f"describing the system and symptom (e.g. '{system} errors on the payments "
+            "service'), not the user's whole message. Call it at most once per turn, then "
+            "correlate with any genuine match — cite it only when it actually fits; if "
+            "nothing matches, proceed normally without mentioning memory."
+            + _KNOWLEDGE_INSTRUCTION
+            + _MCP_INSTRUCTION
+            + platform_context_section()
         ),
         # Checked, not trusted: a name used twice would build fine and then
         # fail every turn at the model API, and a catalog that built is saved.

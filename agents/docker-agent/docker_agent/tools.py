@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from orrery_core import confirm, destructive
+from orrery_core.agent.platform import SCOPES, resource_scope, scope_from_labels
 from orrery_core.security.redaction import REDACTED, redact_text
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
@@ -103,6 +104,16 @@ async def _run_docker(
         return False, f"Command timed out after {timeout}s"
 
 
+def _mark_scope(item: dict[str, Any], name: str, label: str | None) -> None:
+    """Tag an auxiliary resource (``ORRERY_AUXILIARY_RESOURCES``, ``orrery.scope``).
+
+    Platform resources stay untagged, so a deployment that configures neither
+    sees the same output as before.
+    """
+    if resource_scope(name, label) == "auxiliary":
+        item["scope"] = "auxiliary"
+
+
 # ── Container operations ─────────────────────────────────────────────
 
 
@@ -126,7 +137,9 @@ async def list_containers(all: bool = False) -> dict[str, Any]:
     containers = []
     for line in output.splitlines():
         if line.strip():
-            containers.append(json.loads(line))
+            row = json.loads(line)
+            _mark_scope(row, str(row.get("Names", "")), scope_from_labels(row.get("Labels")))
+            containers.append(row)
 
     return {"status": "success", "containers": containers, "count": len(containers)}
 
@@ -232,7 +245,7 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
         return {"status": "error", "message": output}
 
     stats = json.loads(output)
-    return {
+    result = {
         "status": "success",
         "container": container_name,
         "cpu_percent": stats.get("CPUPerc"),
@@ -242,6 +255,8 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
         "block_io": stats.get("BlockIO"),
         "pids": stats.get("PIDs"),
     }
+    _mark_scope(result, str(stats.get("Name") or container_name), None)
+    return result
 
 
 #: Compose project names: lowercase letters, digits, dashes and underscores,
@@ -256,7 +271,8 @@ _COMPOSE_PS_FORMAT = (
     '{"project":{{json (.Label "com.docker.compose.project")}},'
     '"service":{{json (.Label "com.docker.compose.service")}},'
     '"name":{{json .Names}},"state":{{json .State}},'
-    '"status":{{json .Status}},"image":{{json .Image}}}'
+    '"status":{{json .Status}},"image":{{json .Image}},'
+    '"scope":{{json (.Label "orrery.scope")}}}'
 )
 
 
@@ -289,6 +305,14 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {"status": "error", "message": "unexpected output from docker ps"}
     rows = [r for r in rows if isinstance(r, dict)]
+    for row in rows:
+        label = row.pop("scope", None)
+        label = label if label in SCOPES else None
+        # A project named like an auxiliary glob makes its containers auxiliary,
+        # unless a container's own label says otherwise.
+        if label is None and resource_scope(str(row.get("project", ""))) == "auxiliary":
+            label = "auxiliary"
+        _mark_scope(row, str(row.get("name", "")), label)
 
     if project is not None:
         if not rows:
@@ -302,14 +326,22 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
         }
 
     projects: dict[str, dict[str, int]] = {}
+    auxiliary: dict[str, int] = {}
     for row in rows:
-        states = projects.setdefault(str(row.get("project", "")), {})
+        name = str(row.get("project", ""))
+        states = projects.setdefault(name, {})
         state = str(row.get("state", "unknown"))
         states[state] = states.get(state, 0) + 1
-    listed = [
-        {"name": name, "containers": sum(states.values()), "states": states}
-        for name, states in sorted(projects.items())
-    ]
+        if row.get("scope") == "auxiliary":
+            auxiliary[name] = auxiliary.get(name, 0) + 1
+    listed = []
+    for name, states in sorted(projects.items()):
+        entry: dict[str, Any] = {"name": name, "containers": sum(states.values()), "states": states}
+        if auxiliary.get(name) == entry["containers"]:
+            entry["scope"] = "auxiliary"
+        elif name in auxiliary:
+            entry["auxiliary_containers"] = auxiliary[name]
+        listed.append(entry)
     return {"status": "success", "projects": listed, "count": len(listed)}
 
 

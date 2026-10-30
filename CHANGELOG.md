@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the environment shows as a badge, leads the tab title, and is named on the
   chat approval card ("Approve on PRODUCTION"); staging, demo and lab also get a
   banner. Invalid values stop startup.
+- **Operator platform context and triage scope**:
+  `ORRERY_PLATFORM_CONTEXT_FILE` (Markdown, at most 16 KiB, read once at
+  startup) is added to the coordinator's and the triage agents'
+  instructions. `ORRERY_AUXILIARY_RESOURCES` (name globs) and the container
+  label `orrery.scope=auxiliary|platform` mark resources that may be down
+  without the platform being degraded: the Docker tools tag them
+  `scope: auxiliary`, and triage reports them separately without letting them
+  change the verdict. The coordinator's examples now name a system the
+  deployment runs instead of assuming Kafka.
 
 - **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose
   client (`azp`, else `client_id`) is in neither `ORRERY_HUMAN_CLIENTS` nor
