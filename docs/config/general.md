@@ -233,6 +233,7 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 |----------|---------|-------------|
 | `ORRERY_SPECIALISTS` | every built-in | Comma-separated entry-point keys to run (e.g. `kafka,k8s`). A third-party specialist runs only when named here. An unknown key stops startup. |
 | `ORRERY_DISABLED_SPECIALISTS` | unset | Keys to leave out. |
+| `ORRERY_DISABLED_TOOLS` | unset | Comma-separated `specialist.tool` names to take out of running specialists (e.g. `kafka.describe_consumer_groups`). Only removes; an unknown name, a tool of a specialist that is not running, or one its health check, remediation, journal or self-test uses stops startup ([details](../specialist-selection.md#step-1-which-specialists-exist)). |
 | `ORRERY_AGENTS_CONFIG` | unset | YAML file of [declarative agents](../adding-an-agent.md#declarative) built from existing tools. |
 | `ORRERY_ADMIN_EDITING` | `false` | Let admins switch specialists and compose agents from the console ([details](../adding-an-agent.md#admin-editing)). |
 | `ORRERY_CATALOG_POLL_SECONDS` | `15` | How often each replica checks for catalog edits made through another one. |

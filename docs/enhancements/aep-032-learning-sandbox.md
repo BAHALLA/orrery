@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> (phase 0 built: `ORRERY_DISABLED_TOOLS` and the manifest loader) |
 | **Priority** | <span class="badge badge--grey">P3</span> |
 | **Effort** | Medium (5-7 days, in four phases) |
 | **Impact** | Medium (practice labs only; no effect on any other deployment) |
@@ -359,7 +359,7 @@ coach is never relied on to withhold anything.
 ### 6. Per-tool narrowing (phase 0, general)
 
 `ORRERY_DISABLED_TOOLS` (comma-separated, qualified names like
-`kafka.get_consumer_lag`) removes tools from their specialists before the
+`kafka.describe_consumer_groups`) removes tools from their specialists before the
 tree is built. It extends ADR-005 and follows its rules:
 
 - **It only removes.** There is no allowlist that could add a tool back.
@@ -384,7 +384,11 @@ tree is built. It extends ADR-005 and follows its rules:
 
 It is not learning-specific (any deployment can narrow itself), which is why
 it is the one piece outside `orrery_core.learning`. A lab uses it to make a
-learner compute a value instead of reading it from a tool.
+learner compute a value instead of reading it from a tool, within one limit
+found while building it: a tool a health check uses stays, because the
+triage sweep would still call it. `kafka.get_consumer_lag` feeds the Kafka
+health check, so a lab cannot hide it; the answer guard is what withholds the
+lag.
 
 ## Design decisions
 
