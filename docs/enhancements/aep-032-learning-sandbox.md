@@ -61,15 +61,37 @@ plus a record of every step of help.
 
 ### 1. The sandbox gate
 
-**One choke point, not a list of surfaces.** The learning loader
-(`orrery_core.learning.activate()`) is the only way anything in this
-proposal gets wired in. It raises unless its caller passes
-`learning_surface=True`, and only `serving/server.py` passes it. Every other
-entry point fails by default whenever the flag is set, including future
-ones: `adk web` (`make run-dev`), the CLI and `run_persistent.py`, the
-Slack and Google Chat bots, batch triage, `agents/ops-journal/run_persistent.py`
-and `scripts/demo/scripted_server.py`. A test walks every entry point and
-pins this.
+**Refusal by default, in the builders every surface shares.** The agent
+tree and the plugin list are built when modules are imported
+(`orrery_assistant.agent` builds the chat root at import, and `app.py` calls
+`default_plugins()` at import). That rules out a check that runs later.
+The gate therefore has two parts:
+
+- **The check.** A small core module, `orrery_core/learning_gate.py`,
+  holds a process-level "activated" flag. It never imports the learning
+  package. It is called by `default_plugins()`, `build_chat_agent()` and
+  `AgentGateway.__init__`. When `ORRERY_LEARNING_MODE` is set and the
+  process was not activated, all three raise.
+  - Every surface goes through at least one of them: the Slack and Google
+    Chat bots, `adk web` (`make run-dev`, whose module-level `App` calls
+    `default_plugins()`), the CLI, `run_persistent.py`, batch triage,
+    `agents/ops-journal/run_persistent.py`, `scripts/demo/scripted_server.py`
+    and any future entry point.
+  - So all of them refuse the flag without any code of their own.
+- **The activation.** `orrery_assistant/app.py`, the HTTP server's module
+  (`uvicorn orrery_assistant.app:api`), calls
+  `learning_gate.activate_http_server()` as its **first statement**, before
+  it imports the agent module. Activation runs the preconditions below and
+  then imports `orrery_core.learning`. Because it happens before
+  construction, the builders that run next see an activated process:
+  `default_plugins()` adds the learning plugins, and `build_chat_agent()`
+  adds the coach.
+  - `scripted_server.py` also calls `create_app`, but it never activates,
+    so its own `default_plugins()` call refuses the flag. A demo is not a
+    sandbox.
+
+A test imports each entry point with the flag set and expects a refusal from
+all of them except `orrery_assistant.app`.
 
 Within the HTTP server, `ORRERY_LEARNING_MODE=true` is refused at startup
 (a `ValueError` naming the condition that is missing, the same pattern as
@@ -122,7 +144,7 @@ by `ORRERY_SCENARIO_MANIFEST`:
   - `default_disclosure` must be 0, 1 or 2; level 3 is reachable only
     through hints.
 - **Values a matcher can work with.** `value` is a number or a string.
-  - A number needs at least three significant digits. A string needs at
+  - A number must be at least 100 in absolute value. A string needs at
     least four characters.
   - A value like `3` (replicas) or `1` (a partition) would match almost
     every reply ("step 1", "level 3"), so it is refused at load.
@@ -206,6 +228,10 @@ at the manifest's `default_disclosure`:
 - **Every change is recorded.**
   - A `learning_hint` audit entry: subject, scenario_id, old and new level.
   - `orrery_learning_hints_total{level}`.
+- **A restart fails safe.** The hint store is per process. After a
+  restart every learner reads as `default_disclosure` again, which withholds
+  more, never less. The durable record of help is the `learning_hint` audit
+  stream.
 - **The model sees the level, never the values.** A learning-package
   `before_model_callback` appends one line to the **root's** system
   instruction: the current level and what it permits. Core's
@@ -214,8 +240,8 @@ at the manifest's `default_disclosure`:
 
 ### 4. The answer guard
 
-`AnswerGuardPlugin` is an `after_model_callback`, registered only by
-`activate()`, **first among after-model plugins** (pinned by a test).
+`AnswerGuardPlugin` is an `after_model_callback`, registered only in an
+activated process, **first among after-model plugins** (pinned by a test).
 ADK's plugin chain stops at the first callback that returns a value.
 
 **What it checks.**
@@ -231,8 +257,8 @@ ADK's plugin chain stops at the first callback that returns a value.
 - It checks **every** non-partial root response that carries non-thought
   text, not only the last one. The gateway's reply joins all of them, and
   a root model often writes text before a tool call.
-- It also checks streamed partials, to decide nothing: they are never
-  forwarded (see the streaming hold below).
+- Streamed partials are skipped: they are never forwarded (see the
+  streaming hold below).
 
 **How it matches.**
 
@@ -306,9 +332,10 @@ The eval measures these. The proposal does not promise to block them.
 
 The declarative `lab_coach` agent (read-only kafka and observability tools,
 a four-step hint ladder; first drafted in PR #342) becomes part of the
-learning package. `build_chat_agent()` adds it **only when `activate()` has
-run**, so admin catalog rebuilds keep it too (and admin editing is off in
-learning mode anyway). `ORRERY_AGENTS_CONFIG` is not the way to load it.
+learning package. `build_chat_agent()` adds it **only in an activated
+process** (§1), so admin catalog rebuilds keep it too (and admin editing is
+off in learning mode anyway). Its name, `lab_coach`, joins
+`RESERVED_AGENT_NAMES`, so no declarative agent can take it. `ORRERY_AGENTS_CONFIG` is not the way to load it.
 
 Its ladder follows the learner's disclosure level instead of a marker in its
 own replies. It is the teaching layer; the guard is the safety layer. The
@@ -390,7 +417,7 @@ learner compute a value instead of reading it from a tool.
 | Learner reads the manifest through a tool | The manifest must not be reachable by any enabled tool (deployment rule) |
 | Manifest disables its own guard or widens access | At least one target; `default_disclosure` ≤ 2; no widening fields; read-only volume |
 | Manifest broken mid-session | Last valid manifest stays in force; metric plus an ERROR log |
-| Unguarded paths: Studio, A2A, `adk web`, bots, CLI | Studio and A2A are preconditions; `activate()` accepts only the HTTP server |
+| Unguarded paths: Studio, A2A, `adk web`, bots, CLI | Studio and A2A are preconditions; the shared builders refuse the flag unless `orrery_assistant.app` activated the process |
 | Learning mode set on an operational deployment | No manifest ⇒ startup refused. Even if it started, the effect is answers being *withheld*, not exposed |
 
 Accepted residual risks: the encodings and the split across responses
@@ -400,23 +427,29 @@ them. Both are inherent to a diagnostic exercise.
 ## Affected Files
 
 - `core/orrery_core/learning/` (new, imported only behind the flag):
-  - `__init__.py`: `activate(learning_surface=...)`
+  - `__init__.py`: wiring called by the activated builders
   - `config.py`: flag and preconditions
   - `manifest.py`: schema, stat-checked reload, grace
   - `guard.py`: matcher and `AnswerGuardPlugin`
   - `hints.py`: level store, `POST /learning/hint`, root instruction line
   - `coach.yaml`
+- `core/orrery_core/learning_gate.py` (new, always importable, no learning
+  code): the activated flag, `activate_http_server()`, and the check called
+  by `default_plugins()`, `build_chat_agent()` and `AgentGateway.__init__`.
+- `agents/orrery-assistant/orrery_assistant/app.py`: activate as the first
+  statement.
 - `core/orrery_core/plugins/identity_guard_plugin.py` (and the core module
   that defines state keys): the level keys.
-- `core/orrery_core/serving/server.py`: call `activate()`, narrow
-  `/triage` and `/activity`, report the mode in `/healthz`.
+- `core/orrery_core/serving/server.py`: narrow `/triage` and `/activity`,
+  report the mode in `/healthz`, and have `inbound()` stamp the level.
 - `core/orrery_core/serving/sse.py`: drop `delta` frames in learning mode.
-- `core/orrery_core/serving/gateway.py`: `inbound()` stamps the level.
+- `core/orrery_core/serving/gateway.py`: the activation check in
+  `AgentGateway.__init__`.
 - `core/orrery_core/registry.py`, `agent/declarative.py`,
   `security/guardrails.py`, `reliability/resilience.py`:
   `ORRERY_DISABLED_TOOLS` (phase 0).
 - `agents/orrery-assistant/orrery_assistant/agent.py`: `build_chat_agent()`
-  adds the coach when activated.
+  adds the coach when activated; `lab_coach` joins `RESERVED_AGENT_NAMES`.
 - `web/`: *Learning sandbox* badge, *Hint* button, level indicator.
 - `docs/integrations/learning-sandbox.md`, `docs/config/general.md`,
   `.env.example`.
@@ -432,8 +465,8 @@ them. Both are inherent to a diagnostic exercise.
 
 **The sandbox gate**
 
-- [ ] Every entry point except the HTTP server refuses the flag (a test
-      walks the entry points).
+- [ ] With the flag set, importing each entry point raises, except
+      `orrery_assistant.app` (a test walks the entry points).
 - [ ] Each precondition, missing on its own, stops startup with a message
       naming it.
 
