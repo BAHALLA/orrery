@@ -489,6 +489,9 @@ them. Both are inherent to a diagnostic exercise.
       `orrery_assistant.app` (a test walks the entry points, each in a
       fresh interpreter, standalone specialists included).
 - [ ] Nothing in `orrery_assistant` imports `agent` at package level.
+- [ ] In-process learning tests reset the activated flag in a fixture, so
+      activation never leaks into the rest of the workspace's single
+      pytest run.
 - [ ] Each precondition, missing on its own, stops startup with a message
       naming it.
 
