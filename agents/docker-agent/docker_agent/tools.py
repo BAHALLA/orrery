@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from orrery_core import confirm, destructive
+from orrery_core.agent.platform import pinned_by_labels, resource_scope
 from orrery_core.security.redaction import REDACTED, redact_text
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
@@ -103,6 +104,16 @@ async def _run_docker(
         return False, f"Command timed out after {timeout}s"
 
 
+def _mark_scope(item: dict[str, Any], name: str, pinned: bool) -> None:
+    """Tag an auxiliary container (``ORRERY_AUXILIARY_RESOURCES``).
+
+    Platform ones stay untagged, so a deployment that configures nothing sees
+    the same output as before.
+    """
+    if resource_scope(name, pinned) == "auxiliary":
+        item["scope"] = "auxiliary"
+
+
 # ── Container operations ─────────────────────────────────────────────
 
 
@@ -126,7 +137,9 @@ async def list_containers(all: bool = False) -> dict[str, Any]:
     containers = []
     for line in output.splitlines():
         if line.strip():
-            containers.append(json.loads(line))
+            row = json.loads(line)
+            _mark_scope(row, str(row.get("Names", "")), pinned_by_labels(row.get("Labels")))
+            containers.append(row)
 
     return {"status": "success", "containers": containers, "count": len(containers)}
 
@@ -232,6 +245,8 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
         return {"status": "error", "message": output}
 
     stats = json.loads(output)
+    # Not scope-tagged: `docker stats` carries no labels, so a container pinned
+    # into the platform would be auxiliary here and not in list_containers.
     return {
         "status": "success",
         "container": container_name,
@@ -256,7 +271,8 @@ _COMPOSE_PS_FORMAT = (
     '{"project":{{json (.Label "com.docker.compose.project")}},'
     '"service":{{json (.Label "com.docker.compose.service")}},'
     '"name":{{json .Names}},"state":{{json .State}},'
-    '"status":{{json .Status}},"image":{{json .Image}}}'
+    '"status":{{json .Status}},"image":{{json .Image}},'
+    '"scope":{{json (.Label "orrery.scope")}}}'
 )
 
 
@@ -289,6 +305,15 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {"status": "error", "message": "unexpected output from docker ps"}
     rows = [r for r in rows if isinstance(r, dict)]
+    for row in rows:
+        pinned = row.pop("scope", None) == "platform"
+        # A project named like an auxiliary glob makes its containers auxiliary,
+        # unless a container is pinned into the platform.
+        name = str(row.get("name", ""))
+        if not pinned and resource_scope(str(row.get("project", ""))) == "auxiliary":
+            row["scope"] = "auxiliary"
+        else:
+            _mark_scope(row, name, pinned)
 
     if project is not None:
         if not rows:
@@ -302,14 +327,22 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
         }
 
     projects: dict[str, dict[str, int]] = {}
+    auxiliary: dict[str, int] = {}
     for row in rows:
-        states = projects.setdefault(str(row.get("project", "")), {})
+        name = str(row.get("project", ""))
+        states = projects.setdefault(name, {})
         state = str(row.get("state", "unknown"))
         states[state] = states.get(state, 0) + 1
-    listed = [
-        {"name": name, "containers": sum(states.values()), "states": states}
-        for name, states in sorted(projects.items())
-    ]
+        if row.get("scope") == "auxiliary":
+            auxiliary[name] = auxiliary.get(name, 0) + 1
+    listed = []
+    for name, states in sorted(projects.items()):
+        entry: dict[str, Any] = {"name": name, "containers": sum(states.values()), "states": states}
+        if auxiliary.get(name) == entry["containers"]:
+            entry["scope"] = "auxiliary"
+        elif name in auxiliary:
+            entry["auxiliary_containers"] = auxiliary[name]
+        listed.append(entry)
     return {"status": "success", "projects": listed, "count": len(listed)}
 
 
