@@ -101,11 +101,18 @@ The layers narrow. Two details matter:
   tools is a common reason to switch the broad one off. To take tools away
   entirely, exclude the specialist in the env, or a single tool with
   `ORRERY_DISABLED_TOOLS`.
-- **A removed tool is gone everywhere.** `ORRERY_DISABLED_TOOLS` clones the
-  specialist's agent without the tool before anything is built from it, so the
-  coordinator, declarative agents, the admin catalog and the Studio never see
-  it, and `GuardrailsPlugin` refuses a call to it (`BLOCKED`, which never opens
-  a circuit) by function identity in case one is reached another way. A tool
+- **A removed tool is gone from everything the orchestrator builds.**
+  `ORRERY_DISABLED_TOOLS` clones the specialist's agent without the tool
+  before anything is built from it, so the coordinator, declarative agents,
+  the admin catalog, the Studio and the triage sweep never see it. Another
+  specialist holding the same function (a plugin re-exporting a built-in
+  tool) loses it too. `GuardrailsPlugin` refuses a call to it (`BLOCKED`,
+  which never opens a circuit) by function identity in case one is reached
+  another way. Two limits: a specialist package run on its own (its own
+  `adk web`) never goes through discovery, so the tool is still there; and
+  the specialist's instruction is not rewritten, so a prompt that names the
+  removed tool still does. The model then gets ADK's "tool not found" for
+  it, so prefer removing tools the instruction doesn't name. A tool
   the specialist's health check, remediation, journal or self-test uses cannot
   be removed: startup fails instead of silently shrinking the sweep. For
   example, `kafka.get_consumer_lag` feeds the Kafka health check, so it stays.

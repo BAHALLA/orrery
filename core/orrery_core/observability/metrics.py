@@ -92,11 +92,6 @@ TOKEN_BUDGET_STORE_ERRORS_TOTAL = Counter(
     "Token budget store calls that failed or timed out (the model call went ahead)",
 )
 
-LEARNING_MANIFEST_ERRORS_TOTAL = Counter(
-    "orrery_learning_manifest_errors_total",
-    "Scenario manifest reloads that failed (the last valid manifest stayed in force)",
-)
-
 LLM_FAILOVER_TOTAL = Counter(
     "orrery_llm_failover_total",
     "Model calls moved to the next model in the fallback chain",
@@ -419,11 +414,6 @@ def track_token_budget_refusal(scope: str) -> None:
 def track_token_budget_store_error() -> None:
     """Record a token budget store call that failed; the budget was not enforced."""
     TOKEN_BUDGET_STORE_ERRORS_TOTAL.inc()
-
-
-def track_learning_manifest_error() -> None:
-    """A scenario manifest reload failed; the last valid one is still guarding (AEP-032)."""
-    LEARNING_MANIFEST_ERRORS_TOTAL.inc()
 
 
 def track_llm_failover(*, from_model: str, to_model: str) -> None:

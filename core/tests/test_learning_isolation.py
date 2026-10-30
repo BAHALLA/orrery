@@ -16,6 +16,11 @@ import orrery_core
 import orrery_core.plugins
 import orrery_core.serving.server
 import orrery_assistant.agent
+import orrery_assistant.app
+import slack_bot.app
+import google_chat_bot.app
+import orrery_core.studio.api
+import orrery_core.serving.a2a_server
 leaked = sorted(m for m in sys.modules if m.startswith("orrery_core.learning"))
 print("LEAKED=" + ",".join(leaked))
 """
@@ -28,6 +33,8 @@ def test_a_normal_process_never_imports_the_learning_package():
         if not k.startswith(("ORRERY_LEARNING", "ORRERY_SCENARIO"))
     }
     env["OTEL_TRACING_ENABLED"] = "false"
+    # Importing the HTTP app builds the server, which needs an auth setup.
+    env["AUTH_ENABLED"] = "false"
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
         capture_output=True,

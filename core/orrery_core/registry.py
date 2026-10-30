@@ -59,7 +59,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import entry_points
 from typing import Any, Literal
 
@@ -119,8 +119,7 @@ def is_tool_disabled(tool: Any) -> bool:
     specialists, and a declarative agent holding the same tool has another
     agent name.
     """
-    func = getattr(tool, "func", tool)
-    return _DISABLED_FUNCS.get(id(func)) is func
+    return _is_removed(tool, _DISABLED_FUNCS)
 
 
 @dataclass(frozen=True)
@@ -434,7 +433,7 @@ def _disabled_tools(installed: set[str]) -> dict[str, set[str]]:
     return grouped
 
 
-def _tools_used_by(spec: SpecialistSpec) -> list[tuple[str, Any]]:
+def _tools_used_by(spec: SpecialistSpec | Specialist) -> list[tuple[str, Any]]:
     """Every tool a specialist's contributions call, with what calls it."""
     used: list[tuple[str, Any]] = []
     if spec.health_check is not None:
@@ -470,6 +469,38 @@ def _without_tools(key: str, spec: SpecialistSpec, names: set[str]) -> tuple[Bas
             )
     kept = [t for t in tools if not any(t is r for r in removed)]
     return spec.agent.clone(update={"tools": kept}), removed
+
+
+def _is_removed(tool: Any, removed: dict[int, Any]) -> bool:
+    func = getattr(tool, "func", tool)
+    return removed.get(id(func)) is func
+
+
+def _strip_shared(specialist: Specialist, removed: dict[int, Any]) -> Specialist:
+    """Take a removed function out of every other specialist that holds it too.
+
+    The runtime refusal matches the function wherever it is, so a second
+    specialist sharing it (a plugin re-exporting a built-in tool) would
+    otherwise keep offering a tool that is then refused, or silently lose part
+    of its own sweep. A shared function its contributions use stops startup.
+    """
+    for what, tool in _tools_used_by(specialist):
+        if _is_removed(tool, removed):
+            raise ValueError(
+                f"{DISABLED_TOOLS_ENV}: {_tool_name(tool)} is also used by the "
+                f"{specialist.key} specialist's {what}; it cannot be removed"
+            )
+    tools = list(getattr(specialist.agent, "tools", None) or [])
+    kept = [t for t in tools if not _is_removed(t, removed)]
+    if len(kept) == len(tools):
+        return specialist
+    logger.info(
+        "Shared tools removed from %s by %s: %s",
+        specialist.key,
+        DISABLED_TOOLS_ENV,
+        ", ".join(sorted(_tool_name(t) for t in tools if _is_removed(t, removed))),
+    )
+    return replace(specialist, agent=specialist.agent.clone(update={"tools": kept}))
 
 
 #: A key names the specialist in env lists, in the admin catalog, and in the
@@ -609,6 +640,8 @@ def discover_specialists(
             f"{DISABLED_TOOLS_ENV} names tools of specialists that are not running: "
             f"{sorted(not_running)}"
         )
+    if removed_funcs:
+        selected = [_strip_shared(s, removed_funcs) for s in selected]
     if record:
         global _DISABLED_FUNCS
         _DISABLED_FUNCS = removed_funcs

@@ -156,6 +156,32 @@ def test_a_tool_the_health_check_uses_cannot_be_removed(monkeypatch):
         discover_specialists(loader=_loader(("kafka", _kafka(health_check=check))))
 
 
+def _other(**spec: Any) -> SpecialistSpec:
+    """A second specialist that re-exports the first one's get_lag function."""
+    agent = create_agent(
+        name="lag_agent", model="gemini-x", description="Lag.", instruction="", tools=[get_lag]
+    )
+    return SpecialistSpec(agent=agent, **spec)
+
+
+def test_a_shared_function_is_removed_from_every_specialist(monkeypatch):
+    monkeypatch.setenv("ORRERY_DISABLED_TOOLS", "kafka.get_lag")
+    other = _other()
+    found = {
+        s.key: s for s in discover_specialists(loader=_loader(("kafka", _kafka()), ("lag", other)))
+    }
+    assert "get_lag" not in _names(found["lag"].agent)
+    assert _names(other.agent) == ["get_lag"]
+
+
+def test_a_shared_function_another_sweep_uses_stops_startup(monkeypatch):
+    monkeypatch.setenv("ORRERY_DISABLED_TOOLS", "kafka.get_lag")
+    check = HealthCheck(system="Lag", checks="lag.", criteria="high.", tools=(get_lag,))
+    loader = _loader(("kafka", _kafka()), ("lag", _other(health_check=check)))
+    with pytest.raises(ValueError, match="also used by the lag specialist's health_check"):
+        discover_specialists(loader=loader)
+
+
 @pytest.mark.asyncio
 async def test_guardrails_refuse_a_removed_tool_with_a_neutral_status(monkeypatch):
     monkeypatch.setenv("ORRERY_DISABLED_TOOLS", "kafka.get_lag")

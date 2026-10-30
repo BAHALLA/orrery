@@ -163,8 +163,13 @@ by `ORRERY_SCENARIO_MANIFEST`:
     least four characters.
   - A value like `3` (replicas) or `1` (a partition) would match almost
     every reply ("step 1", "level 3"), so it is refused at load.
-  - A manifest where any value appears inside any `descriptor` is refused
-    as well, because the guard's nudge is built from descriptors.
+  - A manifest where any value appears inside a `descriptor`, a target
+    `id`, a `unit` or the `scenario_id` is refused as well: the guard's
+    nudge is built from descriptors, and ids reach audit lines and
+    `/healthz`.
+  - Parsing is pydantic's strict JSON mode: exact types (no `true` for `1`,
+    no `"2"` for `2`), timezone-aware `seeded_at`, no NaN or infinity, and
+    numbers below 2**53. Only a regular file is read.
   - The lab never ships a list of formats. The guard derives them (§4).
 - **Narrow-only by construction.** The schema has no field that can raise
   autonomy, grant a role or add a tool. A later `hide_tools` field may only

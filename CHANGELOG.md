@@ -14,17 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The specialist's agent is cloned without the tool before anything is built
   from it, so the coordinator, declarative agents, the admin catalog and the
   Studio never see it, and `GuardrailsPlugin` refuses a call to it by function
-  identity with the neutral `BLOCKED` status. It only removes: an unknown
+  identity with the neutral `BLOCKED` status. Another specialist sharing the
+  function loses it too. It only removes: an unknown
   name, a tool of a specialist that is not running, or a tool the specialist's
   health check, remediation, journal or self-test uses stops startup. Unset,
   nothing changes.
 - **Scenario manifest loader** (AEP-032 phase 0, not wired in yet):
-  `orrery_core.learning.manifest` validates contract v1 strictly (no field
+  `orrery_core.learning.manifest` validates contract v1 strictly in JSON mode
+  (exact types, no NaN, no field
   that can widen access, at least one target, `default_disclosure` at most 2,
-  no value under 100 or shorter than 4 characters, none inside a descriptor),
-  never repeats a value in an error, re-checks the file's `stat()` on every
-  read, keeps the last valid manifest when a reload fails
-  (`orrery_learning_manifest_errors_total`), and keeps values that left the
+  no value under 100 or shorter than 4 characters, none inside an id, unit or
+  descriptor), reads regular files only,
+  never repeats a value in an error, re-checks the file's `stat()` (and its
+  content while it is young) on every read, keeps the last valid manifest when a reload fails
+  (`orrery_learning_manifest_errors_total`, registered only when used), and keeps values that left the
   file guarded for `ORRERY_LEARNING_GRACE_SECONDS`. Nothing imports the
   learning package in a normal process; a test pins that.
 

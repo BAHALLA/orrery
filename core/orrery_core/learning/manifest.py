@@ -27,28 +27,19 @@ Three properties matter more than the shape:
 
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import os
 import re
+import stat
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StrictFloat,
-    StrictInt,
-    StrictStr,
-    ValidationError,
-    model_validator,
-)
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 logger = logging.getLogger("orrery.learning.manifest")
 
@@ -62,6 +53,14 @@ MAX_TARGETS = 50
 #: Below this a number matches ordinary replies ("step 1", "3 replicas").
 MIN_NUMBER = 100
 MIN_STRING_CHARS = 4
+#: Integers above this lose precision as floats, and nothing a lab seeds is that big.
+MAX_NUMBER = 2**53
+
+#: JSON only, every field its exact type (no ``true`` for ``1``, no ``"2"`` for
+#: ``2``), no NaN or infinity, and errors that never carry their input.
+_STRICT = ConfigDict(
+    extra="forbid", frozen=True, strict=True, allow_inf_nan=False, hide_input_in_errors=True
+)
 
 # Ids reach audit lines and /healthz, so they are plain tokens: nothing a log
 # reader could mistake for another field.
@@ -87,11 +86,11 @@ def _mentions(text: str, value: int | float | str) -> bool:
 class Target(BaseModel):
     """One answer the exercise asks for."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    model_config = _STRICT
 
     id: str = Field(pattern=_ID)
     descriptor: str = Field(min_length=3, max_length=200)
-    value: StrictInt | StrictFloat | StrictStr
+    value: int | float | str
     unit: str = Field(default="", max_length=32)
 
     @model_validator(mode="after")
@@ -102,9 +101,10 @@ class Target(BaseModel):
                     f"target {self.id!r}: a string value needs at least "
                     f"{MIN_STRING_CHARS} characters"
                 )
-        elif abs(self.value) < MIN_NUMBER:
+        elif not MIN_NUMBER <= abs(self.value) < MAX_NUMBER:
             raise ValueError(
-                f"target {self.id!r}: a number must be at least {MIN_NUMBER} in absolute value"
+                f"target {self.id!r}: a number must be at least {MIN_NUMBER} and below "
+                f"2**53 in absolute value"
             )
         return self
 
@@ -112,25 +112,37 @@ class Target(BaseModel):
 class ScenarioManifest(BaseModel):
     """Contract v1. Narrow-only: no field can raise autonomy, grant a role or add a tool."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    model_config = _STRICT
 
-    schema_version: Literal[1]
+    # A strict int pinned to 1 rather than Literal[1], which accepts ``true``.
+    schema_version: int = Field(ge=1, le=1)
     scenario_id: str = Field(pattern=_ID)
-    seeded_at: datetime
+    seeded_at: AwareDatetime
     default_disclosure: int = Field(ge=0, le=2)
-    targets: tuple[Target, ...] = Field(min_length=1, max_length=MAX_TARGETS)
+    # The "at least one" rule lives in the validator: as a field constraint it
+    # adds a spurious "too short" error whenever any one target is invalid.
+    targets: tuple[Target, ...] = Field(max_length=MAX_TARGETS)
 
     @model_validator(mode="after")
     def _guardable(self) -> ScenarioManifest:
+        if not self.targets:
+            raise ValueError("a manifest needs at least one target")
         ids = [t.id for t in self.targets]
         if dupes := sorted({i for i in ids if ids.count(i) > 1}):
             raise ValueError(f"duplicate target ids: {dupes}")
+        # Every field the learner can see or a log line carries: the ids reach
+        # audit lines and /healthz, the descriptors build the guard's nudge.
+        visible = [("scenario_id", self.scenario_id)]
+        for t in self.targets:
+            visible += [("target id", t.id), ("descriptor", t.descriptor), ("unit", t.unit)]
         for target in self.targets:
-            for other in self.targets:
-                if _mentions(other.descriptor, target.value):
+            for field, text in visible:
+                if _mentions(text, target.value):
+                    # Says which kind of field, not which one: an id here could
+                    # itself be the value.
                     raise ValueError(
-                        f"target {target.id!r}: its value appears in the descriptor of "
-                        f"{other.id!r}; a descriptor must not give an answer away"
+                        f"a target value appears in a {field}; ids, descriptors and "
+                        "units must not give an answer away"
                     )
         return self
 
@@ -148,32 +160,50 @@ def _describe(error: ValidationError) -> str:
     """
     parts = []
     for item in error.errors(include_input=False, include_url=False):
-        loc = ".".join(str(p) for p in item["loc"]) or "(root)"
+        loc = [str(p) for p in item["loc"]]
+        if item["type"] == "extra_forbidden" and loc:
+            loc[-1] = "<extra field>"  # the key itself could be the value
         detail = item["msg"] if item["type"] == "value_error" else item["type"]
-        parts.append(f"{loc}: {detail}")
+        parts.append(f"{'.'.join(loc) or '(root)'}: {detail}")
     return "; ".join(parts)
 
 
 def parse_manifest(raw: bytes) -> ScenarioManifest:
-    """Validate a manifest's bytes. Raises :class:`ManifestError`."""
+    """Validate a manifest's bytes. Raises :class:`ManifestError`, and nothing else.
+
+    Parsed by pydantic's JSON mode, so malformed JSON, a 5000-digit integer or
+    a NaN is a validation error like any other, never a stray exception a
+    caller might not expect.
+    """
     if len(raw) > MAX_MANIFEST_BYTES:
         raise ManifestError(f"manifest is larger than {MAX_MANIFEST_BYTES} bytes")
     try:
-        data = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        # JSONDecodeError's message is a position, never the document.
-        raise ManifestError(f"manifest is not valid JSON: {type(exc).__name__}") from None
-    try:
-        return ScenarioManifest.model_validate(data)
+        return ScenarioManifest.model_validate_json(raw)
     except ValidationError as exc:
         raise ManifestError(f"manifest is invalid: {_describe(exc)}") from None
+    except (ValueError, OverflowError, RecursionError) as exc:
+        # Defence in depth: a validator tripping on an odd input. Type only.
+        raise ManifestError(f"manifest is invalid: {type(exc).__name__}") from None
+
+
+def _read(path: str | os.PathLike[str]) -> bytes:
+    """At most one byte over the cap, from a regular file only.
+
+    ``O_NONBLOCK`` keeps a FIFO at the path from blocking the open (and with
+    it every guard call waiting on the store's lock); the ``fstat`` then
+    refuses it, and anything else that is not a regular file.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ManifestError("manifest is not a regular file")
+        return handle.read(MAX_MANIFEST_BYTES + 1)
 
 
 def load_manifest(path: str | os.PathLike[str]) -> ScenarioManifest:
     """Read and validate the manifest at *path*. Raises :class:`ManifestError`."""
     try:
-        with open(path, "rb") as handle:
-            raw = handle.read(MAX_MANIFEST_BYTES + 1)
+        raw = _read(path)
     except OSError as exc:
         raise ManifestError(f"manifest cannot be read: {type(exc).__name__}") from None
     return parse_manifest(raw)
@@ -189,14 +219,51 @@ class GuardedValue:
     descriptor: str
 
 
-def _fingerprint(path: Path) -> tuple[int, int, int, int] | None:
-    """Device, inode, mtime and size: an atomic rename changes the inode even
-    when the mtime and size happen to match."""
+#: A file changed this recently may change again within the filesystem's
+#: timestamp granularity without its stat moving ("racy" in git's terms).
+_RACY_SECONDS = 2.0
+
+
+def _fingerprint(path: Path) -> tuple[Any, ...] | None:
+    """What identifies this version of the file.
+
+    Device, inode, mtime, ctime and size catch an atomic rename in the usual
+    case, but a filesystem may reuse a freed inode and timestamps are coarse,
+    so two seeds in quick succession can share all five. For a file that young
+    the content's hash is added, the way git treats racily clean files.
+    """
     try:
         st = path.stat()
     except OSError:
         return None
-    return (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
+    base: tuple[Any, ...] = (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+    if time.time() - st.st_mtime_ns / 1e9 >= _RACY_SECONDS:
+        return base
+    try:
+        digest = hashlib.sha256(_read(path)).hexdigest()
+    except OSError, ManifestError:
+        digest = None
+    return (*base, digest)
+
+
+def _count_reload_error() -> None:
+    """``orrery_learning_manifest_errors_total``, registered on first use.
+
+    Created here rather than with the other metrics so a deployment without
+    learning mode does not even show the series at zero.
+    """
+    global _RELOAD_ERRORS
+    if _RELOAD_ERRORS is None:
+        from prometheus_client import Counter
+
+        _RELOAD_ERRORS = Counter(
+            "orrery_learning_manifest_errors_total",
+            "Scenario manifest reloads that failed (the last valid manifest stayed in force)",
+        )
+    _RELOAD_ERRORS.inc()
+
+
+_RELOAD_ERRORS: Any = None
 
 
 class ManifestStore:
@@ -269,9 +336,7 @@ class ManifestStore:
         try:
             manifest = load_manifest(self._path)
         except ManifestError as exc:
-            from ..observability.metrics import track_learning_manifest_error
-
-            track_learning_manifest_error()
+            _count_reload_error()
             logger.error(
                 "Scenario manifest reload failed; %s stays in force: %s",
                 self._manifest.scenario_id,
