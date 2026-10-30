@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from orrery_core import confirm, destructive
+from orrery_core.security.redaction import REDACTED, redact_text
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
     validate_positive_int,
@@ -17,20 +18,51 @@ from orrery_core.security.validation import (
 logger = logging.getLogger(__name__)
 
 _ENV_SENSITIVE_PATTERNS = frozenset(
-    {"password", "secret", "token", "api_key", "credential", "key", "auth"}
+    {"password", "passwd", "secret", "token", "api_key", "credential", "key", "auth", "dsn"}
 )
+
+#: A DSN with credentials but no scheme, as Go's MySQL driver writes it
+#: (``user:pass@tcp(db:3306)/app``): only that exact form, since ``a:b@c`` alone
+#: is too common a shape to redact.
+# Greedy up to the last "@" before the protocol, as the driver splits it, so a
+# password holding "@" goes whole.
+_SCHEMELESS_USERINFO = re.compile(r"^[^\s:/@=]*:\S+(?=@(?:tcp|udp|unix)\()")
+
+
+#: Name *words* (split on "_") that mark a secret but are too short to match
+#: as substrings: PASS would hit BYPASS, and PWD alone is the working directory.
+_ENV_SENSITIVE_WORDS = frozenset({"pass", "pwd"})
+_NOT_SECRET_NAMES = frozenset({"pwd", "oldpwd"})
+
+
+def _sensitive_name(var_name: str) -> bool:
+    name = var_name.lower()
+    if any(s in name for s in _ENV_SENSITIVE_PATTERNS):
+        return True
+    if name in _NOT_SECRET_NAMES:
+        return False
+    return not _ENV_SENSITIVE_WORDS.isdisjoint(name.split("_"))
 
 
 def _redact_env_vars(env_list: list[str]) -> list[str]:
-    """Redact values of sensitive environment variables."""
+    """Redact sensitive environment variables, by name and by value.
+
+    A name like ``DATABASE_URL`` says nothing about its value, so values are
+    scanned too: credentials in a URL (``postgres://user:pass@db``), a
+    scheme-less DSN, and the token shapes ``redact_text`` knows. This runs
+    before ``PIIRedactionPlugin``, so the tool never returns them even when
+    the plugin is off.
+    """
     redacted = []
     for entry in env_list:
         if "=" in entry:
-            var_name, _, _value = entry.partition("=")
-            if any(s in var_name.lower() for s in _ENV_SENSITIVE_PATTERNS):
+            var_name, _, value = entry.partition("=")
+            if _sensitive_name(var_name):
                 redacted.append(f"{var_name}=***")
-            else:
-                redacted.append(entry)
+                continue
+            value, _ = redact_text(value)
+            value = _SCHEMELESS_USERINFO.sub(REDACTED, value)
+            redacted.append(f"{var_name}={value}")
         else:
             redacted.append(entry)
     return redacted

@@ -68,6 +68,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, so a service that logs only to stderr (nginx's error log, Prometheus,
   most Go and Java servers) showed no lines. Both streams are now read
   through one pipe, interleaved as the CLI writes them.
+### Security
+
+- **`inspect_container` scans env values, not only names.** A variable like
+  `DATABASE_URL=postgres://user:pass@db` passed the tool's own filter, which
+  matched names only (the global `PIIRedactionPlugin` already masked the URL
+  credentials, but not with `ORRERY_PII_REDACTION=false`). Values now go
+  through the same `redact_text` patterns, plus Go's scheme-less
+  `user:pass@tcp(…)` DSN form; `passwd`/`dsn` names, and `pass`/`pwd` as a
+  name word (`DB_PASS`, `DB_PWD`; not `PWD` itself), are redacted whole.
 
 ## [0.13.0] - 2026-10-29
 
