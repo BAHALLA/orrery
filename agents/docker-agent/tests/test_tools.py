@@ -586,6 +586,37 @@ def test_redact_env_vars_case_insensitive():
     assert "AUTH_HEADER=***" in result
 
 
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        # The name gives nothing away; the value carries the password.
+        (
+            "DATABASE_URL=postgres://app:hunter22@db:5432/shop",
+            "DATABASE_URL=postgres://[REDACTED]@db:5432/shop",
+        ),
+        ("BROKER=amqp://guest:guest@rabbit:5672//", "BROKER=amqp://[REDACTED]@rabbit:5672//"),
+        ("CACHE=redis://:p%40ss@cache:6379/0", "CACHE=redis://[REDACTED]@cache:6379/0"),
+        # Go MySQL driver DSN, no scheme.
+        ("MYSQL=app:hunter22@tcp(db:3306)/shop", "MYSQL=[REDACTED]@tcp(db:3306)/shop"),
+        ("MYSQL=app:p@ss@tcp(db:3306)/shop", "MYSQL=[REDACTED]@tcp(db:3306)/shop"),
+        ("DB_PASS=hunter2", "DB_PASS=***"),
+        ("RABBITMQ_DEFAULT_PASS=guest", "RABBITMQ_DEFAULT_PASS=***"),
+        ("DB_PWD=x", "DB_PWD=***"),
+        ("OLDPWD=/", "OLDPWD=/"),
+        ("BYPASS_CACHE=1", "BYPASS_CACHE=1"),
+        ("GH=ghp_abcdefghijklmnopqrstuvwxyz0123", "GH=[REDACTED]"),
+        ("SENTRY_DSN=https://abc@o1.ingest.sentry.io/1", "SENTRY_DSN=***"),
+        # Left alone: nothing secret in them.
+        ("UPSTREAM=http://svc:8080/api", "UPSTREAM=http://svc:8080/api"),
+        ("PWD=/app", "PWD=/app"),
+        ("MAILTO=ops@example.com", "MAILTO=ops@example.com"),
+        ("TIME=12:30@utc", "TIME=12:30@utc"),
+    ],
+)
+def test_redact_env_vars_scans_values(entry, expected):
+    assert _redact_env_vars([entry]) == [expected]
+
+
 def test_redact_env_vars_no_equals():
     assert _redact_env_vars(["NOVALUE"]) == ["NOVALUE"]
 
