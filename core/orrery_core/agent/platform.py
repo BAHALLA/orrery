@@ -10,10 +10,12 @@ editable from the console:
   platform. Operator configuration, so trusted; size-capped all the same,
   because it is sent with every model call.
 - ``ORRERY_AUXILIARY_RESOURCES``: comma-separated name globs (``lab-*,ops-*``)
-  for resources that may be down without the platform being degraded. A
-  container label ``orrery.scope=auxiliary`` (or ``=platform``, which wins
-  over a glob) says the same per container. Triage reports auxiliary
-  resources separately and never lets them change a verdict.
+  for containers and compose projects that may be down without the platform
+  being degraded. Triage reports them separately and never lets them change a
+  verdict. A container label ``orrery.scope=platform`` pins one back into the
+  platform; the label cannot make anything auxiliary, because containers
+  inherit their image's labels, and an image author must not be able to take
+  a failing container out of the verdict.
 """
 
 from __future__ import annotations
@@ -26,9 +28,8 @@ from pathlib import Path
 
 PLATFORM_CONTEXT_ENV = "ORRERY_PLATFORM_CONTEXT_FILE"
 AUXILIARY_ENV = "ORRERY_AUXILIARY_RESOURCES"
-#: Container label that places one resource explicitly.
+#: Container label that pins one container into the platform.
 SCOPE_LABEL = "orrery.scope"
-SCOPES = ("platform", "auxiliary")
 #: Sent with every coordinator and triage call: a runbook belongs in the
 #: knowledge corpus (``search_knowledge``), not here.
 MAX_PLATFORM_CONTEXT_BYTES = 16 * 1024
@@ -89,48 +90,58 @@ def platform_context_section() -> str:
 
 
 def auxiliary_patterns() -> tuple[str, ...]:
-    """The ``ORRERY_AUXILIARY_RESOURCES`` globs, in the order given."""
-    raw = os.getenv(AUXILIARY_ENV, "")
-    return tuple(p.strip() for p in raw.split(",") if p.strip())
+    """The ``ORRERY_AUXILIARY_RESOURCES`` globs, in the order given.
 
-
-def resource_scope(name: str, label: str | None = None) -> str:
-    """``"platform"`` or ``"auxiliary"`` for one resource.
-
-    An explicit ``orrery.scope`` label wins; otherwise a name matching one of
-    the auxiliary globs is auxiliary; everything else is platform, so a
-    deployment that configures nothing triages exactly as before.
+    Raises:
+        ValueError: A pattern made only of wildcards, which would make the
+            whole platform auxiliary and every triage healthy.
     """
-    if label in SCOPES:
-        return label
+    raw = os.getenv(AUXILIARY_ENV, "")
+    patterns = tuple(p.strip() for p in raw.split(",") if p.strip())
+    for pattern in patterns:
+        if not pattern.strip("*?"):
+            raise ValueError(
+                f"{AUXILIARY_ENV}: {pattern!r} matches every name; list the auxiliary "
+                "ones (e.g. lab-*)"
+            )
+    return patterns
+
+
+def resource_scope(name: str, pinned: bool = False) -> str:
+    """``"platform"`` or ``"auxiliary"`` for one container or compose project.
+
+    A name matching an auxiliary glob is auxiliary, unless *pinned* (the
+    container carries ``orrery.scope=platform``); everything else is platform,
+    so a deployment that configures nothing triages exactly as before.
+    """
+    if pinned:
+        return "platform"
     name = name.lstrip("/")
     return "auxiliary" if any(fnmatchcase(name, p) for p in auxiliary_patterns()) else "platform"
 
 
-#: ``orrery.scope=<value>`` inside the comma-joined ``Labels`` column of
-#: ``docker ps --format json``.
-_SCOPE_IN_LABELS = re.compile(rf"(?:^|,){re.escape(SCOPE_LABEL)}=(platform|auxiliary)(?=,|$)")
+#: ``orrery.scope=platform`` inside the comma-joined ``Labels`` column of
+#: ``docker ps --format json``. A label value containing that text can only
+#: pin a container *into* the platform, which is the safe direction.
+_PINNED_IN_LABELS = re.compile(rf"(?:^|,){re.escape(SCOPE_LABEL)}=platform(?=,|$)")
 
 
-def scope_from_labels(labels: object) -> str | None:
-    """The ``orrery.scope`` value in a ``docker ps`` ``Labels`` string, if any."""
-    if not isinstance(labels, str):
-        return None
-    match = _SCOPE_IN_LABELS.search(labels)
-    return match.group(1) if match else None
+def pinned_by_labels(labels: object) -> bool:
+    """Whether a ``docker ps`` ``Labels`` string pins the container into the platform."""
+    return isinstance(labels, str) and _PINNED_IN_LABELS.search(labels) is not None
 
 
 def scope_rule() -> str:
     """The triage rule for auxiliary resources, for checker and triage instructions."""
     patterns = auxiliary_patterns()
-    named = (
-        " Resources named like " + ", ".join(f"`{p}`" for p in patterns) + " are auxiliary too."
-        if patterns
-        else ""
-    )
+    if not patterns:
+        return ""
+    # The tools do the matching: a model applying globs by eye would discount
+    # a Kubernetes namespace or a Kafka group that merely looks similar.
     return (
-        "Auxiliary resources: an item a tool marks `scope: auxiliary` is outside the "
-        f"platform.{named} Report auxiliary items under a separate 'Auxiliary' line with "
-        "their state, and never let them raise a status or the overall verdict: the "
-        "platform is degraded only by platform resources."
+        "\n\nAuxiliary resources: a container or compose project a tool marks "
+        "`scope: auxiliary` is outside the platform. Report those under a separate "
+        "'Auxiliary' line with their state, and never let them raise a status or the "
+        "overall verdict. Only items carrying that exact tag are auxiliary: judge "
+        "everything else, whatever its name, as part of the platform."
     )

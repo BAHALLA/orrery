@@ -6,9 +6,9 @@ from orrery_core.agent import platform
 from orrery_core.agent.platform import (
     MAX_PLATFORM_CONTEXT_BYTES,
     load_platform_context,
+    pinned_by_labels,
     platform_context_section,
     resource_scope,
-    scope_from_labels,
     scope_rule,
 )
 
@@ -64,14 +64,12 @@ def test_an_unusable_file_stops_startup(tmp_path, monkeypatch, content, message)
         load_platform_context()
 
 
-def test_scope_label_wins_over_globs(monkeypatch):
+def test_globs_mark_auxiliary_and_a_pin_wins(monkeypatch):
     monkeypatch.setenv(platform.AUXILIARY_ENV, "lab-*, ops-*")
     assert resource_scope("lab-kafka") == "auxiliary"
     assert resource_scope("/ops-grafana") == "auxiliary"
     assert resource_scope("api") == "platform"
-    assert resource_scope("lab-kafka", "platform") == "platform"
-    assert resource_scope("api", "auxiliary") == "auxiliary"
-    assert resource_scope("api", "bogus") == "platform"
+    assert resource_scope("lab-kafka", pinned=True) == "platform"
 
 
 def test_globs_are_case_sensitive(monkeypatch):
@@ -83,23 +81,35 @@ def test_nothing_configured_is_all_platform():
     assert resource_scope("lab-kafka") == "platform"
 
 
+@pytest.mark.parametrize("pattern", ["*", "**", "?*", "lab-*, *"])
+def test_a_pattern_matching_everything_is_refused(monkeypatch, pattern):
+    monkeypatch.setenv(platform.AUXILIARY_ENV, pattern)
+    with pytest.raises(ValueError, match="matches every name"):
+        scope_rule()
+
+
 @pytest.mark.parametrize(
-    ("labels", "scope"),
+    ("labels", "pinned"),
     [
-        ("orrery.scope=auxiliary", "auxiliary"),
-        ("a=1,orrery.scope=platform,b=2", "platform"),
-        ("xorrery.scope=auxiliary", None),
-        ("orrery.scope=auxiliaryish", None),
-        ("", None),
-        (None, None),
+        ("orrery.scope=platform", True),
+        ("a=1,orrery.scope=platform,b=2", True),
+        # A label can never make a container auxiliary: images pass theirs on.
+        ("orrery.scope=auxiliary", False),
+        ("org.opencontainers.image.description=x,orrery.scope=auxiliary,m=a", False),
+        ("xorrery.scope=platform", False),
+        ("orrery.scope=platformish", False),
+        ("", False),
+        (None, False),
     ],
 )
-def test_scope_from_labels(labels, scope):
-    assert scope_from_labels(labels) == scope
+def test_only_a_platform_pin_is_read_from_labels(labels, pinned):
+    assert pinned_by_labels(labels) is pinned
 
 
-def test_scope_rule_names_the_globs(monkeypatch):
-    assert "`scope: auxiliary`" in scope_rule()
-    assert "named like" not in scope_rule()
+def test_the_scope_rule_appears_only_when_configured(monkeypatch):
+    assert scope_rule() == ""
     monkeypatch.setenv(platform.AUXILIARY_ENV, "lab-*")
-    assert "`lab-*`" in scope_rule()
+    rule = scope_rule()
+    assert "`scope: auxiliary`" in rule
+    assert "Only items carrying that exact tag are auxiliary" in rule
+    assert "lab-*" not in rule  # the tools match names, never the model

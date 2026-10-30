@@ -19,11 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Operator platform context and triage scope**:
   `ORRERY_PLATFORM_CONTEXT_FILE` (Markdown, at most 16 KiB, read once at
   startup) is added to the coordinator's and the triage agents'
-  instructions. `ORRERY_AUXILIARY_RESOURCES` (name globs) and the container
-  label `orrery.scope=auxiliary|platform` mark resources that may be down
-  without the platform being degraded: the Docker tools tag them
-  `scope: auxiliary`, and triage reports them separately without letting them
-  change the verdict. The coordinator's examples now name a system the
+  instructions. `ORRERY_AUXILIARY_RESOURCES` (name globs) marks containers
+  and compose projects that may be down without the platform being degraded:
+  the Docker tools tag them `scope: auxiliary`, and triage reports them
+  separately without letting them change the verdict. A container label
+  `orrery.scope=platform` pins one back in; no label can make a container
+  auxiliary, since images pass their labels on. The coordinator's examples now name a system the
   deployment runs instead of assuming Kafka.
 
 - **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose

@@ -157,7 +157,7 @@ def _checker_instruction(system: str, checks: str, criteria: str) -> str:
         f"Severity: {criteria} "
         "The status must come only from what the tools returned this run. If a check "
         "failed, name what is unverified and cap STATUS at 'unknown' for that area — "
-        "missing data is never 'healthy'.\n\n" + scope_rule() + platform_context_section()
+        "missing data is never 'healthy'." + scope_rule() + platform_context_section()
     )
 
 
@@ -249,7 +249,7 @@ triage_summarizer = create_agent(
         "verbatim); one line each for healthy systems\n"
         "3. Next actions, most urgent first, each naming a concrete target\n\n"
         "Then call record_triage_verdict EXACTLY ONCE with overall_status "
-        "('healthy'|'degraded'|'critical') and report set to your full report text.\n\n"
+        "('healthy'|'degraded'|'critical') and report set to your full report text."
         + scope_rule()
         + platform_context_section()
     ),
@@ -332,7 +332,7 @@ def build_triage_agent(specialists: Sequence[Specialist]) -> Any | None:
             "Report: overall status + deciding reason first, then per-system findings with "
             "exact names and numbers from tool output, then next actions with concrete "
             "targets. Call record_triage_verdict EXACTLY ONCE with overall_status and the "
-            "full report text.\n\n" + scope_rule() + platform_context_section()
+            "full report text." + scope_rule() + platform_context_section()
         ),
         tools=[*tools, record_triage_verdict],
     )
@@ -398,7 +398,7 @@ _KNOWLEDGE_INSTRUCTION = (
 def _example_system(specialists: Sequence[Specialist]) -> str:
     """A system the coordinator can reach, for its instruction's examples."""
     checks = [s.health_check for s in sweepable(specialists)]
-    return next((c.system for c in checks if c is not None), "the database")
+    return next((c.system for c in checks if c is not None), "the platform")
 
 
 def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequence[Any]) -> Any:

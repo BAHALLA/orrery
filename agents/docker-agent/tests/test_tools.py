@@ -810,7 +810,7 @@ def test_prune_containers_has_destructive_guardrail():
     assert prune_containers._guardrail_level == "destructive"
 
 
-# ── Triage scope (ORRERY_AUXILIARY_RESOURCES / orrery.scope) ──────────
+# ── Triage scope (ORRERY_AUXILIARY_RESOURCES / orrery.scope=platform) ──
 
 
 @pytest.mark.asyncio
@@ -823,11 +823,12 @@ async def test_list_containers_tags_only_auxiliary_ones(mock_run, monkeypatch):
             {"Names": "api", "Labels": "a=b"},
             {"Names": "lab-kafka", "Labels": ""},
             {"Names": "lab-pinned", "Labels": "x=1,orrery.scope=platform"},
-            {"Names": "sidecar", "Labels": "orrery.scope=auxiliary,y=2"},
+            # An image's label cannot take a container out of the verdict.
+            {"Names": "api2", "Labels": "description=x,orrery.scope=auxiliary,y=2"},
         ),
     )
     rows = (await list_containers(all=True))["containers"]
-    assert [r.get("scope") for r in rows] == [None, "auxiliary", None, "auxiliary"]
+    assert [r.get("scope") for r in rows] == [None, "auxiliary", None, None]
 
 
 @pytest.mark.asyncio
@@ -840,14 +841,23 @@ async def test_nothing_is_tagged_without_configuration(mock_run, monkeypatch):
 
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_stats_are_never_scope_tagged(mock_run, monkeypatch):
+    """`docker stats` has no labels, so it could not honour a platform pin."""
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab-*")
+    mock_run.return_value = (True, json.dumps({"Name": "lab-api", "CPUPerc": "99%"}))
+    assert "scope" not in await get_container_stats("lab-api")
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
 async def test_compose_status_marks_auxiliary_projects(mock_run, monkeypatch):
-    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab")
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab, shop-tool-*")
     mock_run.return_value = (
         True,
         _rows(
             {"project": "lab", "name": "lab-kafka-1", "state": "exited", "scope": ""},
             {"project": "shop", "name": "shop-web-1", "state": "running", "scope": ""},
-            {"project": "shop", "name": "shop-tool-1", "state": "exited", "scope": "auxiliary"},
+            {"project": "shop", "name": "shop-tool-1", "state": "exited", "scope": ""},
         ),
     )
     projects = {p["name"]: p for p in (await docker_compose_status())["projects"]}
@@ -865,7 +875,8 @@ async def test_compose_services_carry_their_scope(mock_run, monkeypatch):
         _rows(
             {"project": "lab", "name": "lab-kafka-1", "state": "exited", "scope": ""},
             {"project": "lab", "name": "lab-api-1", "state": "running", "scope": "platform"},
+            {"project": "lab", "name": "lab-x-1", "state": "exited", "scope": "auxiliary"},
         ),
     )
     services = (await docker_compose_status("lab"))["services"]
-    assert [s.get("scope") for s in services] == ["auxiliary", None]
+    assert [s.get("scope") for s in services] == ["auxiliary", None, "auxiliary"]

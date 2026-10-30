@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from orrery_core import confirm, destructive
-from orrery_core.agent.platform import SCOPES, resource_scope, scope_from_labels
+from orrery_core.agent.platform import pinned_by_labels, resource_scope
 from orrery_core.security.redaction import REDACTED, redact_text
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
@@ -104,13 +104,13 @@ async def _run_docker(
         return False, f"Command timed out after {timeout}s"
 
 
-def _mark_scope(item: dict[str, Any], name: str, label: str | None) -> None:
-    """Tag an auxiliary resource (``ORRERY_AUXILIARY_RESOURCES``, ``orrery.scope``).
+def _mark_scope(item: dict[str, Any], name: str, pinned: bool) -> None:
+    """Tag an auxiliary container (``ORRERY_AUXILIARY_RESOURCES``).
 
-    Platform resources stay untagged, so a deployment that configures neither
-    sees the same output as before.
+    Platform ones stay untagged, so a deployment that configures nothing sees
+    the same output as before.
     """
-    if resource_scope(name, label) == "auxiliary":
+    if resource_scope(name, pinned) == "auxiliary":
         item["scope"] = "auxiliary"
 
 
@@ -138,7 +138,7 @@ async def list_containers(all: bool = False) -> dict[str, Any]:
     for line in output.splitlines():
         if line.strip():
             row = json.loads(line)
-            _mark_scope(row, str(row.get("Names", "")), scope_from_labels(row.get("Labels")))
+            _mark_scope(row, str(row.get("Names", "")), pinned_by_labels(row.get("Labels")))
             containers.append(row)
 
     return {"status": "success", "containers": containers, "count": len(containers)}
@@ -245,7 +245,9 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
         return {"status": "error", "message": output}
 
     stats = json.loads(output)
-    result = {
+    # Not scope-tagged: `docker stats` carries no labels, so a container pinned
+    # into the platform would be auxiliary here and not in list_containers.
+    return {
         "status": "success",
         "container": container_name,
         "cpu_percent": stats.get("CPUPerc"),
@@ -255,8 +257,6 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
         "block_io": stats.get("BlockIO"),
         "pids": stats.get("PIDs"),
     }
-    _mark_scope(result, str(stats.get("Name") or container_name), None)
-    return result
 
 
 #: Compose project names: lowercase letters, digits, dashes and underscores,
@@ -306,13 +306,14 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
         return {"status": "error", "message": "unexpected output from docker ps"}
     rows = [r for r in rows if isinstance(r, dict)]
     for row in rows:
-        label = row.pop("scope", None)
-        label = label if label in SCOPES else None
+        pinned = row.pop("scope", None) == "platform"
         # A project named like an auxiliary glob makes its containers auxiliary,
-        # unless a container's own label says otherwise.
-        if label is None and resource_scope(str(row.get("project", ""))) == "auxiliary":
-            label = "auxiliary"
-        _mark_scope(row, str(row.get("name", "")), label)
+        # unless a container is pinned into the platform.
+        name = str(row.get("name", ""))
+        if not pinned and resource_scope(str(row.get("project", ""))) == "auxiliary":
+            row["scope"] = "auxiliary"
+        else:
+            _mark_scope(row, name, pinned)
 
     if project is not None:
         if not rows:
