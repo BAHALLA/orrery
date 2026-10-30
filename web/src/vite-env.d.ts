@@ -22,6 +22,8 @@ interface ImportMeta {
 interface OrreryRuntimeConfig {
   oidc?: { issuer?: string; clientId?: string; scope?: string };
   roleClaim?: string;
+  /** `ORRERY_CONSOLE_TITLE` / `_ENVIRONMENT` / `_ACCENT`, validated by the server. */
+  branding?: { title?: string; environment?: string; accent?: string };
 }
 
 interface Window {

@@ -8,6 +8,7 @@ import { AgentsDashboard } from "./agents/AgentsDashboard";
 import { BREAKPOINT_LG, useMediaQuery, useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
+import { EnvironmentBadge, EnvironmentBanner } from "./EnvironmentBadge";
 import { pendingPlacement } from "../chat/pending";
 import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon, ShieldIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
@@ -17,6 +18,7 @@ import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
 import { useStoredFlag } from "./storedFlag";
 import { storageKeys } from "../config";
+import { branding, brandedTitle } from "../theme/accent";
 import { resolveSpecialists } from "../specialists";
 import { useSystem } from "../system/useSystem";
 
@@ -24,8 +26,8 @@ import { useSystem } from "../system/useSystem";
 // first visit, so none of it is in the chat console's first load.
 const StudioView = lazy(() => import("../studio/StudioView"));
 
-/** The page title (index.html); a Studio run waiting for a person prefixes it. */
-const BASE_TITLE = "Orrery Console";
+/** The page title, environment first, even ahead of a waiting Studio decision. */
+const BASE_TITLE = brandedTitle();
 
 export type ConsoleView = "chat" | "agents" | "studio";
 
@@ -69,9 +71,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   // an approval left unseen expires and ends the run rejected.
   const [studioWaiting, setStudioWaiting] = useState(0);
   useEffect(() => {
-    document.title = studioWaiting
-      ? `(${studioWaiting}) Approval needed · ${BASE_TITLE}`
-      : BASE_TITLE;
+    document.title = brandedTitle(
+      branding,
+      studioWaiting ? `(${studioWaiting}) Approval needed` : undefined,
+    );
   }, [studioWaiting]);
   useEffect(
     () => () => {
@@ -258,6 +261,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        <EnvironmentBanner />
         {/* The one live region for a turn: "working", then "answer ready". */}
         <p role="status" className="sr-only">
           {announcement}
@@ -289,6 +293,9 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                 ? "Studio"
                 : conversations.active.title}
           </h2>
+          {/* Here as well as in the sidebar: a folded rail or a closed drawer
+              must not leave production unmarked. */}
+          <EnvironmentBadge />
           {live ? (
             <span
               aria-hidden="true"

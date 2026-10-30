@@ -16,6 +16,17 @@ app, that sets ``window.__ORRERY_CONSOLE_CONFIG__`` from these variables:
   badge. Defaults to the server's ``JWT_ROLE_CLAIM``, which it must match or the
   badge disagrees with the RBAC that is actually enforced.
 
+Branding, so two deployments of the same console are told apart at a glance
+(a production instance and a demo lab, say):
+
+- ``ORRERY_CONSOLE_TITLE``: the product name in the header, sign-in page and
+  browser tab (default "Orrery Console"). At most 60 characters.
+- ``ORRERY_CONSOLE_ENVIRONMENT``: ``production``, ``staging``, ``demo`` or
+  ``lab``. Shown as a badge, in the tab title and on the approval card, plus a
+  banner for anything but production.
+- ``ORRERY_CONSOLE_ACCENT``: the accent colour, one of :data:`ACCENTS`
+  (default ``indigo``).
+
 Anything unset is left out, and the console falls back to its build-time value,
 so a bundle built with ``VITE_OIDC_*`` keeps working unchanged.
 
@@ -29,12 +40,19 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 GLOBAL_NAME = "__ORRERY_CONSOLE_CONFIG__"
 
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+#: Values of ``ORRERY_CONSOLE_ENVIRONMENT``.
+ENVIRONMENTS = ("production", "staging", "demo", "lab")
+#: Accent presets the console knows (``web/src/theme/accent.ts``).
+ACCENTS = ("indigo", "blue", "teal", "emerald", "amber", "orange", "red", "rose", "violet", "slate")
+MAX_TITLE_CHARS = 60
 
 
 @dataclass(frozen=True)
@@ -43,6 +61,9 @@ class ConsoleConfig:
     oidc_client_id: str | None = None
     oidc_scope: str | None = None
     role_claim: str | None = None
+    title: str | None = None
+    environment: str | None = None
+    accent: str | None = None
 
     @classmethod
     def from_env(cls) -> ConsoleConfig:
@@ -54,15 +75,21 @@ class ConsoleConfig:
             oidc_client_id=env("ORRERY_CONSOLE_OIDC_CLIENT_ID"),
             oidc_scope=env("ORRERY_CONSOLE_OIDC_SCOPE"),
             role_claim=env("ORRERY_CONSOLE_OIDC_ROLE_CLAIM") or env("JWT_ROLE_CLAIM"),
+            title=env("ORRERY_CONSOLE_TITLE"),
+            environment=(env("ORRERY_CONSOLE_ENVIRONMENT") or "").lower() or None,
+            accent=(env("ORRERY_CONSOLE_ACCENT") or "").lower() or None,
         )
 
     def validate(self, jwt_issuer: str | None) -> None:
         """Refuse an issuer the server would not accept, or one reached in clear.
 
+        Also refuses branding values the console could not show as meant.
+
         Raises:
             ValueError: The issuer is not https (outside localhost), or differs
-                from the server's ``JWT_ISSUER``.
+                from the server's ``JWT_ISSUER``; or a branding value is invalid.
         """
+        self._validate_branding()
         if not self.oidc_issuer:
             return
         url = urlsplit(self.oidc_issuer)
@@ -75,6 +102,25 @@ class ConsoleConfig:
             raise ValueError(
                 f"ORRERY_CONSOLE_OIDC_ISSUER ({self.oidc_issuer}) differs from JWT_ISSUER "
                 f"({jwt_issuer}): the console would sign in and every API call would get 401"
+            )
+
+    def _validate_branding(self) -> None:
+        if self.title is not None and (
+            len(self.title) > MAX_TITLE_CHARS
+            or not all(c.isprintable() or unicodedata.category(c) == "Zs" for c in self.title)
+        ):
+            raise ValueError(
+                f"ORRERY_CONSOLE_TITLE must be at most {MAX_TITLE_CHARS} characters with no "
+                "control or invisible formatting characters"
+            )
+        if self.environment is not None and self.environment not in ENVIRONMENTS:
+            raise ValueError(
+                f"ORRERY_CONSOLE_ENVIRONMENT must be one of {', '.join(ENVIRONMENTS)}, "
+                f"got {self.environment!r}"
+            )
+        if self.accent is not None and self.accent not in ACCENTS:
+            raise ValueError(
+                f"ORRERY_CONSOLE_ACCENT must be one of {', '.join(ACCENTS)}, got {self.accent!r}"
             )
 
     def as_dict(self) -> dict[str, object]:
@@ -93,6 +139,17 @@ class ConsoleConfig:
             out["oidc"] = oidc
         if self.role_claim:
             out["roleClaim"] = self.role_claim
+        branding = {
+            k: v
+            for k, v in (
+                ("title", self.title),
+                ("environment", self.environment),
+                ("accent", self.accent),
+            )
+            if v
+        }
+        if branding:
+            out["branding"] = branding
         return out
 
 

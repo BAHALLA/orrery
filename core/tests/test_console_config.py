@@ -71,3 +71,69 @@ def test_an_issuer_outside_localhost_must_be_https(issuer, ok):
     else:
         with pytest.raises(ValueError, match="must be an https URL"):
             cfg.validate(None)
+
+
+# ── Branding ─────────────────────────────────────────────────────────
+
+
+def test_branding_from_env(monkeypatch):
+    monkeypatch.setenv("ORRERY_CONSOLE_TITLE", "Tirraflow Ops")
+    monkeypatch.setenv("ORRERY_CONSOLE_ENVIRONMENT", "Production")
+    monkeypatch.setenv("ORRERY_CONSOLE_ACCENT", "RED")
+    cfg = ConsoleConfig.from_env()
+    cfg.validate(None)
+    assert cfg.as_dict()["branding"] == {
+        "title": "Tirraflow Ops",
+        "environment": "production",
+        "accent": "red",
+    }
+
+
+def test_no_branding_sends_nothing(monkeypatch):
+    for name in ("ORRERY_CONSOLE_TITLE", "ORRERY_CONSOLE_ENVIRONMENT", "ORRERY_CONSOLE_ACCENT"):
+        monkeypatch.delenv(name, raising=False)
+    assert "branding" not in ConsoleConfig.from_env().as_dict()
+
+
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        ConsoleConfig(environment="prod"),
+        ConsoleConfig(accent="#ff0000"),
+        ConsoleConfig(title="x" * 61),
+        ConsoleConfig(title="Ops\nInjected"),
+    ],
+)
+def test_invalid_branding_stops_startup(cfg):
+    with pytest.raises(ValueError):
+        cfg.validate(None)
+
+
+def test_a_title_cannot_close_the_script_element():
+    script = render_script(ConsoleConfig(title="</script><b>"))
+    assert "</script>" not in script
+    assert json.loads(script.split("=", 1)[1].strip().rstrip(";"))["branding"]["title"] == (
+        "</script><b>"
+    )
+
+
+def test_a_no_break_space_is_a_valid_title():
+    ConsoleConfig(title="Tirraflow Ops").validate(None)
+    with pytest.raises(ValueError):
+        ConsoleConfig(title="Ops​Lab").validate(None)  # zero-width space
+
+
+def test_accents_match_the_consoles_presets():
+    """The server accepts exactly the presets the console can paint."""
+    import re
+    from pathlib import Path
+
+    from orrery_core.serving.console_config import ACCENTS, ENVIRONMENTS
+
+    source = (Path(__file__).parents[2] / "web/src/theme/accent.ts").read_text()
+    hues = re.search(r"ACCENT_HUES: Record<string, number> = \{(.*?)\};", source, re.S)
+    assert hues is not None
+    assert tuple(re.findall(r"^\s*(\w+):", hues.group(1), re.M)) == ACCENTS
+    envs = re.search(r"const ENVIRONMENTS: readonly Environment\[\] = \[(.*?)\];", source, re.S)
+    assert envs is not None
+    assert tuple(re.findall(r'"(\w+)"', envs.group(1))) == ENVIRONMENTS

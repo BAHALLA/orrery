@@ -1,3 +1,5 @@
+import { branding } from "../theme/accent";
+import { EnvironmentBadge } from "./EnvironmentBadge";
 import { OrreryMark } from "./OrreryMark";
 
 interface Props {
@@ -21,8 +23,9 @@ export function SignInPanel({ onSignIn, error, isLoading = false }: Props) {
         <div className="mb-1 flex items-center justify-center gap-2">
           <OrreryMark className="h-7 w-7 text-slate-900 dark:text-slate-100" />
           <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-            Orrery Console
+            {branding.title}
           </h1>
+          <EnvironmentBadge />
         </div>
 
         {isLoading ? (
