@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the summary. A project mixing both now reports `states` for its platform
   containers only, plus `auxiliary_states` and `auxiliary_containers`; a
   project that is wholly auxiliary keeps `states` and `scope: auxiliary`.
+  `containers` stays the total, and the triage prompts name the new key.
   Output is unchanged when `ORRERY_AUXILIARY_RESOURCES` is unset.
 
 ## [0.14.0] - 2026-10-30

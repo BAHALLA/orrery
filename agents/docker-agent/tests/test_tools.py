@@ -863,6 +863,8 @@ async def test_compose_status_marks_auxiliary_projects(mock_run, monkeypatch):
     projects = {p["name"]: p for p in (await docker_compose_status())["projects"]}
     assert projects["lab"]["scope"] == "auxiliary"
     assert projects["lab"]["states"] == {"exited": 1}
+    assert "auxiliary_states" not in projects["lab"]
+    assert "auxiliary_containers" not in projects["lab"]
     assert "scope" not in projects["shop"]
     assert projects["shop"]["auxiliary_containers"] == 1
 
@@ -924,3 +926,24 @@ async def test_compose_services_carry_their_scope(mock_run, monkeypatch):
     )
     services = (await docker_compose_status("lab"))["services"]
     assert [s.get("scope") for s in services] == ["auxiliary", None, "auxiliary"]
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_a_pinned_container_keeps_an_auxiliary_project_in_the_platform(mock_run, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab")
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "lab", "name": "lab-kafka-1", "state": "restarting", "scope": ""},
+            {"project": "lab", "name": "lab-api-1", "state": "running", "scope": "platform"},
+        ),
+    )
+    (project,) = (await docker_compose_status())["projects"]
+    assert project == {
+        "name": "lab",
+        "containers": 2,
+        "states": {"running": 1},
+        "auxiliary_containers": 1,
+        "auxiliary_states": {"restarting": 1},
+    }

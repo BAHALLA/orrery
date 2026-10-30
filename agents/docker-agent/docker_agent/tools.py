@@ -335,7 +335,8 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
     for row in rows:
         name = str(row.get("project", ""))
         platform.setdefault(name, {})
-        counts = (auxiliary if row.get("scope") == "auxiliary" else platform).setdefault(name, {})
+        bucket = auxiliary if row.get("scope") == "auxiliary" else platform
+        counts = bucket.setdefault(name, {})
         state = str(row.get("state", "unknown"))
         counts[state] = counts.get(state, 0) + 1
     listed = []

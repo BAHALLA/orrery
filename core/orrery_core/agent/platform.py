@@ -143,6 +143,8 @@ def scope_rule() -> str:
         "\n\nAuxiliary resources: a container or compose project a tool marks "
         "`scope: auxiliary` is outside the platform. Report those under a separate "
         "'Auxiliary' line with their state, and never let them raise a status or the "
-        "overall verdict. Only items carrying that exact tag are auxiliary: judge "
+        "overall verdict. In a compose project summary, the counts under "
+        "`auxiliary_states` (and `auxiliary_containers`) are auxiliary containers too, "
+        "while `states` counts only the platform's. Nothing else is auxiliary: judge "
         "everything else, whatever its name, as part of the platform."
     )
