@@ -111,5 +111,6 @@ def test_the_scope_rule_appears_only_when_configured(monkeypatch):
     monkeypatch.setenv(platform.AUXILIARY_ENV, "lab-*")
     rule = scope_rule()
     assert "`scope: auxiliary`" in rule
-    assert "Only items carrying that exact tag are auxiliary" in rule
+    assert "Nothing else is auxiliary" in rule
+    assert "`auxiliary_states`" in rule  # the compose summary's key: a rename must fail here
     assert "lab-*" not in rule  # the tools match names, never the model

@@ -285,7 +285,9 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
 
     Args:
         project: Compose project name. If omitted, lists every project with a
-                 count of its containers by state.
+                 count of its containers by state; auxiliary containers
+                 (``ORRERY_AUXILIARY_RESOURCES``) are counted apart, under
+                 ``auxiliary_states``.
 
     Returns:
         A dictionary with the projects, or with every container of *project*.
@@ -326,22 +328,31 @@ async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
             "count": len(services),
         }
 
-    projects: dict[str, dict[str, int]] = {}
-    auxiliary: dict[str, int] = {}
+    # Per project, state counts kept apart by scope: a crash-looping auxiliary
+    # container inside a platform project must not read as a platform restart.
+    platform: dict[str, dict[str, int]] = {}
+    auxiliary: dict[str, dict[str, int]] = {}
     for row in rows:
         name = str(row.get("project", ""))
-        states = projects.setdefault(name, {})
+        platform.setdefault(name, {})
+        bucket = auxiliary if row.get("scope") == "auxiliary" else platform
+        counts = bucket.setdefault(name, {})
         state = str(row.get("state", "unknown"))
-        states[state] = states.get(state, 0) + 1
-        if row.get("scope") == "auxiliary":
-            auxiliary[name] = auxiliary.get(name, 0) + 1
+        counts[state] = counts.get(state, 0) + 1
     listed = []
-    for name, states in sorted(projects.items()):
-        entry: dict[str, Any] = {"name": name, "containers": sum(states.values()), "states": states}
-        if auxiliary.get(name) == entry["containers"]:
+    for name in sorted(platform):
+        states, aux_states = platform[name], auxiliary.get(name, {})
+        aux_count = sum(aux_states.values())
+        entry: dict[str, Any] = {"name": name, "containers": sum(states.values()) + aux_count}
+        if aux_count and not states:
             entry["scope"] = "auxiliary"
-        elif name in auxiliary:
-            entry["auxiliary_containers"] = auxiliary[name]
+            entry["states"] = aux_states
+        else:
+            # Platform containers only; the auxiliary ones are counted beside them.
+            entry["states"] = states
+            if aux_count:
+                entry["auxiliary_containers"] = aux_count
+                entry["auxiliary_states"] = aux_states
         listed.append(entry)
     return {"status": "success", "projects": listed, "count": len(listed)}
 

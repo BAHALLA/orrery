@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`docker_compose_status` keeps auxiliary containers out of a project's
+  state counts.** With every container in one compose project, a
+  crash-looping `lab-*` container showed as an untagged `restarting: 1` in
+  the summary. A project mixing both now reports `states` for its platform
+  containers only, plus `auxiliary_states` and `auxiliary_containers`; a
+  project that is wholly auxiliary keeps `states` and `scope: auxiliary`.
+  `containers` stays the total, and the triage prompts name the new key.
+  Output is unchanged when `ORRERY_AUXILIARY_RESOURCES` is unset.
+
 ## [0.14.0] - 2026-10-30
 
 **Per-environment consoles, platform-aware triage, and a learning sandbox.**
