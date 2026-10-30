@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-30
+
+**Per-environment consoles, platform-aware triage, and a learning sandbox.**
+A console now says which deployment it is (title, environment badge, accent)
+and hides features its server does not run. Operators can describe the
+platform to the agent and mark auxiliary containers that triage reports
+without letting them change the verdict. Practice labs can run Orrery in a
+sandbox that withholds an exercise's answers (AEP-032 phases 0–1, off by
+default). The Docker specialist's compose status now works against a remote
+daemon, its logs include stderr, and `inspect_container` redacts credentials
+in env values; a deployment can also refuse tokens from clients it does not
+list.
+
 ### Added
 
 - **Console branding per environment**: `ORRERY_CONSOLE_TITLE`,
@@ -31,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ORRERY_SERVICE_CLIENTS` gets 401, the same answer as an invalid token, on
   the console API and A2A, instead of becoming a viewer service principal.
   Setting it without `ORRERY_HUMAN_CLIENTS` stops startup.
-- **Learning sandbox mode** (AEP-032 phase 1), off by default:
+- **Learning sandbox mode**
+  ([AEP-032](docs/enhancements/aep-032-learning-sandbox.md) phase 1), off by default:
   `ORRERY_LEARNING_MODE=true` with `ORRERY_SCENARIO_MANIFEST` makes the HTTP
   server withhold an exercise's answers. `AnswerGuardPlugin` checks every
   final text response of the coordinator against the manifest's targets
@@ -69,11 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file guarded for `ORRERY_LEARNING_GRACE_SECONDS`. Nothing imports the
   learning package in a normal process; a test pins that.
 
-- **AEP-032: Learning Sandbox Mode** (proposal only, no code). An opt-in,
-  read-only sandbox for practice labs that withholds a seeded exercise's
-  answers until the learner asks for hints. Off by default and refused at
-  startup outside an authenticated L2 deployment with a scenario manifest.
-
 ### Fixed
 
 - **The console no longer offers a Studio the server does not run.** Every
@@ -97,6 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only, so a service that logs only to stderr (nginx's error log, Prometheus,
   most Go and Java servers) showed no lines. Both streams are now read
   through one pipe, interleaved as the CLI writes them.
+
 ### Security
 
 - **`inspect_container` scans env values, not only names.** A variable like
@@ -1888,7 +1898,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/BAHALLA/orrery/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/BAHALLA/orrery/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/BAHALLA/orrery/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/BAHALLA/orrery/compare/v0.10.0...v0.11.0
