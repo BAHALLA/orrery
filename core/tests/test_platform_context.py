@@ -81,10 +81,10 @@ def test_nothing_configured_is_all_platform():
     assert resource_scope("lab-kafka") == "platform"
 
 
-@pytest.mark.parametrize("pattern", ["*", "**", "?*", "lab-*, *"])
+@pytest.mark.parametrize("pattern", ["*", "**", "?*", "lab-*, *", "*-*", "[!_]*"])
 def test_a_pattern_matching_everything_is_refused(monkeypatch, pattern):
     monkeypatch.setenv(platform.AUXILIARY_ENV, pattern)
-    with pytest.raises(ValueError, match="matches every name"):
+    with pytest.raises(ValueError, match="must start with a literal prefix"):
         scope_rule()
 
 

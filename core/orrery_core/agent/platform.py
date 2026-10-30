@@ -93,16 +93,17 @@ def auxiliary_patterns() -> tuple[str, ...]:
     """The ``ORRERY_AUXILIARY_RESOURCES`` globs, in the order given.
 
     Raises:
-        ValueError: A pattern made only of wildcards, which would make the
-            whole platform auxiliary and every triage healthy.
+        ValueError: A pattern that does not start with a literal prefix
+            (``*``, ``*-*``, ``[!_]*``): it would match nearly every container
+            and make every triage healthy.
     """
     raw = os.getenv(AUXILIARY_ENV, "")
     patterns = tuple(p.strip() for p in raw.split(",") if p.strip())
     for pattern in patterns:
-        if not pattern.strip("*?"):
+        if pattern[0] in "*?[":
             raise ValueError(
-                f"{AUXILIARY_ENV}: {pattern!r} matches every name; list the auxiliary "
-                "ones (e.g. lab-*)"
+                f"{AUXILIARY_ENV}: {pattern!r} must start with a literal prefix "
+                "(e.g. lab-*), or it matches nearly every name"
             )
     return patterns
 
