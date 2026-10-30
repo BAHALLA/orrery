@@ -17,6 +17,7 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.base_toolset import BaseToolset
 from pydantic import BaseModel
 
+from .. import learning_gate
 from ..env import env_flag
 from ..observability.log import setup_logging
 from ..security.guardrails import (
@@ -509,6 +510,7 @@ def create_agent(
             sub-agent, 'single_turn' as a graph node. Set 'chat' explicitly on
             a Workflow/App root coordinator so it retains conversation history.
     """
+    learning_gate.check("create_agent()")
     resolved_model = model if model is not None else resolve_model()
 
     kwargs: dict[str, Any] = {

@@ -38,6 +38,7 @@ from typing import Any, Protocol
 
 from google.adk.events import Event
 
+from .. import learning_gate
 from ..plugins.progress_plugin import progress_scope
 from .events import extract_reply_text
 from .gateway import (
@@ -119,7 +120,14 @@ async def stream_turn(
     """
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
+    # Streamed text cannot be retracted, and the answer guard checks only a
+    # final response, so the learning sandbox sends the checked ``message``
+    # alone (AEP-032 §4). Read once: activation happens before serving.
+    hold_deltas = learning_gate.is_active()
+
     async def on_event(event: Event) -> None:
+        if hold_deltas:
+            return
         if getattr(event, "partial", None) is True and (text := extract_reply_text(event)):
             queue.put_nowait(("delta", {"text": text, "author": event.author or ""}))
 

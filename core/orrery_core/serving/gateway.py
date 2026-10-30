@@ -47,6 +47,7 @@ from google.adk.sessions.base_session_service import BaseSessionService
 from google.adk.workflow import Workflow
 from google.genai import types
 
+from .. import learning_gate
 from ..env import env_int
 from ..persistence.db import create_session_service
 from ..security.confirmation_flow import conversation_scope
@@ -331,6 +332,7 @@ class AgentGateway:
         # Fail at boot, not on the first Kubernetes call, on a mistyped
         # ORRERY_IMPERSONATION (every transport builds a gateway).
         enabled_systems()
+        learning_gate.check("AgentGateway")
         self.app_name = app_name
         self.session_service = session_service or create_session_service(db_url)
         self.resolver: SessionResolver = session_resolver or MappedSessionResolver()
@@ -362,6 +364,12 @@ class AgentGateway:
         plugins = self._plugins
         if not any(isinstance(p, AttachmentPlugin) for p in plugins):
             plugins = [*plugins, AttachmentPlugin()]
+        if (learning := learning_gate.runtime()) is not None:
+            # First, so no after-model plugin can answer ahead of the answer
+            # guard; it edits in place and returns None, so the rest still run.
+            # It reads the served root's name per call, so it follows
+            # replace_root_agent() (AEP-032 §4).
+            plugins = [*learning.plugins(lambda: getattr(self.root_agent, "name", "")), *plugins]
         app = App(
             name=self.app_name,
             root_agent=root_agent,
@@ -404,6 +412,13 @@ class AgentGateway:
         turn pipeline. ``session_service`` is only needed for the resolver-based
         :meth:`run`; :meth:`run_in_session` works without it.
         """
+        # A Runner built elsewhere carries no answer guard, so learning mode
+        # refuses it even in the activated process (AEP-032 §1).
+        if learning_gate.requested():
+            raise learning_gate.LearningModeRefused(
+                "AgentGateway.from_runner() cannot honour ORRERY_LEARNING_MODE: "
+                "the Runner was built without the answer guard."
+            )
         self = cls.__new__(cls)
         self.app_name = app_name
         self.runner = runner

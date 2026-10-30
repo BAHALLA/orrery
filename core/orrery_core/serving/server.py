@@ -61,6 +61,7 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
     ) from exc
 
+from .. import learning_gate
 from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, create_catalog_store
 from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
@@ -835,6 +836,10 @@ def create_app(
 
     @api.get("/healthz")
     async def healthz() -> dict[str, str]:
+        # A lab checks which scenario the sandbox guards before it hands out
+        # an exercise (AEP-032). The scenario id is not an answer.
+        if (learning := learning_gate.runtime()) is not None:
+            return {"status": "ok", "mode": "learning", "scenario_id": learning.scenario_id()}
         return {"status": "ok"}
 
     readiness = ReadinessCheck(cfg.database_url)
@@ -1156,10 +1161,13 @@ def create_app(
         """
         session = await caller_session(auth, session_id)
         raw = session.state.get("session_log", []) if session.state else []
+        # In the learning sandbox a call's arguments can carry an answer the
+        # model passed along, and nothing guards this path: names only.
+        learning = learning_gate.is_active()
         entries = [
             ActivityEntry(
                 operation=str(e.get("operation", "")),
-                details=str(e.get("details", "")),
+                details="" if learning else str(e.get("details", "")),
                 timestamp=str(e.get("timestamp", "")),
             )
             for e in raw
@@ -1184,7 +1192,9 @@ def create_app(
         session = await caller_session(auth, session_id)
         state = session.state or {}
         severity = state.get("incident_severity")
-        report = state.get("triage_report")
+        # The report is a specialist's prose, written straight to state: the
+        # answer guard never sees it, so the learning sandbox keeps it back.
+        report = None if learning_gate.is_active() else state.get("triage_report")
         return TriageResponse(
             session_id=session_id,
             severity=str(severity) if severity else None,

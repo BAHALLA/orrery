@@ -45,6 +45,7 @@ from orrery_core import (
     create_context_cache_config,
     create_events_compaction_config,
     default_plugins,
+    learning_gate,
     load_agent_env,
     resolve_planner,
 )
@@ -399,6 +400,7 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     section is derived from exactly the agents passed in, so it never mentions
     one the coordinator cannot reach.
     """
+    learning_gate.check("build_chat_agent()")
     triage = build_triage_agent(specialists)
     # Only offer what the coordinator can do: with the journal switched off, a
     # "want me to save this?" ends in a tool it doesn't have.

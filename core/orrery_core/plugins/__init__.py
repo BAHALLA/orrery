@@ -76,6 +76,7 @@ from pathlib import Path
 
 from google.adk.plugins.base_plugin import BasePlugin
 
+from .. import learning_gate
 from ..env import env_flag, env_int
 from ..security.auth import AuthPlugin
 from ..security.rbac import RolePolicy
@@ -296,6 +297,7 @@ def default_plugins(
             ``default_plugins()`` call in a process (chat, and each Studio run)
             spends from the same counters.
     """
+    learning_gate.check("default_plugins()")
     if enable_tracing is None:
         enable_tracing = env_flag("OTEL_TRACING_ENABLED", default=False)
     resilience = ResiliencePlugin(

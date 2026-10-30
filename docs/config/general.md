@@ -234,6 +234,9 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | `ORRERY_SPECIALISTS` | every built-in | Comma-separated entry-point keys to run (e.g. `kafka,k8s`). A third-party specialist runs only when named here. An unknown key stops startup. |
 | `ORRERY_DISABLED_SPECIALISTS` | unset | Keys to leave out. |
 | `ORRERY_DISABLED_TOOLS` | unset | Comma-separated `specialist.tool` names to take out of running specialists (e.g. `observability.get_alert_groups`). Only removes; an unknown name, a tool of a specialist that is not running, or one its health check, remediation, journal or self-test uses stops startup ([details](../specialist-selection.md#step-1-which-specialists-exist)). |
+| `ORRERY_LEARNING_MODE` | `false` | Learning sandbox for practice labs: the HTTP server withholds the exercise answers listed in `ORRERY_SCENARIO_MANIFEST`. Every other entry point refuses it, and startup fails unless the sandbox's preconditions hold ([AEP-032](../enhancements/aep-032-learning-sandbox.md)). |
+| `ORRERY_SCENARIO_MANIFEST` | unset | The scenario manifest (contract v1) learning mode guards. Required with `ORRERY_LEARNING_MODE`; re-read when the file changes. |
+| `ORRERY_LEARNING_GRACE_SECONDS` | `3600` | How long a value that left the manifest stays withheld. |
 | `ORRERY_AGENTS_CONFIG` | unset | YAML file of [declarative agents](../adding-an-agent.md#declarative) built from existing tools. |
 | `ORRERY_ADMIN_EDITING` | `false` | Let admins switch specialists and compose agents from the console ([details](../adding-an-agent.md#admin-editing)). |
 | `ORRERY_CATALOG_POLL_SECONDS` | `15` | How often each replica checks for catalog edits made through another one. |

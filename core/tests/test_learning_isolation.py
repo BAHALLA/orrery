@@ -21,7 +21,11 @@ import slack_bot.app
 import google_chat_bot.app
 import orrery_core.studio.api
 import orrery_core.serving.a2a_server
-leaked = sorted(m for m in sys.modules if m.startswith("orrery_core.learning"))
+# learning_gate is the always-importable refusal check; the package is not.
+leaked = sorted(
+    m for m in sys.modules
+    if m == "orrery_core.learning" or m.startswith("orrery_core.learning.")
+)
 print("LEAKED=" + ",".join(leaked))
 """
 
