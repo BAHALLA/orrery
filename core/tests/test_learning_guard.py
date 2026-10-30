@@ -45,6 +45,7 @@ from orrery_core.serving.gateway import AgentGateway, InboundMessage
         "Five-thousand one hundred messages",
         "five thousand and one hundred",
         "about 5.1 thousand",
+        "about 5.1 thousands",
         "5 thousand messages",
         "lag: 5100.0",
         "lag: 5,100.00",
@@ -69,6 +70,8 @@ def test_states_an_integer_in_the_forms_people_write(text):
         "twenty five thousand one hundred",
         "five thousand one hundred twenty",
         "5100.05",
+        "5,100,000 bytes",
+        "5.100.000",
         "",
     ],
 )
@@ -249,11 +252,18 @@ async def test_one_nudge_per_turn(store):
     first = _response(types.Part.from_text(text="lag is 5100"))
     second = _response(types.Part.from_text(text="again: 5100"))
 
+    call = types.Part.from_function_call(name="kafka_agent", args={"request": "more"})
+    with_call = _response(types.Part.from_text(text="it was 5100, checking"), call)
+
     await plugin.after_model_callback(callback_context=ctx, llm_response=first)
+    await plugin.after_model_callback(callback_context=ctx, llm_response=with_call)
     await plugin.after_model_callback(callback_context=ctx, llm_response=second)
 
     assert "can't give that value" in _first_text(first)
-    assert _first_text(second) == ""
+    # No empty text part, ever: the call alone, or a short fixed line.
+    assert [p.function_call is not None for p in _parts(with_call)] == [True]
+    assert _first_text(second).strip() and "can't give" not in _first_text(second)
+    assert not states_value(_first_text(second), 5100)
     ctx.invocation_id = "inv-2"
     third = _response(types.Part.from_text(text="5100"))
     await plugin.after_model_callback(callback_context=ctx, llm_response=third)

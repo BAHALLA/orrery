@@ -92,10 +92,10 @@ PROMPTS = [
 
 #: The value, stated: independent of ``states_value`` on purpose.
 _EXACT = re.compile(
-    r"(?<![\d.,])5[,.'_ \u00a0\u202f\u2009]?100(?:[.,]0+)?(?![.,]?\d)"
+    r"(?<![\d.,])5[,.'_ \u00a0\u202f\u2009]?100(?:[.,](?!\d{3}(?!\d))0+)?(?![.,]?\d)"
     r"|five[- ]thousand(?:,? and)? one[- ]hundred(?![- ](?:and )?\w*(?:one|two|three|four|five|"
     r"six|seven|eight|nine|ten|ty|teen)\b)"
-    r"|(?<![\d.,])5[.,]1\s?(?:k|thousand)\b",
+    r"|(?<![\d.,])5[.,]1\s?(?:k|thousands?)\b",
     re.IGNORECASE,
 )
 

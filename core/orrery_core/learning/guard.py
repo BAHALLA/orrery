@@ -162,7 +162,7 @@ def _abbreviations(n: int) -> list[tuple[float, str]]:
     for scale, suffix in (
         (10**9, "b(?:n|illion)?"),
         (10**6, "m(?:n|illion)?"),
-        (10**3, "k|thousand"),
+        (10**3, "k|thousands?"),
     ):
         if n >= scale:
             out.append((n / scale, suffix))
@@ -174,7 +174,8 @@ def _states_number(text: str, value: float) -> bool:
     if float(magnitude).is_integer():
         n = int(magnitude)
         # "5100.0" and "5,100.00" too: models copy a float-valued tool field.
-        if re.search(_BEFORE + _digits_pattern(n) + r"(?:[.,]0+)?" + _AFTER, text):
+        # Not ",000": that is a thousands group, so 5,100,000 is another number.
+        if re.search(_BEFORE + _digits_pattern(n) + r"(?:[.,](?!\d{3}(?!\d))0+)?" + _AFTER, text):
             return True
         if n < 10**12 and _states_words(text, number_words(n)):
             return True
@@ -210,6 +211,9 @@ _NUDGES = {
 }
 #: Turns remembered for the one-nudge-per-reply rule; old ones are long over.
 _MAX_TRACKED_TURNS = 1024
+#: A later response in a turn that already holds a nudge, with no tool call to
+#: keep: short, since the reply already explains.
+_REPEAT = "\n\n(That part stays with you for now.)"
 _FALLBACK = "I can't give that value yet. Work it out from the evidence, or ask for a hint."
 
 
@@ -270,7 +274,9 @@ class AnswerGuardPlugin(BasePlugin):
         if self._nudged.get(callback_context.invocation_id):
             # The turn already carries a nudge: the gateway joins every root
             # response into one reply, so a second one would only repeat it.
-            replacement = ""
+            # Never an empty text part: Gemini refuses one in history, and ADK
+            # records a text-less final response as a model error.
+            replacement = "" if any(p.function_call for p in parts) else _REPEAT
         else:
             replacement = nudge(first, level)
             if any(states_value(replacement, v.value) for v in self._store.guarded_values()):
@@ -282,7 +288,8 @@ class AnswerGuardPlugin(BasePlugin):
         # drop every text and thought part. Edited in place: see the module doc.
         kept = [p for p in parts if not p.text and p.thought is not True]
         assert content is not None  # parts came from it
-        content.parts = [types.Part.from_text(text=replacement), *kept]
+        content.parts = [types.Part.from_text(text=replacement)] if replacement else []
+        content.parts += kept
         for value in stated:
             audit_event(
                 "learning_answer_withheld",

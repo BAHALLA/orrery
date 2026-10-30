@@ -306,6 +306,10 @@ event from the same object, so the edit is what gets stored and sent.
   `function_call` parts are kept, so a mixed text-and-tool-call response
   still runs its tools.
 - The nudge itself is run through the matcher before it is used.
+- One nudge per turn: the gateway joins every root response into one
+  reply, so a later match in the same turn keeps only its tool calls, or
+  becomes a short fixed line. It never leaves an empty text part, which
+  Gemini rejects in history.
 - The original text is never stored or logged.
 - A `learning_answer_withheld` audit entry records the target id and
   scenario_id, never the value.
