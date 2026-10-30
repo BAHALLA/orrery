@@ -115,3 +115,25 @@ def test_a_title_cannot_close_the_script_element():
     assert json.loads(script.split("=", 1)[1].strip().rstrip(";"))["branding"]["title"] == (
         "</script><b>"
     )
+
+
+def test_a_no_break_space_is_a_valid_title():
+    ConsoleConfig(title="Tirraflow Ops").validate(None)
+    with pytest.raises(ValueError):
+        ConsoleConfig(title="Ops​Lab").validate(None)  # zero-width space
+
+
+def test_accents_match_the_consoles_presets():
+    """The server accepts exactly the presets the console can paint."""
+    import re
+    from pathlib import Path
+
+    from orrery_core.serving.console_config import ACCENTS, ENVIRONMENTS
+
+    source = (Path(__file__).parents[2] / "web/src/theme/accent.ts").read_text()
+    hues = re.search(r"ACCENT_HUES: Record<string, number> = \{(.*?)\};", source, re.S)
+    assert hues is not None
+    assert tuple(re.findall(r"^\s*(\w+):", hues.group(1), re.M)) == ACCENTS
+    envs = re.search(r"const ENVIRONMENTS: readonly Environment\[\] = \[(.*?)\];", source, re.S)
+    assert envs is not None
+    assert tuple(re.findall(r'"(\w+)"', envs.group(1))) == ENVIRONMENTS

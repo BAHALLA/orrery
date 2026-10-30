@@ -140,6 +140,7 @@ export function ConfirmationPanel({
             type="button"
             disabled={disabled}
             onClick={() => onDecide("approve")}
+            aria-label={environment ? `Approve on ${environment}` : undefined}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none disabled:opacity-50 dark:focus-visible:ring-offset-slate-900"
           >
             <CheckIcon size={16} />

@@ -49,9 +49,10 @@ export interface Branding {
 }
 
 export function resolveBranding(raw: OrreryRuntimeConfig["branding"]): Branding {
-  const title = raw?.title?.trim();
+  const title = typeof raw?.title === "string" ? raw.title.trim() : "";
   const environment = ENVIRONMENTS.find((e) => e === raw?.environment) ?? null;
-  const accent = raw?.accent && raw.accent in ACCENT_HUES ? raw.accent : null;
+  const accent =
+    typeof raw?.accent === "string" && Object.hasOwn(ACCENT_HUES, raw.accent) ? raw.accent : null;
   return { title: title || DEFAULT_TITLE, environment, accent };
 }
 
@@ -71,7 +72,8 @@ export function applyAccent(accent: string | null, root: HTMLElement = document.
   }
 }
 
-/** "PRODUCTION · Orrery Console": the environment first, so a pinned tab shows it. */
-export function brandedTitle(b: Branding = branding): string {
-  return b.environment ? `${b.environment.toUpperCase()} · ${b.title}` : b.title;
+/** "PRODUCTION · Orrery Console": the environment first, so a pinned tab shows it,
+ * then any *status* ("(2) Approval needed"), then the title. */
+export function brandedTitle(b: Branding = branding, status?: string): string {
+  return [b.environment?.toUpperCase(), status, b.title].filter(Boolean).join(" · ");
 }

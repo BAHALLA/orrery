@@ -19,7 +19,8 @@ describe("approval card", () => {
         onDecide={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Approve on PRODUCTION" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve on production" })).toBeInTheDocument();
+    expect(screen.getByText("Approve on PRODUCTION")).toBeInTheDocument();
     expect(screen.getByText("production")).toBeInTheDocument();
   });
 

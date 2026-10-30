@@ -11,6 +11,11 @@ describe("branding", () => {
   });
 
   it("drops values the console cannot show, rather than breaking the page", () => {
+    expect(resolveBranding({ title: 42 as never, accent: "constructor" })).toEqual({
+      title: "Orrery Console",
+      environment: null,
+      accent: null,
+    });
     expect(resolveBranding({ title: "  ", environment: "prod", accent: "#f00" })).toEqual({
       title: "Orrery Console",
       environment: null,
@@ -22,6 +27,9 @@ describe("branding", () => {
     const b = resolveBranding({ title: "Lab Ops", environment: "production" });
     expect(brandedTitle(b)).toBe("PRODUCTION · Lab Ops");
     expect(brandedTitle(resolveBranding({ title: "Lab Ops" }))).toBe("Lab Ops");
+    expect(brandedTitle(b, "(2) Approval needed")).toBe(
+      "PRODUCTION · (2) Approval needed · Lab Ops",
+    );
   });
 
   it("repaints the brand scale in the accent's hue", () => {

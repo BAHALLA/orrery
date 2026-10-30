@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ORRERY_CONSOLE_ACCENT` (ten presets) are served in `/console-config.js`.
   The title replaces "Orrery Console" in the sidebar, sign-in page and tab;
   the environment shows as a badge, leads the tab title, and is named on the
-  approval card ("Approve on PRODUCTION"); staging, demo and lab also get a
+  chat approval card ("Approve on PRODUCTION"); staging, demo and lab also get a
   banner. Invalid values stop startup.
 
 - **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose

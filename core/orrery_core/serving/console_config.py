@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -105,11 +106,12 @@ class ConsoleConfig:
 
     def _validate_branding(self) -> None:
         if self.title is not None and (
-            len(self.title) > MAX_TITLE_CHARS or not self.title.isprintable()
+            len(self.title) > MAX_TITLE_CHARS
+            or not all(c.isprintable() or unicodedata.category(c) == "Zs" for c in self.title)
         ):
             raise ValueError(
-                f"ORRERY_CONSOLE_TITLE must be printable text of at most {MAX_TITLE_CHARS} "
-                "characters"
+                f"ORRERY_CONSOLE_TITLE must be at most {MAX_TITLE_CHARS} characters with no "
+                "control or invisible formatting characters"
             )
         if self.environment is not None and self.environment not in ENVIRONMENTS:
             raise ValueError(
