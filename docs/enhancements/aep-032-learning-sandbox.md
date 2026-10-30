@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">proposed</span> |
+| **Status** | <span class="badge badge--amber">in-progress</span> (phase 0 built: `ORRERY_DISABLED_TOOLS` and the manifest loader) |
 | **Priority** | <span class="badge badge--grey">P3</span> |
 | **Effort** | Medium (5-7 days, in four phases) |
 | **Impact** | Medium (practice labs only; no effect on any other deployment) |
@@ -163,8 +163,13 @@ by `ORRERY_SCENARIO_MANIFEST`:
     least four characters.
   - A value like `3` (replicas) or `1` (a partition) would match almost
     every reply ("step 1", "level 3"), so it is refused at load.
-  - A manifest where any value appears inside any `descriptor` is refused
-    as well, because the guard's nudge is built from descriptors.
+  - A manifest where any value appears inside a `descriptor`, a target
+    `id`, a `unit` or the `scenario_id` is refused as well: the guard's
+    nudge is built from descriptors, and ids reach audit lines and
+    `/healthz`.
+  - Parsing is pydantic's strict JSON mode: exact types (no `true` for `1`,
+    no `"2"` for `2`), timezone-aware `seeded_at`, no NaN or infinity, and
+    numbers below 2**53. Only a regular file is read.
   - The lab never ships a list of formats. The guard derives them (§4).
 - **Narrow-only by construction.** The schema has no field that can raise
   autonomy, grant a role or add a tool. A later `hide_tools` field may only
@@ -359,7 +364,7 @@ coach is never relied on to withhold anything.
 ### 6. Per-tool narrowing (phase 0, general)
 
 `ORRERY_DISABLED_TOOLS` (comma-separated, qualified names like
-`kafka.get_consumer_lag`) removes tools from their specialists before the
+`observability.get_alert_groups`) removes tools from their specialists before the
 tree is built. It extends ADR-005 and follows its rules:
 
 - **It only removes.** There is no allowlist that could add a tool back.
@@ -384,7 +389,11 @@ tree is built. It extends ADR-005 and follows its rules:
 
 It is not learning-specific (any deployment can narrow itself), which is why
 it is the one piece outside `orrery_core.learning`. A lab uses it to make a
-learner compute a value instead of reading it from a tool.
+learner compute a value instead of reading it from a tool, within one limit
+found while building it: a tool a health check uses stays, because the
+triage sweep would still call it. `kafka.get_consumer_lag` feeds the Kafka
+health check, so a lab cannot hide it; the answer guard is what withholds the
+lag.
 
 ## Design decisions
 

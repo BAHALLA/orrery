@@ -39,7 +39,7 @@ enterprise-grade requirements for autonomous DevOps systems.
 | <span class="badge badge--blue">P2</span> | [AEP-016](aep-016-load-chaos-testing.md) | Load & Chaos Testing Harness | <span class="badge badge--amber">proposed</span> | Medium | Medium |
 | <span class="badge badge--blue">P2</span> | [AEP-019](aep-019-web-console.md) | Web Console for Onboarding & Operator Usage | <span class="badge badge--green">completed</span> | High | Medium-High |
 | <span class="badge badge--grey">P3</span> | [AEP-012](aep-012-custom-agents.md) | Custom Agent Classes for DevOps Patterns | <span class="badge badge--amber">proposed</span> | Medium | Medium |
-| <span class="badge badge--grey">P3</span> | [AEP-032](aep-032-learning-sandbox.md) | Learning Sandbox Mode for Practice Labs | <span class="badge badge--amber">proposed</span> | Medium | Medium |
+| <span class="badge badge--grey">P3</span> | [AEP-032](aep-032-learning-sandbox.md) | Learning Sandbox Mode for Practice Labs | <span class="badge badge--amber">in-progress</span> | Medium | Medium |
 | <span class="badge badge--red">P0</span> | [AEP-018](aep-018-pubsub-idempotency-hpa.md) | Pub/Sub Worker Idempotency & Backlog-Based HPA | <span class="badge badge--green">completed</span> | Medium | High |
 
 ## How to Read These Proposals
