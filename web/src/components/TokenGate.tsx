@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { branding } from "../theme/accent";
+import { EnvironmentBadge } from "./EnvironmentBadge";
 import { OrreryMark } from "./OrreryMark";
 
 interface Props {
@@ -30,8 +32,9 @@ export function TokenGate({ onSubmit, error }: Props) {
         <div className="mb-1 flex items-center gap-2">
           <OrreryMark className="h-7 w-7 text-slate-900 dark:text-slate-100" />
           <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-            Orrery Console
+            {branding.title}
           </h1>
+          <EnvironmentBadge />
         </div>
         <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
           Paste a bearer token to connect to the agent front door.

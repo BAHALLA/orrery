@@ -8,6 +8,7 @@ import { AgentsDashboard } from "./agents/AgentsDashboard";
 import { BREAKPOINT_LG, useMediaQuery, useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
+import { EnvironmentBanner } from "./EnvironmentBadge";
 import { pendingPlacement } from "../chat/pending";
 import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon, ShieldIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
@@ -17,6 +18,7 @@ import { severityBadge, toneChip } from "./severity";
 import { Sidebar } from "./Sidebar";
 import { useStoredFlag } from "./storedFlag";
 import { storageKeys } from "../config";
+import { brandedTitle } from "../theme/accent";
 import { resolveSpecialists } from "../specialists";
 import { useSystem } from "../system/useSystem";
 
@@ -24,8 +26,8 @@ import { useSystem } from "../system/useSystem";
 // first visit, so none of it is in the chat console's first load.
 const StudioView = lazy(() => import("../studio/StudioView"));
 
-/** The page title (index.html); a Studio run waiting for a person prefixes it. */
-const BASE_TITLE = "Orrery Console";
+/** The page title, environment first; a Studio run waiting for a person prefixes it. */
+const BASE_TITLE = brandedTitle();
 
 export type ConsoleView = "chat" | "agents" | "studio";
 
@@ -258,6 +260,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
       />
 
       <main className="flex min-w-0 flex-1 flex-col">
+        <EnvironmentBanner />
         {/* The one live region for a turn: "working", then "answer ready". */}
         <p role="status" className="sr-only">
           {announcement}

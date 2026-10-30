@@ -112,6 +112,23 @@ machine.
     `https://your-console/` (and `http://localhost:5173/` for dev) with your
     provider.
 
+### Branding per environment
+
+Two deployments of the same image look identical unless told otherwise, and
+"which console am I approving this in?" should never need a second look. Three
+optional server variables, served with the SSO settings in `/console-config.js`
+(no rebuild):
+
+| Server variable | Default | Description |
+|---|---|---|
+| `ORRERY_CONSOLE_TITLE` | `Orrery Console` | Name in the sidebar, sign-in page and browser tab. Printable text, at most 60 characters. |
+| `ORRERY_CONSOLE_ENVIRONMENT` | — | `production`, `staging`, `demo` or `lab`. Shown as a badge (red for production), first in the tab title (`PRODUCTION · …`) and on the approval card, whose button reads **Approve on PRODUCTION**. Anything but production also gets a one-line banner. |
+| `ORRERY_CONSOLE_ACCENT` | `indigo` | Accent colour: `indigo`, `blue`, `teal`, `emerald`, `amber`, `orange`, `red`, `rose`, `violet` or `slate`. |
+
+An invalid value stops startup rather than rendering a console that misleads.
+These are labels, not controls: they change nothing about what the console may
+do, and RBAC and the approval gate behave the same in every environment.
+
 ### Pasted token (default, and for CI)
 
 With `ORRERY_CONSOLE_OIDC_ISSUER` (and `VITE_OIDC_ISSUER`) unset the console shows the token gate: paste a JWT,

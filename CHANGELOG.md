@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Console branding per environment**: `ORRERY_CONSOLE_TITLE`,
+  `ORRERY_CONSOLE_ENVIRONMENT` (`production`/`staging`/`demo`/`lab`) and
+  `ORRERY_CONSOLE_ACCENT` (ten presets) are served in `/console-config.js`.
+  The title replaces "Orrery Console" in the sidebar, sign-in page and tab;
+  the environment shows as a badge, leads the tab title, and is named on the
+  approval card ("Approve on PRODUCTION"); staging, demo and lab also get a
+  banner. Invalid values stop startup.
+
 - **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose
   client (`azp`, else `client_id`) is in neither `ORRERY_HUMAN_CLIENTS` nor
   `ORRERY_SERVICE_CLIENTS` gets 401, the same answer as an invalid token, on
