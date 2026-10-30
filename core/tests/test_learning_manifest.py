@@ -270,6 +270,29 @@ def test_a_file_that_ages_past_the_racy_window_is_not_reloaded(tmp_path):
     assert _errors() == before + 1
 
 
+def test_a_same_stat_rewrite_read_after_the_window_is_still_seen(tmp_path, monkeypatch):
+    path = tmp_path / "manifest.json"
+    _write(path, _doc())
+    wall = _Clock()
+    wall.now = path.stat().st_mtime_ns / 1e9
+    store = ManifestStore(path, wall_clock=wall)
+    stat = manifest_module._fingerprint(path, wall.now)
+    assert stat is not None and stat.digest is not None
+
+    # A rewrite inside one timestamp tick: same size, and a stat pinned to the old one.
+    path.write_text(json.dumps(_doc(targets=[_target(value=SECRET + 1)])))
+    real = manifest_module._fingerprint
+
+    def same_stat(p, now):
+        fp = real(p, now)
+        return None if fp is None else manifest_module._Fingerprint(stat.stat, fp.digest)
+
+    monkeypatch.setattr(manifest_module, "_fingerprint", same_stat)
+    wall.now += 10  # first read only after the window
+
+    assert sorted(v.value for v in store.guarded_values()) == [SECRET, SECRET + 1]
+
+
 def test_values_from_a_previous_scenario_stay_guarded_through_the_grace(tmp_path):
     path = tmp_path / "manifest.json"
     clock = _Clock()

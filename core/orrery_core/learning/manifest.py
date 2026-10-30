@@ -362,7 +362,20 @@ class ManifestStore:
         if fingerprint is None and self._fingerprint is None:
             return  # still missing: already counted once
         if fingerprint is not None and not fingerprint.differs_from(self._fingerprint):
-            return
+            stored = self._fingerprint
+            if stored is None or stored.digest is None or fingerprint.digest is not None:
+                return
+            # The stored version was hashed while young and the file has since
+            # aged out of the racy window with an unchanged stat: hash it once
+            # more, since a same-tick rewrite would look exactly like this.
+            # Git does the same for an index entry that was racily clean.
+            try:
+                digest: str | None = hashlib.sha256(_read(self._path)).hexdigest()
+            except OSError, ManifestError:
+                digest = None
+            if digest == stored.digest:
+                self._fingerprint = fingerprint  # aged, unchanged: stop hashing
+                return
         self._fingerprint = fingerprint
         try:
             manifest = load_manifest(self._path)
