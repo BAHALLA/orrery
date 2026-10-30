@@ -24,9 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Docker tools tag them `scope: auxiliary`, and triage reports them
   separately without letting them change the verdict. A container label
   `orrery.scope=platform` pins one back in; no label can make a container
-  auxiliary, since images pass their labels on. The coordinator's examples now name a system the
-  deployment runs instead of assuming Kafka.
-
+  auxiliary, since images pass their labels on. The coordinator's examples
+  now name a system the deployment runs instead of assuming Kafka.
 - **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose
   client (`azp`, else `client_id`) is in neither `ORRERY_HUMAN_CLIENTS` nor
   `ORRERY_SERVICE_CLIENTS` gets 401, the same answer as an invalid token, on
