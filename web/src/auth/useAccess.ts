@@ -33,7 +33,9 @@ export function useAccess(
     const controller = new AbortController();
     new ApiClient(tokenRef.current)
       .me({ signal: controller.signal })
-      .then(() => setState({ who, access: "granted" }))
+      .then(() => {
+        if (!controller.signal.aborted) setState({ who, access: "granted" });
+      })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         const denied = err instanceof ApiError && err.isAccessDenied;
