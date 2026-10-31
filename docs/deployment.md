@@ -124,7 +124,7 @@ services:
       # Every file here named like an env var is loaded at startup, so the
       # URL never appears in the container's environment (docker inspect).
       # A directory of its own: an unusable file in it stops startup, and
-      # /run/secrets also receives the service's other (binary) secrets.
+      # /run/secrets would also receive any other (binary) secret you add.
       ORRERY_SECRETS_DIR: /run/secrets/orrery
     secrets:
       - source: orrery_database_url
@@ -163,10 +163,10 @@ networks:
   needs `sudo` unless your own uid is 1000.
 - **An unusable secret file stops startup**: unreadable, not UTF-8, over
   64 KiB, or holding a NUL byte, for any file in `ORRERY_SECRETS_DIR` named
-  like a variable. Keep that directory for variable values only. Orrery refuses to start
-  rather than run as if `DATABASE_URL` were unset (which would mean
-  in-memory sessions again), and the error names the file and the uid that
-  could not read it.
+  like a variable. Keep that directory for variable values only. Orrery
+  refuses to start rather than run as if `DATABASE_URL` were unset (which
+  would mean in-memory sessions again). The error names the file and, when
+  it cannot be read, the uid.
 - **One database per instance.** Two instances (a lab and an ops console)
   get two databases, or two Postgres containers: sessions, memory and the
   agent catalog are not namespaced by instance.
