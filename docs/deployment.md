@@ -96,6 +96,95 @@ ADK's `DatabaseSessionService` is built on SQLAlchemy and the schema
 is created automatically on first use. You do **not** need to run a
 migration step.
 
+### Single node (Docker Compose)
+
+One replica still needs PostgreSQL for conversations to survive a restart: a
+container restart (a nightly package update bouncing Docker, say) otherwise
+loses every session. A small Postgres container on a named volume is enough:
+
+```yaml
+services:
+  orrery-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: orrery
+      POSTGRES_DB: orrery
+      POSTGRES_PASSWORD_FILE: /run/secrets/orrery_db_password
+    secrets: [orrery_db_password]
+    volumes: [orrery-db:/var/lib/postgresql/data]
+    networks: [orrery-db]                # internal only, no published port
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orrery -d orrery"]
+      interval: 5s
+      retries: 12
+    restart: unless-stopped
+
+  orrery:
+    environment:
+      # Every file here named like an env var is loaded at startup, so the
+      # URL never appears in the container's environment (docker inspect).
+      # A directory of its own: an unusable file in it stops startup, and
+      # /run/secrets would also receive any other (binary) secret you add.
+      ORRERY_SECRETS_DIR: /run/secrets/orrery
+    secrets:
+      - source: orrery_database_url
+        target: /run/secrets/orrery/DATABASE_URL
+    depends_on:
+      orrery-db: {condition: service_healthy}
+    # The DB network is internal; the default one keeps egress (model API,
+    # identity provider) and published ports working.
+    networks: [default, orrery-db]
+    restart: unless-stopped
+
+secrets:
+  orrery_db_password:
+    file: ./secrets/orrery_db_password    # the password alone
+  orrery_database_url:
+    file: ./secrets/orrery_database_url   # postgresql+asyncpg://orrery:<password>@orrery-db:5432/orrery
+
+volumes: {orrery-db: {}}
+networks:
+  orrery-db: {internal: true}
+```
+
+- **The password is written twice, in two files.** Postgres reads it bare;
+  Orrery reads it inside the URL, where characters such as `@`, `:`, `/` or
+  `%` must be percent-encoded. A password of letters and digits
+  (`openssl rand -hex 24`) avoids the question. Keep both files out of
+  version control.
+- **The URL file must be readable by uid 1000.** Plain Compose mounts a
+  file secret with the host file's owner and mode (it ignores `uid`/`mode`),
+  and the image runs as uid 1000. If it cannot read the file, Orrery
+  refuses to start: `chown 1000
+  secrets/orrery_database_url && chmod 0400 secrets/orrery_database_url`.
+  Postgres reads its password file as root, so `0600` is fine there.
+  Under rootless Docker, Podman or `userns-remap`, container uid 1000 maps to
+  another host uid: use that one (`podman unshare chown 1000 …`). `chown`
+  needs `sudo` unless your own uid is 1000.
+- **An unusable secret file stops startup**: unreadable, not UTF-8, over
+  64 KiB, or holding a NUL byte, for any file in `ORRERY_SECRETS_DIR` named
+  like a variable. Keep that directory for variable values only. Orrery
+  refuses to start rather than run as if `DATABASE_URL` were unset (which
+  would mean in-memory sessions again). The error names the file and, when
+  it cannot be read, the uid.
+- **One database per instance.** Two instances (a lab and an ops console)
+  get two databases, or two Postgres containers: sessions, memory and the
+  agent catalog are not namespaced by instance.
+- **Keep fail-fast on.** Don't set `ORRERY_DB_ALLOW_INMEMORY_FALLBACK`. The
+  `service_healthy` condition orders the start, and if the database is still
+  unreachable the container exits and `restart` retries it, instead of
+  serving chats from memory that the next restart will lose.
+- **The learning sandbox may use it.** `ORRERY_LEARNING_MODE` accepts
+  `DATABASE_URL`, and it never keeps long-term memory: no memory service, no
+  `MemoryPlugin`, no `load_memory` tool, all refused at startup. Recall is
+  keyed by the learner, not the scenario, so it would replay an earlier
+  attempt's answers. The same goes for `user:` state: the ops journal (notes
+  and preferences per learner) is left out of the coordinator in learning
+  mode, and a tree that still reaches a tool marked `cross_session` is
+  refused. Sessions persist; recall doesn't.
+- **Back it up** like any database (`pg_dump` on a schedule): conversations
+  name people and systems.
+
 ---
 
 ## Step 3 — Install via Helm

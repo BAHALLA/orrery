@@ -21,7 +21,7 @@ from typing import Any
 
 from google.adk.tools import ToolContext
 
-from orrery_core import confirm
+from orrery_core import confirm, cross_session
 from orrery_core.observability.activity import MAX_SESSION_LOG_ENTRIES
 from orrery_core.security.validation import validate_positive_int, validate_string, validate_url
 
@@ -151,6 +151,7 @@ async def get_session_summary(ctx: ToolContext) -> dict[str, Any]:
 # ── User State: persists across sessions for the same user ─────────────
 
 
+@cross_session
 async def save_note(
     ctx: ToolContext, title: str, content: str, tags: str | None = None
 ) -> dict[str, Any]:
@@ -206,6 +207,7 @@ async def save_note(
     }
 
 
+@cross_session
 async def list_notes(ctx: ToolContext, tag: str | None = None) -> dict[str, Any]:
     """Lists all saved notes for this user, optionally filtered by tag.
 
@@ -229,6 +231,7 @@ async def list_notes(ctx: ToolContext, tag: str | None = None) -> dict[str, Any]
     }
 
 
+@cross_session
 async def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
     """Searches saved notes by keyword in title or content.
 
@@ -256,6 +259,7 @@ async def search_notes(ctx: ToolContext, query: str) -> dict[str, Any]:
     }
 
 
+@cross_session
 async def delete_note(ctx: ToolContext, note_id: int) -> dict[str, Any]:
     """Deletes a saved note by ID.
 
@@ -288,6 +292,7 @@ async def delete_note(ctx: ToolContext, note_id: int) -> dict[str, Any]:
 # ── User Preferences: user-scoped settings ─────────────────────────────
 
 
+@cross_session
 async def set_preference(ctx: ToolContext, key: str, value: str) -> dict[str, Any]:
     """Sets a user preference that persists across sessions.
 
@@ -322,6 +327,7 @@ async def set_preference(ctx: ToolContext, key: str, value: str) -> dict[str, An
     }
 
 
+@cross_session
 async def get_preferences(ctx: ToolContext) -> dict[str, Any]:
     """Gets all user preferences.
 
@@ -338,6 +344,7 @@ async def get_preferences(ctx: ToolContext) -> dict[str, Any]:
 # ── App State: shared across all users ─────────────────────────────────
 
 
+@cross_session
 @confirm("adds a bookmark that every user of this deployment will see")
 async def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, Any]:
     """Adds (or updates, by name) a shared bookmark visible to all users.
@@ -390,6 +397,7 @@ async def add_team_bookmark(ctx: ToolContext, name: str, url: str) -> dict[str, 
     }
 
 
+@cross_session
 async def list_team_bookmarks(ctx: ToolContext) -> dict[str, Any]:
     """Lists all shared team bookmarks.
 

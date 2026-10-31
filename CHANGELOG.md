@@ -36,8 +36,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     manifest's `default_disclosure`. A level is stamped into each turn by
     the server, and a tool that writes it is reverted.
 
+### Changed
+
+- **The learning sandbox keeps no long-term memory.** With
+  `ORRERY_LEARNING_MODE` the HTTP server builds no memory service and no
+  `MemoryPlugin`, and the coordinator has no `load_memory` tool. The gateway
+  refuses all three at startup. Memory is keyed by the learner, not the
+  scenario, so recall would hand back an earlier attempt's evidence and
+  answers, and with `DATABASE_URL` it would outlive every reset of the lab.
+  The ops journal, whose notes and preferences live in `user:` state, is left
+  out of the coordinator for the same reason, and the gateway refuses any
+  agent tree reaching a tool marked with the new `cross_session` marker.
+  Sessions still persist, so a learning deployment can now use PostgreSQL
+  (see *Single node (Docker Compose)* in the deployment guide).
+
 ### Fixed
 
+- **An unusable file in `ORRERY_SECRETS_DIR` stops startup:** one that is
+  unreadable, not UTF-8, over 64 KiB or holds a NUL byte. It used to be
+  logged and skipped, so an unreadable `DATABASE_URL` file (wrong owner: the
+  image runs as uid 1000) started the server on in-memory sessions, against
+  the database fail-fast policy. The error names the file and the uid.
 - **Guarded MCP servers no longer try Google mTLS.** ADK's MCP session
   manager calls `google.auth.default()` on every HTTP/SSE connection to set up
   client-certificate mTLS. Without Google credentials that logged `Failed to

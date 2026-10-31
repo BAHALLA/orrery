@@ -92,6 +92,7 @@ from .security.guardrails import LEVEL_CONFIRM as LEVEL_CONFIRM
 from .security.guardrails import LEVEL_DESTRUCTIVE as LEVEL_DESTRUCTIVE
 from .security.guardrails import classify_decision as classify_decision
 from .security.guardrails import confirm as confirm
+from .security.guardrails import cross_session as cross_session
 from .security.guardrails import destructive as destructive
 from .security.guardrails import dry_run as dry_run
 from .security.guardrails import get_guard_level as get_guard_level
