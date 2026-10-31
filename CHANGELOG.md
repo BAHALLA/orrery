@@ -14,7 +14,8 @@ lets a deployment keep sessions in PostgreSQL while carrying nothing from one
 session to the next: no memory service, no `load_memory`, no ops journal.
 Until now only the learning sandbox did this, and it refuses Studio, so a
 lab's Studio instance (or any shared instance) can now use `DATABASE_URL`
-safely. A missed wiring stops startup instead of remembering.
+safely. A missed wiring stops startup instead of remembering. Turning it off
+does not delete memory or journal data stored earlier.
 
 ### Added
 
@@ -26,8 +27,10 @@ safely. A missed wiring stops startup instead of remembering.
   refused before it is saved, and `AgentGateway` refuses a memory service, a
   `MemoryPlugin` or a tree (graph `Workflow` nodes included) that still
   reaches a recall or `cross_session` tool, including a wrapped Runner. Until
-  now only the learning sandbox did this, and it refuses Studio. Data stored
-  earlier is not deleted. On by default.
+  now only the learning sandbox did this, and it refuses Studio. Studio's tool
+  catalogue and the console's Agents tab stop offering `cross_session` tools;
+  batch triage keeps its own journal step. Data stored earlier is not
+  deleted. On by default.
 
 ## [0.16.0] - 2026-10-31
 
