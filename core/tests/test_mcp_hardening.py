@@ -550,3 +550,45 @@ def test_sse_events_split_across_chunks_are_counted_whole():
     tight = mcp_network._ByteCap(11, per_event=True)
     tight.add(b"data: ab\r")
     assert not tight.add(b"\n\r\n")
+
+
+# ── ADK's Google mTLS probe ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_adk_google_mtls_probe_is_off_for_guarded_servers(monkeypatch):
+    """ADK would call google.auth.default() per HTTP connection and, on success,
+    swap the guarded client factory for its own. A guarded toolset never asks."""
+    from unittest.mock import MagicMock
+
+    import google.auth
+    from google.adk.tools.mcp_tool.mcp_session_manager import (
+        MCPSessionManager,
+        StreamableHTTPConnectionParams,
+    )
+
+    from orrery_core.tools.mcp import GuardedMcpToolset, McpServerConfig
+
+    monkeypatch.delenv("GOOGLE_API_USE_CLIENT_CERTIFICATE", raising=False)
+    probe = MagicMock(side_effect=RuntimeError("Your default credentials were not found"))
+    monkeypatch.setattr(google.auth, "default", probe)
+
+    # Upstream still probes: if ADK renames or drops it, this says so, and the
+    # override below can go.
+    stock = MCPSessionManager(StreamableHTTPConnectionParams(url="https://mcp.example.com/mcp"))
+    assert await stock._get_mtls_transport() is None
+    assert probe.called
+
+    probe.reset_mock()
+    toolset = GuardedMcpToolset(
+        McpServerConfig(
+            name="blog",
+            description="Blog admin",
+            transport="streamable_http",
+            url="https://mcp.example.com/mcp",
+            tools=["list_posts"],
+            read_only=["list_posts"],
+        )
+    )
+    assert await toolset._mcp_session_manager._get_mtls_transport() is None
+    probe.assert_not_called()
