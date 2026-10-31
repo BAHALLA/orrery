@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-31
+
+**Role-gated deployments, a hint ladder, and a quieter image.** A deployment
+shared through one identity provider can admit only accounts holding a listed
+role, and send the rest to a page of its choice. Learners in the sandbox can
+ask for a hint, one level at a time, with each one recorded; the sandbox now
+keeps no long-term memory, so a lab can use a durable session store. Guarded
+MCP servers no longer probe Google mTLS, and the image no longer fetches
+LiteLLM's tables from GitHub at startup.
+
 ### Added
 
 - **`ORRERY_REQUIRED_ROLES`: admit only accounts holding a listed role.**
@@ -1970,7 +1980,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/BAHALLA/orrery/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/BAHALLA/orrery/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/BAHALLA/orrery/compare/v0.11.0...v0.12.0
