@@ -204,7 +204,8 @@ The learner is the adversary for exam integrity. A debrief the learner can
 read is an **answer oracle**: `first_correct` says whether any message so far
 held the target, so "is it 4800, 4900, 5000, 5100?" followed by *Finish*
 narrows the value down. So the debrief is **encrypted to the lab**, finishing
-is **one-shot**, and a debrief is **bound to an attempt the lab issued**.
+is **one-shot**, and each attempt the lab issues is **bound to exactly one
+session from the moment that session is created**.
 
 ### What the debrief contains, and where each field comes from
 
@@ -219,7 +220,8 @@ restart once the lab runs on PostgreSQL (the learning sandbox allows
 | `levels`: `{t_ms, level}` | the level the server stamps into each turn's `state_delta`, stored on the learner's message event. **Coarse:** it is the per-learner level at the start of each turn, so a hint shows at the next turn, and a level reached in an earlier session of the scenario shows from turn 1. Labs charge hint costs from the `learning_hint` audit stream, which is the record of each hint |
 | `first_correct`: `{target_id, t_ms, after_reveal}` per target | the first learner message the grading matcher finds the target in. `after_reveal` is true when level 3 was stamped first |
 | `hypotheses`: `[{hypothesis_id, t_ms}]` | learner messages matched against the manifest's optional `hypotheses` list (below) |
-| `evidence_before_conclusion` | whether a delegation to the target's `specialist` (manifest v2, below) ran before `first_correct` |
+| `evidence_before_conclusion` | whether a delegation to the target's `specialist` (manifest v2, below), or to `incident_triage_agent` (whose sweep covers it), ran before `first_correct` |
+| `wrong_candidates_before_correct` per target | how many learner messages before `first_correct` named a different value of the same magnitude: "4800?", "4900?", "5000?", "5100?" counts 3. The lab decides what that costs |
 
 **The grading matcher is stricter than the guard's.** The answer guard is
 lenient on purpose ("5k" counts as stating 5100). For grading, that would
@@ -249,9 +251,17 @@ value (`first_correct` names the target id only).
 Orrery never lets a service principal read a person's session (ADR-006), so
 the lab does not pull. Instead:
 
-1. **The lab issues the attempt.** When it launches the exercise, the lab
-   creates an `attempt_id` (random, single use) and an issue time, and passes
-   the id to the console in the launch URL.
+1. **The lab issues the attempt, and the first turn binds it.** When it
+   launches the exercise, the lab creates an `attempt_id` (random, single
+   use) for one `iss`/`sub` and one `scenario_id`, and passes it to the
+   console in the launch URL. The console sends it with the **first** message
+   of a new conversation. The server stamps it into that session's state as a
+   server-set, guarded key (`_learning_attempt`, in `GUARDED_STATE_KEYS`) and
+   records `attempt_id -> session_id`. A second session presenting the same
+   id is refused. Turns in a learning deployment need a bound attempt, so
+   there is no unbound session to work the answer out in. That also means
+   one replica: the binding store is per process, like the hint store, and
+   learning mode already refuses `ORRERY_MULTI_REPLICA`.
 2. **The learner finishes once.** *Finish exercise* calls
    `POST /learning/attempts/{attempt_id}/finish` with the `session_id`, with
    `Cache-Control: no-store` and no CORS. The call needs all of:
@@ -260,11 +270,14 @@ the lab does not pull. Instead:
    - a session that is **not** a machine session (`is_machine_session()`), so
      an agent acting for the learner cannot do the exercise for them.
 
-   The server takes the session's turn lock and writes a server-set
-   `_learning_finished` marker, which `IdentityStateGuardPlugin` protects and
-   `inbound()` checks: the session takes no further turns. A second finish,
-   or a finish for an `attempt_id` already used, is refused. One debrief per
-   session.
+   The `attempt_id` must be the one bound to that session. The server takes
+   the session's turn lock and writes a server-set `_learning_finished`
+   marker (in `GUARDED_STATE_KEYS`). The refusal of further turns is checked
+   **inside** the turn lock, in `run_in_session`, not in `inbound()`, which
+   runs before the lock: a turn queued behind the finish then sees the
+   marker. A second finish is refused. One debrief per attempt. Orrery's
+   record of used attempts is per process, so the **lab's** single-use check
+   is the authoritative one.
 3. **Encrypted, not just signed.** The payload holds `iss`, `sub`,
    `scenario_id`, `attempt_id`, `session_id`, the session's first-event time,
    `issued_at`, a random `nonce` and the fields above. It is sealed with
@@ -272,9 +285,12 @@ the lab does not pull. Instead:
    env only, 32 bytes, and startup fails if it is missing while debriefs are
    on. The browser gets an opaque token it can neither read nor edit.
    `iss` and `sub` go in clear inside the ciphertext, so no unsalted hash
-   needs matching, and pairwise-subject IdPs keep working. Only the lab
-   holds the key, and a shared AEAD key lets the lab mint debriefs too:
-   acceptable, since the lab is the only consumer.
+   needs matching, and pairwise-subject IdPs keep working. The key is shared
+   by Orrery (which seals) and the lab (which opens), and nobody else; a
+   shared key lets the lab mint debriefs too, which is acceptable since the
+   lab is the only consumer. The JWE header carries a `kid`, so a new key
+   (`ORRERY_LEARNING_DEBRIEF_KEY_ID`) can be rolled in while the lab still
+   accepts the previous one.
 4. **Relay without the lab's cookies.** The console POSTs the token to
    `ORRERY_CONSOLE_DEBRIEF_URL` (https, validated like
    `ORRERY_CONSOLE_ACCESS_DENIED_URL`, plus a CSP `connect-src` entry) as a
@@ -282,18 +298,30 @@ the lab does not pull. Instead:
    sealed with the lab's key and names the attempt, so the lab needs no
    session cookie, `SameSite=None` or credentialed CORS. It only allows the
    console origin.
-5. **The lab accepts it** when it decrypts, its `attempt_id` is one the lab
-   issued to this `iss`/`sub` and is unused, the session started after the
-   attempt was issued, and `issued_at` is within a window. It then marks the
-   attempt used. Working the answer out in session A, then opening session B
-   to type it, fails: B is not the attempt's session, and A is finished.
+5. **The lab accepts it** when:
+   - it decrypts;
+   - its `attempt_id` is one the lab issued and has not used;
+   - its `iss`/`sub` and `scenario_id` are the ones that attempt was issued
+     for (so an easy scenario's session can't be finished under a hard one's
+     attempt);
+   - the session started after the attempt was issued;
+   - `issued_at` is within a window.
+
+   It then marks the attempt used. Working the answer out in session A and
+   typing it in session B fails: an attempt binds to the first session that
+   uses it, and every turn needs a bound attempt.
+6. **A missing debrief is a failed attempt.** The learner's browser carries
+   the token, so the learner can withhold it. The lab treats an issued
+   attempt with no accepted debrief inside its window as not passed.
 
 ### Phase 1 deliverables
 
 - `orrery_core/learning/debrief.py`: derives the fields from session events,
   with the grading matcher, and never copies a value out.
-- `POST /learning/attempts/{attempt_id}/finish`, the `_learning_finished`
-  marker and its turn refusal, `ORRERY_LEARNING_DEBRIEF_KEY`.
+- Attempt binding on the first turn (`_learning_attempt`), and
+  `POST /learning/attempts/{attempt_id}/finish` with the `_learning_finished`
+  marker, refused inside the turn lock. `ORRERY_LEARNING_DEBRIEF_KEY` and
+  `_KEY_ID`.
 - Manifest contract v2 (`targets[].specialist`, `hypotheses`).
 - Console: the `attempt_id` from the launch URL, and *Finish exercise*,
   posting to `ORRERY_CONSOLE_DEBRIEF_URL`.
@@ -305,14 +333,17 @@ the lab does not pull. Instead:
 - [ ] A non-owner, a non-human principal, a machine session and a
       non-learning deployment are refused. No route exists outside learning
       mode.
-- [ ] After a finish the session refuses turns; a second finish and a reused
-      `attempt_id` are refused.
+- [ ] A turn without a bound attempt is refused, and a second session
+      presenting a bound `attempt_id` is refused.
+- [ ] After a finish the session refuses turns, including one already
+      waiting on the turn lock. A second finish is refused.
 - [ ] The browser-held token reveals nothing: decrypting without the key
       fails, and tampering with any byte fails authentication.
 - [ ] A seeded target value in a tool result, a model reply or a learner
       message never appears in a debrief (fuzzed like the guard tests).
 - [ ] A message listing several same-magnitude candidates is not a correct
-      hypothesis.
+      hypothesis, and candidates spread over several messages are counted
+      in `wrong_candidates_before_correct`.
 - [ ] `first_correct.after_reveal` is true when level 3 was stamped before
       the correct message.
 - [ ] After a restart, a debrief rebuilt from a PostgreSQL session store has
