@@ -49,3 +49,19 @@ describe("runtime console config", () => {
     expect(oidcConfig.scope).toBe("openid");
   });
 });
+
+describe("access-denied url", () => {
+  it("keeps only https URLs", async () => {
+    const { safeHttpsUrl } = await loadConfig();
+    expect(safeHttpsUrl("https://tirraflow.com/labs")).toBe("https://tirraflow.com/labs");
+    expect(safeHttpsUrl("javascript:alert(1)")).toBeNull();
+    expect(safeHttpsUrl("http://tirraflow.com")).toBeNull();
+    expect(safeHttpsUrl("/labs")).toBeNull();
+    expect(safeHttpsUrl(undefined)).toBeNull();
+  });
+
+  it("reads it from the runtime config", async () => {
+    const { config } = await loadConfig({ accessDeniedUrl: "https://tirraflow.com/labs" });
+    expect(config.accessDeniedUrl).toBe("https://tirraflow.com/labs");
+  });
+});

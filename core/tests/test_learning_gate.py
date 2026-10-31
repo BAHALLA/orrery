@@ -53,6 +53,50 @@ def test_every_builder_refuses_the_flag_when_not_activated(monkeypatch):
         AgentGateway.from_runner(MagicMock())
 
 
+def test_the_gateway_refuses_memory_in_learning_mode(monkeypatch, manifest):
+    from google.adk.tools.load_memory_tool import LoadMemoryTool
+
+    from orrery_core.plugins.memory_plugin import MemoryPlugin
+
+    monkeypatch.setenv(learning_gate.LEARNING_ENV, "true")
+    monkeypatch.setattr(learning_gate, "_runtime", Runtime(store=ManifestStore(manifest)))
+    root = MagicMock(tools=[])
+    root.name = "root"
+    with pytest.raises(ValueError, match="memory"):
+        AgentGateway(
+            app_name="t", root_agent=root, session_service=MagicMock(), memory_service=MagicMock()
+        )
+    with pytest.raises(ValueError, match="memory"):
+        AgentGateway(
+            app_name="t", root_agent=root, session_service=MagicMock(), plugins=[MemoryPlugin()]
+        )
+    recalling = MagicMock(tools=[LoadMemoryTool()])
+    recalling.name = "root"
+    with pytest.raises(ValueError, match="load_memory"):
+        AgentGateway(app_name="t", root_agent=recalling, session_service=MagicMock())
+
+
+def test_the_gateway_refuses_cross_session_state_anywhere_in_the_tree(monkeypatch, manifest):
+    """The ops journal's notes live in `user:` state: recall by another name."""
+    from google.adk.agents import LlmAgent
+    from google.adk.tools.agent_tool import AgentTool
+
+    from orrery_core import cross_session
+
+    @cross_session
+    async def list_notes() -> dict:
+        """Notes kept across sessions."""
+        return {}
+
+    monkeypatch.setenv(learning_gate.LEARNING_ENV, "true")
+    monkeypatch.setattr(learning_gate, "_runtime", Runtime(store=ManifestStore(manifest)))
+    journal = LlmAgent(name="journal", model="gemini-test", tools=[list_notes])
+    middle = LlmAgent(name="middle", model="gemini-test", tools=[AgentTool(agent=journal)])
+    root = LlmAgent(name="root", model="gemini-test", tools=[AgentTool(agent=middle)])
+    with pytest.raises(ValueError, match="journal.list_notes"):
+        AgentGateway(app_name="t", root_agent=root, session_service=MagicMock())
+
+
 def test_from_runner_is_refused_even_when_activated(monkeypatch, manifest):
     monkeypatch.setenv(learning_gate.LEARNING_ENV, "true")
     monkeypatch.setattr(learning_gate, "_runtime", Runtime(store=ManifestStore(manifest)))
@@ -348,8 +392,15 @@ from orrery_core import learning_gate
 from orrery_core.learning.guard import AnswerGuardPlugin
 from orrery_core.serving.gateway import AgentGateway
 [gateway] = [o for o in gc.get_objects() if isinstance(o, AgentGateway)]
+from orrery_core.plugins.memory_plugin import MemoryPlugin
 guarded = any(isinstance(p, AnswerGuardPlugin) for p in gateway.runner.app.plugins)
+remembers = any(isinstance(p, MemoryPlugin) for p in gateway.runner.app.plugins)
+tools = {getattr(t, "name", "") for t in gateway.root_agent.tools}
+journal = any("journal" in getattr(t, "name", "") for t in gateway.root_agent.tools)
+print(f"JOURNAL={journal}")
 print(f"ACTIVE={learning_gate.is_active()} GUARDED={guarded}")
+print(f"MEMORY={gateway.runner.memory_service is not None or remembers} "
+      f"RECALL={'load_memory' in tools}")
 """
     env = {
         learning_gate.LEARNING_ENV: "true",
@@ -368,6 +419,10 @@ print(f"ACTIVE={learning_gate.is_active()} GUARDED={guarded}")
     result = _run(probe, env)
     assert result.returncode == 0, result.stderr[-2000:]
     assert "ACTIVE=True GUARDED=True" in result.stdout
+    # No long-term memory: recall would replay an earlier attempt's answers.
+    assert "MEMORY=False RECALL=False" in result.stdout
+    # The journal's `user:` notes would follow a learner between attempts.
+    assert "JOURNAL=False" in result.stdout
 
 
 def test_the_http_server_refuses_an_unmet_precondition(manifest):

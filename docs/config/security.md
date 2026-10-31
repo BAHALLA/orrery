@@ -51,6 +51,7 @@ The HTTP front door (`ServerConfig.from_env()`, `JWTConfig.from_env()`) reads:
 | `ORRERY_HUMAN_CLIENTS` | unset | Clients people sign in through. See [People, agents and services](#people-agents-and-services-adr-006). |
 | `ORRERY_SERVICE_CLIENTS` | unset | `client=role` ceilings for machine clients ([ADR-006](../adr/006-caller-principals.md)). |
 | `ORRERY_REJECT_UNLISTED_CLIENTS` | `false` | Answer 401 to a verified token whose client is in neither `ORRERY_HUMAN_CLIENTS` nor `ORRERY_SERVICE_CLIENTS` (a delegated token's client is the agent's), on the console API and A2A. Off, such a token is a **viewer** service principal. Needs `ORRERY_HUMAN_CLIENTS`. |
+| `ORRERY_REQUIRED_ROLES` | unset | Comma-separated role names, read from `JWT_ROLE_CLAIM` as the IdP spells them (case-insensitive). A verified token must carry one of them, or every authenticated route (console API and A2A) answers **403 `access_denied`**. Checked on every token, service and delegated ones included. Unset, a token with no role is admitted as a viewer. Needs `AUTH_ENABLED=true`. |
 | `ORRERY_PROTECTED_NAMESPACES` | unset | Comma-separated namespace globs where only admins may mutate ([ADR-001](../adr/001-rbac.md)). Reads are never scoped. |
 | `ORRERY_AUTONOMY_LEVEL` | unset | `L2`, `L3` or `L4`. See [Autonomy levels](#autonomy-levels). |
 
@@ -182,6 +183,20 @@ ORRERY_SERVICE_CLIENTS=ci-bot=viewer,partner-agent=operator  # machine clients a
     sensitive too (logs, for one), set `ORRERY_REJECT_UNLISTED_CLIENTS=true`
     and every client must be listed: its token is otherwise answered with the
     same 401 as an invalid one.
+
+!!! tip "Admit only the people this deployment is for"
+    Every verified token is admitted, and one with no role is a viewer. On a
+    deployment only some accounts of a shared identity provider should reach
+    (a practice lab, an ops console), set `ORRERY_REQUIRED_ROLES` to the roles
+    that grant it, e.g. `ORRERY_REQUIRED_ROLES=orrery-lab-learner,orrery-admin`.
+    A token without one gets 403 `access_denied` everywhere except the probes
+    and the console shell. A machine client that should still reach the
+    deployment needs the role in the IdP too. The Slack and Google Chat bots
+    verify their platform's signature, not an IdP token, so the rule does not
+    apply to them: restrict who can message the bot in that platform. Pair it with
+    `ORRERY_CONSOLE_ACCESS_DENIED_URL`
+    ([web console](../integrations/web-console.md)) so a refused person is told
+    where to get access.
 
 A machine caller's message is never recorded as a decision, whatever it
 says. To approve an action an agent raised for you, use the console or:

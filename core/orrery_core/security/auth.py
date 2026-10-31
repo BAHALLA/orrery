@@ -129,6 +129,22 @@ def _lookup_claim(claims: dict[str, Any], path: str) -> Any:
     return current
 
 
+def role_tokens(claims: dict[str, Any], role_claim: str = DEFAULT_ROLE_CLAIM) -> list[str] | None:
+    """The raw role names in ``claims[role_claim]``, lower-cased.
+
+    ``None`` when the claim does not resolve or has an unsupported type; a
+    string may be space- or comma-separated ("admin operator", "admin,operator").
+    """
+    raw = _lookup_claim(claims, role_claim)
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return [t.strip().lower() for t in raw.replace(",", " ").split() if t.strip()]
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return [str(t).strip().lower() for t in raw if str(t).strip()]
+    return None
+
+
 def extract_role(
     claims: dict[str, Any],
     *,
@@ -170,13 +186,8 @@ def extract_role(
             sorted(claims)[:20],
         )
         return "viewer"
-
-    if isinstance(raw, str):
-        # Tolerate both "admin operator" and "admin,operator".
-        tokens = [t.strip().lower() for t in raw.replace(",", " ").split() if t.strip()]
-    elif isinstance(raw, (list, tuple, set, frozenset)):
-        tokens = [str(t).strip().lower() for t in raw if str(t).strip()]
-    else:
+    tokens = role_tokens(claims, role_claim)
+    if tokens is None:
         logger.warning("Unsupported type for %r claim: %s", role_claim, type(raw).__name__)
         return "viewer"
 

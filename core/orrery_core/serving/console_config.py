@@ -27,6 +27,13 @@ Branding, so two deployments of the same console are told apart at a glance
 - ``ORRERY_CONSOLE_ACCENT``: the accent colour, one of :data:`ACCENTS`
   (default ``indigo``).
 
+Access:
+
+- ``ORRERY_CONSOLE_ACCESS_DENIED_URL``: where a signed-in person without one of
+  ``ORRERY_REQUIRED_ROLES`` is sent. The console shows a "no access to this
+  deployment" page linking there and loads nothing else. An ``https`` URL with
+  no credentials in it, at most 2048 characters.
+
 Anything unset is left out, and the console falls back to its build-time value,
 so a bundle built with ``VITE_OIDC_*`` keeps working unchanged.
 
@@ -44,6 +51,8 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from ..security.principal import REQUIRED_ROLES_ENV
+
 GLOBAL_NAME = "__ORRERY_CONSOLE_CONFIG__"
 
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -53,6 +62,7 @@ ENVIRONMENTS = ("production", "staging", "demo", "lab")
 #: Accent presets the console knows (``web/src/theme/accent.ts``).
 ACCENTS = ("indigo", "blue", "teal", "emerald", "amber", "orange", "red", "rose", "violet", "slate")
 MAX_TITLE_CHARS = 60
+MAX_URL_CHARS = 2048
 
 
 @dataclass(frozen=True)
@@ -64,6 +74,8 @@ class ConsoleConfig:
     title: str | None = None
     environment: str | None = None
     accent: str | None = None
+    access_denied_url: str | None = None
+    access_restricted: bool = False
 
     @classmethod
     def from_env(cls) -> ConsoleConfig:
@@ -78,6 +90,8 @@ class ConsoleConfig:
             title=env("ORRERY_CONSOLE_TITLE"),
             environment=(env("ORRERY_CONSOLE_ENVIRONMENT") or "").lower() or None,
             accent=(env("ORRERY_CONSOLE_ACCENT") or "").lower() or None,
+            access_denied_url=env("ORRERY_CONSOLE_ACCESS_DENIED_URL"),
+            access_restricted=any(r.strip() for r in os.getenv(REQUIRED_ROLES_ENV, "").split(",")),
         )
 
     def validate(self, jwt_issuer: str | None) -> None:
@@ -90,6 +104,7 @@ class ConsoleConfig:
                 from the server's ``JWT_ISSUER``; or a branding value is invalid.
         """
         self._validate_branding()
+        self._validate_access_denied_url()
         if not self.oidc_issuer:
             return
         url = urlsplit(self.oidc_issuer)
@@ -123,6 +138,25 @@ class ConsoleConfig:
                 f"ORRERY_CONSOLE_ACCENT must be one of {', '.join(ACCENTS)}, got {self.accent!r}"
             )
 
+    def _validate_access_denied_url(self) -> None:
+        url = self.access_denied_url
+        if url is None:
+            return
+        parts = urlsplit(url)
+        if (
+            len(url) > MAX_URL_CHARS
+            or parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or not all(c.isprintable() and not c.isspace() for c in url)
+        ):
+            raise ValueError(
+                "ORRERY_CONSOLE_ACCESS_DENIED_URL must be an https URL with a host, no "
+                f"credentials and no spaces or control characters (at most {MAX_URL_CHARS} "
+                f"characters), got {url!r}"
+            )
+
     def as_dict(self) -> dict[str, object]:
         """Only what is set: an absent key means "use the build-time value"."""
         oidc = {
@@ -150,6 +184,10 @@ class ConsoleConfig:
         }
         if branding:
             out["branding"] = branding
+        if self.access_denied_url:
+            out["accessDeniedUrl"] = self.access_denied_url
+        if self.access_restricted:
+            out["accessRestricted"] = True
         return out
 
 

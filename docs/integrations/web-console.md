@@ -125,7 +125,15 @@ optional server variables, served with the SSO settings in `/console-config.js`
 | `ORRERY_CONSOLE_ENVIRONMENT` | — | `production`, `staging`, `demo` or `lab`. Shown as a badge (red for production), first in the tab title (`PRODUCTION · …`) and on the approval card, whose button reads **Approve on PRODUCTION**. Anything but production also gets a one-line banner. |
 | `ORRERY_CONSOLE_ACCENT` | `indigo` | Accent colour: `indigo`, `blue`, `teal`, `emerald`, `amber`, `orange`, `red`, `rose`, `violet` or `slate`. |
 
+| `ORRERY_CONSOLE_ACCESS_DENIED_URL` | — | Where a signed-in person refused by `ORRERY_REQUIRED_ROLES` is sent. An `https` URL with a host and no credentials, at most 2048 characters. The console shows "You don't have access to this deployment" with a link there and a **Sign out** button. |
+
 An invalid value stops startup rather than rendering a console that misleads.
+
+When `ORRERY_REQUIRED_ROLES` is set ([security](../config/security.md)), the
+console asks `/me` right after sign-in and loads nothing else (no
+conversations, status or agents) until the server admits the token. A
+403 `access_denied` shows the page above. The server's 403 is the control; the
+page only explains it.
 These are labels, not controls: they change nothing about what the console may
 do, and RBAC and the approval gate behave the same in every environment.
 
