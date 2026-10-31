@@ -49,7 +49,7 @@ For out-of-band builds:
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f Dockerfile \
-  -t ghcr.io/bahalla/orrery:0.16.0 \
+  -t ghcr.io/bahalla/orrery:0.17.0 \
   --push .
 ```
 
@@ -211,7 +211,7 @@ Recommended override file:
 ```yaml
 image:
   repository: ghcr.io/bahalla/orrery
-  tag: "0.16.0"  # bare semver — the published tags carry no leading "v"
+  tag: "0.17.0"  # bare semver — the published tags carry no leading "v"
 
 # Use the Secret created in Step 2 instead of storing values in the chart.
 existingSecret: orrery-assistant-secrets
@@ -444,7 +444,7 @@ Trigger a rollout:
 ```bash
 helm upgrade orrery-assistant deploy/helm/orrery-assistant \
   -n orrery -f my-values.yaml \
-  --set image.tag=0.16.0
+  --set image.tag=0.17.0
 
 kubectl -n orrery rollout status deployment/orrery-assistant
 ```

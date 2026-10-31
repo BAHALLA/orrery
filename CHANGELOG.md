@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-01
+
+**Durable chats without lasting memory.** `ORRERY_LONG_TERM_MEMORY=false`
+lets a deployment keep sessions in PostgreSQL while carrying nothing from one
+session to the next: no memory service, no `load_memory`, no ops journal.
+Until now only the learning sandbox did this, and it refuses Studio, so a
+lab's Studio instance (or any shared instance) can now use `DATABASE_URL`
+safely. A missed wiring stops startup instead of remembering. Turning it off
+does not delete memory or journal data stored earlier.
+
 ### Added
 
 - **`ORRERY_LONG_TERM_MEMORY=false`: durable chats without lasting memory.**
@@ -17,8 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused before it is saved, and `AgentGateway` refuses a memory service, a
   `MemoryPlugin` or a tree (graph `Workflow` nodes included) that still
   reaches a recall or `cross_session` tool, including a wrapped Runner. Until
-  now only the learning sandbox did this, and it refuses Studio. Data stored
-  earlier is not deleted. On by default.
+  now only the learning sandbox did this, and it refuses Studio. Studio's tool
+  catalogue and the console's Agents tab stop offering `cross_session` tools;
+  batch triage keeps its own journal step. Data stored earlier is not
+  deleted. On by default.
 
 ## [0.16.0] - 2026-10-31
 
@@ -2023,7 +2035,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/BAHALLA/orrery/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/BAHALLA/orrery/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/BAHALLA/orrery/compare/v0.13.0...v0.14.0
