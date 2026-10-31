@@ -397,8 +397,7 @@ the lab does not pull. Instead:
       is refused, while a session bound before it keeps working.
 - [ ] A launch while signed out (through the SSO round trip) still binds.
 - [ ] A binding is never dropped before its token's `exp` plus the leeway;
-      at the cap, new
-      bindings are refused.
+      at the cap, new bindings are refused.
 - [ ] An attempt token is refused by the debrief verifier and a debrief by
       the attempt verifier (`typ`), and equal attempt and debrief keys stop
       startup.
