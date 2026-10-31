@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ORRERY_REQUIRED_ROLES`: admit only accounts holding a listed role.**
+  A verified token used to be admitted whatever its roles, with a roleless one
+  served as a viewer. On a deployment shared through one identity provider
+  (a practice lab, say), every account could read it. With the rule set, a
+  token carrying none of the listed role names (raw IdP names from
+  `JWT_ROLE_CLAIM`, case-insensitive) gets 403 `access_denied` on every
+  authenticated route, console API and A2A alike. Startup fails if it is set
+  with auth off.
+- **`ORRERY_CONSOLE_ACCESS_DENIED_URL`.** With `ORRERY_REQUIRED_ROLES` set, the
+  console checks `/me` before loading anything, and a refused person sees a
+  "you don't have access to this deployment" page, linking to this https URL,
+  instead of a console whose every call fails.
 - **A hint ladder in the learning sandbox (AEP-032 phase 2).** Each learner
   has a level per scenario: 0 orient, 1 narrow, 2 point at the tool, 3
   reveal.

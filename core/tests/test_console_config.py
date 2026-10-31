@@ -137,3 +137,36 @@ def test_accents_match_the_consoles_presets():
     envs = re.search(r"const ENVIRONMENTS: readonly Environment\[\] = \[(.*?)\];", source, re.S)
     assert envs is not None
     assert tuple(re.findall(r'"(\w+)"', envs.group(1))) == ENVIRONMENTS
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://tirraflow.com/labs",
+        "javascript:alert(1)",
+        "https://",
+        "https://user:pw@tirraflow.com/labs",
+        "https://tirraflow.com/a b",
+        "https://tirraflow.com/\nx",
+        "https://tirraflow.com/" + "a" * 2048,
+        "//tirraflow.com/labs",
+    ],
+)
+def test_an_unsafe_access_denied_url_stops_startup(url):
+    with pytest.raises(ValueError, match="ORRERY_CONSOLE_ACCESS_DENIED_URL"):
+        ConsoleConfig(access_denied_url=url).validate(None)
+
+
+def test_the_access_denied_url_reaches_the_console(monkeypatch):
+    monkeypatch.setenv("ORRERY_CONSOLE_ACCESS_DENIED_URL", "https://tirraflow.com/labs?from=lab")
+    cfg = ConsoleConfig.from_env()
+    cfg.validate(None)
+    assert cfg.as_dict()["accessDeniedUrl"] == "https://tirraflow.com/labs?from=lab"
+    assert "accessDeniedUrl" not in ConsoleConfig().as_dict()
+
+
+def test_the_console_learns_that_access_is_restricted(monkeypatch):
+    monkeypatch.setenv("ORRERY_REQUIRED_ROLES", "orrery-lab-learner")
+    assert ConsoleConfig.from_env().as_dict()["accessRestricted"] is True
+    monkeypatch.setenv("ORRERY_REQUIRED_ROLES", " , ")
+    assert "accessRestricted" not in ConsoleConfig.from_env().as_dict()
