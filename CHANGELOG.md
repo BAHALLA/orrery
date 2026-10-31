@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-31
+
+**A coach for the learning sandbox.** In learning mode the coordinator gets
+`lab_coach`, which investigates with read-only Kafka and monitoring tools and
+answers at the learner's hint level, the one the server stamps, so a learner
+cannot type their way up the ladder. It exists only in a learning-mode
+process; no configuration file loads it. The design for the learner debrief
+(AEP-022) now also covers launch URLs behind a lab's own gate.
+
 ### Added
 
 - **The lab coach in the learning sandbox (AEP-032 phase 3).** In learning
@@ -1994,7 +2003,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/BAHALLA/orrery/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/BAHALLA/orrery/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/BAHALLA/orrery/compare/v0.12.0...v0.13.0
