@@ -28,6 +28,14 @@ from .env import env_flag
 
 LEARNING_ENV = "ORRERY_LEARNING_MODE"
 
+#: The learner's disclosure level for this turn, ``{"scenario_id", "level"}``,
+#: stamped by the HTTP server into each turn's ``state_delta`` (AEP-032 §3).
+#: Defined here, not in the learning package, so core's identity guard can
+#: protect it without importing learning code.
+LEARNING_LEVEL_STATE_KEY = "_learning_level"
+#: Set alongside it by the server only; a level without it reads as the default.
+LEARNING_LEVEL_LOCKED_STATE_KEY = "_learning_level_set_by_server"
+
 #: The activated learning runtime (``orrery_core.learning.runtime.Runtime``),
 #: or ``None``. Set once, by :func:`activate_http_server`.
 _runtime: Any = None
