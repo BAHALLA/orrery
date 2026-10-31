@@ -277,7 +277,10 @@ async def run_persistent(
 
     # Co-locate long-term memory with the session store so recall persists too
     # when PostgreSQL is configured. Callers can still pass an explicit override.
-    if memory_service is None:
+    # Unless the deployment turned long-term memory off (ORRERY_LONG_TERM_MEMORY).
+    from ..memory_switch import long_term_memory_enabled
+
+    if memory_service is None and long_term_memory_enabled():
         from ..persistence.memory import create_memory_service
 
         memory_service = create_memory_service(db_url=resolved_db_url)

@@ -78,6 +78,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 
 from .. import learning_gate
 from ..env import env_flag, env_int
+from ..memory_switch import long_term_memory_enabled
 from ..security.auth import AuthPlugin
 from ..security.rbac import RolePolicy
 from .activity_plugin import ActivityPlugin
@@ -440,7 +441,9 @@ def default_plugins(
     if enable_activity_tracking:
         plugins.append(ActivityPlugin())
 
-    if enable_memory:
+    # ORRERY_LONG_TERM_MEMORY=false wins over a caller's enable_memory=True:
+    # the deployment chose, and AgentGateway would refuse the plugin anyway.
+    if enable_memory and long_term_memory_enabled():
         plugins.append(MemoryPlugin(min_events=memory_min_events))
 
     # Registered after the observability plugins: ADK's after-tool chain

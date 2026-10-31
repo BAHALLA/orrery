@@ -182,6 +182,9 @@ networks:
   and preferences per learner) is left out of the coordinator in learning
   mode, and a tree that still reaches a tool marked `cross_session` is
   refused. Sessions persist; recall doesn't.
+- **Outside the sandbox**, `ORRERY_LONG_TERM_MEMORY=false` gives the same
+  result: durable chats, no lasting memory and no ops journal (see
+  [Cross-session memory](memory.md#turning-it-off)).
 - **Back it up** like any database (`pg_dump` on a schedule): conversations
   name people and systems.
 

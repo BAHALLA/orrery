@@ -172,6 +172,37 @@ matters more than per-turn cost.
 | `max_entries_per_user` | `500` | Maximum events stored per user; oldest evicted when exceeded |
 | `sensitive_patterns` | Built-in set | List of `re.Pattern` objects for redaction. Replaces the built-in set |
 
+### Turning it off {: #turning-it-off }
+
+`ORRERY_LONG_TERM_MEMORY=false` keeps conversations (durable with
+`DATABASE_URL`) but carries nothing from one session to the next:
+
+- no memory service and no `MemoryPlugin`: `default_plugins(enable_memory=True)`
+  leaves the plugin out, and `run_persistent` builds no memory service;
+- no `load_memory` tool on the coordinator, and no ops journal, whose notes and
+  preferences live in `user:` state and so follow a person between sessions;
+- a declarative agent holding a recall or `cross_session` tool fails to
+  build: an admin edit is refused before it is saved (and the console's
+  **Agents** tab does not offer those tools), and an `ORRERY_AGENTS_CONFIG`
+  file holding one stops startup, batch triage included, since it imports
+  the same agent module;
+- every surface that runs through `AgentGateway` (the HTTP server and
+  console, `run_persistent`, Slack, Google Chat, Studio runs) also refuses a
+  memory service, a `MemoryPlugin`, or a tree (agents, `AgentTool`s,
+  sub-agents, graph `Workflow` nodes) that still reaches `load_memory`,
+  `preload_memory` or a tool marked `cross_session`. A missed wiring stops
+  startup instead of remembering. `adk web` builds its own Runner, so there
+  only the builders apply.
+
+Turning it off does not delete what was stored before: earlier memory rows
+and `user:`/`app:` state stay in PostgreSQL, out of reach of any tool. Purge
+them yourself if they must go.
+
+Use it on a shared instance where a returning person should not get their own
+earlier findings back (a practice lab's Studio instance, a demo). The learning
+sandbox (AEP-032) does the same on its own. The batch triage Workflow is not a
+conversation and keeps its own journal step.
+
 ## Plugin Order
 
 The `MemoryPlugin` is registered as part of `default_plugins()` when enabled. It runs after `ActivityPlugin` and before `ToolOutputCapPlugin` and `ErrorHandlerPlugin`. The full order (optional plugins in parentheses):
