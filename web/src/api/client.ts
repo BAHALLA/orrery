@@ -6,6 +6,7 @@ import type {
   CatalogUpdate,
   ChatRequest,
   ChatResponse,
+  LearningInfo,
   MeResponse,
   PendingResponse,
   ProgressEvent,
@@ -274,6 +275,11 @@ export class ApiClient {
   /** The server's own view of the caller: resolved role, autonomy level, model. */
   me(options?: RequestOptions): Promise<MeResponse> {
     return this.request<MeResponse>("/me", undefined, options);
+  }
+
+  /** Raise the caller's hint level by one step (learning sandbox only). */
+  takeHint(options?: RequestOptions): Promise<LearningInfo> {
+    return this.request<LearningInfo>("/learning/hint", {}, options);
   }
 
   /** Every specialist the coordinator can reach, with tool guard levels (admin only). */

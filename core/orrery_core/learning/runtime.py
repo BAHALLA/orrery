@@ -11,13 +11,15 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.plugins.base_plugin import BasePlugin
 
 from .config import SPAN_CONTENT_ENV, check_preconditions
 from .guard import AnswerGuardPlugin
+from .hints import DisclosureInstructionPlugin, HintStore, level_from_state, record_hint, state_for
 from .manifest import ManifestStore
 
 logger = logging.getLogger("orrery.learning")
@@ -28,6 +30,7 @@ class Runtime:
     """The sandbox's state for one process."""
 
     store: ManifestStore
+    hints: HintStore = field(default_factory=HintStore)
 
     @classmethod
     def from_env(cls) -> Runtime:
@@ -49,10 +52,28 @@ class Runtime:
     def scenario_id(self) -> str:
         return self.store.current().scenario_id
 
-    def level_of(self, callback_context: CallbackContext) -> int:
-        """The learner's disclosure level. Phase 1: the manifest's default for everyone."""
-        del callback_context
+    def default_level(self) -> int:
         return self.store.current().default_disclosure
+
+    def level_of(self, callback_context: CallbackContext) -> int:
+        """The level the server stamped for this turn (the default if none)."""
+        return level_from_state(callback_context.state, self.scenario_id(), self.default_level())
+
+    def level_for(self, subject: str) -> int:
+        """A learner's current level in the scenario in force."""
+        return self.hints.level(subject, self.scenario_id(), self.default_level())
+
+    def turn_state(self, subject: str) -> dict[str, Any]:
+        """What a turn's ``state_delta`` carries: the level, marked as the server's."""
+        return state_for(self.scenario_id(), self.level_for(subject))
+
+    def take_hint(self, subject: str) -> tuple[int, int]:
+        """Raise *subject*'s level by one (capped), audit it, return ``(old, new)``."""
+        scenario = self.scenario_id()
+        old, new = self.hints.raise_level(subject, scenario, self.default_level())
+        if new != old:
+            record_hint(subject, scenario, old, new)
+        return old, new
 
     def plugins(self, root_agent_name: Callable[[], str]) -> list[BasePlugin]:
         """The plugins a gateway adds to its Runner in learning mode."""
@@ -61,5 +82,6 @@ class Runtime:
                 store=self.store,
                 root_agent_name=root_agent_name,
                 level_of=self.level_of,
-            )
+            ),
+            DisclosureInstructionPlugin(root_agent_name=root_agent_name, level_of=self.level_of),
         ]

@@ -30,6 +30,8 @@ export interface SystemController {
   loadCatalog: () => Promise<void>;
   /** Save an edit. Resolves to an error message, or null on success. */
   saveCatalog: (update: CatalogUpdate) => Promise<string | null>;
+  /** Take one hint (learning sandbox). Resolves to an error message, or null. */
+  takeHint: () => Promise<string | null>;
 }
 
 /** After a save, how long before reading the served agents again when the first read failed. */
@@ -153,6 +155,16 @@ export function useSystem(token: string | null): SystemController {
     [client, loadCatalog, loadAgents],
   );
 
+  const takeHint = useCallback(async () => {
+    try {
+      const learning = await client.takeHint();
+      setMe((current) => (current ? { ...current, learning } : current));
+      return null;
+    } catch (err) {
+      return describeApiError(err, "Could not take a hint.");
+    }
+  }, [client]);
+
   const runSelfTest = useCallback(async () => {
     if (isChecking) return;
     setIsChecking(true);
@@ -180,5 +192,6 @@ export function useSystem(token: string | null): SystemController {
     catalog,
     loadCatalog,
     saveCatalog,
+    takeHint,
   };
 }

@@ -239,6 +239,7 @@ Which specialists the coordinator can delegate to, and how to add your own. See
 | `ORRERY_LEARNING_MODE` | `false` | Learning sandbox for practice labs: the HTTP server withholds the exercise answers listed in `ORRERY_SCENARIO_MANIFEST`. Every other entry point refuses it, and startup fails unless the sandbox's preconditions hold ([AEP-032](../enhancements/aep-032-learning-sandbox.md)). |
 | `ORRERY_SCENARIO_MANIFEST` | unset | The scenario manifest (contract v1) learning mode guards. Required with `ORRERY_LEARNING_MODE`; re-read when the file changes. |
 | `ORRERY_LEARNING_GRACE_SECONDS` | `3600` | How long a value that left the manifest stays withheld. |
+| `ORRERY_LEARNING_HINT_RATE_LIMIT` | `3/minute` | Per-learner limit on `POST /learning/hint`, the console's *Take a hint* button. |
 | `ORRERY_AGENTS_CONFIG` | unset | YAML file of [declarative agents](../adding-an-agent.md#declarative) built from existing tools. |
 | `ORRERY_ADMIN_EDITING` | `false` | Let admins switch specialists and compose agents from the console ([details](../adding-an-agent.md#admin-editing)). |
 | `ORRERY_CATALOG_POLL_SECONDS` | `15` | How often each replica checks for catalog edits made through another one. |

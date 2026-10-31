@@ -9,14 +9,9 @@ export function App() {
   const auth = useAuth();
   const signedIn = auth.isAuthenticated && auth.token !== null;
   const access = useAccess(
-    // Subject and role: a silent renew keeps both (no re-check), while signing
-    // in again with another role for the same subject (`make dev-token`
-    // reuses one) is checked afresh.
-    signedIn
-      ? auth.identity
-        ? `${auth.identity.subject}\u0000${auth.identity.role}`
-        : auth.token
-      : null,
+    // Who is signed in, not the token: an SSO silent renew replaces the token
+    // and must not re-check (see useAccess).
+    signedIn ? (auth.identity?.subject ?? auth.token) : null,
     signedIn ? auth.token : null,
   );
 

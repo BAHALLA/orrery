@@ -39,7 +39,13 @@ export function useAccess(
         const denied = err instanceof ApiError && err.isAccessDenied;
         setState({ who, access: denied ? "denied" : "granted" });
       });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // Whoever comes next (after a sign-out, or another account) starts
+      // undecided: a verdict cached for this person must not show the console
+      // to the next one while their own /me is in flight.
+      setState({ who: null, access: "checking" });
+    };
   }, [who, restricted]);
   if (!restricted) return "granted";
   return state.who === who ? state.access : "checking";

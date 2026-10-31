@@ -102,9 +102,23 @@ describe("access check across token renewals", () => {
     expect(result.current).toBe("granted");
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
+    // Signing out and back in as the same person, now refused: the old
+    // verdict must not show while the new /me is in flight.
+    fetchMock.mockImplementationOnce(
+      async () =>
+        new Response(JSON.stringify({ detail: "access_denied" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    rerender({ who: null as unknown as string, token: "" });
+    rerender({ who: "alice", token: "t2b" });
+    expect(result.current).toBe("checking");
+    await waitFor(() => expect(result.current).toBe("denied"));
+
     rerender({ who: "bob", token: "t3" }); // someone else: checked afresh
     expect(result.current).toBe("checking");
     await waitFor(() => expect(result.current).toBe("granted"));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
