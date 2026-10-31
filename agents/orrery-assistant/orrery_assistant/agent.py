@@ -120,6 +120,8 @@ RESERVED_AGENT_NAMES = (
     "orrery_chat_agent",
     "load_memory",
     "search_knowledge",
+    # The learning sandbox's coach (orrery_core.learning.coach.COACH_NAME).
+    "lab_coach",
     *(t.agent.name for t in _mcp_tools),
 )
 _specialists = discover_specialists()
@@ -431,6 +433,12 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
         # The journal keeps notes in `user:` state, which follows a learner
         # from one attempt to the next: recall by another name (AEP-032).
         specialists = [s for s in specialists if s.journal is None]
+        # The coach, built from these specialists' tools (AEP-032 §5). Only
+        # here: never a catalog entry or an ORRERY_AGENTS_CONFIG file.
+        from orrery_core.learning.coach import build_coach
+
+        if (coach := build_coach(specialists)) is not None:
+            declarative_agents = [*declarative_agents, coach]
     triage = build_triage_agent(specialists)
     # Only offer what the coordinator can do: with the journal switched off, a
     # "want me to save this?" ends in a tool it doesn't have.

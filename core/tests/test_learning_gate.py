@@ -398,6 +398,7 @@ remembers = any(isinstance(p, MemoryPlugin) for p in gateway.runner.app.plugins)
 tools = {getattr(t, "name", "") for t in gateway.root_agent.tools}
 journal = any("journal" in getattr(t, "name", "") for t in gateway.root_agent.tools)
 print(f"JOURNAL={journal}")
+print(f"COACH={'lab_coach' in tools}")
 print(f"ACTIVE={learning_gate.is_active()} GUARDED={guarded}")
 print(f"MEMORY={gateway.runner.memory_service is not None or remembers} "
       f"RECALL={'load_memory' in tools}")
@@ -423,6 +424,8 @@ print(f"MEMORY={gateway.runner.memory_service is not None or remembers} "
     assert "MEMORY=False RECALL=False" in result.stdout
     # The journal's `user:` notes would follow a learner between attempts.
     assert "JOURNAL=False" in result.stdout
+    # The coach is wired in by the activated builder, not by a config file.
+    assert "COACH=True" in result.stdout
 
 
 def test_the_http_server_refuses_an_unmet_precondition(manifest):

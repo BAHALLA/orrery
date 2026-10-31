@@ -22,6 +22,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from orrery_core import learning_gate
+from orrery_core.learning.coach import COACH_NAME
 from orrery_core.learning.hints import (
     DisclosureInstructionPlugin,
     HintStore,
@@ -111,20 +112,32 @@ def test_tools_cannot_write_the_level_keys():
 
 
 @pytest.mark.asyncio
-async def test_the_instruction_line_reaches_the_root_only():
-    plugin = DisclosureInstructionPlugin(root_agent_name=lambda: "root", level_of=lambda _: 1)
+async def test_the_instruction_line_reaches_the_root_and_the_coach_only():
+    plugin = DisclosureInstructionPlugin(
+        root_agent_name=lambda: "root", level_of=lambda _: 1, also=("lab_coach",)
+    )
 
     class Ctx:
         def __init__(self, name: str) -> None:
             self.agent_name = name
 
-    for name, expected in (("root", True), ("kafka_agent", False)):
+    for name, expected in (("root", True), ("lab_coach", True), ("kafka_agent", False)):
         request = LlmRequest()
         ctx: Any = Ctx(name)
         assert await plugin.before_model_callback(callback_context=ctx, llm_request=request) is None
         text = str(request.config.system_instruction or "")
         assert (instruction_line(1) in text) is expected
     assert "5100" not in "".join(instruction_line(n) for n in range(4))
+
+
+def test_the_runtime_gives_the_coach_the_level_line(tmp_path):
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_MANIFEST))
+    runtime = Runtime(store=ManifestStore(path))
+    [plugin] = [
+        p for p in runtime.plugins(lambda: "root") if isinstance(p, DisclosureInstructionPlugin)
+    ]
+    assert plugin._also == (COACH_NAME,)
 
 
 # ── The endpoint ─────────────────────────────────────────────────────

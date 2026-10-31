@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">in-progress</span> (phases 0–2 built: `ORRERY_DISABLED_TOOLS`, the manifest loader, the sandbox gate, the answer guard and the hint ladder) |
+| **Status** | <span class="badge badge--amber">in-progress</span> (phases 0–3 built: `ORRERY_DISABLED_TOOLS`, the manifest loader, the sandbox gate, the answer guard, the hint ladder and the coach) |
 | **Priority** | <span class="badge badge--grey">P3</span> |
 | **Effort** | Medium (5-7 days, in four phases) |
 | **Impact** | Medium (practice labs only; no effect on any other deployment) |
@@ -378,7 +378,7 @@ The eval measures these. The proposal does not promise to block them.
 ### 5. The coach
 
 The declarative `lab_coach` agent (read-only kafka and observability tools,
-a four-step hint ladder; first drafted in PR #342) becomes part of the
+a hint ladder; first drafted in PR #342) becomes part of the
 learning package. `build_chat_agent()` adds it **only in an activated
 process** (§1), so admin catalog rebuilds keep it too (and admin editing is
 off in learning mode anyway). Its name, `lab_coach`, joins
@@ -483,7 +483,7 @@ them. Both are inherent to a diagnostic exercise.
   - `manifest.py`: schema, stat-checked reload, grace
   - `guard.py`: matcher and `AnswerGuardPlugin`
   - `hints.py`: level store, `POST /learning/hint`, root instruction line
-  - `coach.yaml`
+  - `coach.py`: the coach's instruction, tool list and builder
 - `core/orrery_core/learning_gate.py` (new, always importable, no learning
   code): the activated flag, `activate_http_server()`, and the check called
   by `create_agent()`, `default_plugins()`, `build_chat_agent()` and
@@ -564,6 +564,17 @@ them. Both are inherent to a diagnostic exercise.
 - [x] A level from another scenario reads as the default.
 - [x] A tool writing the level keys is reverted.
 - [x] A hint pressed during a running turn does not break that turn.
+
+**Coach**
+
+- [x] The coach exists only in an activated process, built by
+      `build_chat_agent()`; `lab_coach` is a reserved name, so no
+      declarative agent can take it.
+- [x] Its ladder follows the stamped level (the level line reaches the
+      coach's sub-run as well as the root), never a marker in its replies.
+- [x] Its tools are read-only; a guarded one in its list stops startup, and
+      a tool that is not available here (a disabled specialist, Loki
+      without a URL) is skipped.
 
 **Tool narrowing**
 
