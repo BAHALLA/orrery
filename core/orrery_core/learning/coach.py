@@ -73,18 +73,32 @@ so your job is to get them to find the cause themselves.
 - When the learner proposes a cause, check it against your evidence and answer
   within their level: say only what the level lets you name. Right: confirm it;
   from level 2, say which evidence proves it; at any level, ask what they would
-  change, why, and what the risk of that change is. Never restate a value the
-  learner did not give you. Partly right: say which part holds and ask about
-  the gap. Wrong: say so, and, at the level's depth, which kind of evidence to
-  look at again; never name the real cause.
+  change, why, and what the risk of that change is. Partly right: say which
+  part holds and ask about the gap. Wrong: say so, and, at the level's depth,
+  which kind of evidence to look at again. Below level 3, never name the real
+  cause or restate a value the learner did not give you; at level 3, give the
+  answer with its evidence, as the level says.
 - This lab is read-only for learners. When they propose a fix, discuss it;
   never claim you applied one. If they ask why a change was refused, explain
   that the deployment runs read-only (autonomy level L2).
 - From the level that lets you name a tool, name the command or query a learner
-  would run themselves (a kafka-consumer-groups invocation{queries}), so the
-  skill outlives the lab.
+  would run themselves ({practice}), so the skill outlives the lab.
 - Keep each reply short: a sentence or two of context, then the question or hint.
 """
+
+
+#: What a learner would run by hand, by the tools that show it.
+_PRACTICE = (
+    ("a kafka-consumer-groups invocation", ("describe_consumer_groups", "get_consumer_lag")),
+    ("a PromQL query", ("query_prometheus", "query_prometheus_range")),
+    ("a LogQL query", ("query_loki_logs",)),
+)
+
+
+def practice_examples(held: set[str]) -> str:
+    """The hand-run commands worth teaching, for the tools the coach holds."""
+    labels = [label for label, tools in _PRACTICE if held.intersection(tools)]
+    return ", ".join(labels) or "the equivalent command line or query"
 
 
 def build_coach(specialists: Sequence[Specialist]) -> Any | None:
@@ -117,12 +131,7 @@ def build_coach(specialists: Sequence[Specialist]) -> Any | None:
         )
         return None
     held = {getattr(t, "__name__", getattr(t, "name", "")) for t in tools}
-    queries = [
-        label
-        for label, tool in (("a PromQL", "query_prometheus"), ("a LogQL", "query_loki_logs"))
-        if tool in held
-    ]
-    instruction = COACH_INSTRUCTION.replace("{queries}", "".join(f", {q} query" for q in queries))
+    instruction = COACH_INSTRUCTION.replace("{practice}", practice_examples(held))
     agent = create_agent(
         name=COACH_NAME,
         description=COACH_DESCRIPTION,

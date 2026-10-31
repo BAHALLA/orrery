@@ -42,17 +42,29 @@ def test_builds_with_every_specialist(monkeypatch):
     assert set(COACH_TOOLS) - names <= {"query_loki_logs"}
 
 
-def test_it_teaches_only_the_query_languages_it_has(monkeypatch):
+def test_it_teaches_only_what_it_can_run():
+    from orrery_core.learning.coach import practice_examples
+
+    assert practice_examples({"get_consumer_lag"}) == "a kafka-consumer-groups invocation"
+    # PromQL is taught from either Prometheus query tool.
+    assert practice_examples({"query_prometheus_range"}) == "a PromQL query"
+    assert "LogQL" in practice_examples({"query_loki_logs"})
+    assert "kafka" not in practice_examples({"query_prometheus", "query_loki_logs"})
+    assert practice_examples(set()) == "the equivalent command line or query"
+
+
+def test_the_instruction_has_no_placeholder_left(monkeypatch):
     from orrery_core.agent.base import base_instruction
 
-    with_loki = build_coach(_specialists(monkeypatch, "docker,k8s,elasticsearch"))
-    without = build_coach(_specialists(monkeypatch, "docker,k8s,elasticsearch,observability"))
-    assert with_loki is not None and without is not None
-    has_loki = "query_loki_logs" in {t.__name__ for t in with_loki.tools}
-    assert "PromQL" in base_instruction(with_loki)
-    assert ("LogQL" in base_instruction(with_loki)) is has_loki
-    assert "PromQL" not in base_instruction(without) and "LogQL" not in base_instruction(without)
-    assert "{queries}" not in base_instruction(without)
+    coach = build_coach(_specialists(monkeypatch, "docker,k8s,elasticsearch,kafka"))
+    assert coach is not None
+    text = base_instruction(coach)
+    assert "{practice}" not in text and "kafka-consumer-groups" not in text
+
+
+def test_level_three_may_reveal():
+    assert "Below level 3, never name the real" in coach_module.COACH_INSTRUCTION
+    assert "at level 3, give the" in coach_module.COACH_INSTRUCTION
 
 
 def test_is_read_only(monkeypatch):
