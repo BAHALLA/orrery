@@ -365,6 +365,11 @@ def fingerprint(text: dict[str, Any]) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
+async def _no_google_mtls() -> None:
+    """Stands in for ``MCPSessionManager._get_mtls_transport`` (see the caller)."""
+    return None
+
+
 class GuardedMcpToolset(McpToolset):
     """An ``McpToolset`` whose tools carry Orrery guard levels.
 
@@ -409,6 +414,14 @@ class GuardedMcpToolset(McpToolset):
             # user's token gets its own session and listing.
             header_provider=self._user_headers if config.auth else None,
         )
+        # ADK probes Google client-certificate mTLS on every HTTP/SSE connection
+        # (``google.auth.default()``). Here it only logs "default credentials
+        # were not found" per connection, and were it ever to succeed (a host
+        # with Google credentials and a workload certificate) ADK would replace
+        # the guarded client factory with its own: no origin pin, no address
+        # checks, and a Google token sent to whatever server this is. An
+        # Orrery MCP server's TLS comes from its config (``client_cert_file``).
+        self._mcp_session_manager._get_mtls_transport = _no_google_mtls  # ty: ignore[invalid-assignment]
         self._reported_missing = False
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
         self._pinned: dict[str, str] = pin_store if pin_store is not None else {}

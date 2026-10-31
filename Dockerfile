@@ -138,6 +138,15 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
+# LiteLLM fetches its model price list and its Anthropic beta-header table
+# from raw.githubusercontent.com at startup, unless told to use the copies it
+# ships. Behind an egress allowlist that is a refused request and a warning on
+# every start; anywhere else it is an unpinned download deciding behaviour.
+# The bundled copies move with the pinned LiteLLM version. Set either to
+# "false" to fetch the live tables instead.
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True \
+    LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=true
+
 # Default: the HTTP front door (JWT auth, RBAC from verified claims, rate
 # limits, CSP, the web console, /healthz and /readyz on :8000). It reads
 # AUTH_ENABLED / JWT_*: with neither set it refuses to start, so a bare
