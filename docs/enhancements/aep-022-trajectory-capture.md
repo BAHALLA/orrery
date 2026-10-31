@@ -281,10 +281,12 @@ the lab does not pull. Instead:
      checked and set with no `await` in between, which is what stops two
      concurrent first turns in two **different** sessions from both binding:
      the turn lock is per `(user, session)`, so it only orders turns within
-     one session. An entry is kept until its token's `exp` and pruned by
-     `exp`, **never evicted** (not a `BoundedSessionCache`): an evicted entry
-     would let a still-valid token bind a second session. If a cap is
-     reached, new bindings are refused.
+     one session. An entry is kept until its token's `exp` **plus the
+     leeway** (one constant, shared by the verifier and the pruner) and
+     pruned only then, **never evicted** (not a `BoundedSessionCache`): an
+     entry dropped while its token still verifies would let it bind a second
+     session. If a cap is reached, new bindings are refused; size it from
+     the lab's issuance rate times the token lifetime.
    - A second session presenting a bound `attempt_id` is refused. Every turn
      in a learning deployment needs a bound attempt, so there is no unbound
      session to work the answer out in.
@@ -394,7 +396,8 @@ the lab does not pull. Instead:
       refused. After a restart, a token issued before the process started
       is refused, while a session bound before it keeps working.
 - [ ] A launch while signed out (through the SSO round trip) still binds.
-- [ ] A binding is never dropped before its token's `exp`; at the cap, new
+- [ ] A binding is never dropped before its token's `exp` plus the leeway;
+      at the cap, new
       bindings are refused.
 - [ ] An attempt token is refused by the debrief verifier and a debrief by
       the attempt verifier (`typ`), and equal attempt and debrief keys stop
