@@ -81,7 +81,9 @@ SECRETS_DIR_ENV = "ORRERY_SECRETS_DIR"
 #: also contain '.' and '-' (e.g. a ``ca.crt`` mounted alongside); those are
 #: files for a path-based setting, not variables, and are left alone.
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-#: Larger files are certificates or bundles, not variable values.
+#: No variable value is larger. A bigger file named like a variable stops
+#: startup (keep certificates and bundles out of the directory, or give them
+#: a dotted name such as ``ca.crt``).
 _MAX_SECRET_BYTES = 64 * 1024
 
 
@@ -156,7 +158,7 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
         except UnicodeDecodeError as exc:
             raise SecretFileUnreadable(
                 f"Secret file {name} in {root} is not UTF-8 text (saved as UTF-16?)"
-            ) from exc
+            ) from None  # the decode error would quote the bytes
         except OSError as exc:
             logger.warning("Secret file %s could not be read: %s", name, exc)
             continue

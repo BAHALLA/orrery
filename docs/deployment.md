@@ -123,10 +123,12 @@ services:
     environment:
       # Every file here named like an env var is loaded at startup, so the
       # URL never appears in the container's environment (docker inspect).
-      ORRERY_SECRETS_DIR: /run/secrets
+      # A directory of its own: an unusable file in it stops startup, and
+      # /run/secrets also receives the service's other (binary) secrets.
+      ORRERY_SECRETS_DIR: /run/secrets/orrery
     secrets:
       - source: orrery_database_url
-        target: DATABASE_URL
+        target: /run/secrets/orrery/DATABASE_URL
     depends_on:
       orrery-db: {condition: service_healthy}
     # The DB network is internal; the default one keeps egress (model API,
@@ -159,7 +161,9 @@ networks:
   Under rootless Docker, Podman or `userns-remap`, container uid 1000 maps to
   another host uid: use that one (`podman unshare chown 1000 …`). `chown`
   needs `sudo` unless your own uid is 1000.
-- **An unreadable secret file stops startup.** Orrery refuses to start
+- **An unusable secret file stops startup**: unreadable, not UTF-8, over
+  64 KiB, or holding a NUL byte, for any file in `ORRERY_SECRETS_DIR` named
+  like a variable. Keep that directory for variable values only. Orrery refuses to start
   rather than run as if `DATABASE_URL` were unset (which would mean
   in-memory sessions again), and the error names the file and the uid that
   could not read it.
