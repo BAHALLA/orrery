@@ -22,7 +22,25 @@ export const config = {
    * Keycloak's realm roles live at `realm_access.roles`.
    */
   roleClaim: runtime.roleClaim || import.meta.env.VITE_OIDC_ROLE_CLAIM || "roles",
+  /**
+   * Where a signed-in person the server refuses (`ORRERY_REQUIRED_ROLES`) is
+   * sent. The server validates it; checked again here so a stale or hand-edited
+   * config can never turn the link into a `javascript:` URL.
+   */
+  accessDeniedUrl: safeHttpsUrl(runtime.accessDeniedUrl),
+  /** The server refuses tokens without a required role: ask before loading anything. */
+  accessRestricted: runtime.accessRestricted === true,
 } as const;
+
+/** `raw` when it parses as an https URL, else null. */
+export function safeHttpsUrl(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    return new URL(raw).protocol === "https:" ? raw : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * OIDC single sign-on. Configured only when an issuer is set; otherwise the

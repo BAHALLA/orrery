@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
@@ -28,5 +28,53 @@ describe("sign-in", () => {
     expect(await screen.findByText("alice")).toBeInTheDocument();
     expect(screen.getByText("operator")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: /message/i })).toBeInTheDocument();
+  });
+});
+
+describe("access denied", () => {
+  beforeEach(() => {
+    window.__ORRERY_CONSOLE_CONFIG__ = { accessRestricted: true };
+    vi.resetModules();
+  });
+  afterEach(() => {
+    delete window.__ORRERY_CONSOLE_CONFIG__;
+  });
+
+  async function connect() {
+    const user = userEvent.setup();
+    const { App: Fresh } = await import("./App");
+    render(<Fresh />);
+    await user.type(screen.getByLabelText(/jwt bearer token/i), makeToken({ sub: "bob" }));
+    await user.click(screen.getByRole("button", { name: /connect/i }));
+  }
+
+  it("shows the no-access page and loads nothing else", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL) =>
+        new Response(JSON.stringify({ detail: "access_denied" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await connect();
+
+    expect(
+      await screen.findByRole("heading", { name: /don.t have access to this deployment/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /message/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["/me"]);
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /sign out/i }));
+    expect(await screen.findByLabelText(/jwt bearer token/i)).toBeInTheDocument();
+  });
+
+  it("opens the console on any other failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 500 })),
+    );
+    await connect();
+    expect(await screen.findByRole("textbox", { name: /message/i })).toBeInTheDocument();
   });
 });

@@ -81,7 +81,9 @@ from ..security.auth import (
 )
 from ..security.identity import CallerIdentity, caller_scope, identity_from_claims
 from ..security.principal import (
+    ACCESS_DENIED,
     REJECT_UNLISTED_ENV,
+    REQUIRED_ROLES_ENV,
     PrincipalKind,
     PrincipalPolicy,
     as_principal,
@@ -651,6 +653,10 @@ def create_app(
     else:
         if principal_policy.reject_unlisted:
             logger.warning("%s has no effect with auth disabled", REJECT_UNLISTED_ENV)
+        if principal_policy.required_roles:
+            # An access rule the operator believes is on, with no identity to
+            # check it against: refuse rather than admit everyone.
+            raise ValueError(f"{REQUIRED_ROLES_ENV} needs AUTH_ENABLED=true")
         logger.warning(
             "Auth DISABLED. Do not run this configuration in production — "
             "RBAC is meaningless without verified identity."
@@ -842,6 +848,11 @@ def create_app(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        if not principal_policy.has_required_role(verified.claims, cfg.jwt.role_claim):
+            # Authenticated, so not a 401 (a new token would not help): the
+            # console shows its "no access to this deployment" page on this.
+            logger.info("Access denied: %r has none of %s", verified.subject, REQUIRED_ROLES_ENV)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ACCESS_DENIED)
         return as_principal(verified, principal_policy)
 
     def caller_identity(auth: AuthContext) -> CallerIdentity | None:

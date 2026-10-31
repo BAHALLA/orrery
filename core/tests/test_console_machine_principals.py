@@ -242,3 +242,53 @@ def test_reject_unlisted_needs_the_human_list(monkeypatch):
     monkeypatch.setenv("ORRERY_REJECT_UNLISTED_CLIENTS", "true")
     with pytest.raises(ValueError, match="ORRERY_HUMAN_CLIENTS"):
         _make_client()
+
+
+# ── ORRERY_REQUIRED_ROLES ────────────────────────────────────────────
+
+
+def test_required_roles_refuse_a_verified_token_without_one(monkeypatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+    monkeypatch.setenv("ORRERY_REQUIRED_ROLES", "Orrery-Lab-Learner, operator")
+    learner = _bearer({"azp": "orrery-console", "roles": ["orrery-lab-learner"]})
+    roleless = _bearer({"azp": "orrery-console", "roles": []})
+    no_claim = _bearer({"azp": "orrery-console", "roles": None})
+    with _make_client() as client:
+        for headers in (roleless, no_claim, _bearer({"azp": "cron", "roles": "viewer"})):
+            res = client.get("/me", headers=headers)
+            # Authenticated, so 403, with the code the console turns into its page.
+            assert res.status_code == 403
+            assert res.json() == {"detail": "access_denied"}
+            assert client.post("/chat", headers=headers, json={"message": "hi"}).status_code == 403
+            assert client.get("/sessions", headers=headers).status_code == 403
+        # Names match case-insensitively, against the raw claim (not viewer/operator/admin).
+        assert client.get("/me", headers=learner).status_code == 200
+        assert client.get("/me", headers=ALICE).status_code == 200  # holds "operator"
+        # A bad token stays a 401: the rule is checked only after verification.
+        bad = {"Authorization": "Bearer not-a-jwt"}
+        assert client.get("/me", headers=bad).status_code == 401
+        # Probes and the console's config script need no token at all.
+        assert client.get("/healthz").status_code == 200
+
+
+def test_without_required_roles_a_roleless_token_is_a_viewer(client):
+    res = client.get("/me", headers=_bearer({"azp": "orrery-console", "roles": []}))
+    assert res.status_code == 200
+    assert res.json()["role"] == "viewer"
+
+
+def test_required_roles_need_auth(monkeypatch):
+    monkeypatch.setenv("ORRERY_REQUIRED_ROLES", "orrery-lab-learner")
+    with (
+        patch(
+            "orrery_core.serving.server.create_session_service",
+            return_value=InMemorySessionService(),
+        ),
+        pytest.raises(ValueError, match="AUTH_ENABLED"),
+    ):
+        create_app(
+            root_agent=LlmAgent(name="root", model=_EchoLlm(), instruction="Answer."),
+            app_name="t",
+            plugins=[],
+            config=ServerConfig(auth_enabled=False),
+        )
