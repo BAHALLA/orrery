@@ -78,3 +78,33 @@ describe("access denied", () => {
     expect(await screen.findByRole("textbox", { name: /message/i })).toBeInTheDocument();
   });
 });
+
+describe("access check across token renewals", () => {
+  it("asks once per person, so a silent renew keeps the console mounted", async () => {
+    const { renderHook, waitFor } = await import("@testing-library/react");
+    const { useAccess } = await import("./auth/useAccess");
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL) =>
+        new Response(JSON.stringify({ subject: "alice" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ who, token }: { who: string; token: string }) => useAccess(who, token, true),
+      { initialProps: { who: "alice", token: "t1" } },
+    );
+    await waitFor(() => expect(result.current).toBe("granted"));
+
+    rerender({ who: "alice", token: "t2" }); // SSO silent renew
+    expect(result.current).toBe("granted");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    rerender({ who: "bob", token: "t3" }); // someone else: checked afresh
+    expect(result.current).toBe("checking");
+    await waitFor(() => expect(result.current).toBe("granted"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

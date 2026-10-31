@@ -191,7 +191,9 @@ ORRERY_SERVICE_CLIENTS=ci-bot=viewer,partner-agent=operator  # machine clients a
     that grant it, e.g. `ORRERY_REQUIRED_ROLES=orrery-lab-learner,orrery-admin`.
     A token without one gets 403 `access_denied` everywhere except the probes
     and the console shell. A machine client that should still reach the
-    deployment needs the role in the IdP too. Pair it with
+    deployment needs the role in the IdP too. The Slack and Google Chat bots
+    verify their platform's signature, not an IdP token, so the rule does not
+    apply to them: restrict who can message the bot in that platform. Pair it with
     `ORRERY_CONSOLE_ACCESS_DENIED_URL`
     ([web console](../integrations/web-console.md)) so a refused person is told
     where to get access.
