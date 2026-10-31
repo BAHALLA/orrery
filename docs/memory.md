@@ -172,6 +172,25 @@ matters more than per-turn cost.
 | `max_entries_per_user` | `500` | Maximum events stored per user; oldest evicted when exceeded |
 | `sensitive_patterns` | Built-in set | List of `re.Pattern` objects for redaction. Replaces the built-in set |
 
+### Turning it off {: #turning-it-off }
+
+`ORRERY_LONG_TERM_MEMORY=false` keeps conversations (durable with
+`DATABASE_URL`) but carries nothing from one session to the next, on every
+interactive surface (HTTP, CLI, Slack, Google Chat):
+
+- no memory service and no `MemoryPlugin`: `default_plugins(enable_memory=True)`
+  leaves the plugin out, and `run_persistent` builds no memory service;
+- no `load_memory` tool on the coordinator, and no ops journal, whose notes and
+  preferences live in `user:` state and so follow a person between sessions;
+- `AgentGateway` refuses a memory service, a `MemoryPlugin`, or any tree that
+  still reaches `load_memory`, `preload_memory` or a tool marked
+  `cross_session`, so a missed wiring stops startup instead of remembering.
+
+Use it on a shared instance where a returning person should not get their own
+earlier findings back (a practice lab's Studio instance, a demo). The learning
+sandbox (AEP-032) does the same on its own. The batch triage Workflow is not a
+conversation and keeps its journal step.
+
 ## Plugin Order
 
 The `MemoryPlugin` is registered as part of `default_plugins()` when enabled. It runs after `ActivityPlugin` and before `ToolOutputCapPlugin` and `ErrorHandlerPlugin`. The full order (optional plugins in parentheses):

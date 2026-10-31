@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ORRERY_LONG_TERM_MEMORY=false`: durable chats without lasting memory.**
+  A deployment can now keep sessions in PostgreSQL while carrying nothing
+  from one session to the next: no memory service, no `MemoryPlugin`, no
+  `load_memory`, and no ops journal (its notes live in `user:` state). The
+  builders leave them out, and `AgentGateway` refuses a memory service, a
+  `MemoryPlugin` or a tree that still reaches a recall or `cross_session`
+  tool, including a wrapped Runner. Until now only the learning sandbox did
+  this, and it refuses Studio. On by default.
+
 ## [0.16.0] - 2026-10-31
 
 **A coach for the learning sandbox.** In learning mode the coordinator gets

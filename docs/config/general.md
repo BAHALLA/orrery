@@ -138,6 +138,7 @@ Multi-replica deployments **require** PostgreSQL.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATABASE_URL` | unset | PostgreSQL URL, e.g. `postgresql+asyncpg://agents:secret@localhost:5432/agents`. When unset, sessions and memory are in-memory and lost on restart. |
+| `ORRERY_LONG_TERM_MEMORY` | `true` | `false` keeps sessions (durable with `DATABASE_URL`) but no long-term memory: no memory service, no `MemoryPlugin`, no `load_memory`, and no ops journal (its notes live in `user:` state). The gateway refuses a tree or a runner that still holds one. See [Cross-session memory](../memory.md#turning-it-off). |
 | `ORRERY_DB_ALLOW_INMEMORY_FALLBACK` | `false` | **Local-dev only.** When `DATABASE_URL` is set but the DB is unreachable, allow degrading to in-memory instead of failing fast. |
 
 !!! danger "Configured databases fail fast by design"

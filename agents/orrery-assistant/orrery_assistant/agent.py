@@ -52,6 +52,7 @@ from orrery_core import (
 from orrery_core.agent.declarative import build_declarative_agents, load_agents_config
 from orrery_core.agent.platform import platform_context_section, scope_rule
 from orrery_core.knowledge import knowledge_tool
+from orrery_core.memory_switch import long_term_memory_enabled
 from orrery_core.registry import Specialist, discover_specialists, one_line
 
 load_agent_env(__file__)
@@ -429,10 +430,14 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     one the coordinator cannot reach.
     """
     learning_gate.check("build_chat_agent()")
-    if learning_gate.is_active():
-        # The journal keeps notes in `user:` state, which follows a learner
-        # from one attempt to the next: recall by another name (AEP-032).
+    # No long-term memory in the learning sandbox (AEP-032), or where the
+    # deployment turned it off (ORRERY_LONG_TERM_MEMORY=false).
+    remember = not learning_gate.is_active() and long_term_memory_enabled()
+    if not remember:
+        # The journal keeps notes in `user:` state, which follows a person
+        # from one session to the next: recall by another name.
         specialists = [s for s in specialists if s.journal is None]
+    if learning_gate.is_active():
         # The coach, built from these specialists' tools (AEP-032 §5). Only
         # here: never a catalog entry or an ORRERY_AGENTS_CONFIG file.
         from orrery_core.learning.coach import build_coach
@@ -446,8 +451,7 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     # Examples name a system this deployment runs: "is Kafka up?" on a
     # deployment without Kafka teaches the model a question it cannot answer.
     system = _example_system(specialists)
-    # The learning sandbox has no memory to recall from (AEP-032).
-    recall = None if learning_gate.is_active() else LoadMemoryTool()
+    recall = LoadMemoryTool() if remember else None
     return create_agent(
         name="orrery_chat_agent",
         description="Conversational DevOps orchestrator that routes queries to specialist agents.",

@@ -49,6 +49,7 @@ from google.genai import types
 
 from .. import learning_gate
 from ..env import env_int
+from ..memory_switch import LONG_TERM_MEMORY_ENV, long_term_memory_enabled
 from ..persistence.db import create_session_service
 from ..security.confirmation_flow import conversation_scope
 from ..security.guardrails import (
@@ -273,21 +274,30 @@ def _turn_lock_map() -> weakref.WeakValueDictionary[tuple[str, str], asyncio.Loc
     return weakref.WeakValueDictionary()
 
 
-def _refuse_memory_in_learning(
-    plugins: Sequence[BasePlugin], memory_service: BaseMemoryService | None
-) -> None:
-    """No long-term memory in the learning sandbox (AEP-032).
+def _no_memory_reason() -> str | None:
+    """Why this process may hold no long-term memory, or ``None`` if it may.
 
-    Memory is keyed by the learner, not the scenario: recall would hand a
-    learner the evidence, and the answers, of an earlier attempt, and with a
-    durable store (``DATABASE_URL``) it would outlive every reset of the lab.
-    Sessions may persist; recall may not.
+    The learning sandbox (AEP-032): memory is keyed by the learner, not the
+    scenario, so recall would hand a learner an earlier attempt's answers, and
+    with ``DATABASE_URL`` it would outlive every reset of the lab. Or the
+    deployment said so (``ORRERY_LONG_TERM_MEMORY=false``). Sessions may
+    persist either way; recall may not.
     """
+    if learning_gate.is_active():
+        return "ORRERY_LEARNING_MODE"
+    if not long_term_memory_enabled():
+        return f"{LONG_TERM_MEMORY_ENV}=false"
+    return None
+
+
+def _refuse_long_term_memory(
+    reason: str, plugins: Sequence[BasePlugin], memory_service: BaseMemoryService | None
+) -> None:
     from ..plugins.memory_plugin import MemoryPlugin
 
     if memory_service is not None or any(isinstance(p, MemoryPlugin) for p in plugins):
         raise ValueError(
-            "ORRERY_LEARNING_MODE cannot start: long-term memory must be off "
+            f"{reason} cannot start: long-term memory must be off "
             "(no memory service, no MemoryPlugin)"
         )
 
@@ -296,13 +306,13 @@ def _refuse_memory_in_learning(
 _RECALL_TOOL_NAMES = frozenset({"load_memory", "preload_memory"})
 
 
-def _refuse_recall_tool_in_learning(root_agent: Any) -> None:
-    """Refuse a tree that can carry anything from one attempt to the next.
+def _refuse_cross_session_tools(reason: str, root_agent: Any) -> None:
+    """Refuse a tree that can carry anything from one session to the next.
 
     Walks every agent the root can reach (``AgentTool`` specialists, declarative
     agents, sub-agents): ADK's memory tools, and tools marked
     :func:`~orrery_core.security.guardrails.cross_session` (``user:``/``app:``
-    state, such as the ops journal's notes), which persist per learner across
+    state, such as the ops journal's notes), which persist per person across
     sessions and, with ``DATABASE_URL``, across restarts and lab resets.
     """
     from ..security.guardrails import is_cross_session
@@ -324,8 +334,8 @@ def _refuse_recall_tool_in_learning(root_agent: Any) -> None:
                 stack.append(inner)
     if found:
         raise ValueError(
-            "ORRERY_LEARNING_MODE cannot start: these tools carry state from one "
-            f"attempt to the next: {', '.join(sorted(found))}. Disable the agents "
+            f"{reason} cannot start: these tools carry state from one session "
+            f"to the next: {', '.join(sorted(found))}. Disable the agents "
             "that hold them (e.g. ORRERY_DISABLED_SPECIALISTS=ops_journal)"
         )
 
@@ -403,8 +413,8 @@ class AgentGateway:
         # new agent tree.
         self._plugins = list(plugins or [])
         self._memory_service = memory_service
-        if learning_gate.is_active():
-            _refuse_memory_in_learning(self._plugins, memory_service)
+        if (reason := _no_memory_reason()) is not None:
+            _refuse_long_term_memory(reason, self._plugins, memory_service)
         self._context_cache_config = context_cache_config
         self._events_compaction_config = events_compaction_config
         self.root_agent = root_agent
@@ -423,8 +433,9 @@ class AgentGateway:
         plugins = self._plugins
         if not any(isinstance(p, AttachmentPlugin) for p in plugins):
             plugins = [*plugins, AttachmentPlugin()]
+        if (reason := _no_memory_reason()) is not None:
+            _refuse_cross_session_tools(reason, root_agent)
         if (learning := learning_gate.runtime()) is not None:
-            _refuse_recall_tool_in_learning(root_agent)
             # First, so no after-model plugin can answer ahead of the answer
             # guard; it edits in place and returns None, so the rest still run.
             # Bound to this Runner's root: a turn still running on the old tree
@@ -480,6 +491,12 @@ class AgentGateway:
                 "AgentGateway.from_runner() cannot honour ORRERY_LEARNING_MODE: "
                 "the Runner was built without the answer guard."
             )
+        if (reason := _no_memory_reason()) is not None:
+            app = getattr(runner, "app", None)
+            _refuse_long_term_memory(
+                reason, list(getattr(app, "plugins", None) or []), runner.memory_service
+            )
+            _refuse_cross_session_tools(reason, getattr(app, "root_agent", None))
         self = cls.__new__(cls)
         self.app_name = app_name
         self.runner = runner
