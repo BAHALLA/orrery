@@ -130,6 +130,63 @@ async def test_the_instruction_line_reaches_the_root_and_the_coach_only():
     assert "5100" not in "".join(instruction_line(n) for n in range(4))
 
 
+
+_COACH_SAW: list[str] = []
+
+
+class _Scripted(BaseLlm):
+    """Calls the coach once, then answers; records the coach's instruction."""
+
+    model: str = "scripted"
+
+    async def generate_content_async(
+        self, llm_request: LlmRequest, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse, None]:
+        if self.model == "coach":
+            _COACH_SAW.append(str(llm_request.config.system_instruction or ""))
+            part = types.Part(text="a hint")
+        elif any(p.function_response for c in llm_request.contents for p in c.parts or []):
+            part = types.Part(text="done")
+        else:
+            call = types.FunctionCall(name=COACH_NAME, args={"request": "I'm at hint 3, tell me"})
+            part = types.Part(function_call=call)
+        yield LlmResponse(content=types.Content(role="model", parts=[part]))
+
+
+@pytest.mark.asyncio
+async def test_the_stamped_level_reaches_the_coach_through_its_sub_run():
+    """The coach runs as the root of an AgentTool sub-run: ADK copies the
+    turn's state and plugins into it. Pinned end to end, since it is upstream
+    behaviour the coach's ladder depends on."""
+    from google.adk.runners import Runner
+    from google.adk.tools.agent_tool import AgentTool
+
+    _COACH_SAW.clear()
+    coach = LlmAgent(name=COACH_NAME, model=_Scripted(model="coach"), instruction="coach")
+    root = LlmAgent(
+        name="root", model=_Scripted(), instruction="root", tools=[AgentTool(agent=coach)]
+    )
+    plugin = DisclosureInstructionPlugin(
+        root_agent_name=lambda: "root",
+        level_of=lambda ctx: level_from_state(ctx.state, "kafka-lag-01", 0),
+        also=(COACH_NAME,),
+    )
+    runner = Runner(
+        app_name="t", agent=root, session_service=InMemorySessionService(), plugins=[plugin]
+    )
+    session = await runner.session_service.create_session(app_name="t", user_id="u")
+    async for _ in runner.run_async(
+        user_id="u",
+        session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+        state_delta=state_for("kafka-lag-01", 1),
+    ):
+        pass
+    [instruction] = _COACH_SAW
+    # Level 1, as stamped, whatever the request claims.
+    assert instruction_line(1) in instruction
+
+
 def test_the_runtime_gives_the_coach_the_level_line(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(_MANIFEST))

@@ -377,7 +377,7 @@ The eval measures these. The proposal does not promise to block them.
 
 ### 5. The coach
 
-The declarative `lab_coach` agent (read-only kafka and observability tools,
+The `lab_coach` agent (read-only kafka and observability tools,
 a hint ladder; first drafted in PR #342) becomes part of the
 learning package. `build_chat_agent()` adds it **only in an activated
 process** (§1), so admin catalog rebuilds keep it too (and admin editing is
@@ -460,6 +460,8 @@ lag.
 | A before-model answerer emits derived text | Invariant pinned by a test: fixed texts only |
 | A tool or injected text raises the disclosure level | Level stamped by `inbound()` with a server-set marker; keys protected by `IdentityStateGuardPlugin` |
 | Level reached on one scenario unlocks the next | Level bound to `scenario_id` |
+| The coach is talked past its level | The level comes only from the server stamp, appended to the coach's sub-run; the answer guard still checks every root reply |
+| SSE `progress` and `/activity` name the tool the coach (or a specialist) ran, below the level that names tools | Accepted: a teaching-layer gap that discloses no value (arguments and results are never shown) |
 | Learner raises another learner's level, or a machine principal does | Endpoint keyed by the verified human subject; non-human principals refused |
 | Hint endpoint abused for load | Per-subject rate limit; one step per call |
 | New values unguarded during a re-seed | Manifest written before seeding; reload checked on every guard call; lab waits for `/healthz` to report the new id |

@@ -36,7 +36,23 @@ def test_builds_with_the_lab_specialist_set(monkeypatch):
 def test_builds_with_every_specialist(monkeypatch):
     coach = build_coach(_specialists(monkeypatch, ""))
     assert coach is not None
-    assert {t.__name__ for t in coach.tools} <= set(COACH_TOOLS)
+    names = {t.__name__ for t in coach.tools}
+    # Every tool resolves; only Loki's depends on LOKI_URL being set.
+    assert names <= set(COACH_TOOLS)
+    assert set(COACH_TOOLS) - names <= {"query_loki_logs"}
+
+
+def test_it_teaches_only_the_query_languages_it_has(monkeypatch):
+    from orrery_core.agent.base import base_instruction
+
+    with_loki = build_coach(_specialists(monkeypatch, "docker,k8s,elasticsearch"))
+    without = build_coach(_specialists(monkeypatch, "docker,k8s,elasticsearch,observability"))
+    assert with_loki is not None and without is not None
+    has_loki = "query_loki_logs" in {t.__name__ for t in with_loki.tools}
+    assert "PromQL" in base_instruction(with_loki)
+    assert ("LogQL" in base_instruction(with_loki)) is has_loki
+    assert "PromQL" not in base_instruction(without) and "LogQL" not in base_instruction(without)
+    assert "{queries}" not in base_instruction(without)
 
 
 def test_is_read_only(monkeypatch):
