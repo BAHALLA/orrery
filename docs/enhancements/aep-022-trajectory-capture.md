@@ -253,28 +253,41 @@ the lab does not pull. Instead:
 
 1. **The lab issues the attempt as a token Orrery verifies, and the first
    turn binds it.**
-   - When it launches the exercise, the lab seals an **attempt token** with
-     the shared key (JWE, same scheme as the debrief):
+   - When it launches the exercise, the lab seals an **attempt token** under
+     the attempt key (JWE, same scheme as the debrief, protected header
+     `typ: orrery-learning-attempt`):
      `{attempt_id, iss, sub, scenario_id, issued_at, exp}`. It passes the
-     token to the console in the launch URL.
+     token in the launch URL's **fragment** (`#attempt=…`), which never
+     reaches Orrery's or the ingress's access logs. The console reads it,
+     removes it with `history.replaceState`, and the page is served with
+     `Referrer-Policy: no-referrer`.
    - The console sends it with the **first** message of a new conversation.
-     Orrery decrypts it and checks three things before binding: `iss`/`sub`
-     are the caller's, `scenario_id` is the manifest's, and `exp` is in the
-     future. A made-up or foreign id cannot open a session.
+     Orrery decrypts it and checks four things before binding: `typ` is
+     `orrery-learning-attempt`, `iss`/`sub` are the caller's, `scenario_id`
+     is the manifest's, and `issued_at` is after this process started while
+     `exp` is still in the future. A made-up or foreign id cannot open a
+     session.
    - The binding is a server-set, guarded key in the session's state
      (`_learning_attempt`, in `GUARDED_STATE_KEYS`) plus an
-     `attempt_id -> session_id` record. It is made under the session's turn
-     lock and checked and set with no `await` in between, so two concurrent
-     first turns cannot both bind.
+     `attempt_id -> session_id` record kept by the process. The record is
+     checked and set with no `await` in between, which is what stops two
+     concurrent first turns in two **different** sessions from both binding:
+     the turn lock is per `(user, session)`, so it only orders turns within
+     one session.
    - A second session presenting a bound `attempt_id` is refused. Every turn
      in a learning deployment needs a bound attempt, so there is no unbound
      session to work the answer out in.
    - **Restarts.** The record is per process (learning mode already refuses
-     `ORRERY_MULTI_REPLICA`). After a restart, binding first searches the
-     session store for a session already holding that `attempt_id` and
-     refuses if it finds one. The lab also learns the bound `session_id` from
-     the debrief and refuses a debrief from any other session of that
-     attempt.
+     `ORRERY_MULTI_REPLICA`), so a restart forgets it. That is why a token
+     issued before the process started is refused: otherwise a learner could
+     work the answer out in session A, delete A, and after a restart bind
+     the same token to a clean session B. A session already bound keeps
+     working after a restart (its `_learning_attempt` is in the session
+     store); a learner who lost theirs relaunches, the lab issues a new
+     attempt, and the old one counts as failed (step 6). No store search,
+     and so no `await` between check and set. The lab also learns the bound
+     `session_id` from the debrief and refuses a debrief from any other
+     session of that attempt.
 2. **The learner finishes once.** *Finish exercise* calls
    `POST /learning/attempts/{attempt_id}/finish` with the `session_id`, with
    `Cache-Control: no-store` and no CORS. The call needs all of:
@@ -294,16 +307,23 @@ the lab does not pull. Instead:
 3. **Encrypted, not just signed.** The payload holds `iss`, `sub`,
    `scenario_id`, `attempt_id`, `session_id`, the session's first-event time,
    `issued_at`, a random `nonce` and the fields above. It is sealed with
-   AES-256-GCM (JWE `dir` + `A256GCM`) under `ORRERY_LEARNING_DEBRIEF_KEY`:
+   AES-256-GCM (JWE `dir` + `A256GCM`, protected header
+   `typ: orrery-learning-debrief`) under `ORRERY_LEARNING_DEBRIEF_KEY`:
    env only, 32 bytes, and startup fails if it is missing while debriefs are
    on. The browser gets an opaque token it can neither read nor edit.
    `iss` and `sub` go in clear inside the ciphertext, so no unsalted hash
-   needs matching, and pairwise-subject IdPs keep working. The key is shared
-   by Orrery (which seals) and the lab (which opens), and nobody else; a
-   shared key lets the lab mint debriefs too, which is acceptable since the
-   lab is the only consumer. The JWE header carries a `kid`, so a new key
-   (`ORRERY_LEARNING_DEBRIEF_KEY_ID`) can be rolled in while the lab still
-   accepts the previous one.
+   needs matching, and pairwise-subject IdPs keep working.
+   - **One key per direction.** The attempt key
+     (`ORRERY_LEARNING_ATTEMPT_KEY`; the lab seals, Orrery opens) and the
+     debrief key (Orrery seals, the lab opens) are different 32-byte keys,
+     and startup refuses them equal. Each verifier also requires its own
+     `typ`, so an attempt token posted to the lab's debrief endpoint (or
+     the reverse) fails even under a lenient verifier. Both are shared with
+     the lab and nobody else; a symmetric key lets either holder seal, which
+     is acceptable since the lab is the only other party.
+   - Each JWE header carries a `kid`, so a new key
+     (`ORRERY_LEARNING_ATTEMPT_KEY_ID`, `ORRERY_LEARNING_DEBRIEF_KEY_ID`)
+     can be rolled in while the previous one is still accepted.
 4. **Relay without the lab's cookies.** The console POSTs the token to
    `ORRERY_CONSOLE_DEBRIEF_URL` (https, validated like
    `ORRERY_CONSOLE_ACCESS_DENIED_URL`, plus a CSP `connect-src` entry) as a
@@ -312,7 +332,7 @@ the lab does not pull. Instead:
    session cookie, `SameSite=None` or credentialed CORS. It only allows the
    console origin.
 5. **The lab accepts it** when:
-   - it decrypts;
+   - it decrypts under the debrief key with `typ: orrery-learning-debrief`;
    - its `attempt_id` is one the lab issued and has not used;
    - its `iss`/`sub` and `scenario_id` are the ones that attempt was issued
      for (so an easy scenario's session can't be finished under a hard one's
@@ -339,10 +359,11 @@ the lab does not pull. Instead:
 - Attempt-token verification and binding on the first turn
   (`_learning_attempt`), and
   `POST /learning/attempts/{attempt_id}/finish` with the `_learning_finished`
-  marker, refused inside the turn lock. `ORRERY_LEARNING_DEBRIEF_KEY` and
-  `_KEY_ID`.
+  marker, refused inside the turn lock. `ORRERY_LEARNING_ATTEMPT_KEY`,
+  `ORRERY_LEARNING_DEBRIEF_KEY` and their `_KEY_ID`s.
 - Manifest contract v2 (`targets[].specialist`, `hypotheses`).
-- Console: the `attempt_id` from the launch URL, and *Finish exercise*,
+- Console: the attempt token from the launch URL's fragment (then removed
+  from the address bar), and *Finish exercise*,
   posting to `ORRERY_CONSOLE_DEBRIEF_URL`.
 - A reference decrypt-and-verify snippet for labs (Python and TypeScript) in
   `docs/integrations/`.
@@ -355,8 +376,13 @@ the lab does not pull. Instead:
 - [ ] A turn without a verified, bound attempt is refused. A made-up,
       expired, foreign-subject or other-scenario attempt token cannot open
       a session. A second session presenting a bound `attempt_id` is
-      refused, including after a restart.
-- [ ] Two concurrent first turns cannot both bind one attempt.
+      refused. After a restart, a token issued before the process started
+      is refused, while a session bound before it keeps working.
+- [ ] An attempt token is refused by the debrief verifier and a debrief by
+      the attempt verifier (`typ`), and equal attempt and debrief keys stop
+      startup.
+- [ ] Two concurrent first turns, in one session or in two, cannot both
+      bind one attempt.
 - [ ] After a finish the session refuses turns, including one already
       waiting on the turn lock. A second finish is refused.
 - [ ] The browser-held token reveals nothing: decrypting without the key
