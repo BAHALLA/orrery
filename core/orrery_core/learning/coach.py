@@ -122,9 +122,7 @@ def build_coach(specialists: Sequence[Specialist]) -> Any | None:
         for label, tool in (("a PromQL", "query_prometheus"), ("a LogQL", "query_loki_logs"))
         if tool in held
     ]
-    instruction = COACH_INSTRUCTION.replace(
-        "{queries}", "".join(f", {q} query" for q in queries)
-    )
+    instruction = COACH_INSTRUCTION.replace("{queries}", "".join(f", {q} query" for q in queries))
     agent = create_agent(
         name=COACH_NAME,
         description=COACH_DESCRIPTION,

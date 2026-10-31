@@ -130,7 +130,6 @@ async def test_the_instruction_line_reaches_the_root_and_the_coach_only():
     assert "5100" not in "".join(instruction_line(n) for n in range(4))
 
 
-
 _COACH_SAW: list[str] = []
 
 
@@ -141,7 +140,7 @@ class _Scripted(BaseLlm):
 
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
-    ) -> AsyncGenerator[LlmResponse, None]:
+    ) -> AsyncGenerator[LlmResponse]:
         if self.model == "coach":
             _COACH_SAW.append(str(llm_request.config.system_instruction or ""))
             part = types.Part(text="a hint")
