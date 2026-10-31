@@ -21,12 +21,19 @@ process; no configuration file loads it. The design for the learner debrief
 - **The lab coach in the learning sandbox (AEP-032 phase 3).** In learning
   mode the coordinator gets `lab_coach`, which investigates with read-only
   Kafka and monitoring tools and answers with a question or hint at the
-  learner's hint level: it reads the level the server stamps (the same line
+  learner's hint level (at level 3, the answer with its evidence): it reads the level the server stamps (the same line
   the root gets), not a hint count in its own replies, so a learner cannot
   type their way up the ladder. It is built only in an activated process and
   `lab_coach` is a reserved name; tools that are not available here (a
   disabled specialist, Loki without a URL) are skipped, and a guarded one
   stops startup. The answer guard stays the safety layer.
+
+### Documentation
+
+- **AEP-022: the debrief's launch URL behind a lab's own gate.** The attempt
+  token goes in the lab's launch URL fragment, which an HTTP 3xx redirect
+  without a fragment of its own carries over; the design lists the three
+  ways a gate loses it.
 
 ## [0.15.0] - 2026-10-31
 
