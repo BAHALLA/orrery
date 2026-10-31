@@ -14,8 +14,9 @@ a learner could talk the model into calling one.
   (``learning_gate.LEARNING_LEVEL_*``); :func:`level_from_state` reads it, and
   ``IdentityStateGuardPlugin`` reverts any tool that writes either key.
 - **The model sees the level, never the values.**
-  :class:`DisclosureInstructionPlugin` appends one line to the root's system
-  instruction.
+  :class:`DisclosureInstructionPlugin` appends one line to the system
+  instruction of the root and of the coach (``coach.COACH_NAME``), which runs
+  as the root of its own ``AgentTool`` sub-run with a copy of the turn's state.
 """
 
 from __future__ import annotations
@@ -120,7 +121,7 @@ def instruction_line(level: int) -> str:
 
 
 class DisclosureInstructionPlugin(BasePlugin):
-    """Appends the learner's level to the root's system instruction.
+    """Appends the learner's level to the root's and the coach's instruction.
 
     Never answers (always returns ``None``), so it is not a before-model
     short-circuit; ``test_learning_guard`` lists it as reviewed.
@@ -131,15 +132,18 @@ class DisclosureInstructionPlugin(BasePlugin):
         *,
         root_agent_name: Callable[[], str],
         level_of: Callable[[CallbackContext], int],
+        also: tuple[str, ...] = (),
     ) -> None:
         super().__init__(name="learning_disclosure_instruction")
         self._root = root_agent_name
         self._level_of = level_of
+        self._also = also
 
     async def before_model_callback(
         self, *, callback_context: CallbackContext, llm_request: LlmRequest
     ) -> LlmResponse | None:
-        if callback_context.agent_name == self._root():
+        name = callback_context.agent_name
+        if name == self._root() or name in self._also:
             llm_request.append_instructions([instruction_line(self._level_of(callback_context))])
         return None
 

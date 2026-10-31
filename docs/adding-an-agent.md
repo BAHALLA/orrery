@@ -293,6 +293,13 @@ when any of them is `@confirm`/`@destructive`. An unknown or ambiguous tool, or
 a name that collides with an existing agent, stops startup. Admins can see the
 result, with every tool's guard level, in the console's **Agents** tab.
 
+### The lab coach {: #lab-coach }
+
+The learning sandbox's coach, `lab_coach`, is not a declarative agent: it
+exists only in a learning-mode process, built from the active specialists'
+read-only tools, and its name is reserved. See
+[AEP-032 §5](enhancements/aep-032-learning-sandbox.md).
+
 ### Editing from the console {: #admin-editing }
 
 With `ORRERY_ADMIN_EDITING=true`, admins can do the same from the console's

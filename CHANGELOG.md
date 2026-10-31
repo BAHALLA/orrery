@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The lab coach in the learning sandbox (AEP-032 phase 3).** In learning
+  mode the coordinator gets `lab_coach`, which investigates with read-only
+  Kafka and monitoring tools and answers with a question or hint at the
+  learner's hint level: it reads the level the server stamps (the same line
+  the root gets), not a hint count in its own replies, so a learner cannot
+  type their way up the ladder. It is built only in an activated process and
+  `lab_coach` is a reserved name; tools that are not available here (a
+  disabled specialist, Loki without a URL) are skipped, and a guarded one
+  stops startup. The answer guard stays the safety layer.
+
 ## [0.15.0] - 2026-10-31
 
 **Role-gated deployments, a hint ladder, and a quieter image.** A deployment

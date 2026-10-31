@@ -17,6 +17,7 @@ from typing import Any
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.plugins.base_plugin import BasePlugin
 
+from .coach import COACH_NAME
 from .config import SPAN_CONTENT_ENV, check_preconditions
 from .guard import AnswerGuardPlugin
 from .hints import DisclosureInstructionPlugin, HintStore, level_from_state, record_hint, state_for
@@ -83,5 +84,9 @@ class Runtime:
                 root_agent_name=root_agent_name,
                 level_of=self.level_of,
             ),
-            DisclosureInstructionPlugin(root_agent_name=root_agent_name, level_of=self.level_of),
+            DisclosureInstructionPlugin(
+                root_agent_name=root_agent_name,
+                level_of=self.level_of,
+                also=(COACH_NAME,),
+            ),
         ]
