@@ -40,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **An unreadable file in `ORRERY_SECRETS_DIR` stops startup.** It used to be
+- **An unusable file in `ORRERY_SECRETS_DIR` stops startup:** one that is
+  unreadable, not UTF-8, over 64 KiB or holds a NUL byte. It used to be
   logged and skipped, so an unreadable `DATABASE_URL` file (wrong owner: the
   image runs as uid 1000) started the server on in-memory sessions, against
   the database fail-fast policy. The error names the file and the uid.

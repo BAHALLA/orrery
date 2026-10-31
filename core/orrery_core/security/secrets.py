@@ -86,7 +86,12 @@ _MAX_SECRET_BYTES = 64 * 1024
 
 
 class SecretFileUnreadable(RuntimeError):
-    """A secret file named like an environment variable exists but can't be read."""
+    """A secret file named like an environment variable exists but can't be used.
+
+    Unreadable, not UTF-8, oversized or holding a NUL byte. Skipping it would
+    start the service as if the variable were unset, so startup stops instead.
+    The message names the file, never its content.
+    """
 
 
 def load_secrets_into_environment(directory: str | Path | None = None) -> list[str]:
@@ -134,8 +139,9 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
             continue
         try:
             if entry.stat().st_size > _MAX_SECRET_BYTES:
-                logger.warning("Secret file %s is over %d bytes; skipped", name, _MAX_SECRET_BYTES)
-                continue
+                raise SecretFileUnreadable(
+                    f"Secret file {name} in {root} is over {_MAX_SECRET_BYTES} bytes"
+                )
             value = entry.read_text(encoding="utf-8").rstrip("\r\n")
         except PermissionError as exc:
             # A secret the operator mounted but this process may not read is a
@@ -147,12 +153,15 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
                 f"Secret file {name} in {root} is not readable by this process "
                 f"(uid {os.getuid()}): {exc.strerror}. Make it readable, or remove it."
             ) from exc
-        except (OSError, UnicodeDecodeError) as exc:
+        except UnicodeDecodeError as exc:
+            raise SecretFileUnreadable(
+                f"Secret file {name} in {root} is not UTF-8 text (saved as UTF-16?)"
+            ) from exc
+        except OSError as exc:
             logger.warning("Secret file %s could not be read: %s", name, exc)
             continue
         if "\0" in value:
-            logger.warning("Secret file %s contains a NUL byte; skipped", name)
-            continue
+            raise SecretFileUnreadable(f"Secret file {name} in {root} contains a NUL byte")
         existing = os.environ.get(name)
         if existing is not None and existing != value:
             logger.warning(

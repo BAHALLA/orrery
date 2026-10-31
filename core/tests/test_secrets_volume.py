@@ -85,19 +85,20 @@ def test_kubelet_indirection_directories_are_not_loaded(tmp_path, clean_env):
     assert "..data" not in os.environ
 
 
-def test_oversized_nul_and_binary_files_are_skipped(tmp_path, clean_env, caplog):
-    kubernetes_secret_volume(
-        tmp_path,
-        {
-            "ORRERY_TEST_DB_URL": "x" * (64 * 1024 + 1),
-            "ORRERY_TEST_API_KEY": "a\0b",
-            "ORRERY_TEST_JWT_SECRET": b"\xff\xfe\x00binary",
-        },
-    )
+@pytest.mark.parametrize(
+    "content",
+    ["x" * (64 * 1024 + 1), "a\0b", b"\xff\xfe\x00binary"],
+    ids=["oversized", "nul", "not-utf8"],
+)
+def test_an_unusable_secret_file_stops_startup(tmp_path, clean_env, content):
+    """Skipping it would start as if the variable were unset."""
+    from orrery_core.security.secrets import SecretFileUnreadable
 
-    assert load_secrets_into_environment(tmp_path) == []
-    for name in ("ORRERY_TEST_DB_URL", "ORRERY_TEST_API_KEY", "ORRERY_TEST_JWT_SECRET"):
-        assert name not in os.environ
+    kubernetes_secret_volume(tmp_path, {"ORRERY_TEST_DB_URL": content})
+    with pytest.raises(SecretFileUnreadable, match="ORRERY_TEST_DB_URL") as raised:
+        load_secrets_into_environment(tmp_path)
+    assert "xxxx" not in str(raised.value) and "binary" not in str(raised.value)
+    assert "ORRERY_TEST_DB_URL" not in os.environ
 
 
 def test_no_directory_configured_is_a_no_op(clean_env):
