@@ -1,9 +1,10 @@
 """Unit tests for docker-agent tools.
 
-All subprocess calls are mocked — no real Docker needed.
+Subprocess calls are mocked, or run a fake ``docker`` script: no real Docker needed.
 """
 
 import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -202,6 +203,47 @@ async def test_get_container_logs_timeout(mock_run):
     assert "timed out" in result["message"].lower()
 
 
+@pytest.fixture
+def fake_docker(tmp_path, monkeypatch):
+    """A ``docker`` on PATH that writes like ``docker logs``: both streams."""
+    script = tmp_path / "docker"
+    script.write_text(
+        "#!/bin/sh\n"
+        'echo "out 1"\n'
+        'echo "err 1" >&2\n'
+        'echo "out 2"\n'
+        'if [ "$FAKE_DOCKER_FAIL" = 1 ]; then echo "No such container: x" >&2; exit 1; fi\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    return monkeypatch
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_includes_stderr(fake_docker):
+    result = await get_container_logs("web")
+
+    assert result["status"] == "success"
+    assert result["logs"].splitlines() == ["out 1", "err 1", "out 2"]
+    assert result["lines"] == 3
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_failure_reports_the_cli_message(fake_docker):
+    fake_docker.setenv("FAKE_DOCKER_FAIL", "1")
+    result = await get_container_logs("x")
+    assert result["status"] == "error"
+    assert "No such container: x" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_other_commands_still_read_stdout_only(fake_docker):
+    from docker_agent.tools import _run_docker
+
+    ok, output = await _run_docker(["ps"])
+    assert ok and output.splitlines() == ["out 1", "out 2"]
+
+
 # ── get_container_stats ───────────────────────────────────────────────
 
 
@@ -237,36 +279,84 @@ async def test_get_container_stats_error(mock_run):
 # ── docker_compose_status ─────────────────────────────────────────────
 
 
+def _rows(*rows: dict) -> str:
+    return "\n".join(json.dumps(r) for r in rows)
+
+
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
-async def test_compose_status_success(mock_run):
-    services = [
-        {"Name": "kafka", "State": "running", "Health": "healthy"},
-        {"Name": "zookeeper", "State": "running", "Health": ""},
-    ]
-    mock_run.return_value = (True, "\n".join(json.dumps(s) for s in services))
+async def test_compose_status_lists_projects_from_labels(mock_run):
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "shop", "service": "web", "state": "running"},
+            {"project": "shop", "service": "job", "state": "exited"},
+            {"project": "obs", "service": "prom", "state": "running"},
+        ),
+    )
 
     result = await docker_compose_status()
-    assert result["status"] == "success"
-    assert result["count"] == 2
+
+    # The plain CLI, filtered on the compose label: no compose file or plugin.
+    args = mock_run.call_args[0][0]
+    assert args[:4] == ["ps", "--all", "--filter", "label=com.docker.compose.project"]
+    assert result == {
+        "status": "success",
+        "projects": [
+            {"name": "obs", "containers": 1, "states": {"running": 1}},
+            {"name": "shop", "containers": 2, "states": {"running": 1, "exited": 1}},
+        ],
+        "count": 2,
+    }
 
 
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
-async def test_compose_status_with_project_dir(mock_run):
-    mock_run.return_value = (True, "")
+async def test_compose_status_of_one_project(mock_run):
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "shop", "service": "kafka", "name": "shop-kafka-1", "state": "running"},
+            {"project": "shop", "service": "job", "name": "shop-job-1", "state": "exited"},
+        ),
+    )
 
-    await docker_compose_status(project_dir="/opt/myapp")
-    args = mock_run.call_args[0][0]
-    assert "-f" in args
-    assert "/opt/myapp/docker-compose.yml" in args
+    result = await docker_compose_status(project="shop")
+
+    assert "label=com.docker.compose.project=shop" in mock_run.call_args[0][0]
+    assert result["count"] == 2 and result["project"] == "shop"
+    assert result["services"][1] == {"service": "job", "name": "shop-job-1", "state": "exited"}
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_says_when_a_project_has_no_containers(mock_run):
+    mock_run.return_value = (True, "")
+    result = await docker_compose_status(project="nosuch")
+    assert result["status"] == "error" and "nosuch" in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("project", ["../etc", "-f", "Shop", "a b", "", "x=y"])
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_refuses_a_bad_project_name(mock_run, project):
+    result = await docker_compose_status(project=project)
+    assert result["status"] == "error"
+    mock_run.assert_not_called()
 
 
 @pytest.mark.asyncio
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
 async def test_compose_status_error(mock_run):
-    mock_run.return_value = (False, "no configuration file provided")
+    mock_run.return_value = (False, "Cannot connect to the Docker daemon")
+    result = await docker_compose_status()
+    assert result["status"] == "error"
 
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_unexpected_output_is_an_error(mock_run):
+    mock_run.return_value = (True, "WARNING: something\n")
     result = await docker_compose_status()
     assert result["status"] == "error"
 
@@ -275,10 +365,8 @@ async def test_compose_status_error(mock_run):
 @patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
 async def test_compose_status_empty(mock_run):
     mock_run.return_value = (True, "")
-
     result = await docker_compose_status()
-    assert result["status"] == "success"
-    assert result["count"] == 0
+    assert result == {"status": "success", "projects": [], "count": 0}
 
 
 # ── stop_container ────────────────────────────────────────────────────
@@ -498,6 +586,37 @@ def test_redact_env_vars_case_insensitive():
     assert "AUTH_HEADER=***" in result
 
 
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        # The name gives nothing away; the value carries the password.
+        (
+            "DATABASE_URL=postgres://app:hunter22@db:5432/shop",
+            "DATABASE_URL=postgres://[REDACTED]@db:5432/shop",
+        ),
+        ("BROKER=amqp://guest:guest@rabbit:5672//", "BROKER=amqp://[REDACTED]@rabbit:5672//"),
+        ("CACHE=redis://:p%40ss@cache:6379/0", "CACHE=redis://[REDACTED]@cache:6379/0"),
+        # Go MySQL driver DSN, no scheme.
+        ("MYSQL=app:hunter22@tcp(db:3306)/shop", "MYSQL=[REDACTED]@tcp(db:3306)/shop"),
+        ("MYSQL=app:p@ss@tcp(db:3306)/shop", "MYSQL=[REDACTED]@tcp(db:3306)/shop"),
+        ("DB_PASS=hunter2", "DB_PASS=***"),
+        ("RABBITMQ_DEFAULT_PASS=guest", "RABBITMQ_DEFAULT_PASS=***"),
+        ("DB_PWD=x", "DB_PWD=***"),
+        ("OLDPWD=/", "OLDPWD=/"),
+        ("BYPASS_CACHE=1", "BYPASS_CACHE=1"),
+        ("GH=ghp_abcdefghijklmnopqrstuvwxyz0123", "GH=[REDACTED]"),
+        ("SENTRY_DSN=https://abc@o1.ingest.sentry.io/1", "SENTRY_DSN=***"),
+        # Left alone: nothing secret in them.
+        ("UPSTREAM=http://svc:8080/api", "UPSTREAM=http://svc:8080/api"),
+        ("PWD=/app", "PWD=/app"),
+        ("MAILTO=ops@example.com", "MAILTO=ops@example.com"),
+        ("TIME=12:30@utc", "TIME=12:30@utc"),
+    ],
+)
+def test_redact_env_vars_scans_values(entry, expected):
+    assert _redact_env_vars([entry]) == [expected]
+
+
 def test_redact_env_vars_no_equals():
     assert _redact_env_vars(["NOVALUE"]) == ["NOVALUE"]
 
@@ -550,13 +669,6 @@ async def test_get_container_logs_rejects_huge_tail():
 async def test_get_container_stats_rejects_empty_name():
     result = await get_container_stats("")
     assert result["status"] == "error"
-
-
-@pytest.mark.asyncio
-async def test_compose_status_rejects_path_traversal():
-    result = await docker_compose_status(project_dir="../../etc")
-    assert result["status"] == "error"
-    assert "traversal" in result["message"]
 
 
 # ── networks ──────────────────────────────────────────────────────────
@@ -696,3 +808,142 @@ def test_prune_images_has_destructive_guardrail():
 
 def test_prune_containers_has_destructive_guardrail():
     assert prune_containers._guardrail_level == "destructive"
+
+
+# ── Triage scope (ORRERY_AUXILIARY_RESOURCES / orrery.scope=platform) ──
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_list_containers_tags_only_auxiliary_ones(mock_run, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab-*, ops-*")
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"Names": "api", "Labels": "a=b"},
+            {"Names": "lab-kafka", "Labels": ""},
+            {"Names": "lab-pinned", "Labels": "x=1,orrery.scope=platform"},
+            # An image's label cannot take a container out of the verdict.
+            {"Names": "api2", "Labels": "description=x,orrery.scope=auxiliary,y=2"},
+        ),
+    )
+    rows = (await list_containers(all=True))["containers"]
+    assert [r.get("scope") for r in rows] == [None, "auxiliary", None, None]
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_nothing_is_tagged_without_configuration(mock_run, monkeypatch):
+    monkeypatch.delenv("ORRERY_AUXILIARY_RESOURCES", raising=False)
+    mock_run.return_value = (True, _rows({"Names": "lab-kafka", "Labels": ""}))
+    assert "scope" not in (await list_containers())["containers"][0]
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_stats_are_never_scope_tagged(mock_run, monkeypatch):
+    """`docker stats` has no labels, so it could not honour a platform pin."""
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab-*")
+    mock_run.return_value = (True, json.dumps({"Name": "lab-api", "CPUPerc": "99%"}))
+    assert "scope" not in await get_container_stats("lab-api")
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_status_marks_auxiliary_projects(mock_run, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab, shop-tool-*")
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "lab", "name": "lab-kafka-1", "state": "exited", "scope": ""},
+            {"project": "shop", "name": "shop-web-1", "state": "running", "scope": ""},
+            {"project": "shop", "name": "shop-tool-1", "state": "exited", "scope": ""},
+        ),
+    )
+    projects = {p["name"]: p for p in (await docker_compose_status())["projects"]}
+    assert projects["lab"]["scope"] == "auxiliary"
+    assert projects["lab"]["states"] == {"exited": 1}
+    assert "auxiliary_states" not in projects["lab"]
+    assert "auxiliary_containers" not in projects["lab"]
+    assert "scope" not in projects["shop"]
+    assert projects["shop"]["auxiliary_containers"] == 1
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_an_auxiliary_crash_loop_is_not_a_platform_restart(mock_run, monkeypatch):
+    """One project holds everything: its auxiliary containers are counted apart."""
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab-*")
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "deploy", "name": "api", "state": "running", "scope": ""},
+            {"project": "deploy", "name": "nginx", "state": "running", "scope": ""},
+            {"project": "deploy", "name": "lab-kafka", "state": "restarting", "scope": ""},
+            {"project": "deploy", "name": "lab-prom", "state": "running", "scope": ""},
+        ),
+    )
+    (project,) = (await docker_compose_status())["projects"]
+    assert project == {
+        "name": "deploy",
+        "containers": 4,
+        "states": {"running": 2},
+        "auxiliary_containers": 2,
+        "auxiliary_states": {"restarting": 1, "running": 1},
+    }
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_summary_is_unchanged_without_configuration(mock_run, monkeypatch):
+    monkeypatch.delenv("ORRERY_AUXILIARY_RESOURCES", raising=False)
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "deploy", "name": "api", "state": "running", "scope": ""},
+            {"project": "deploy", "name": "lab-kafka", "state": "restarting", "scope": ""},
+        ),
+    )
+    (project,) = (await docker_compose_status())["projects"]
+    assert project == {
+        "name": "deploy",
+        "containers": 2,
+        "states": {"running": 1, "restarting": 1},
+    }
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_compose_services_carry_their_scope(mock_run, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab")
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "lab", "name": "lab-kafka-1", "state": "exited", "scope": ""},
+            {"project": "lab", "name": "lab-api-1", "state": "running", "scope": "platform"},
+            {"project": "lab", "name": "lab-x-1", "state": "exited", "scope": "auxiliary"},
+        ),
+    )
+    services = (await docker_compose_status("lab"))["services"]
+    assert [s.get("scope") for s in services] == ["auxiliary", None, "auxiliary"]
+
+
+@pytest.mark.asyncio
+@patch("docker_agent.tools._run_docker", new_callable=AsyncMock)
+async def test_a_pinned_container_keeps_an_auxiliary_project_in_the_platform(mock_run, monkeypatch):
+    monkeypatch.setenv("ORRERY_AUXILIARY_RESOURCES", "lab")
+    mock_run.return_value = (
+        True,
+        _rows(
+            {"project": "lab", "name": "lab-kafka-1", "state": "restarting", "scope": ""},
+            {"project": "lab", "name": "lab-api-1", "state": "running", "scope": "platform"},
+        ),
+    )
+    (project,) = (await docker_compose_status())["projects"]
+    assert project == {
+        "name": "lab",
+        "containers": 2,
+        "states": {"running": 1},
+        "auxiliary_containers": 1,
+        "auxiliary_states": {"restarting": 1},
+    }

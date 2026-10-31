@@ -89,6 +89,7 @@ flowchart TB
 |---|---|---|---|
 | Installed | Every distribution in the Python environment, transitive dependencies included | Entry points, group `orrery.specialists` | n/a |
 | Allowed | The operator | `ORRERY_SPECIALISTS` / `ORRERY_DISABLED_SPECIALISTS`. Built-ins are allowed by default; a third-party specialist only when `ORRERY_SPECIALISTS` names it | No: an unknown name stops startup |
+| Allowed tools | The operator | `ORRERY_DISABLED_TOOLS`: qualified `key.tool` names taken out of a running specialist | No: it only removes, and an unknown name stops startup |
 | Enabled | An admin, at run time | `PUT /admin/catalog` (console Agents tab) | No: switching on an env-excluded specialist is refused |
 
 The layers narrow. Two details matter:
@@ -98,7 +99,24 @@ The layers narrow. Two details matter:
   checks it, but a declarative agent may still use its tools, each with its own
   guard level. This is deliberate: a narrow agent over a broad specialist's
   tools is a common reason to switch the broad one off. To take tools away
-  entirely, exclude the specialist in the env.
+  entirely, exclude the specialist in the env, or a single tool with
+  `ORRERY_DISABLED_TOOLS`.
+- **A removed tool is gone from everything the orchestrator builds.**
+  `ORRERY_DISABLED_TOOLS` clones the specialist's agent without the tool
+  before anything is built from it, so the coordinator, declarative agents,
+  the admin catalog, the Studio and the triage sweep never see it. Another
+  specialist holding the same function (a plugin re-exporting a built-in
+  tool) loses it too. `GuardrailsPlugin` refuses a call to it (`BLOCKED`,
+  which never opens a circuit) by function identity in case one is reached
+  another way. Two limits: a specialist package run on its own (its own
+  `adk web`) never goes through discovery, so the tool is still there; and
+  the specialist's instruction is not rewritten, so a prompt that names the
+  removed tool still does. The model then gets ADK's "tool not found" for
+  it, so prefer removing tools the instruction doesn't name. A tool
+  the specialist's health check, remediation, journal or self-test uses cannot
+  be removed: startup fails instead of silently shrinking the sweep. For
+  example, `kafka.get_consumer_lag` feeds the Kafka health check, so it stays.
+  Naming a tool of a specialist that is not running also stops startup.
 - **Startup fails closed.** A stored catalog that no longer builds is served
   *narrowed*: its switch-offs that still apply, without its additions. A store
   that cannot be read at startup stops startup, rather than serving the env's

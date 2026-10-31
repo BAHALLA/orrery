@@ -16,6 +16,8 @@ import {
 import { joinLabels, resolveSpecialists, systemLabels } from "../specialists";
 import { BREAKPOINT_LG, useFocusTrap, useMediaQuery } from "./a11y";
 import { IdentityBadge } from "./IdentityBadge";
+import { branding } from "../theme/accent";
+import { EnvironmentBadge } from "./EnvironmentBadge";
 import { OrreryMark } from "./OrreryMark";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -162,10 +164,11 @@ export const Sidebar = memo(function Sidebar({
         <div className={`flex items-center gap-2.5 py-4 ${folded ? "flex-col px-0" : "px-4"}`}>
           <OrreryMark className="h-7 w-7 shrink-0 text-slate-900 dark:text-slate-100" />
           <span
-            className={`font-semibold tracking-tight whitespace-nowrap text-slate-900 dark:text-slate-100 ${folded ? "sr-only" : ""}`}
+            className={`min-w-0 truncate font-semibold tracking-tight whitespace-nowrap text-slate-900 dark:text-slate-100 ${folded ? "sr-only" : ""}`}
           >
-            Orrery <span className="font-normal text-slate-500 dark:text-slate-400">Console</span>
+            {branding.title}
           </span>
+          {folded ? null : <EnvironmentBadge />}
           <button
             ref={toggleRef}
             type="button"
@@ -237,7 +240,9 @@ export const Sidebar = memo(function Sidebar({
               ) : null}
             </button>
           ) : null}
-          {me?.role === "admin" ? (
+          {/* Only where the server mounts it and lets this caller in: a feature
+              the deployment switched off is not shown at all. */}
+          {me?.studio_available === true ? (
             <button
               type="button"
               aria-current={view === "studio" ? "page" : undefined}

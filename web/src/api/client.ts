@@ -6,6 +6,7 @@ import type {
   CatalogUpdate,
   ChatRequest,
   ChatResponse,
+  LearningInfo,
   MeResponse,
   PendingResponse,
   ProgressEvent,
@@ -33,6 +34,14 @@ export class ApiError extends Error {
   /** True when the failure is an auth problem the user can fix by re-entering a token. */
   get isAuth(): boolean {
     return this.status === 401 || this.status === 403;
+  }
+
+  /**
+   * True when the server verified the caller but refuses them this deployment
+   * (`ORRERY_REQUIRED_ROLES`): signing in again with the same account won't help.
+   */
+  get isAccessDenied(): boolean {
+    return this.status === 403 && this.message === "access_denied";
   }
 
   /** True when the caller was rate limited and should simply wait. */
@@ -266,6 +275,11 @@ export class ApiClient {
   /** The server's own view of the caller: resolved role, autonomy level, model. */
   me(options?: RequestOptions): Promise<MeResponse> {
     return this.request<MeResponse>("/me", undefined, options);
+  }
+
+  /** Raise the caller's hint level by one step (learning sandbox only). */
+  takeHint(options?: RequestOptions): Promise<LearningInfo> {
+    return this.request<LearningInfo>("/learning/hint", {}, options);
   }
 
   /** Every specialist the coordinator can reach, with tool guard levels (admin only). */

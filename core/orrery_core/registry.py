@@ -37,6 +37,16 @@ not a plain identifier stops startup: a typo that silently enabled everything
 (or nothing), or a package quietly replacing a built-in, is the kind of mistake
 nobody notices until an incident.
 
+``ORRERY_DISABLED_TOOLS`` narrows further, one tool at a time: each entry is a
+qualified ``key.tool`` and the tool is taken out of its specialist's agent
+before anything is built from it, so the coordinator, the declarative-agent
+catalogue, the admin catalog and the Studio never see it. It can only remove.
+An unknown name, a tool of a specialist that is not running, or a tool the
+specialist's health check, remediation, journal or self-test still uses stops
+startup. ``GuardrailsPlugin`` also refuses a call to a removed tool, matched by
+function identity, in case one is reached some other way. Unset, nothing is
+copied or changed.
+
 Two other sources add specialists at run time and are recorded here too, so the
 admin view can say where each agent came from: declarative agents
 (:mod:`orrery_core.agent.declarative`) and MCP servers
@@ -49,7 +59,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import entry_points
 from typing import Any, Literal
 
@@ -62,6 +72,7 @@ ENTRY_POINT_GROUP = "orrery.specialists"
 
 ENABLED_ENV = "ORRERY_SPECIALISTS"
 DISABLED_ENV = "ORRERY_DISABLED_SPECIALISTS"
+DISABLED_TOOLS_ENV = "ORRERY_DISABLED_TOOLS"
 
 Source = Literal["builtin", "plugin", "declarative", "mcp"]
 
@@ -94,6 +105,21 @@ _DISTRIBUTIONS: dict[str, str] = {}
 def distribution_of(agent_name: str) -> str | None:
     """The installed package a discovered specialist came from, if known."""
     return _DISTRIBUTIONS.get(agent_name)
+
+
+# id -> the function of each tool ORRERY_DISABLED_TOOLS removed, kept alive so
+# an id is never reused; read by GuardrailsPlugin. Replaced on each discovery.
+_DISABLED_FUNCS: dict[int, Any] = {}
+
+
+def is_tool_disabled(tool: Any) -> bool:
+    """Whether *tool* is one ``ORRERY_DISABLED_TOOLS`` removed at discovery.
+
+    Matched by function identity, not by name: bare names repeat across
+    specialists, and a declarative agent holding the same tool has another
+    agent name.
+    """
+    return _is_removed(tool, _DISABLED_FUNCS)
 
 
 @dataclass(frozen=True)
@@ -388,6 +414,95 @@ def _names(env: str) -> set[str]:
     return {n.strip() for n in os.getenv(env, "").split(",") if n.strip()}
 
 
+def _disabled_tools(installed: set[str]) -> dict[str, set[str]]:
+    """``ORRERY_DISABLED_TOOLS`` grouped by specialist key: ``{"kafka": {"get_consumer_lag"}}``."""
+    grouped: dict[str, set[str]] = {}
+    for entry in sorted(_names(DISABLED_TOOLS_ENV)):
+        key, dot, name = entry.partition(".")
+        if not dot or not key or not name or "." in name:
+            raise ValueError(
+                f"{DISABLED_TOOLS_ENV}: {entry!r} must be a qualified name, "
+                "<specialist>.<tool> (e.g. kafka.get_consumer_lag)"
+            )
+        if key not in installed:
+            raise ValueError(
+                f"{DISABLED_TOOLS_ENV}: {entry!r} names a specialist that is not installed. "
+                f"Installed: {sorted(installed)}"
+            )
+        grouped.setdefault(key, set()).add(name)
+    return grouped
+
+
+def _tools_used_by(spec: SpecialistSpec | Specialist) -> list[tuple[str, Any]]:
+    """Every tool a specialist's contributions call, with what calls it."""
+    used: list[tuple[str, Any]] = []
+    if spec.health_check is not None:
+        used += [("health_check", t) for t in spec.health_check.tools]
+    if spec.remediation is not None:
+        used += [("remediation", t) for t in spec.remediation.actions]
+        used += [("remediation verify", t) for t in spec.remediation.verify]
+    if spec.journal is not None:
+        used += [("journal", spec.journal.save), ("journal", spec.journal.log)]
+    if spec.setup_check is not None:
+        used.append(("setup_check", spec.setup_check.tool))
+    return used
+
+
+def _without_tools(key: str, spec: SpecialistSpec, names: set[str]) -> tuple[BaseAgent, list[Any]]:
+    """A copy of the specialist's agent without *names*, and the tools removed.
+
+    The agent is cloned, never edited: it is a module-level object, and editing
+    it would remove the tool from every later discovery in the process too.
+    """
+    tools = list(getattr(spec.agent, "tools", None) or [])
+    removed = [t for t in tools if _tool_name(t) in names]
+    if unknown := names - {_tool_name(t) for t in removed}:
+        raise ValueError(
+            f"{DISABLED_TOOLS_ENV}: {spec.agent.name} ({key}) has no tool "
+            f"{sorted(unknown)}. Its tools: {sorted(_tool_name(t) for t in tools)}"
+        )
+    for what, tool in _tools_used_by(spec):
+        if any(tool is r for r in removed):
+            raise ValueError(
+                f"{DISABLED_TOOLS_ENV}: {key}.{_tool_name(tool)} is used by the "
+                f"specialist's {what}; it cannot be removed"
+            )
+    kept = [t for t in tools if not any(t is r for r in removed)]
+    return spec.agent.clone(update={"tools": kept}), removed
+
+
+def _is_removed(tool: Any, removed: dict[int, Any]) -> bool:
+    func = getattr(tool, "func", tool)
+    return removed.get(id(func)) is func
+
+
+def _strip_shared(specialist: Specialist, removed: dict[int, Any]) -> Specialist:
+    """Take a removed function out of every other specialist that holds it too.
+
+    The runtime refusal matches the function wherever it is, so a second
+    specialist sharing it (a plugin re-exporting a built-in tool) would
+    otherwise keep offering a tool that is then refused, or silently lose part
+    of its own sweep. A shared function its contributions use stops startup.
+    """
+    for what, tool in _tools_used_by(specialist):
+        if _is_removed(tool, removed):
+            raise ValueError(
+                f"{DISABLED_TOOLS_ENV}: {_tool_name(tool)} is also used by the "
+                f"{specialist.key} specialist's {what}; it cannot be removed"
+            )
+    tools = list(getattr(specialist.agent, "tools", None) or [])
+    kept = [t for t in tools if not _is_removed(t, removed)]
+    if len(kept) == len(tools):
+        return specialist
+    logger.info(
+        "Shared tools removed from %s by %s: %s",
+        specialist.key,
+        DISABLED_TOOLS_ENV,
+        ", ".join(sorted(_tool_name(t) for t in tools if _is_removed(t, removed))),
+    )
+    return replace(specialist, agent=specialist.agent.clone(update={"tools": kept}))
+
+
 #: A key names the specialist in env lists, in the admin catalog, and in the
 #: batch workflow's node names and state keys (``<key>_health_checker``,
 #: ``<key>_status``), which must be Python identifiers.
@@ -466,6 +581,8 @@ def discover_specialists(
             f"{ENABLED_ENV}/{DISABLED_ENV} name specialists that are not installed: "
             f"{sorted(unknown)}. Installed: {sorted(installed)}"
         )
+    disabled_tools = _disabled_tools(set(installed))
+    removed_funcs: dict[int, Any] = {}
 
     selected: list[Specialist] = []
     for key in sorted(installed):
@@ -483,6 +600,18 @@ def discover_specialists(
             )
             continue
         spec = _as_spec(key, ep, ep.load(), plugin=entry.source == "plugin")
+        agent = spec.agent
+        if key in disabled_tools:
+            agent, removed = _without_tools(key, spec, disabled_tools[key])
+            for tool in removed:
+                func = getattr(tool, "func", tool)
+                removed_funcs[id(func)] = func
+            logger.info(
+                "Tools removed from %s by %s: %s",
+                key,
+                DISABLED_TOOLS_ENV,
+                ", ".join(sorted(disabled_tools[key])),
+            )
         if clash := next((s for s in selected if s.agent.name == spec.agent.name), None):
             # The coordinator calls each as an AgentTool named after the agent:
             # two with one name would be one tool shadowing the other.
@@ -492,7 +621,7 @@ def discover_specialists(
         selected.append(
             Specialist(
                 key=key,
-                agent=spec.agent,
+                agent=agent,
                 distribution=entry.distribution,
                 routing_hint=spec.routing_hint,
                 health_check=spec.health_check,
@@ -506,6 +635,16 @@ def discover_specialists(
             _KEYS[spec.agent.name] = key
             if entry.distribution:
                 _DISTRIBUTIONS[spec.agent.name] = entry.distribution
+    if not_running := set(disabled_tools) - {s.key for s in selected}:
+        raise ValueError(
+            f"{DISABLED_TOOLS_ENV} names tools of specialists that are not running: "
+            f"{sorted(not_running)}"
+        )
+    if removed_funcs:
+        selected = [_strip_shared(s, removed_funcs) for s in selected]
+    if record:
+        global _DISABLED_FUNCS
+        _DISABLED_FUNCS = removed_funcs
     return selected
 
 

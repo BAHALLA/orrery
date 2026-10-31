@@ -61,6 +61,7 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
     ) from exc
 
+from .. import learning_gate
 from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, create_catalog_store
 from ..agent.declarative import DeclarativeAgentConfig
 from ..concurrency import configure_default_executor
@@ -80,6 +81,9 @@ from ..security.auth import (
 )
 from ..security.identity import CallerIdentity, caller_scope, identity_from_claims
 from ..security.principal import (
+    ACCESS_DENIED,
+    REJECT_UNLISTED_ENV,
+    REQUIRED_ROLES_ENV,
     PrincipalKind,
     PrincipalPolicy,
     as_principal,
@@ -156,6 +160,9 @@ class ServerConfig:
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
     chat_rate_limit: str = "30/minute"
+    #: ``POST /learning/hint`` per learner (AEP-032): a lab charges for hints,
+    #: and a held-down button should not climb the whole ladder at once.
+    hint_rate_limit: str = "3/minute"
     selftest_rate_limit: str = "10/minute"
     docs_enabled: bool | None = None
     rate_limit_storage_uri: str = "memory://"
@@ -211,6 +218,8 @@ class ServerConfig:
           on ``POST /chat``.
         - ``ORRERY_SELFTEST_RATE_LIMIT`` (default ``10/minute``) — per-caller
           limit on ``POST /onboarding/selftest``.
+        - ``ORRERY_LEARNING_HINT_RATE_LIMIT`` (default ``3/minute``) — per-learner
+          limit on ``POST /learning/hint`` (learning sandbox only).
         - ``ORRERY_DOCS_ENABLED`` — serve the interactive ``/docs`` schema.
           Unset defaults to *on only when auth is off* (see :attr:`serve_docs`).
         - ``ORRERY_RATE_LIMIT_STORAGE_URI`` (default ``memory://``) — where the
@@ -240,6 +249,7 @@ class ServerConfig:
             web_console_enabled=env_flag("ORRERY_WEB_CONSOLE_ENABLED", default=False),
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
             selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
+            hint_rate_limit=os.getenv("ORRERY_LEARNING_HINT_RATE_LIMIT", "3/minute"),
             docs_enabled=env_flag("ORRERY_DOCS_ENABLED", default=False) if docs else None,
             rate_limit_storage_uri=os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
             or "memory://",
@@ -454,6 +464,16 @@ class SpecialistInfo(BaseModel):
     label: str | None = None
 
 
+class LearningInfo(BaseModel):
+    """A learner's place on the hint ladder (AEP-032 §3). Never a value."""
+
+    scenario_id: str
+    level: int
+    max_level: int
+    #: Whether this caller may take a hint: only a verified person.
+    can_take_hint: bool
+
+
 class MeResponse(BaseModel):
     """Who the caller is and what this deployment will let them do.
 
@@ -481,6 +501,8 @@ class MeResponse(BaseModel):
     #: (``ORRERY_STUDIO_ENABLED``) and the caller is a human admin. The
     #: console shows its entry only then; ``/studio/*`` checks it again.
     studio_available: bool = False
+    #: The learning sandbox's state for this caller, or ``null`` outside it.
+    learning: LearningInfo | None = None
 
 
 class CheckResultModel(BaseModel):
@@ -541,6 +563,31 @@ def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
             f"{MULTI_REPLICA_ENV} is set, so this server runs as one of several replicas, "
             "but its state is per-process: " + "; ".join(problems) + "."
         )
+
+
+def _check_learning_server(cfg: ServerConfig) -> None:
+    """The learning sandbox's preconditions, again, against the final config.
+
+    Activation checked the environment before the agent tree was imported, and
+    a specialist's own ``.env`` may override it since (``load_agent_env``). So
+    the check runs once more here, plus the resolved config, which is what the
+    server actually does (AEP-032 §1).
+    """
+    from ..learning.config import check_preconditions
+
+    check_preconditions()
+    unmet = [
+        why
+        for bad, why in (
+            (not cfg.auth_enabled, "auth must be enabled"),
+            (cfg.a2a.enabled, "A2A must be off"),
+            (cfg.studio.enabled, "Studio must be off"),
+            (cfg.admin_editing, "admin editing must be off"),
+        )
+        if bad
+    ]
+    if unmet:
+        raise ValueError("ORRERY_LEARNING_MODE cannot start: " + "; ".join(unmet))
 
 
 def create_app(
@@ -615,11 +662,19 @@ def create_app(
     # Validate JWT config eagerly when auth is on — fail fast at startup
     # rather than on the first request.
     principal_policy = PrincipalPolicy.from_env()  # a malformed policy fails startup
+    if learning_gate.is_active():
+        _check_learning_server(cfg)
     if cfg.auth_enabled:
         cfg.jwt.validate()
         logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)
         warn_if_unclassified(principal_policy)
     else:
+        if principal_policy.reject_unlisted:
+            logger.warning("%s has no effect with auth disabled", REJECT_UNLISTED_ENV)
+        if principal_policy.required_roles:
+            # An access rule the operator believes is on, with no identity to
+            # check it against: refuse rather than admit everyone.
+            raise ValueError(f"{REQUIRED_ROLES_ENV} needs AUTH_ENABLED=true")
         logger.warning(
             "Auth DISABLED. Do not run this configuration in production — "
             "RBAC is meaningless without verified identity."
@@ -677,6 +732,7 @@ def create_app(
     limiter = RateLimiter(cfg.rate_limit_storage_uri)
     chat_limit = parse_rate(cfg.chat_rate_limit)
     selftest_limit = parse_rate(cfg.selftest_rate_limit)
+    hint_limit = parse_rate(cfg.hint_rate_limit)
     if cfg.rate_limit_storage_uri.startswith("memory://") and env_flag(
         MULTI_REPLICA_ENV, default=False
     ):
@@ -799,6 +855,23 @@ def create_app(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             ) from exc
+        if not principal_policy.admits(verified.claims):
+            # Same answer as a bad token: a caller learns nothing about the lists.
+            logger.info(
+                "Auth rejected: client %r is not listed (%s)",
+                verified.claims.get("azp") or verified.claims.get("client_id"),
+                REJECT_UNLISTED_ENV,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not principal_policy.has_required_role(verified.claims, cfg.jwt.role_claim):
+            # Authenticated, so not a 401 (a new token would not help): the
+            # console shows its "no access to this deployment" page on this.
+            logger.info("Access denied: %r has none of %s", verified.subject, REQUIRED_ROLES_ENV)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ACCESS_DENIED)
         return as_principal(verified, principal_policy)
 
     def caller_identity(auth: AuthContext) -> CallerIdentity | None:
@@ -835,6 +908,10 @@ def create_app(
 
     @api.get("/healthz")
     async def healthz() -> dict[str, str]:
+        # A lab checks which scenario the sandbox guards before it hands out
+        # an exercise (AEP-032). The scenario id is not an answer.
+        if (learning := learning_gate.runtime()) is not None:
+            return {"status": "ok", "mode": "learning", "scenario_id": learning.scenario_id()}
         return {"status": "ok"}
 
     readiness = ReadinessCheck(cfg.database_url)
@@ -977,6 +1054,10 @@ def create_app(
         # runs), so a long-lived session always inherits the latest verified
         # role and AuthPlugin resolves RBAC from it.
         state_delta: dict[str, object] = {AUTH_STATE_KEY: auth.as_state()}
+        if (learning := learning_gate.runtime()) is not None:
+            # Copied from the hint store at the start of the turn, marked as the
+            # server's: a hint taken mid-turn applies from the next one.
+            state_delta.update(learning.turn_state(auth.subject))
         # No session id means a new conversation: label it now, while its opening
         # message is in hand, so `GET /sessions` can name it for any browser.
         # Written exactly once — a later turn must not relabel the thread. (An
@@ -1156,10 +1237,13 @@ def create_app(
         """
         session = await caller_session(auth, session_id)
         raw = session.state.get("session_log", []) if session.state else []
+        # In the learning sandbox a call's arguments can carry an answer the
+        # model passed along, and nothing guards this path: names only.
+        learning = learning_gate.is_active()
         entries = [
             ActivityEntry(
                 operation=str(e.get("operation", "")),
-                details=str(e.get("details", "")),
+                details="" if learning else str(e.get("details", "")),
                 timestamp=str(e.get("timestamp", "")),
             )
             for e in raw
@@ -1184,7 +1268,9 @@ def create_app(
         session = await caller_session(auth, session_id)
         state = session.state or {}
         severity = state.get("incident_severity")
-        report = state.get("triage_report")
+        # The report is a specialist's prose, written straight to state: the
+        # answer guard never sees it, so the learning sandbox keeps it back.
+        report = None if learning_gate.is_active() else state.get("triage_report")
         return TriageResponse(
             session_id=session_id,
             severity=str(severity) if severity else None,
@@ -1299,7 +1385,42 @@ def create_app(
             studio_available=cfg.studio.enabled
             and auth.role == "admin"
             and auth.principal_kind == PrincipalKind.HUMAN,
+            learning=_learning_info(auth),
         )
+
+    def _learning_info(auth: AuthContext) -> LearningInfo | None:
+        if (learning := learning_gate.runtime()) is None:
+            return None
+        from ..learning.guard import REVEAL_LEVEL
+
+        return LearningInfo(
+            scenario_id=learning.scenario_id(),
+            level=learning.level_for(auth.subject),
+            max_level=REVEAL_LEVEL,
+            can_take_hint=auth.principal_kind == PrincipalKind.HUMAN,
+        )
+
+    if learning_gate.is_active():
+
+        @api.post("/learning/hint", response_model=LearningInfo)
+        async def take_hint(
+            auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+        ) -> LearningInfo:
+            """Raise the caller's hint level by one step (AEP-032 §3).
+
+            Only a verified person: a delegated agent or a service could be
+            talked into spending a learner's hints. Writes the per-process hint
+            store, never a session, so a turn already running is untouched and
+            the new level applies from the next turn.
+            """
+            if auth.principal_kind != PrincipalKind.HUMAN:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="human_only")
+            limiter.hit(hint_limit, f"hint:{auth.subject}")
+            learning = learning_gate.runtime()
+            learning.take_hint(auth.subject)
+            info = _learning_info(auth)
+            assert info is not None  # active, checked at registration
+            return info
 
     @api.get("/admin/agents", response_model=AgentsResponse)
     async def admin_agents(

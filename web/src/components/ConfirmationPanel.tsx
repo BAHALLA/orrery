@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, type RefObject } from "react";
 import type { PendingConfirmation } from "../api/types";
 import { AlertIcon, CheckIcon, CloseIcon, ShieldIcon } from "./icons";
+import { branding, type Environment } from "../theme/accent";
+import { EnvironmentBadge } from "./EnvironmentBadge";
 import { toneBorder, tonePill } from "./severity";
 
 interface Props {
@@ -9,6 +11,8 @@ interface Props {
   panelRef?: RefObject<HTMLElement | null>;
   pending: PendingConfirmation;
   disabled: boolean;
+  /** Where the action would run; defaults to the deployment's environment. */
+  environment?: Environment | null;
   onDecide: (word: "approve" | "deny") => void;
 }
 
@@ -43,7 +47,13 @@ function ago(createdAt: number): string {
  * The moment this component started deciding *who* may approve, the
  * guarantee would be bypassed — so it never does.
  */
-export function ConfirmationPanel({ panelRef, pending, disabled, onDecide }: Props) {
+export function ConfirmationPanel({
+  panelRef,
+  pending,
+  disabled,
+  environment = branding.environment,
+  onDecide,
+}: Props) {
   const explainId = useId();
   const toolId = useId();
   // An alertdialog takes focus when it appears, so keyboard and screen-reader
@@ -81,6 +91,7 @@ export function ConfirmationPanel({ panelRef, pending, disabled, onDecide }: Pro
               <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Awaiting your approval
               </span>
+              <EnvironmentBadge environment={environment} />
               <span
                 className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide uppercase ${level.badge}`}
               >
@@ -129,10 +140,11 @@ export function ConfirmationPanel({ panelRef, pending, disabled, onDecide }: Pro
             type="button"
             disabled={disabled}
             onClick={() => onDecide("approve")}
+            aria-label={environment ? `Approve on ${environment}` : undefined}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:outline-none disabled:opacity-50 dark:focus-visible:ring-offset-slate-900"
           >
             <CheckIcon size={16} />
-            Approve
+            {environment ? `Approve on ${environment.toUpperCase()}` : "Approve"}
           </button>
         </div>
       </section>

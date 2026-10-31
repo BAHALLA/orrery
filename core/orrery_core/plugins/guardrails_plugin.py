@@ -10,6 +10,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from ..registry import DISABLED_TOOLS_ENV, is_tool_disabled
 from ..security.rbac import NamespaceScopeGuard, RolePolicy, ensure_default_role
 from ..security.rbac import authorize as _authorize_factory
 
@@ -21,6 +22,10 @@ class GuardrailsPlugin(BasePlugin):
     — ``create_agent()`` attaches ``require_confirmation()`` to any agent with
     a guarded tool — so it works in all execution contexts (ADK web UI, CLI
     runner, AgentTool sub-agents).
+
+    A tool ``ORRERY_DISABLED_TOOLS`` removed is refused before RBAC, with the
+    neutral ``BLOCKED`` status, in case it is reached some way other than the
+    agent tree it was removed from.
 
     Also ensures a default viewer role on untrusted sessions via
     ``before_agent_callback``.
@@ -67,7 +72,15 @@ class GuardrailsPlugin(BasePlugin):
         tool_args: dict[str, Any],
         tool_context: ToolContext,
     ) -> dict | None:
-        """Check RBAC, then confirmation gate."""
+        """Refuse a removed tool, then check RBAC, then the confirmation gate."""
+        if is_tool_disabled(tool):
+            return {
+                "status": "BLOCKED",
+                "tool": tool.name,
+                "message": f"Tool '{tool.name}' is disabled in this deployment "
+                f"({DISABLED_TOOLS_ENV}).",
+            }
+
         # RBAC check
         result = self._authorize(tool=tool, args=tool_args, tool_context=tool_context)
         if result is not None:

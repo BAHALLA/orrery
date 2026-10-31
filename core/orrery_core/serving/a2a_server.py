@@ -87,6 +87,7 @@ from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_s
 from ..security.identity import CallerIdentity
 from ..security.principal import (
     A2A_SESSION_PREFIX,
+    ACCESS_DENIED,
     PrincipalPolicy,
     as_principal,
     principal_key,
@@ -550,6 +551,19 @@ def mount_a2a(
                 status_code=401,
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        if not policy.admits(verified.claims):
+            logger.info(
+                "A2A auth rejected: client %r is not listed",
+                verified.claims.get("azp") or verified.claims.get("client_id"),
+            )
+            return JSONResponse(
+                {"error": "unauthorized"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not policy.has_required_role(verified.claims, a2a_jwt.role_claim):
+            logger.info("A2A access denied: %r has no required role", verified.subject)
+            return JSONResponse({"error": ACCESS_DENIED}, status_code=403)
         auth = as_principal(verified, policy, machine_surface=True)
         limiter.hit(rate, f"a2a:{principal_key(auth)}")
         # The SDK reads the whole body with no bound, and Content-Length is

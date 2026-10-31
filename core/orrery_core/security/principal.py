@@ -39,6 +39,16 @@ logger = logging.getLogger("orrery.auth")
 HUMAN_CLIENTS_ENV = "ORRERY_HUMAN_CLIENTS"
 #: ``client=role`` pairs: machine clients and the highest role each may hold.
 SERVICE_CLIENTS_ENV = "ORRERY_SERVICE_CLIENTS"
+#: Refuse a verified token whose client is in neither list (off by default:
+#: an unlisted client is then a viewer service principal).
+REJECT_UNLISTED_ENV = "ORRERY_REJECT_UNLISTED_CLIENTS"
+#: Raw role names (from ``JWT_ROLE_CLAIM``), comma-separated: a verified token
+#: must carry at least one of them to use the deployment at all, or it gets
+#: 403 ``access_denied``. Unset admits every verified token (a roleless one as
+#: a viewer), as before.
+REQUIRED_ROLES_ENV = "ORRERY_REQUIRED_ROLES"
+#: The ``detail``/``error`` code a refused token gets, which the console reads.
+ACCESS_DENIED = "access_denied"
 
 _ROLE_RANK = {"viewer": 0, "operator": 1, "admin": 2}
 
@@ -81,15 +91,59 @@ class PrincipalPolicy:
     human_clients: frozenset[str] | None = None
     #: Highest role per machine client. Unlisted machine clients get ``viewer``.
     service_ceilings: dict[str, str] = field(default_factory=dict)
+    #: Refuse tokens from a client in neither list, rather than make them viewers.
+    reject_unlisted: bool = False
+    #: Lower-cased raw role names; a token needs one of them. Empty: no rule.
+    required_roles: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls) -> PrincipalPolicy:
+        from ..env import env_flag
+
         raw_humans = os.getenv(HUMAN_CLIENTS_ENV, "").strip()
         humans = frozenset(c.strip() for c in raw_humans.split(",") if c.strip())
+        reject = env_flag(REJECT_UNLISTED_ENV, default=False)
+        if reject and not humans:
+            # Without the list every console token is human, so there is no
+            # "unlisted" to refuse: say so rather than refuse nothing.
+            raise ValueError(f"{REJECT_UNLISTED_ENV} needs {HUMAN_CLIENTS_ENV} to be set")
         return cls(
             human_clients=humans or None,
             service_ceilings=_parse_ceilings(os.getenv(SERVICE_CLIENTS_ENV, "")),
+            reject_unlisted=reject,
+            required_roles=frozenset(
+                r.strip().lower() for r in os.getenv(REQUIRED_ROLES_ENV, "").split(",") if r.strip()
+            ),
         )
+
+    def admits(self, claims: dict[str, Any]) -> bool:
+        """Whether a verified token's client may call at all.
+
+        Always true unless ``reject_unlisted``; then the client (``azp``, else
+        ``client_id``) must be a listed human or service client. A delegated
+        token's client is the acting agent's, so that agent must be listed too.
+        """
+        if not self.reject_unlisted:
+            return True
+        client = _client_id(claims)
+        if client is None:
+            return False
+        return client in (self.human_clients or ()) or client in self.service_ceilings
+
+    def has_required_role(self, claims: dict[str, Any], role_claim: str) -> bool:
+        """Whether a verified token carries one of ``required_roles``.
+
+        Always true with no rule. Checked on every token, service and delegated
+        ones included: a machine client that should reach the deployment is
+        given the role in the identity provider, like a person. The names are
+        the IdP's own (``orrery-lab-learner``), not Orrery's viewer/operator/
+        admin, since every token without a role already reads as viewer.
+        """
+        if not self.required_roles:
+            return True
+        from .auth import role_tokens
+
+        return any(t in self.required_roles for t in role_tokens(claims, role_claim) or ())
 
     def ceiling(self, client_id: str | None) -> str:
         return self.service_ceilings.get(client_id or "", "viewer")

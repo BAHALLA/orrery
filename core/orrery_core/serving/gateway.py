@@ -47,6 +47,7 @@ from google.adk.sessions.base_session_service import BaseSessionService
 from google.adk.workflow import Workflow
 from google.genai import types
 
+from .. import learning_gate
 from ..env import env_int
 from ..persistence.db import create_session_service
 from ..security.confirmation_flow import conversation_scope
@@ -272,6 +273,63 @@ def _turn_lock_map() -> weakref.WeakValueDictionary[tuple[str, str], asyncio.Loc
     return weakref.WeakValueDictionary()
 
 
+def _refuse_memory_in_learning(
+    plugins: Sequence[BasePlugin], memory_service: BaseMemoryService | None
+) -> None:
+    """No long-term memory in the learning sandbox (AEP-032).
+
+    Memory is keyed by the learner, not the scenario: recall would hand a
+    learner the evidence, and the answers, of an earlier attempt, and with a
+    durable store (``DATABASE_URL``) it would outlive every reset of the lab.
+    Sessions may persist; recall may not.
+    """
+    from ..plugins.memory_plugin import MemoryPlugin
+
+    if memory_service is not None or any(isinstance(p, MemoryPlugin) for p in plugins):
+        raise ValueError(
+            "ORRERY_LEARNING_MODE cannot start: long-term memory must be off "
+            "(no memory service, no MemoryPlugin)"
+        )
+
+
+#: ADK's memory tools: recall of earlier sessions by name.
+_RECALL_TOOL_NAMES = frozenset({"load_memory", "preload_memory"})
+
+
+def _refuse_recall_tool_in_learning(root_agent: Any) -> None:
+    """Refuse a tree that can carry anything from one attempt to the next.
+
+    Walks every agent the root can reach (``AgentTool`` specialists, declarative
+    agents, sub-agents): ADK's memory tools, and tools marked
+    :func:`~orrery_core.security.guardrails.cross_session` (``user:``/``app:``
+    state, such as the ops journal's notes), which persist per learner across
+    sessions and, with ``DATABASE_URL``, across restarts and lab resets.
+    """
+    from ..security.guardrails import is_cross_session
+
+    seen: set[int] = set()
+    stack = [root_agent]
+    found: list[str] = []
+    while stack:
+        agent = stack.pop()
+        if id(agent) in seen:
+            continue
+        seen.add(id(agent))
+        stack.extend(getattr(agent, "sub_agents", None) or [])
+        for tool in getattr(agent, "tools", None) or []:
+            name = str(getattr(tool, "name", None) or getattr(tool, "__name__", ""))
+            if name in _RECALL_TOOL_NAMES or is_cross_session(tool):
+                found.append(f"{getattr(agent, 'name', '?')}.{name}")
+            if (inner := getattr(tool, "agent", None)) is not None:
+                stack.append(inner)
+    if found:
+        raise ValueError(
+            "ORRERY_LEARNING_MODE cannot start: these tools carry state from one "
+            f"attempt to the next: {', '.join(sorted(found))}. Disable the agents "
+            "that hold them (e.g. ORRERY_DISABLED_SPECIALISTS=ops_journal)"
+        )
+
+
 class AgentGateway:
     """Shared turn pipeline: build the Runner once, run turns for any channel.
 
@@ -331,6 +389,7 @@ class AgentGateway:
         # Fail at boot, not on the first Kubernetes call, on a mistyped
         # ORRERY_IMPERSONATION (every transport builds a gateway).
         enabled_systems()
+        learning_gate.check("AgentGateway")
         self.app_name = app_name
         self.session_service = session_service or create_session_service(db_url)
         self.resolver: SessionResolver = session_resolver or MappedSessionResolver()
@@ -344,6 +403,8 @@ class AgentGateway:
         # new agent tree.
         self._plugins = list(plugins or [])
         self._memory_service = memory_service
+        if learning_gate.is_active():
+            _refuse_memory_in_learning(self._plugins, memory_service)
         self._context_cache_config = context_cache_config
         self._events_compaction_config = events_compaction_config
         self.root_agent = root_agent
@@ -362,6 +423,14 @@ class AgentGateway:
         plugins = self._plugins
         if not any(isinstance(p, AttachmentPlugin) for p in plugins):
             plugins = [*plugins, AttachmentPlugin()]
+        if (learning := learning_gate.runtime()) is not None:
+            _refuse_recall_tool_in_learning(root_agent)
+            # First, so no after-model plugin can answer ahead of the answer
+            # guard; it edits in place and returns None, so the rest still run.
+            # Bound to this Runner's root: a turn still running on the old tree
+            # after replace_root_agent() is checked against its own root.
+            root_name = getattr(root_agent, "name", "")
+            plugins = [*learning.plugins(lambda: root_name), *plugins]
         app = App(
             name=self.app_name,
             root_agent=root_agent,
@@ -404,6 +473,13 @@ class AgentGateway:
         turn pipeline. ``session_service`` is only needed for the resolver-based
         :meth:`run`; :meth:`run_in_session` works without it.
         """
+        # A Runner built elsewhere carries no answer guard, so learning mode
+        # refuses it even in the activated process (AEP-032 §1).
+        if learning_gate.requested():
+            raise learning_gate.LearningModeRefused(
+                "AgentGateway.from_runner() cannot honour ORRERY_LEARNING_MODE: "
+                "the Runner was built without the answer guard."
+            )
         self = cls.__new__(cls)
         self.app_name = app_name
         self.runner = runner

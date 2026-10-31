@@ -222,6 +222,7 @@ nav:
     - "AEP-029: Answer Feedback": enhancements/aep-029-answer-feedback.md
     - "AEP-030: Chat Attachments": enhancements/aep-030-chat-attachments.md
     - "AEP-031: Orrery Studio": enhancements/aep-031-orrery-studio.md
+    - "AEP-032: Learning Sandbox": enhancements/aep-032-learning-sandbox.md
   - Project:
     - Changelog: CHANGELOG.md
     - Contributing: CONTRIBUTING.md

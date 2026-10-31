@@ -38,6 +38,7 @@ from typing import Any, Protocol
 
 from google.adk.events import Event
 
+from .. import learning_gate
 from ..plugins.progress_plugin import progress_scope
 from .events import extract_reply_text
 from .gateway import (
@@ -119,7 +120,21 @@ async def stream_turn(
     """
     queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
 
+    # Streamed text cannot be retracted, and the answer guard checks only a
+    # final response, so the learning sandbox sends the checked ``message``
+    # alone (AEP-032 §4). Read once: activation happens before serving.
+    hold_deltas = learning_gate.is_active()
+
+    def _step(step: Any) -> dict[str, Any]:
+        frame = step.as_dict()
+        if hold_deltas:
+            # A tool's own status string could be a string target (OOMKilled).
+            frame["status"] = ""
+        return frame
+
     async def on_event(event: Event) -> None:
+        if hold_deltas:
+            return
         if getattr(event, "partial", None) is True and (text := extract_reply_text(event)):
             queue.put_nowait(("delta", {"text": text, "author": event.author or ""}))
 
@@ -127,7 +142,7 @@ async def stream_turn(
         try:
             # Entered inside the task that runs the agent, so the sink reaches
             # every specialist's sub-Runner (ContextVars copy into child tasks).
-            with progress_scope(lambda step: queue.put_nowait(("progress", step.as_dict()))):
+            with progress_scope(lambda step: queue.put_nowait(("progress", _step(step)))):
                 reply = await gateway.run(
                     msg, session_id=session_id, on_event=on_event, streaming=True
                 )

@@ -81,8 +81,19 @@ SECRETS_DIR_ENV = "ORRERY_SECRETS_DIR"
 #: also contain '.' and '-' (e.g. a ``ca.crt`` mounted alongside); those are
 #: files for a path-based setting, not variables, and are left alone.
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-#: Larger files are certificates or bundles, not variable values.
+#: No variable value is larger. A bigger file named like a variable stops
+#: startup (keep certificates and bundles out of the directory, or give them
+#: a dotted name such as ``ca.crt``).
 _MAX_SECRET_BYTES = 64 * 1024
+
+
+class SecretFileUnreadable(RuntimeError):
+    """A secret file named like an environment variable exists but can't be used.
+
+    Unreadable, not UTF-8, oversized or holding a NUL byte. Skipping it would
+    start the service as if the variable were unset, so startup stops instead.
+    The message names the file, never its content.
+    """
 
 
 def load_secrets_into_environment(directory: str | Path | None = None) -> list[str]:
@@ -130,15 +141,29 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
             continue
         try:
             if entry.stat().st_size > _MAX_SECRET_BYTES:
-                logger.warning("Secret file %s is over %d bytes; skipped", name, _MAX_SECRET_BYTES)
-                continue
+                raise SecretFileUnreadable(
+                    f"Secret file {name} in {root} is over {_MAX_SECRET_BYTES} bytes"
+                )
             value = entry.read_text(encoding="utf-8").rstrip("\r\n")
-        except (OSError, UnicodeDecodeError) as exc:
+        except PermissionError as exc:
+            # A secret the operator mounted but this process may not read is a
+            # deployment error, not an absent setting: skipping it would start
+            # the service as if it were unset (DATABASE_URL -> in-memory
+            # sessions, against the DB fail-fast policy). Usually the file's
+            # owner: the image runs as uid 1000.
+            raise SecretFileUnreadable(
+                f"Secret file {name} in {root} is not readable by this process "
+                f"(uid {os.getuid()}): {exc.strerror}. Make it readable, or remove it."
+            ) from exc
+        except UnicodeDecodeError:
+            raise SecretFileUnreadable(
+                f"Secret file {name} in {root} is not UTF-8 text (saved as UTF-16?)"
+            ) from None  # the decode error would quote the bytes
+        except OSError as exc:
             logger.warning("Secret file %s could not be read: %s", name, exc)
             continue
         if "\0" in value:
-            logger.warning("Secret file %s contains a NUL byte; skipped", name)
-            continue
+            raise SecretFileUnreadable(f"Secret file {name} in {root} contains a NUL byte")
         existing = os.environ.get(name)
         if existing is not None and existing != value:
             logger.warning(

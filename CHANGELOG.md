@@ -7,15 +7,199 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-31
+
+**Role-gated deployments, a hint ladder, and a quieter image.** A deployment
+shared through one identity provider can admit only accounts holding a listed
+role, and send the rest to a page of its choice. Learners in the sandbox can
+ask for a hint, one level at a time, with each one recorded; the sandbox now
+keeps no long-term memory, so a lab can use a durable session store. Guarded
+MCP servers no longer probe Google mTLS, and the image no longer fetches
+LiteLLM's tables from GitHub at startup. Note for operators: an unusable
+file in `ORRERY_SECRETS_DIR` (unreadable, not UTF-8, over 64 KiB) now stops
+startup instead of being skipped.
+
 ### Added
 
-- **Lab coach** (`agents/orrery-assistant/declarative/lab-coach.yaml`): a
-  declarative agent for shared practice labs that walks a learner through a
-  Kafka or monitoring diagnosis with questions and a four-step hint ladder,
-  rather than handing over the answer. Read-only tools from the kafka and
-  observability specialists only, so it builds on a deployment that disables
-  the others and runs at L2 with no confirmation gate. Enable it with
-  `ORRERY_AGENTS_CONFIG=/app/agents/orrery-assistant/declarative/lab-coach.yaml`.
+- **`ORRERY_REQUIRED_ROLES`: admit only accounts holding a listed role.**
+  A verified token used to be admitted whatever its roles, with a roleless one
+  served as a viewer. On a deployment shared through one identity provider
+  (a practice lab, say), every account could read it. With the rule set, a
+  token carrying none of the listed role names (raw IdP names from
+  `JWT_ROLE_CLAIM`, case-insensitive) gets 403 `access_denied` on every
+  authenticated route, console API and A2A alike. Startup fails if it is set
+  with auth off.
+- **`ORRERY_CONSOLE_ACCESS_DENIED_URL`.** With `ORRERY_REQUIRED_ROLES` set, the
+  console checks `/me` before loading anything, and a refused person sees a
+  "you don't have access to this deployment" page, linking to this https URL,
+  instead of a console whose every call fails.
+- **A hint ladder in the learning sandbox (AEP-032 phase 2).** Each learner
+  has a level per scenario: 0 orient, 1 narrow, 2 point at the tool, 3
+  reveal.
+  - The console's *Take a hint* button calls `POST /learning/hint`. It
+    accepts verified people only, is rate-limited per learner
+    (`ORRERY_LEARNING_HINT_RATE_LIMIT`, default `3/minute`), raises the
+    level one step at a time and never lowers it.
+  - Each step writes a `learning_hint` audit entry, which a lab can deduct
+    hint costs from, and `orrery_learning_hints_total{level}`.
+  - The level reaches the coordinator as one line of its instruction, and
+    the answer guard stops withholding values at level 3.
+  - Levels are per process: after a restart every learner is back at the
+    manifest's `default_disclosure`. A level is stamped into each turn by
+    the server, and a tool that writes it is reverted.
+
+### Changed
+
+- **The learning sandbox keeps no long-term memory.** With
+  `ORRERY_LEARNING_MODE` the HTTP server builds no memory service and no
+  `MemoryPlugin`, and the coordinator has no `load_memory` tool. The gateway
+  refuses all three at startup. Memory is keyed by the learner, not the
+  scenario, so recall would hand back an earlier attempt's evidence and
+  answers, and with `DATABASE_URL` it would outlive every reset of the lab.
+  The ops journal, whose notes and preferences live in `user:` state, is left
+  out of the coordinator for the same reason, and the gateway refuses any
+  agent tree reaching a tool marked with the new `cross_session` marker.
+  Sessions still persist, so a learning deployment can now use PostgreSQL
+  (see *Single node (Docker Compose)* in the deployment guide).
+
+### Fixed
+
+- **An unusable file in `ORRERY_SECRETS_DIR` stops startup:** one that is
+  unreadable, not UTF-8, over 64 KiB or holds a NUL byte. It used to be
+  logged and skipped, so an unreadable `DATABASE_URL` file (wrong owner: the
+  image runs as uid 1000) started the server on in-memory sessions, against
+  the database fail-fast policy. The error names the file and the uid.
+- **Guarded MCP servers no longer try Google mTLS.** ADK's MCP session
+  manager calls `google.auth.default()` on every HTTP/SSE connection to set up
+  client-certificate mTLS. Without Google credentials that logged `Failed to
+  configure mTLS using AsyncAuthorizedSession` on each connection. With them, a
+  successful probe would have replaced the guarded HTTP client (origin pin,
+  address checks, no redirects) with ADK's own, and sent a Google token to the
+  MCP server. `GuardedMcpToolset` turns the probe off; TLS comes from the
+  server's config.
+- **The image uses LiteLLM's bundled tables.** `LITELLM_LOCAL_MODEL_COST_MAP`
+  and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are set by default, so startup no
+  longer fetches from `raw.githubusercontent.com`, a request that fails behind
+  an egress allowlist.
+
+- **`docker_compose_status` keeps auxiliary containers out of a project's
+  state counts.** With every container in one compose project, a
+  crash-looping `lab-*` container showed as an untagged `restarting: 1` in
+  the summary. A project mixing both now reports `states` for its platform
+  containers only, plus `auxiliary_states` and `auxiliary_containers`; a
+  project that is wholly auxiliary keeps `states` and `scope: auxiliary`.
+  `containers` stays the total, and the triage prompts name the new key.
+  Output is unchanged when `ORRERY_AUXILIARY_RESOURCES` is unset.
+
+## [0.14.0] - 2026-10-30
+
+**Per-environment consoles, platform-aware triage, and a learning sandbox.**
+A console now says which deployment it is (title, environment badge, accent)
+and hides features its server does not run. Operators can describe the
+platform to the agent and mark auxiliary containers that triage reports
+without letting them change the verdict. Practice labs can run Orrery in a
+sandbox that withholds an exercise's answers (AEP-032 phases 0–1, off by
+default). The Docker specialist's compose status now works against a remote
+daemon, its logs include stderr, and `inspect_container` redacts credentials
+in env values; a deployment can also refuse tokens from clients it does not
+list.
+
+### Added
+
+- **Console branding per environment**: `ORRERY_CONSOLE_TITLE`,
+  `ORRERY_CONSOLE_ENVIRONMENT` (`production`/`staging`/`demo`/`lab`) and
+  `ORRERY_CONSOLE_ACCENT` (ten presets) are served in `/console-config.js`.
+  The title replaces "Orrery Console" in the sidebar, sign-in page and tab;
+  the environment shows as a badge, leads the tab title, and is named on the
+  chat approval card ("Approve on PRODUCTION"); staging, demo and lab also get a
+  banner. Invalid values stop startup.
+- **Operator platform context and triage scope**:
+  `ORRERY_PLATFORM_CONTEXT_FILE` (Markdown, at most 16 KiB, read once at
+  startup) is added to the coordinator's and the triage agents'
+  instructions. `ORRERY_AUXILIARY_RESOURCES` (name globs) marks containers
+  and compose projects that may be down without the platform being degraded:
+  the Docker tools tag them `scope: auxiliary`, and triage reports them
+  separately without letting them change the verdict. A container label
+  `orrery.scope=platform` pins one back in; no label can make a container
+  auxiliary, since images pass their labels on. The coordinator's examples
+  now name a system the deployment runs instead of assuming Kafka.
+- **`ORRERY_REJECT_UNLISTED_CLIENTS`** (opt-in): a verified token whose
+  client (`azp`, else `client_id`) is in neither `ORRERY_HUMAN_CLIENTS` nor
+  `ORRERY_SERVICE_CLIENTS` gets 401, the same answer as an invalid token, on
+  the console API and A2A, instead of becoming a viewer service principal.
+  Setting it without `ORRERY_HUMAN_CLIENTS` stops startup.
+- **Learning sandbox mode**
+  ([AEP-032](docs/enhancements/aep-032-learning-sandbox.md) phase 1), off by default:
+  `ORRERY_LEARNING_MODE=true` with `ORRERY_SCENARIO_MANIFEST` makes the HTTP
+  server withhold an exercise's answers. `AnswerGuardPlugin` checks every
+  final text response of the coordinator against the manifest's targets
+  (digits with or without one consistent separator and with trailing zero
+  decimals, `k`/`thousand`/`M` roundings, English words, strings) and
+  replaces a match with a nudge in place, keeping tool calls; the stored
+  transcript holds the nudge, and `learning_answer_withheld` audits the
+  target id only. `/chat/stream` sends no `delta` frames, `/session/{id}/triage`
+  returns the severity only, `/session/{id}/activity` drops the argument
+  summary, and `/healthz` reports `mode` and `scenario_id`. Startup is refused
+  unless auth, `ORRERY_HUMAN_CLIENTS` and L2 are set and A2A, Studio, admin
+  editing, multi-replica, several workers, span content capture and DEBUG
+  logging and message-content capture in traces are off, checked again once
+  the agent tree is built. Every other entry point (the bots, the CLI, `adk web`,
+  the batch triage, a specialist on its own) refuses the flag.
+- **`ORRERY_DISABLED_TOOLS`** (AEP-032 phase 0): take single tools out of
+  running specialists by qualified name (`observability.get_alert_groups`).
+  The specialist's agent is cloned without the tool before anything is built
+  from it, so the coordinator, declarative agents, the admin catalog and the
+  Studio never see it, and `GuardrailsPlugin` refuses a call to it by function
+  identity with the neutral `BLOCKED` status. Another specialist sharing the
+  function loses it too. It only removes: an unknown
+  name, a tool of a specialist that is not running, or a tool the specialist's
+  health check, remediation, journal or self-test uses stops startup. Unset,
+  nothing changes.
+- **Scenario manifest loader** (AEP-032 phase 0, not wired in yet):
+  `orrery_core.learning.manifest` validates contract v1 strictly in JSON mode
+  (exact types, no NaN, no field
+  that can widen access, at least one target, `default_disclosure` at most 2,
+  no value under 100 or shorter than 4 characters, none inside an id, unit or
+  descriptor), reads regular files only,
+  never repeats a value in an error, re-checks the file's `stat()` (and its
+  content while it is young) on every read, keeps the last valid manifest when a reload fails
+  (`orrery_learning_manifest_errors_total`, registered only when used), and keeps values that left the
+  file guarded for `ORRERY_LEARNING_GRACE_SECONDS`. Nothing imports the
+  learning package in a normal process; a test pins that.
+
+### Fixed
+
+- **The console no longer offers a Studio the server does not run.** Every
+  admin saw "Studio" in the navigation, and with `ORRERY_STUDIO_ENABLED`
+  off it opened a "not enabled here" page. The entry now follows `/me`'s
+  `studio_available` (mounted, and the caller a human admin), and the
+  Studio view cannot be opened without it.
+  The Agents page no longer suggests `ORRERY_ADMIN_EDITING` when editing is
+  off.
+- **`docker_compose_status` works in the image.** It ran `docker compose`,
+  which the image does not ship (it failed as "unknown flag: --format"), with
+  a hardcoded `docker-compose.yml` path on the agent's own filesystem. It now
+  reads the compose labels the daemon keeps on each container through the
+  plain CLI (`docker ps --all --filter label=com.docker.compose.project…`):
+  no argument lists every project with its containers by state,
+  `project=NAME` lists that project's containers, stopped ones included, and
+  an unknown project is an error. No compose file or plugin is needed, so it
+  works against a remote `DOCKER_HOST`. The `project_dir` argument is gone.
+- **`get_container_logs` includes the container's stderr.** `docker logs`
+  replays a container's stderr on its own stderr, and the tool read stdout
+  only, so a service that logs only to stderr (nginx's error log, Prometheus,
+  most Go and Java servers) showed no lines. Both streams are now read
+  through one pipe, interleaved as the CLI writes them.
+
+### Security
+
+- **`inspect_container` scans env values, not only names.** A variable like
+  `DATABASE_URL=postgres://user:pass@db` passed the tool's own filter, which
+  matched names only (the global `PIIRedactionPlugin` already masked the URL
+  credentials, but not with `ORRERY_PII_REDACTION=false`). Values now go
+  through the same `redact_text` patterns, plus Go's scheme-less
+  `user:pass@tcp(…)` DSN form; `passwd`/`dsn` names, and `pass`/`pwd` as a
+  name word (`DB_PASS`, `DB_PWD`; not `PWD` itself), are redacted whole.
 
 ## [0.13.0] - 2026-10-29
 
@@ -1798,7 +1982,9 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/BAHALLA/orrery/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/BAHALLA/orrery/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/BAHALLA/orrery/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/BAHALLA/orrery/compare/v0.10.0...v0.11.0

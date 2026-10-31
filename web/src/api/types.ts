@@ -147,6 +147,24 @@ export interface MeResponse {
    * set. Display only — it never widens or narrows what the server allows.
    */
   specialists?: SpecialistInfo[] | null;
+  /**
+   * The Studio is mounted (`ORRERY_STUDIO_ENABLED`) and this caller may use it
+   * (a human admin). The console offers the Studio only when this is true; a
+   * server that predates the field never mounted one either.
+   */
+  studio_available?: boolean;
+  /** The learning sandbox's hint ladder for this caller; null outside it (AEP-032). */
+  learning?: LearningInfo | null;
+}
+
+/** A learner's place on the hint ladder. Never an exercise value. */
+export interface LearningInfo {
+  scenario_id: string;
+  /** 0 orient, 1 narrow, 2 point at the tool, 3 reveal. */
+  level: number;
+  max_level: number;
+  /** Only a verified person may take a hint. */
+  can_take_hint: boolean;
 }
 
 /** One enabled specialist, as `/me` lists it. */

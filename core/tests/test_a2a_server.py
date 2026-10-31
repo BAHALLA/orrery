@@ -154,6 +154,31 @@ def test_anonymous_calls_are_refused(turns):
     assert turns == []
 
 
+def test_reject_unlisted_refuses_an_unlisted_agent_client(turns, monkeypatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+    monkeypatch.setenv("ORRERY_SERVICE_CLIENTS", "partner=viewer")
+    monkeypatch.setenv("ORRERY_REJECT_UNLISTED_CLIENTS", "true")
+    client = TestClient(_app())
+
+    refused = client.post("/a2a", json=_send(), headers=_headers(azp="stranger"))
+    assert refused.status_code == 401
+    assert turns == []
+    admitted = client.post("/a2a", json=_send(), headers=_headers(azp="partner"))
+    assert admitted.status_code == 200, admitted.text
+
+
+def test_required_roles_refuse_an_agent_without_one(turns, monkeypatch):
+    monkeypatch.setenv("ORRERY_REQUIRED_ROLES", "orrery-agent")
+    client = TestClient(_app())
+
+    refused = client.post("/a2a", json=_send(), headers=_headers(roles=("operator",)))
+    assert refused.status_code == 403
+    assert refused.json() == {"error": "access_denied"}
+    assert turns == []
+    admitted = client.post("/a2a", json=_send(), headers=_headers(roles=("orrery-agent",)))
+    assert admitted.status_code == 200, admitted.text
+
+
 def test_a_console_token_is_not_an_agent_token(turns):
     r = TestClient(_app()).post("/a2a", json=_send(), headers=_headers(aud="orrery"))
     assert r.status_code == 401

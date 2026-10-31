@@ -341,6 +341,27 @@ def destructive(reason: str = "") -> Callable:
     return decorator
 
 
+_CROSS_SESSION_ATTR = "_orrery_cross_session"
+
+
+def cross_session[F: Callable[..., Any]](func: F) -> F:
+    """Mark a tool that reads or writes state outliving the session.
+
+    That is ADK's ``user:`` state (every session of the same user) and ``app:``
+    state (every user). Such a tool is recall by another name: the learning
+    sandbox refuses an agent tree holding one, since what a learner saved in
+    one attempt would be handed back in the next (AEP-032).
+    """
+    setattr(func, _CROSS_SESSION_ATTR, True)
+    return func
+
+
+def is_cross_session(tool_or_func: Any) -> bool:
+    """Whether *tool_or_func* is marked with :func:`cross_session`."""
+    func = getattr(tool_or_func, "func", tool_or_func)
+    return getattr(func, _CROSS_SESSION_ATTR, False) is True
+
+
 def set_guard(target: Any, level: str | None, reason: str = "") -> None:
     """Attach (or with ``level=None`` clear) guard metadata on *target*.
 

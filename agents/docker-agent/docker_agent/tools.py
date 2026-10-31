@@ -4,12 +4,14 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from typing import Any
 
 from orrery_core import confirm, destructive
+from orrery_core.agent.platform import pinned_by_labels, resource_scope
+from orrery_core.security.redaction import REDACTED, redact_text
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
-    validate_path,
     validate_positive_int,
     validate_string,
 )
@@ -17,38 +19,75 @@ from orrery_core.security.validation import (
 logger = logging.getLogger(__name__)
 
 _ENV_SENSITIVE_PATTERNS = frozenset(
-    {"password", "secret", "token", "api_key", "credential", "key", "auth"}
+    {"password", "passwd", "secret", "token", "api_key", "credential", "key", "auth", "dsn"}
 )
+
+#: A DSN with credentials but no scheme, as Go's MySQL driver writes it
+#: (``user:pass@tcp(db:3306)/app``): only that exact form, since ``a:b@c`` alone
+#: is too common a shape to redact.
+# Greedy up to the last "@" before the protocol, as the driver splits it, so a
+# password holding "@" goes whole.
+_SCHEMELESS_USERINFO = re.compile(r"^[^\s:/@=]*:\S+(?=@(?:tcp|udp|unix)\()")
+
+
+#: Name *words* (split on "_") that mark a secret but are too short to match
+#: as substrings: PASS would hit BYPASS, and PWD alone is the working directory.
+_ENV_SENSITIVE_WORDS = frozenset({"pass", "pwd"})
+_NOT_SECRET_NAMES = frozenset({"pwd", "oldpwd"})
+
+
+def _sensitive_name(var_name: str) -> bool:
+    name = var_name.lower()
+    if any(s in name for s in _ENV_SENSITIVE_PATTERNS):
+        return True
+    if name in _NOT_SECRET_NAMES:
+        return False
+    return not _ENV_SENSITIVE_WORDS.isdisjoint(name.split("_"))
 
 
 def _redact_env_vars(env_list: list[str]) -> list[str]:
-    """Redact values of sensitive environment variables."""
+    """Redact sensitive environment variables, by name and by value.
+
+    A name like ``DATABASE_URL`` says nothing about its value, so values are
+    scanned too: credentials in a URL (``postgres://user:pass@db``), a
+    scheme-less DSN, and the token shapes ``redact_text`` knows. This runs
+    before ``PIIRedactionPlugin``, so the tool never returns them even when
+    the plugin is off.
+    """
     redacted = []
     for entry in env_list:
         if "=" in entry:
-            var_name, _, _value = entry.partition("=")
-            if any(s in var_name.lower() for s in _ENV_SENSITIVE_PATTERNS):
+            var_name, _, value = entry.partition("=")
+            if _sensitive_name(var_name):
                 redacted.append(f"{var_name}=***")
-            else:
-                redacted.append(entry)
+                continue
+            value, _ = redact_text(value)
+            value = _SCHEMELESS_USERINFO.sub(REDACTED, value)
+            redacted.append(f"{var_name}={value}")
         else:
             redacted.append(entry)
     return redacted
 
 
-async def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
-    """Run a docker CLI command asynchronously and return (success, output)."""
+async def _run_docker(
+    args: list[str], timeout: int = 15, *, merge_stderr: bool = False
+) -> tuple[bool, str]:
+    """Run a docker CLI command asynchronously and return (success, output).
+
+    With *merge_stderr*, both streams share one pipe, in the order they were
+    written, and the output is that pipe whether or not the command failed.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker",
             *args,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:
-            return False, stderr.decode().strip()
-        return True, stdout.decode().strip()
+            return False, (stderr or stdout).decode(errors="replace").strip()
+        return True, stdout.decode(errors="replace").strip()
     except FileNotFoundError:
         logger.exception("Docker CLI not found")
         return False, "Docker CLI not found. Is Docker installed?"
@@ -63,6 +102,16 @@ async def _run_docker(args: list[str], timeout: int = 15) -> tuple[bool, str]:
         with contextlib.suppress(ProcessLookupError):
             await proc.wait()
         return False, f"Command timed out after {timeout}s"
+
+
+def _mark_scope(item: dict[str, Any], name: str, pinned: bool) -> None:
+    """Tag an auxiliary container (``ORRERY_AUXILIARY_RESOURCES``).
+
+    Platform ones stay untagged, so a deployment that configures nothing sees
+    the same output as before.
+    """
+    if resource_scope(name, pinned) == "auxiliary":
+        item["scope"] = "auxiliary"
 
 
 # ── Container operations ─────────────────────────────────────────────
@@ -88,7 +137,9 @@ async def list_containers(all: bool = False) -> dict[str, Any]:
     containers = []
     for line in output.splitlines():
         if line.strip():
-            containers.append(json.loads(line))
+            row = json.loads(line)
+            _mark_scope(row, str(row.get("Names", "")), pinned_by_labels(row.get("Labels")))
+            containers.append(row)
 
     return {"status": "success", "containers": containers, "count": len(containers)}
 
@@ -161,7 +212,10 @@ async def get_container_logs(
         args.extend(["--since", since])
     args.append(container_name)
 
-    ok, output = await _run_docker(args, timeout=10)
+    # `docker logs` replays the container's stderr on its own stderr, and many
+    # servers (nginx's error log, Prometheus, most Go and Java services) log
+    # only there: read both, interleaved as the CLI writes them.
+    ok, output = await _run_docker(args, timeout=10, merge_stderr=True)
     if not ok:
         return {"status": "error", "message": output}
 
@@ -191,6 +245,8 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
         return {"status": "error", "message": output}
 
     stats = json.loads(output)
+    # Not scope-tagged: `docker stats` carries no labels, so a container pinned
+    # into the platform would be auxiliary here and not in list_containers.
     return {
         "status": "success",
         "container": container_name,
@@ -203,34 +259,102 @@ async def get_container_stats(container_name: str) -> dict[str, Any]:
     }
 
 
-async def docker_compose_status(project_dir: str | None = None) -> dict[str, Any]:
-    """Gets the status of services in a Docker Compose project.
+#: Compose project names: lowercase letters, digits, dashes and underscores,
+#: starting with a letter or digit (the rule ``docker compose -p`` enforces).
+_COMPOSE_PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]*")
+
+_PROJECT_LABEL = "com.docker.compose.project"
+#: One JSON object per container, built by the CLI's own template: the compose
+#: labels are read by key, since the ``Labels`` column joins them with commas
+#: that config-file paths may contain too.
+_COMPOSE_PS_FORMAT = (
+    '{"project":{{json (.Label "com.docker.compose.project")}},'
+    '"service":{{json (.Label "com.docker.compose.service")}},'
+    '"name":{{json .Names}},"state":{{json .State}},'
+    '"status":{{json .Status}},"image":{{json .Image}},'
+    '"scope":{{json (.Label "orrery.scope")}}}'
+)
+
+
+async def docker_compose_status(project: str | None = None) -> dict[str, Any]:
+    """Gets the status of Docker Compose projects or of one project's services.
+
+    Reads the compose labels the daemon keeps on each container, so it needs no
+    compose file (and no compose plugin) and works against a remote
+    ``DOCKER_HOST``. Stopped containers are included.
 
     Args:
-        project_dir: Path to the directory containing docker-compose.yml.
-                     If not provided, uses the current directory.
+        project: Compose project name. If omitted, lists every project with a
+                 count of its containers by state; auxiliary containers
+                 (``ORRERY_AUXILIARY_RESOURCES``) are counted apart, under
+                 ``auxiliary_states``.
 
     Returns:
-        A dictionary with the status of all compose services.
+        A dictionary with the projects, or with every container of *project*.
     """
-    if project_dir and (err := validate_path(project_dir, "project_dir")):
-        return err
-
-    args = ["compose"]
-    if project_dir:
-        args.extend(["-f", f"{project_dir}/docker-compose.yml"])
-    args.extend(["ps", "--format", "json"])
-
-    ok, output = await _run_docker(args)
+    label = _PROJECT_LABEL
+    if project is not None:
+        if err := validate_string(project, "project", max_len=128, pattern=_COMPOSE_PROJECT):
+            return err
+        label = f"{_PROJECT_LABEL}={project}"
+    ok, output = await _run_docker(
+        ["ps", "--all", "--filter", f"label={label}", "--format", _COMPOSE_PS_FORMAT]
+    )
     if not ok:
         return {"status": "error", "message": output}
+    try:
+        rows = [json.loads(line) for line in output.splitlines() if line.strip()]
+    except json.JSONDecodeError:
+        return {"status": "error", "message": "unexpected output from docker ps"}
+    rows = [r for r in rows if isinstance(r, dict)]
+    for row in rows:
+        pinned = row.pop("scope", None) == "platform"
+        # A project named like an auxiliary glob makes its containers auxiliary,
+        # unless a container is pinned into the platform.
+        name = str(row.get("name", ""))
+        if not pinned and resource_scope(str(row.get("project", ""))) == "auxiliary":
+            row["scope"] = "auxiliary"
+        else:
+            _mark_scope(row, name, pinned)
 
-    services = []
-    for line in output.splitlines():
-        if line.strip():
-            services.append(json.loads(line))
+    if project is not None:
+        if not rows:
+            return {"status": "error", "message": f"no containers for compose project {project!r}"}
+        services = [{k: v for k, v in r.items() if k != "project"} for r in rows]
+        return {
+            "status": "success",
+            "project": project,
+            "services": services,
+            "count": len(services),
+        }
 
-    return {"status": "success", "services": services, "count": len(services)}
+    # Per project, state counts kept apart by scope: a crash-looping auxiliary
+    # container inside a platform project must not read as a platform restart.
+    platform: dict[str, dict[str, int]] = {}
+    auxiliary: dict[str, dict[str, int]] = {}
+    for row in rows:
+        name = str(row.get("project", ""))
+        platform.setdefault(name, {})
+        bucket = auxiliary if row.get("scope") == "auxiliary" else platform
+        counts = bucket.setdefault(name, {})
+        state = str(row.get("state", "unknown"))
+        counts[state] = counts.get(state, 0) + 1
+    listed = []
+    for name in sorted(platform):
+        states, aux_states = platform[name], auxiliary.get(name, {})
+        aux_count = sum(aux_states.values())
+        entry: dict[str, Any] = {"name": name, "containers": sum(states.values()) + aux_count}
+        if aux_count and not states:
+            entry["scope"] = "auxiliary"
+            entry["states"] = aux_states
+        else:
+            # Platform containers only; the auxiliary ones are counted beside them.
+            entry["states"] = states
+            if aux_count:
+                entry["auxiliary_containers"] = aux_count
+                entry["auxiliary_states"] = aux_states
+        listed.append(entry)
+    return {"status": "success", "projects": listed, "count": len(listed)}
 
 
 @confirm("stops a running container")
