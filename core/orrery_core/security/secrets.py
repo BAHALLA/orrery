@@ -155,7 +155,7 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
                 f"Secret file {name} in {root} is not readable by this process "
                 f"(uid {os.getuid()}): {exc.strerror}. Make it readable, or remove it."
             ) from exc
-        except UnicodeDecodeError as exc:
+        except UnicodeDecodeError:
             raise SecretFileUnreadable(
                 f"Secret file {name} in {root} is not UTF-8 text (saved as UTF-16?)"
             ) from None  # the decode error would quote the bytes
