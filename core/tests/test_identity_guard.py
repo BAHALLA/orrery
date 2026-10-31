@@ -87,6 +87,9 @@ def _server_state() -> dict[str, Any]:
         ),
         ("autonomy_level", "L4"),
         ("_autonomy_set_by_server", True),
+        # A tool must not grant the learner a hint level (AEP-032 §3).
+        ("_learning_level", {"scenario_id": "kafka-lag-01", "level": 3}),
+        ("_learning_level_set_by_server", True),
     ],
 )
 async def test_every_guarded_key_is_reverted(key, forged):
@@ -109,6 +112,8 @@ def test_guarded_keys_cover_every_identity_and_authorization_key():
         ACTOR_STATE_KEY,
         CONFIRMATION_STRICT_STATE_KEY,
         CONFIRMATION_DECISION_STATE_KEY,
+        "_learning_level",
+        "_learning_level_set_by_server",
     } == GUARDED_STATE_KEYS
 
 

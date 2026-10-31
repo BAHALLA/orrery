@@ -9,6 +9,7 @@ import { BREAKPOINT_LG, useMediaQuery, useTurnAnnouncement } from "./a11y";
 import { ShowApprovalContext } from "./approval";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { EnvironmentBadge, EnvironmentBanner } from "./EnvironmentBadge";
+import { LearningHint } from "./LearningHint";
 import { pendingPlacement } from "../chat/pending";
 import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon, ShieldIcon } from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
@@ -296,6 +297,9 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           {/* Here as well as in the sidebar: a folded rail or a closed drawer
               must not leave production unmarked. */}
           <EnvironmentBadge />
+          {system.me?.learning ? (
+            <LearningHint learning={system.me.learning} onTakeHint={system.takeHint} />
+          ) : null}
           {live ? (
             <span
               aria-hidden="true"
