@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A hint ladder in the learning sandbox (AEP-032 phase 2).** Each learner
+  has a level per scenario: 0 orient, 1 narrow, 2 point at the tool, 3
+  reveal.
+  - The console's *Take a hint* button calls `POST /learning/hint`. It
+    accepts verified people only, is rate-limited per learner
+    (`ORRERY_LEARNING_HINT_RATE_LIMIT`, default `3/minute`), raises the
+    level one step at a time and never lowers it.
+  - Each step writes a `learning_hint` audit entry, which a lab can deduct
+    hint costs from, and `orrery_learning_hints_total{level}`.
+  - The level reaches the coordinator as one line of its instruction, and
+    the answer guard stops withholding values at level 3.
+  - Levels are per process: after a restart every learner is back at the
+    manifest's `default_disclosure`. A level is stamped into each turn by
+    the server, and a tool that writes it is reverted.
+
 ### Fixed
+
+- **Guarded MCP servers no longer try Google mTLS.** ADK's MCP session
+  manager calls `google.auth.default()` on every HTTP/SSE connection to set up
+  client-certificate mTLS. Without Google credentials that logged `Failed to
+  configure mTLS using AsyncAuthorizedSession` on each connection. With them, a
+  successful probe would have replaced the guarded HTTP client (origin pin,
+  address checks, no redirects) with ADK's own, and sent a Google token to the
+  MCP server. `GuardedMcpToolset` turns the probe off; TLS comes from the
+  server's config.
+- **The image uses LiteLLM's bundled tables.** `LITELLM_LOCAL_MODEL_COST_MAP`
+  and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are set by default, so startup no
+  longer fetches from `raw.githubusercontent.com`, a request that fails behind
+  an egress allowlist.
 
 - **`docker_compose_status` keeps auxiliary containers out of a project's
   state counts.** With every container in one compose project, a

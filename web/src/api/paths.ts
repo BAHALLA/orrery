@@ -27,4 +27,6 @@ export const API_PREFIXES = [
   "/admin",
   // Orrery Studio (AEP-031); mounted only when ORRERY_STUDIO_ENABLED.
   "/studio",
+  // The learning sandbox's hint ladder (AEP-032); mounted only in learning mode.
+  "/learning",
 ] as const;
