@@ -15,7 +15,9 @@ role, and send the rest to a page of its choice. Learners in the sandbox can
 ask for a hint, one level at a time, with each one recorded; the sandbox now
 keeps no long-term memory, so a lab can use a durable session store. Guarded
 MCP servers no longer probe Google mTLS, and the image no longer fetches
-LiteLLM's tables from GitHub at startup.
+LiteLLM's tables from GitHub at startup. Note for operators: an unusable
+file in `ORRERY_SECRETS_DIR` (unreadable, not UTF-8, over 64 KiB) now stops
+startup instead of being skipped.
 
 ### Added
 
