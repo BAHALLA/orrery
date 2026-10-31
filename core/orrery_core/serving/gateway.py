@@ -292,12 +292,41 @@ def _refuse_memory_in_learning(
         )
 
 
+#: ADK's memory tools: recall of earlier sessions by name.
+_RECALL_TOOL_NAMES = frozenset({"load_memory", "preload_memory"})
+
+
 def _refuse_recall_tool_in_learning(root_agent: Any) -> None:
-    names = {getattr(t, "name", None) for t in getattr(root_agent, "tools", None) or []}
-    if "load_memory" in names:
+    """Refuse a tree that can carry anything from one attempt to the next.
+
+    Walks every agent the root can reach (``AgentTool`` specialists, declarative
+    agents, sub-agents): ADK's memory tools, and tools marked
+    :func:`~orrery_core.security.guardrails.cross_session` (``user:``/``app:``
+    state, such as the ops journal's notes), which persist per learner across
+    sessions and, with ``DATABASE_URL``, across restarts and lab resets.
+    """
+    from ..security.guardrails import is_cross_session
+
+    seen: set[int] = set()
+    stack = [root_agent]
+    found: list[str] = []
+    while stack:
+        agent = stack.pop()
+        if id(agent) in seen:
+            continue
+        seen.add(id(agent))
+        stack.extend(getattr(agent, "sub_agents", None) or [])
+        for tool in getattr(agent, "tools", None) or []:
+            name = str(getattr(tool, "name", None) or getattr(tool, "__name__", ""))
+            if name in _RECALL_TOOL_NAMES or is_cross_session(tool):
+                found.append(f"{getattr(agent, 'name', '?')}.{name}")
+            if (inner := getattr(tool, "agent", None)) is not None:
+                stack.append(inner)
+    if found:
         raise ValueError(
-            "ORRERY_LEARNING_MODE cannot start: the root agent holds load_memory, "
-            "which recalls a learner's earlier attempts"
+            "ORRERY_LEARNING_MODE cannot start: these tools carry state from one "
+            f"attempt to the next: {', '.join(sorted(found))}. Disable the agents "
+            "that hold them (e.g. ORRERY_DISABLED_SPECIALISTS=ops_journal)"
         )
 
 

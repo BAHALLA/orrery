@@ -427,6 +427,10 @@ def build_chat_agent(specialists: Sequence[Specialist], declarative_agents: Sequ
     one the coordinator cannot reach.
     """
     learning_gate.check("build_chat_agent()")
+    if learning_gate.is_active():
+        # The journal keeps notes in `user:` state, which follows a learner
+        # from one attempt to the next: recall by another name (AEP-032).
+        specialists = [s for s in specialists if s.journal is None]
     triage = build_triage_agent(specialists)
     # Only offer what the coordinator can do: with the journal switched off, a
     # "want me to save this?" ends in a tool it doesn't have.

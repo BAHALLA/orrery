@@ -108,28 +108,48 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: orrery
-      POSTGRES_PASSWORD_FILE: /run/secrets/orrery_db_password
       POSTGRES_DB: orrery
+      POSTGRES_PASSWORD_FILE: /run/secrets/orrery_db_password
+    secrets: [orrery_db_password]
     volumes: [orrery-db:/var/lib/postgresql/data]
-    networks: [orrery-internal]          # no published port
+    networks: [orrery-db]                # internal only, no published port
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orrery -d orrery"]
       interval: 5s
       retries: 12
-    secrets: [orrery_db_password]
     restart: unless-stopped
 
   orrery:
     environment:
-      DATABASE_URL: postgresql+asyncpg://orrery:${ORRERY_DB_PASSWORD}@orrery-db:5432/orrery
+      # Every file here named like an env var is loaded at startup, so the
+      # URL never appears in the container's environment (docker inspect).
+      ORRERY_SECRETS_DIR: /run/secrets
+    secrets:
+      - source: orrery_database_url
+        target: DATABASE_URL
     depends_on:
       orrery-db: {condition: service_healthy}
-    networks: [orrery-internal]
+    # The DB network is internal; the default one keeps egress (model API,
+    # identity provider) and published ports working.
+    networks: [default, orrery-db]
+    restart: unless-stopped
+
+secrets:
+  orrery_db_password:
+    file: ./secrets/orrery_db_password    # the password alone
+  orrery_database_url:
+    file: ./secrets/orrery_database_url   # postgresql+asyncpg://orrery:<password>@orrery-db:5432/orrery
 
 volumes: {orrery-db: {}}
-networks: {orrery-internal: {internal: true}}
+networks:
+  orrery-db: {internal: true}
 ```
 
+- **The password is written twice, in two files.** Postgres reads it bare;
+  Orrery reads it inside the URL, where characters such as `@`, `:`, `/` or
+  `%` must be percent-encoded. A password of letters and digits
+  (`openssl rand -hex 24`) avoids the question. Keep both files `0600`, out
+  of version control.
 - **One database per instance.** Two instances (a lab and an ops console)
   get two databases, or two Postgres containers: sessions, memory and the
   agent catalog are not namespaced by instance.
@@ -141,9 +161,10 @@ networks: {orrery-internal: {internal: true}}
   `DATABASE_URL`, and it never keeps long-term memory: no memory service, no
   `MemoryPlugin`, no `load_memory` tool, all refused at startup. Recall is
   keyed by the learner, not the scenario, so it would replay an earlier
-  attempt's answers. Sessions persist; recall doesn't. The hint store stays
-  per process, and after a restart every learner reads as the manifest's
-  `default_disclosure`, which withholds more, never less.
+  attempt's answers. The same goes for `user:` state: the ops journal (notes
+  and preferences per learner) is left out of the coordinator in learning
+  mode, and a tree that still reaches a tool marked `cross_session` is
+  refused. Sessions persist; recall doesn't.
 - **Back it up** like any database (`pg_dump` on a schedule): conversations
   name people and systems.
 

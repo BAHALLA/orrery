@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses all three at startup. Memory is keyed by the learner, not the
   scenario, so recall would hand back an earlier attempt's evidence and
   answers, and with `DATABASE_URL` it would outlive every reset of the lab.
+  The ops journal, whose notes and preferences live in `user:` state, is left
+  out of the coordinator for the same reason, and the gateway refuses any
+  agent tree reaching a tool marked with the new `cross_session` marker.
   Sessions still persist, so a learning deployment can now use PostgreSQL
   (see *Single node (Docker Compose)* in the deployment guide).
 
