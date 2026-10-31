@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-01
+
+**Durable chats without lasting memory.** `ORRERY_LONG_TERM_MEMORY=false`
+lets a deployment keep sessions in PostgreSQL while carrying nothing from one
+session to the next: no memory service, no `load_memory`, no ops journal.
+Until now only the learning sandbox did this, and it refuses Studio, so a
+lab's Studio instance (or any shared instance) can now use `DATABASE_URL`
+safely. A missed wiring stops startup instead of remembering.
+
 ### Added
 
 - **`ORRERY_LONG_TERM_MEMORY=false`: durable chats without lasting memory.**
@@ -2023,7 +2032,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/BAHALLA/orrery/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/BAHALLA/orrery/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/BAHALLA/orrery/compare/v0.13.0...v0.14.0
