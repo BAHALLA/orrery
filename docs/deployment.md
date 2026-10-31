@@ -451,6 +451,24 @@ Verify `DATABASE_URL` is actually being read — the pod logs should print
 If you see `Using in-memory session store`, the env var isn't wired
 (check the Secret is mounted via `envFrom`).
 
+### Startup warnings behind an egress allowlist
+
+The image makes no outbound call that the deployment didn't configure. Two
+defaults keep it that way:
+
+| Variable | Image default | Without it |
+|----------|---------------|------------|
+| `LITELLM_LOCAL_MODEL_COST_MAP` | `True` | LiteLLM downloads its model price list from `raw.githubusercontent.com` on first use and retries when the request is refused. |
+| `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` | `true` | LiteLLM fetches its Anthropic beta-header table at startup and logs `Failed to fetch remote beta headers config` when the request is refused. |
+
+Both use the copies bundled with the pinned LiteLLM version. Outside the image
+(`make run-api`), set them yourself if your network blocks GitHub.
+
+Guarded MCP servers never try Google client-certificate mTLS. ADK's own MCP
+client does, on every connection (`Failed to configure mTLS using
+AsyncAuthorizedSession`); Orrery turns that probe off, since an MCP server's TLS
+settings come from its [MCP config](integrations/mcp.md).
+
 ### LLM costs spike unexpectedly
 
 Check the Prometheus metrics `orrery_llm_tokens_total` and the context cache

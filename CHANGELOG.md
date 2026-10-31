@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Guarded MCP servers no longer try Google mTLS.** ADK's MCP session
+  manager calls `google.auth.default()` on every HTTP/SSE connection to set up
+  client-certificate mTLS. Without Google credentials that logged `Failed to
+  configure mTLS using AsyncAuthorizedSession` on each connection. With them, a
+  successful probe would have replaced the guarded HTTP client (origin pin,
+  address checks, no redirects) with ADK's own, and sent a Google token to the
+  MCP server. `GuardedMcpToolset` turns the probe off; TLS comes from the
+  server's config.
+- **The image uses LiteLLM's bundled tables.** `LITELLM_LOCAL_MODEL_COST_MAP`
+  and `LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS` are set by default, so startup no
+  longer fetches from `raw.githubusercontent.com`, a request that fails behind
+  an egress allowlist.
+
 - **`docker_compose_status` keeps auxiliary containers out of a project's
   state counts.** With every container in one compose project, a
   crash-looping `lab-*` container showed as an untagged `restarting: 1` in
