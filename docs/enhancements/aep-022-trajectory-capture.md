@@ -266,6 +266,21 @@ the lab does not pull. Instead:
      reads and removes the fragment **before** any auth redirect, carries
      the token through `signinRedirect({ state })` (or `sessionStorage`),
      and restores it after the callback.
+   - **The lab's own gate redirects first.** A lab in front of the console
+     may answer its launch URL with a redirect of its own (Tirraflow's
+     `/__lab/enter?t=…&lab=…` answers with a 302 to `/` that sets a gate
+     cookie). Browsers carry the fragment over an **HTTP 3xx** redirect
+     whose `Location` has none (RFC 9110 §10.2.2), so the lab puts
+     `#attempt=…` on the **launch URL itself**. The console reads the
+     fragment on any path, at app boot, before its router or any auth
+     redirect runs, and never relies on a path or query parameter
+     surviving the gate: the gate always lands on `/`. Three ways to lose
+     it, which the gate must avoid:
+     - a `Location` with a fragment of its own, which replaces it;
+     - a script or meta-refresh redirect, which is a new navigation;
+     - a sign-in hop of the gate's own through an IdP: a gate that signs
+       the learner in must carry the fragment across it, as the console
+       does.
    - The console sends it with the **first** message of a new conversation.
      Orrery decrypts it and checks four things before binding: `typ` is
      `orrery-learning-attempt`, `iss`/`sub` are the caller's, `scenario_id`
