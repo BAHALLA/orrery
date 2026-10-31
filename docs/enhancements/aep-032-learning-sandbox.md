@@ -226,6 +226,16 @@ step, with `old_level` and `new_level`). `GET /me` carries the caller's
 `learning` block (`scenario_id`, `level`, `max_level`, `can_take_hint`), which
 the console reads for its badge and button.
 
+- **A lab reset needs a new `scenario_id`.** Levels are kept per
+  `(subject, scenario_id)` until the process restarts. A reseed that keeps
+  the id keeps every learner's level, so a learner who reached level 3 would
+  start the new run revealed. Give each seeded run its own id
+  (`kafka-lag-01-2026-10-31T10`), or restart the server with the reseed.
+- **A delegated agent acting for a learner gets the learner's level.** It is
+  keyed by the token's subject, which is the person's. It cannot raise the
+  level (the hint endpoint takes only human principals), but at level 3 its
+  turns are unguarded, as the learner's own are.
+
 - **Bound to the scenario.**
   - The level is stored as `(scenario_id, level)`. A level recorded for any
     other scenario reads as `default_disclosure`, so reaching level 3 on
