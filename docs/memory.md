@@ -181,9 +181,11 @@ matters more than per-turn cost.
   leaves the plugin out, and `run_persistent` builds no memory service;
 - no `load_memory` tool on the coordinator, and no ops journal, whose notes and
   preferences live in `user:` state and so follow a person between sessions;
-- a declarative agent holding a journal tool fails to build, and the
-  console's **Agents** tab does not offer those tools, so an admin edit is
-  refused before it is saved;
+- a declarative agent holding a recall or `cross_session` tool fails to
+  build: an admin edit is refused before it is saved (and the console's
+  **Agents** tab does not offer those tools), and an `ORRERY_AGENTS_CONFIG`
+  file holding one stops startup, batch triage included, since it imports
+  the same agent module;
 - every surface that runs through `AgentGateway` (the HTTP server and
   console, `run_persistent`, Slack, Google Chat, Studio runs) also refuses a
   memory service, a `MemoryPlugin`, or a tree (agents, `AgentTool`s,
@@ -199,7 +201,7 @@ them yourself if they must go.
 Use it on a shared instance where a returning person should not get their own
 earlier findings back (a practice lab's Studio instance, a demo). The learning
 sandbox (AEP-032) does the same on its own. The batch triage Workflow is not a
-conversation and keeps its journal step.
+conversation and keeps its own journal step.
 
 ## Plugin Order
 
