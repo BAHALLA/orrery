@@ -148,8 +148,14 @@ networks:
 - **The password is written twice, in two files.** Postgres reads it bare;
   Orrery reads it inside the URL, where characters such as `@`, `:`, `/` or
   `%` must be percent-encoded. A password of letters and digits
-  (`openssl rand -hex 24`) avoids the question. Keep both files `0600`, out
-  of version control.
+  (`openssl rand -hex 24`) avoids the question. Keep both files out of
+  version control.
+- **The URL file must be readable by uid 1000.** Plain Compose mounts a
+  file secret with the host file's owner and mode (it ignores `uid`/`mode`),
+  and the image runs as uid 1000. An unreadable file is logged and skipped,
+  so Orrery would start on in-memory sessions: `chown 1000
+  secrets/orrery_database_url && chmod 0400 secrets/orrery_database_url`.
+  Postgres reads its password file as root, so `0600` is fine there.
 - **One database per instance.** Two instances (a lab and an ops console)
   get two databases, or two Postgres containers: sessions, memory and the
   agent catalog are not namespaced by instance.
