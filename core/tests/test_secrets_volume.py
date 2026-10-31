@@ -146,3 +146,19 @@ print(len(cfg.secret), ES().elasticsearch_password)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["64", "es-pass"]
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root reads any file")
+def test_an_unreadable_secret_file_stops_startup(tmp_path, clean_env):
+    """Skipping it would start as if unset: DATABASE_URL -> in-memory sessions."""
+    from orrery_core.security.secrets import SecretFileUnreadable
+
+    secret = tmp_path / "DATABASE_URL"
+    secret.write_text("postgresql+asyncpg://orrery:pw@db/orrery")
+    secret.chmod(0)
+    try:
+        with pytest.raises(SecretFileUnreadable, match="DATABASE_URL") as raised:
+            load_secrets_into_environment(tmp_path)
+        assert "pw@" not in str(raised.value)
+    finally:
+        secret.chmod(0o600)

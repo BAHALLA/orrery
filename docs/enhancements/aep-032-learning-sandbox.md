@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | <span class="badge badge--amber">in-progress</span> (phases 0–1 built: `ORRERY_DISABLED_TOOLS`, the manifest loader, the sandbox gate and the answer guard) |
+| **Status** | <span class="badge badge--amber">in-progress</span> (phases 0–2 built: `ORRERY_DISABLED_TOOLS`, the manifest loader, the sandbox gate, the answer guard and the hint ladder) |
 | **Priority** | <span class="badge badge--grey">P3</span> |
 | **Effort** | Medium (5-7 days, in four phases) |
 | **Impact** | Medium (practice labs only; no effect on any other deployment) |
@@ -215,12 +215,27 @@ by `ORRERY_SCENARIO_MANIFEST`:
 Each learner has a disclosure level from 0 to 3 **per scenario**, starting
 at the manifest's `default_disclosure`:
 
-| Level | What the agent may say |
-|-------|------------------------|
-| 0 | questions only: which signal to look at |
-| 1 | where to look (a topic, a group, an alert) |
-| 2 | what to compare, without the conclusion |
-| 3 | the answer, with its evidence; target values are no longer withheld |
+| Level | Ladder step | What the agent may say |
+|-------|-------------|------------------------|
+| 0 | orient | questions only: which signal to look at |
+| 1 | narrow | where to look (a topic, a group, an alert) |
+| 2 | point at the tool | which tool to run and what to compare, without the conclusion |
+| 3 | reveal | the answer, with its evidence; target values are no longer withheld |
+
+A lab deducts hint costs from the `learning_hint` audit entries (one per
+step, with `old_level` and `new_level`). `GET /me` carries the caller's
+`learning` block (`scenario_id`, `level`, `max_level`, `can_take_hint`), which
+the console reads for its badge and button.
+
+- **A lab reset needs a new `scenario_id`.** Levels are kept per
+  `(subject, scenario_id)` until the process restarts. A reseed that keeps
+  the id keeps every learner's level, so a learner who reached level 3 would
+  start the new run revealed. Give each seeded run its own id
+  (`kafka-lag-01-2026-10-31T10`), or restart the server with the reseed.
+- **A delegated agent acting for a learner gets the learner's level.** It is
+  keyed by the token's subject, which is the person's. It cannot raise the
+  level (the hint endpoint takes only human principals), but at level 3 its
+  turns are unguarded, as the learner's own are.
 
 - **Bound to the scenario.**
   - The level is stored as `(scenario_id, level)`. A level recorded for any
@@ -543,12 +558,12 @@ them. Both are inherent to a diagnostic exercise.
 
 **Hints**
 
-- [ ] The hint endpoint refuses non-human principals.
-- [ ] It is keyed by subject and rate-limited, adds +1 per call and never
+- [x] The hint endpoint refuses non-human principals.
+- [x] It is keyed by subject and rate-limited, adds +1 per call and never
       lowers the level.
-- [ ] A level from another scenario reads as the default.
-- [ ] A tool writing the level keys is reverted.
-- [ ] A hint pressed during a running turn does not break that turn.
+- [x] A level from another scenario reads as the default.
+- [x] A tool writing the level keys is reverted.
+- [x] A hint pressed during a running turn does not break that turn.
 
 **Tool narrowing**
 

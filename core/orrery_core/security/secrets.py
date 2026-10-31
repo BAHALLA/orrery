@@ -85,6 +85,10 @@ _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MAX_SECRET_BYTES = 64 * 1024
 
 
+class SecretFileUnreadable(RuntimeError):
+    """A secret file named like an environment variable exists but can't be read."""
+
+
 def load_secrets_into_environment(directory: str | Path | None = None) -> list[str]:
     """Expose every secret file under *directory* as an environment variable.
 
@@ -133,6 +137,16 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
                 logger.warning("Secret file %s is over %d bytes; skipped", name, _MAX_SECRET_BYTES)
                 continue
             value = entry.read_text(encoding="utf-8").rstrip("\r\n")
+        except PermissionError as exc:
+            # A secret the operator mounted but this process may not read is a
+            # deployment error, not an absent setting: skipping it would start
+            # the service as if it were unset (DATABASE_URL -> in-memory
+            # sessions, against the DB fail-fast policy). Usually the file's
+            # owner: the image runs as uid 1000.
+            raise SecretFileUnreadable(
+                f"Secret file {name} in {root} is not readable by this process "
+                f"(uid {os.getuid()}): {exc.strerror}. Make it readable, or remove it."
+            ) from exc
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning("Secret file %s could not be read: %s", name, exc)
             continue

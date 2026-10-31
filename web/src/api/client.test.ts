@@ -255,6 +255,7 @@ describe("API path coverage", () => {
       client.catalog(),
       client.updateCatalog({ version: 0, disabled_specialists: [], agents: [] }),
       client.selfTest(),
+      client.takeHint(),
     ]);
 
     const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;

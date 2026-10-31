@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A hint ladder in the learning sandbox (AEP-032 phase 2).** Each learner
+  has a level per scenario: 0 orient, 1 narrow, 2 point at the tool, 3
+  reveal.
+  - The console's *Take a hint* button calls `POST /learning/hint`. It
+    accepts verified people only, is rate-limited per learner
+    (`ORRERY_LEARNING_HINT_RATE_LIMIT`, default `3/minute`), raises the
+    level one step at a time and never lowers it.
+  - Each step writes a `learning_hint` audit entry, which a lab can deduct
+    hint costs from, and `orrery_learning_hints_total{level}`.
+  - The level reaches the coordinator as one line of its instruction, and
+    the answer guard stops withholding values at level 3.
+  - Levels are per process: after a restart every learner is back at the
+    manifest's `default_disclosure`. A level is stamped into each turn by
+    the server, and a tool that writes it is reverted.
+
 ### Changed
 
 - **The learning sandbox keeps no long-term memory.** With
@@ -23,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An unreadable file in `ORRERY_SECRETS_DIR` stops startup.** It used to be
+  logged and skipped, so an unreadable `DATABASE_URL` file (wrong owner: the
+  image runs as uid 1000) started the server on in-memory sessions, against
+  the database fail-fast policy. The error names the file and the uid.
 - **Guarded MCP servers no longer try Google mTLS.** ADK's MCP session
   manager calls `google.auth.default()` on every HTTP/SSE connection to set up
   client-certificate mTLS. Without Google credentials that logged `Failed to

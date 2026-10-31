@@ -397,7 +397,13 @@ def test_the_guard_runs_first_among_after_model_plugins(active):
 #: Plugins with a before-model hook, each reviewed: an answer from there skips
 #: the guard (AEP-032 §4). TokenBudgetPlugin answers with a fixed text; the
 #: other two only edit the request and return None.
-_REVIEWED_BEFORE_MODEL = {"TokenBudgetPlugin", "CallBudgetPlugin", "AttachmentPlugin"}
+# DisclosureInstructionPlugin only appends the level line and returns None.
+_REVIEWED_BEFORE_MODEL = {
+    "TokenBudgetPlugin",
+    "CallBudgetPlugin",
+    "AttachmentPlugin",
+    "DisclosureInstructionPlugin",
+}
 
 
 def test_no_unreviewed_plugin_can_answer_before_the_model(active):

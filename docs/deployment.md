@@ -152,10 +152,17 @@ networks:
   version control.
 - **The URL file must be readable by uid 1000.** Plain Compose mounts a
   file secret with the host file's owner and mode (it ignores `uid`/`mode`),
-  and the image runs as uid 1000. An unreadable file is logged and skipped,
-  so Orrery would start on in-memory sessions: `chown 1000
+  and the image runs as uid 1000. If it cannot read the file, Orrery
+  refuses to start: `chown 1000
   secrets/orrery_database_url && chmod 0400 secrets/orrery_database_url`.
   Postgres reads its password file as root, so `0600` is fine there.
+  Under rootless Docker, Podman or `userns-remap`, container uid 1000 maps to
+  another host uid: use that one (`podman unshare chown 1000 …`). `chown`
+  needs `sudo` unless your own uid is 1000.
+- **An unreadable secret file stops startup.** Orrery refuses to start
+  rather than run as if `DATABASE_URL` were unset (which would mean
+  in-memory sessions again), and the error names the file and the uid that
+  could not read it.
 - **One database per instance.** Two instances (a lab and an ops console)
   get two databases, or two Postgres containers: sessions, memory and the
   agent catalog are not namespaced by instance.

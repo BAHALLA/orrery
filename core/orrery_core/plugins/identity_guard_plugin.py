@@ -52,6 +52,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from ..learning_gate import LEARNING_LEVEL_LOCKED_STATE_KEY, LEARNING_LEVEL_STATE_KEY
 from ..observability.audit import audit_event
 from ..security.auth import AUTH_STATE_KEY
 from ..security.guardrails import (
@@ -75,6 +76,8 @@ GUARDED_STATE_KEYS: frozenset[str] = frozenset(
         ACTOR_STATE_KEY,
         CONFIRMATION_STRICT_STATE_KEY,
         CONFIRMATION_DECISION_STATE_KEY,
+        LEARNING_LEVEL_STATE_KEY,
+        LEARNING_LEVEL_LOCKED_STATE_KEY,
     }
 )
 

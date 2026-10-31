@@ -158,6 +158,9 @@ class ServerConfig:
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
     chat_rate_limit: str = "30/minute"
+    #: ``POST /learning/hint`` per learner (AEP-032): a lab charges for hints,
+    #: and a held-down button should not climb the whole ladder at once.
+    hint_rate_limit: str = "3/minute"
     selftest_rate_limit: str = "10/minute"
     docs_enabled: bool | None = None
     rate_limit_storage_uri: str = "memory://"
@@ -213,6 +216,8 @@ class ServerConfig:
           on ``POST /chat``.
         - ``ORRERY_SELFTEST_RATE_LIMIT`` (default ``10/minute``) — per-caller
           limit on ``POST /onboarding/selftest``.
+        - ``ORRERY_LEARNING_HINT_RATE_LIMIT`` (default ``3/minute``) — per-learner
+          limit on ``POST /learning/hint`` (learning sandbox only).
         - ``ORRERY_DOCS_ENABLED`` — serve the interactive ``/docs`` schema.
           Unset defaults to *on only when auth is off* (see :attr:`serve_docs`).
         - ``ORRERY_RATE_LIMIT_STORAGE_URI`` (default ``memory://``) — where the
@@ -242,6 +247,7 @@ class ServerConfig:
             web_console_enabled=env_flag("ORRERY_WEB_CONSOLE_ENABLED", default=False),
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
             selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
+            hint_rate_limit=os.getenv("ORRERY_LEARNING_HINT_RATE_LIMIT", "3/minute"),
             docs_enabled=env_flag("ORRERY_DOCS_ENABLED", default=False) if docs else None,
             rate_limit_storage_uri=os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
             or "memory://",
@@ -456,6 +462,16 @@ class SpecialistInfo(BaseModel):
     label: str | None = None
 
 
+class LearningInfo(BaseModel):
+    """A learner's place on the hint ladder (AEP-032 §3). Never a value."""
+
+    scenario_id: str
+    level: int
+    max_level: int
+    #: Whether this caller may take a hint: only a verified person.
+    can_take_hint: bool
+
+
 class MeResponse(BaseModel):
     """Who the caller is and what this deployment will let them do.
 
@@ -483,6 +499,8 @@ class MeResponse(BaseModel):
     #: (``ORRERY_STUDIO_ENABLED``) and the caller is a human admin. The
     #: console shows its entry only then; ``/studio/*`` checks it again.
     studio_available: bool = False
+    #: The learning sandbox's state for this caller, or ``null`` outside it.
+    learning: LearningInfo | None = None
 
 
 class CheckResultModel(BaseModel):
@@ -708,6 +726,7 @@ def create_app(
     limiter = RateLimiter(cfg.rate_limit_storage_uri)
     chat_limit = parse_rate(cfg.chat_rate_limit)
     selftest_limit = parse_rate(cfg.selftest_rate_limit)
+    hint_limit = parse_rate(cfg.hint_rate_limit)
     if cfg.rate_limit_storage_uri.startswith("memory://") and env_flag(
         MULTI_REPLICA_ENV, default=False
     ):
@@ -1024,6 +1043,10 @@ def create_app(
         # runs), so a long-lived session always inherits the latest verified
         # role and AuthPlugin resolves RBAC from it.
         state_delta: dict[str, object] = {AUTH_STATE_KEY: auth.as_state()}
+        if (learning := learning_gate.runtime()) is not None:
+            # Copied from the hint store at the start of the turn, marked as the
+            # server's: a hint taken mid-turn applies from the next one.
+            state_delta.update(learning.turn_state(auth.subject))
         # No session id means a new conversation: label it now, while its opening
         # message is in hand, so `GET /sessions` can name it for any browser.
         # Written exactly once — a later turn must not relabel the thread. (An
@@ -1351,7 +1374,42 @@ def create_app(
             studio_available=cfg.studio.enabled
             and auth.role == "admin"
             and auth.principal_kind == PrincipalKind.HUMAN,
+            learning=_learning_info(auth),
         )
+
+    def _learning_info(auth: AuthContext) -> LearningInfo | None:
+        if (learning := learning_gate.runtime()) is None:
+            return None
+        from ..learning.guard import REVEAL_LEVEL
+
+        return LearningInfo(
+            scenario_id=learning.scenario_id(),
+            level=learning.level_for(auth.subject),
+            max_level=REVEAL_LEVEL,
+            can_take_hint=auth.principal_kind == PrincipalKind.HUMAN,
+        )
+
+    if learning_gate.is_active():
+
+        @api.post("/learning/hint", response_model=LearningInfo)
+        async def take_hint(
+            auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
+        ) -> LearningInfo:
+            """Raise the caller's hint level by one step (AEP-032 §3).
+
+            Only a verified person: a delegated agent or a service could be
+            talked into spending a learner's hints. Writes the per-process hint
+            store, never a session, so a turn already running is untouched and
+            the new level applies from the next turn.
+            """
+            if auth.principal_kind != PrincipalKind.HUMAN:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="human_only")
+            limiter.hit(hint_limit, f"hint:{auth.subject}")
+            learning = learning_gate.runtime()
+            learning.take_hint(auth.subject)
+            info = _learning_info(auth)
+            assert info is not None  # active, checked at registration
+            return info
 
     @api.get("/admin/agents", response_model=AgentsResponse)
     async def admin_agents(
