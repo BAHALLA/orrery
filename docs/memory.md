@@ -175,16 +175,26 @@ matters more than per-turn cost.
 ### Turning it off {: #turning-it-off }
 
 `ORRERY_LONG_TERM_MEMORY=false` keeps conversations (durable with
-`DATABASE_URL`) but carries nothing from one session to the next, on every
-interactive surface (HTTP, CLI, Slack, Google Chat):
+`DATABASE_URL`) but carries nothing from one session to the next:
 
 - no memory service and no `MemoryPlugin`: `default_plugins(enable_memory=True)`
   leaves the plugin out, and `run_persistent` builds no memory service;
 - no `load_memory` tool on the coordinator, and no ops journal, whose notes and
   preferences live in `user:` state and so follow a person between sessions;
-- `AgentGateway` refuses a memory service, a `MemoryPlugin`, or any tree that
-  still reaches `load_memory`, `preload_memory` or a tool marked
-  `cross_session`, so a missed wiring stops startup instead of remembering.
+- a declarative agent holding a journal tool fails to build, and the
+  console's **Agents** tab does not offer those tools, so an admin edit is
+  refused before it is saved;
+- every surface that runs through `AgentGateway` (the HTTP server and
+  console, `run_persistent`, Slack, Google Chat, Studio runs) also refuses a
+  memory service, a `MemoryPlugin`, or a tree (agents, `AgentTool`s,
+  sub-agents, graph `Workflow` nodes) that still reaches `load_memory`,
+  `preload_memory` or a tool marked `cross_session`. A missed wiring stops
+  startup instead of remembering. `adk web` builds its own Runner, so there
+  only the builders apply.
+
+Turning it off does not delete what was stored before: earlier memory rows
+and `user:`/`app:` state stay in PostgreSQL, out of reach of any tool. Purge
+them yourself if they must go.
 
 Use it on a shared instance where a returning person should not get their own
 earlier findings back (a practice lab's Studio instance, a demo). The learning

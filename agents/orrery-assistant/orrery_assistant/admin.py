@@ -20,6 +20,7 @@ from orrery_core.agent.declarative import (
     build_declarative_agents,
     tool_catalogue,
 )
+from orrery_core.memory_switch import memory_safe_catalogue
 from orrery_core.registry import installed_specialists, source_of
 from orrery_core.security.guardrails import get_guard_level, get_guard_reason
 from orrery_core.serving.agent_admin import AdminOptions, SpecialistOption, ToolOption
@@ -46,6 +47,9 @@ class ChatAgentAdmin:
         # the Agents tab must not import code the deployment chose not to run.
         loaded = {s.key: s for s in self._allowed}
         catalogue, ambiguous = tool_catalogue(self._allowed)
+        # Without long-term memory the build refuses cross_session tools, so
+        # the picker does not offer them.
+        catalogue = memory_safe_catalogue(catalogue)
         tools = [
             ToolOption(
                 ref=ref,

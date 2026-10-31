@@ -49,7 +49,12 @@ from google.genai import types
 
 from .. import learning_gate
 from ..env import env_int
-from ..memory_switch import LONG_TERM_MEMORY_ENV, long_term_memory_enabled
+from ..memory_switch import (
+    CROSS_SESSION_HINT,
+    LONG_TERM_MEMORY_ENV,
+    cross_session_reach,
+    long_term_memory_enabled,
+)
 from ..persistence.db import create_session_service
 from ..security.confirmation_flow import conversation_scope
 from ..security.guardrails import (
@@ -283,9 +288,11 @@ def _no_memory_reason() -> str | None:
     deployment said so (``ORRERY_LONG_TERM_MEMORY=false``). Sessions may
     persist either way; recall may not.
     """
+    # Read first, so a typo in the switch fails in learning mode too.
+    enabled = long_term_memory_enabled()
     if learning_gate.is_active():
         return "ORRERY_LEARNING_MODE"
-    if not long_term_memory_enabled():
+    if not enabled:
         return f"{LONG_TERM_MEMORY_ENV}=false"
     return None
 
@@ -302,41 +309,12 @@ def _refuse_long_term_memory(
         )
 
 
-#: ADK's memory tools: recall of earlier sessions by name.
-_RECALL_TOOL_NAMES = frozenset({"load_memory", "preload_memory"})
-
-
 def _refuse_cross_session_tools(reason: str, root_agent: Any) -> None:
-    """Refuse a tree that can carry anything from one session to the next.
-
-    Walks every agent the root can reach (``AgentTool`` specialists, declarative
-    agents, sub-agents): ADK's memory tools, and tools marked
-    :func:`~orrery_core.security.guardrails.cross_session` (``user:``/``app:``
-    state, such as the ops journal's notes), which persist per person across
-    sessions and, with ``DATABASE_URL``, across restarts and lab resets.
-    """
-    from ..security.guardrails import is_cross_session
-
-    seen: set[int] = set()
-    stack = [root_agent]
-    found: list[str] = []
-    while stack:
-        agent = stack.pop()
-        if id(agent) in seen:
-            continue
-        seen.add(id(agent))
-        stack.extend(getattr(agent, "sub_agents", None) or [])
-        for tool in getattr(agent, "tools", None) or []:
-            name = str(getattr(tool, "name", None) or getattr(tool, "__name__", ""))
-            if name in _RECALL_TOOL_NAMES or is_cross_session(tool):
-                found.append(f"{getattr(agent, 'name', '?')}.{name}")
-            if (inner := getattr(tool, "agent", None)) is not None:
-                stack.append(inner)
-    if found:
+    """Refuse a tree that can carry anything from one session to the next."""
+    if found := cross_session_reach(root_agent):
         raise ValueError(
             f"{reason} cannot start: these tools carry state from one session "
-            f"to the next: {', '.join(sorted(found))}. Disable the agents "
-            "that hold them (e.g. ORRERY_DISABLED_SPECIALISTS=ops_journal)"
+            f"to the next: {', '.join(found)}. {CROSS_SESSION_HINT}"
         )
 
 

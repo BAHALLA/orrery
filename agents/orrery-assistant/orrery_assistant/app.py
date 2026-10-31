@@ -26,7 +26,7 @@ config = ServerConfig.from_env()
 # The learning sandbox keeps no long-term memory: recall is keyed by the learner,
 # not the scenario, so it would replay an earlier attempt's answers (AEP-032).
 # ORRERY_LONG_TERM_MEMORY=false turns it off on any other deployment.
-remember = not learning_gate.is_active() and long_term_memory_enabled()
+remember = long_term_memory_enabled() and not learning_gate.is_active()
 api = create_app(
     root_agent=root_agent,
     app_name="orrery",

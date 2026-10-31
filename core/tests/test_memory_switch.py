@@ -100,6 +100,28 @@ def test_a_wrapped_runner_is_checked_too(off):
     runner.memory_service = None
     assert AgentGateway.from_runner(runner).runner is runner
 
+    @cross_session
+    async def list_notes() -> dict:
+        """Notes kept across sessions."""
+        return {}
+
+    journal = LlmAgent(name="journal", model="gemini-test", tools=[list_notes])
+    runner.app.root_agent = LlmAgent(
+        name="root", model="gemini-test", tools=[AgentTool(agent=journal)]
+    )
+    with pytest.raises(ValueError, match="journal.list_notes"):
+        AgentGateway.from_runner(runner)
+
+
+def test_a_typo_fails_in_learning_mode_too(monkeypatch):
+    from orrery_core import learning_gate
+    from orrery_core.serving.gateway import _no_memory_reason
+
+    monkeypatch.setattr(learning_gate, "is_active", lambda: True)
+    monkeypatch.setenv(LONG_TERM_MEMORY_ENV, "flase")
+    with pytest.raises(ValueError):
+        _no_memory_reason()
+
 
 def test_a_catalogue_without_memory_drops_cross_session_tools(off):
     @cross_session
@@ -126,8 +148,15 @@ def test_a_catalogue_is_untouched_with_memory_on(monkeypatch):
     assert set(memory_safe_catalogue({"list_notes": list_notes})) == {"list_notes"}
 
 
-def test_the_http_server_runs_without_memory():
-    """The shipped front door, in a fresh interpreter, with the switch off."""
+@pytest.mark.parametrize(
+    ("switch", "expected"),
+    [
+        ("false", "MEMORY=False PLUGIN=False RECALL=False JOURNAL=False"),
+        ("true", "MEMORY=True PLUGIN=True RECALL=True JOURNAL=True"),
+    ],
+)
+def test_the_http_server_follows_the_switch(switch, expected):
+    """The shipped front door, in a fresh interpreter, both ways."""
     probe = """
 import gc
 import orrery_assistant.app
@@ -141,8 +170,14 @@ print(f"MEMORY={gateway.runner.memory_service is not None} "
       f"RECALL={'load_memory' in tools} "
       f"JOURNAL={any('journal' in n for n in tools)}")
 """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ORRERY_LEARNING")}
-    env |= {"OTEL_TRACING_ENABLED": "false", "AUTH_ENABLED": "false", LONG_TERM_MEMORY_ENV: "false"}
+    # A developer's agent selection would decide the outcome, so none is inherited.
+    selection = ("ORRERY_SPECIALISTS", "ORRERY_DISABLED_SPECIALISTS", "ORRERY_AGENTS_CONFIG")
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("ORRERY_LEARNING", "ORRERY_SCENARIO")) and k not in selection
+    }
+    env |= {"OTEL_TRACING_ENABLED": "false", "AUTH_ENABLED": "false", LONG_TERM_MEMORY_ENV: switch}
     result = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
@@ -152,4 +187,4 @@ print(f"MEMORY={gateway.runner.memory_service is not None} "
         check=False,
     )
     assert result.returncode == 0, result.stderr[-2000:]
-    assert "MEMORY=False PLUGIN=False RECALL=False JOURNAL=False" in result.stdout
+    assert expected in result.stdout

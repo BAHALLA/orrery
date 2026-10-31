@@ -13,10 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A deployment can now keep sessions in PostgreSQL while carrying nothing
   from one session to the next: no memory service, no `MemoryPlugin`, no
   `load_memory`, and no ops journal (its notes live in `user:` state). The
-  builders leave them out, and `AgentGateway` refuses a memory service, a
-  `MemoryPlugin` or a tree that still reaches a recall or `cross_session`
-  tool, including a wrapped Runner. Until now only the learning sandbox did
-  this, and it refuses Studio. On by default.
+  builders leave them out, an admin catalog edit holding a journal tool is
+  refused before it is saved, and `AgentGateway` refuses a memory service, a
+  `MemoryPlugin` or a tree (graph `Workflow` nodes included) that still
+  reaches a recall or `cross_session` tool, including a wrapped Runner. Until
+  now only the learning sandbox did this, and it refuses Studio. Data stored
+  earlier is not deleted. On by default.
 
 ## [0.16.0] - 2026-10-31
 
