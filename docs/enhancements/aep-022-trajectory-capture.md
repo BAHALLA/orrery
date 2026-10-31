@@ -261,19 +261,30 @@ the lab does not pull. Instead:
      reaches Orrery's or the ingress's access logs. The console reads it,
      removes it with `history.replaceState`, and the page is served with
      `Referrer-Policy: no-referrer`.
+   - **Signed-out launches.** The SSO `redirect_uri` is the console root,
+     so the IdP's return would drop the fragment. The console therefore
+     reads and removes the fragment **before** any auth redirect, carries
+     the token through `signinRedirect({ state })` (or `sessionStorage`),
+     and restores it after the callback.
    - The console sends it with the **first** message of a new conversation.
      Orrery decrypts it and checks four things before binding: `typ` is
      `orrery-learning-attempt`, `iss`/`sub` are the caller's, `scenario_id`
      is the manifest's, and `issued_at` is after this process started while
-     `exp` is still in the future. A made-up or foreign id cannot open a
-     session.
+     `exp` is still in the future (with a small leeway, 60 s, on `exp`
+     only; never on the start check, which would reopen part of the restart
+     hole below). Both hosts should run NTP: a lab clock behind Orrery's
+     only refuses tokens issued just after a boot, and the learner
+     relaunches. A made-up or foreign id cannot open a session.
    - The binding is a server-set, guarded key in the session's state
      (`_learning_attempt`, in `GUARDED_STATE_KEYS`) plus an
      `attempt_id -> session_id` record kept by the process. The record is
      checked and set with no `await` in between, which is what stops two
      concurrent first turns in two **different** sessions from both binding:
      the turn lock is per `(user, session)`, so it only orders turns within
-     one session.
+     one session. An entry is kept until its token's `exp` and pruned by
+     `exp`, **never evicted** (not a `BoundedSessionCache`): an evicted entry
+     would let a still-valid token bind a second session. If a cap is
+     reached, new bindings are refused.
    - A second session presenting a bound `attempt_id` is refused. Every turn
      in a learning deployment needs a bound attempt, so there is no unbound
      session to work the answer out in.
@@ -284,7 +295,11 @@ the lab does not pull. Instead:
      the same token to a clean session B. A session already bound keeps
      working after a restart (its `_learning_attempt` is in the session
      store); a learner who lost theirs relaunches, the lab issues a new
-     attempt, and the old one counts as failed (step 6). No store search,
+     attempt, and the old one counts as failed (step 6). That includes a
+     token issued but never bound before the restart; the console shows a
+     distinct refusal (`attempt_predates_restart`, "relaunch the exercise"),
+     and whether to forgive an attempt that never bound is the lab's call,
+     since nothing tells it reliably that no session existed. No store search,
      and so no `await` between check and set. The lab also learns the bound
      `session_id` from the debrief and refuses a debrief from any other
      session of that attempt.
@@ -378,6 +393,9 @@ the lab does not pull. Instead:
       a session. A second session presenting a bound `attempt_id` is
       refused. After a restart, a token issued before the process started
       is refused, while a session bound before it keeps working.
+- [ ] A launch while signed out (through the SSO round trip) still binds.
+- [ ] A binding is never dropped before its token's `exp`; at the cap, new
+      bindings are refused.
 - [ ] An attempt token is refused by the debrief verifier and a debrief by
       the attempt verifier (`typ`), and equal attempt and debrief keys stop
       startup.
