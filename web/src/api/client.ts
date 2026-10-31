@@ -36,6 +36,14 @@ export class ApiError extends Error {
     return this.status === 401 || this.status === 403;
   }
 
+  /**
+   * True when the server verified the caller but refuses them this deployment
+   * (`ORRERY_REQUIRED_ROLES`): signing in again with the same account won't help.
+   */
+  get isAccessDenied(): boolean {
+    return this.status === 403 && this.message === "access_denied";
+  }
+
   /** True when the caller was rate limited and should simply wait. */
   get isRateLimited(): boolean {
     return this.status === 429;

@@ -24,6 +24,10 @@ interface OrreryRuntimeConfig {
   roleClaim?: string;
   /** `ORRERY_CONSOLE_TITLE` / `_ENVIRONMENT` / `_ACCENT`, validated by the server. */
   branding?: { title?: string; environment?: string; accent?: string };
+  /** `ORRERY_CONSOLE_ACCESS_DENIED_URL`: where a person without access is sent (https). */
+  accessDeniedUrl?: string;
+  /** Set when `ORRERY_REQUIRED_ROLES` is: check `/me` before loading the console. */
+  accessRestricted?: boolean;
 }
 
 interface Window {
