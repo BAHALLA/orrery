@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The learning sandbox keeps no long-term memory.** With
+  `ORRERY_LEARNING_MODE` the HTTP server builds no memory service and no
+  `MemoryPlugin`, and the coordinator has no `load_memory` tool. The gateway
+  refuses all three at startup. Memory is keyed by the learner, not the
+  scenario, so recall would hand back an earlier attempt's evidence and
+  answers, and with `DATABASE_URL` it would outlive every reset of the lab.
+  Sessions still persist, so a learning deployment can now use PostgreSQL
+  (see *Single node (Docker Compose)* in the deployment guide).
+
 ### Fixed
 
 - **`docker_compose_status` keeps auxiliary containers out of a project's

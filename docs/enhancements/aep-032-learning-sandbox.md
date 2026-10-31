@@ -127,6 +127,7 @@ Within the HTTP server, `ORRERY_LEARNING_MODE=true` is refused at startup
 | `ORRERY_MULTI_REPLICA` off, and a single worker (`WEB_CONCURRENCY` unset or 1) | the manifest's reload state and the hint store are per process; `uvicorn --workers N` would split them inside one pod |
 | `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS` false (activation sets it, since ADK reads unset as on), and `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` unset or `NO_CONTENT` | ADK traces the original model response *before* any after-model callback runs, so captured content would export withheld text |
 | `google_adk` and LiteLLM loggers above DEBUG | ADK logs every streamed model response at DEBUG |
+| No long-term memory: no memory service, no `MemoryPlugin`, no `load_memory` on the root (refused by `AgentGateway`; the HTTP server builds none) | memory is keyed by the learner, not the scenario, so recall would hand back an earlier attempt's evidence and answers, and a durable store outlives every lab reset. Sessions may persist (`DATABASE_URL` is allowed) |
 
 When the mode is active, `GET /healthz` reports `"mode": "learning"` and
 the loaded `scenario_id` (the id is not secret; the values are). The console

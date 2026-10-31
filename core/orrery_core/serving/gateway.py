@@ -273,6 +273,34 @@ def _turn_lock_map() -> weakref.WeakValueDictionary[tuple[str, str], asyncio.Loc
     return weakref.WeakValueDictionary()
 
 
+def _refuse_memory_in_learning(
+    plugins: Sequence[BasePlugin], memory_service: BaseMemoryService | None
+) -> None:
+    """No long-term memory in the learning sandbox (AEP-032).
+
+    Memory is keyed by the learner, not the scenario: recall would hand a
+    learner the evidence, and the answers, of an earlier attempt, and with a
+    durable store (``DATABASE_URL``) it would outlive every reset of the lab.
+    Sessions may persist; recall may not.
+    """
+    from ..plugins.memory_plugin import MemoryPlugin
+
+    if memory_service is not None or any(isinstance(p, MemoryPlugin) for p in plugins):
+        raise ValueError(
+            "ORRERY_LEARNING_MODE cannot start: long-term memory must be off "
+            "(no memory service, no MemoryPlugin)"
+        )
+
+
+def _refuse_recall_tool_in_learning(root_agent: Any) -> None:
+    names = {getattr(t, "name", None) for t in getattr(root_agent, "tools", None) or []}
+    if "load_memory" in names:
+        raise ValueError(
+            "ORRERY_LEARNING_MODE cannot start: the root agent holds load_memory, "
+            "which recalls a learner's earlier attempts"
+        )
+
+
 class AgentGateway:
     """Shared turn pipeline: build the Runner once, run turns for any channel.
 
@@ -346,6 +374,8 @@ class AgentGateway:
         # new agent tree.
         self._plugins = list(plugins or [])
         self._memory_service = memory_service
+        if learning_gate.is_active():
+            _refuse_memory_in_learning(self._plugins, memory_service)
         self._context_cache_config = context_cache_config
         self._events_compaction_config = events_compaction_config
         self.root_agent = root_agent
@@ -365,6 +395,7 @@ class AgentGateway:
         if not any(isinstance(p, AttachmentPlugin) for p in plugins):
             plugins = [*plugins, AttachmentPlugin()]
         if (learning := learning_gate.runtime()) is not None:
+            _refuse_recall_tool_in_learning(root_agent)
             # First, so no after-model plugin can answer ahead of the answer
             # guard; it edits in place and returns None, so the rest still run.
             # Bound to this Runner's root: a turn still running on the old tree

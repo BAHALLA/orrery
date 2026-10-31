@@ -96,6 +96,57 @@ ADK's `DatabaseSessionService` is built on SQLAlchemy and the schema
 is created automatically on first use. You do **not** need to run a
 migration step.
 
+### Single node (Docker Compose)
+
+One replica still needs PostgreSQL for conversations to survive a restart: a
+container restart (a nightly package update bouncing Docker, say) otherwise
+loses every session. A small Postgres container on a named volume is enough:
+
+```yaml
+services:
+  orrery-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: orrery
+      POSTGRES_PASSWORD_FILE: /run/secrets/orrery_db_password
+      POSTGRES_DB: orrery
+    volumes: [orrery-db:/var/lib/postgresql/data]
+    networks: [orrery-internal]          # no published port
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orrery -d orrery"]
+      interval: 5s
+      retries: 12
+    secrets: [orrery_db_password]
+    restart: unless-stopped
+
+  orrery:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://orrery:${ORRERY_DB_PASSWORD}@orrery-db:5432/orrery
+    depends_on:
+      orrery-db: {condition: service_healthy}
+    networks: [orrery-internal]
+
+volumes: {orrery-db: {}}
+networks: {orrery-internal: {internal: true}}
+```
+
+- **One database per instance.** Two instances (a lab and an ops console)
+  get two databases, or two Postgres containers: sessions, memory and the
+  agent catalog are not namespaced by instance.
+- **Keep fail-fast on.** Don't set `ORRERY_DB_ALLOW_INMEMORY_FALLBACK`. The
+  `service_healthy` condition orders the start, and if the database is still
+  unreachable the container exits and `restart` retries it, instead of
+  serving chats from memory that the next restart will lose.
+- **The learning sandbox may use it.** `ORRERY_LEARNING_MODE` accepts
+  `DATABASE_URL`, and it never keeps long-term memory: no memory service, no
+  `MemoryPlugin`, no `load_memory` tool, all refused at startup. Recall is
+  keyed by the learner, not the scenario, so it would replay an earlier
+  attempt's answers. Sessions persist; recall doesn't. The hint store stays
+  per process, and after a restart every learner reads as the manifest's
+  `default_disclosure`, which withholds more, never less.
+- **Back it up** like any database (`pg_dump` on a schedule): conversations
+  name people and systems.
+
 ---
 
 ## Step 3 — Install via Helm

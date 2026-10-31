@@ -407,7 +407,7 @@ def test_no_unreviewed_plugin_can_answer_before_the_model(active):
         app_name="t",
         root_agent=LlmAgent(name="root", model=ScriptedLlm()),
         plugins=default_plugins(
-            enable_auth=True, enable_memory=True, daily_token_budget=1000, enable_tracing=False
+            enable_auth=True, enable_memory=False, daily_token_budget=1000, enable_tracing=False
         ),
         session_service=InMemorySessionService(),
     )
