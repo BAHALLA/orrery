@@ -251,17 +251,30 @@ value (`first_correct` names the target id only).
 Orrery never lets a service principal read a person's session (ADR-006), so
 the lab does not pull. Instead:
 
-1. **The lab issues the attempt, and the first turn binds it.** When it
-   launches the exercise, the lab creates an `attempt_id` (random, single
-   use) for one `iss`/`sub` and one `scenario_id`, and passes it to the
-   console in the launch URL. The console sends it with the **first** message
-   of a new conversation. The server stamps it into that session's state as a
-   server-set, guarded key (`_learning_attempt`, in `GUARDED_STATE_KEYS`) and
-   records `attempt_id -> session_id`. A second session presenting the same
-   id is refused. Turns in a learning deployment need a bound attempt, so
-   there is no unbound session to work the answer out in. That also means
-   one replica: the binding store is per process, like the hint store, and
-   learning mode already refuses `ORRERY_MULTI_REPLICA`.
+1. **The lab issues the attempt as a token Orrery verifies, and the first
+   turn binds it.**
+   - When it launches the exercise, the lab seals an **attempt token** with
+     the shared key (JWE, same scheme as the debrief):
+     `{attempt_id, iss, sub, scenario_id, issued_at, exp}`. It passes the
+     token to the console in the launch URL.
+   - The console sends it with the **first** message of a new conversation.
+     Orrery decrypts it and checks three things before binding: `iss`/`sub`
+     are the caller's, `scenario_id` is the manifest's, and `exp` is in the
+     future. A made-up or foreign id cannot open a session.
+   - The binding is a server-set, guarded key in the session's state
+     (`_learning_attempt`, in `GUARDED_STATE_KEYS`) plus an
+     `attempt_id -> session_id` record. It is made under the session's turn
+     lock and checked and set with no `await` in between, so two concurrent
+     first turns cannot both bind.
+   - A second session presenting a bound `attempt_id` is refused. Every turn
+     in a learning deployment needs a bound attempt, so there is no unbound
+     session to work the answer out in.
+   - **Restarts.** The record is per process (learning mode already refuses
+     `ORRERY_MULTI_REPLICA`). After a restart, binding first searches the
+     session store for a session already holding that `attempt_id` and
+     refuses if it finds one. The lab also learns the bound `session_id` from
+     the debrief and refuses a debrief from any other session of that
+     attempt.
 2. **The learner finishes once.** *Finish exercise* calls
    `POST /learning/attempts/{attempt_id}/finish` with the `session_id`, with
    `Cache-Control: no-store` and no CORS. The call needs all of:
@@ -310,15 +323,21 @@ the lab does not pull. Instead:
    It then marks the attempt used. Working the answer out in session A and
    typing it in session B fails: an attempt binds to the first session that
    uses it, and every turn needs a bound attempt.
-6. **A missing debrief is a failed attempt.** The learner's browser carries
-   the token, so the learner can withhold it. The lab treats an issued
-   attempt with no accepted debrief inside its window as not passed.
+6. **A missing debrief is a failed attempt, and attempts are graded
+   together.** The learner's browser carries the token, so the learner can
+   withhold it. The lab treats an issued attempt with no accepted debrief
+   inside its window as not passed. Since a relaunch is a fresh, clean
+   session, the lab **grades all of a learner's attempts on a scenario
+   together** (and may cap how many it issues). An attempt spent working the
+   answer out, then withheld, still counts as a failed attempt, so a quick
+   second one does not erase it.
 
 ### Phase 1 deliverables
 
 - `orrery_core/learning/debrief.py`: derives the fields from session events,
   with the grading matcher, and never copies a value out.
-- Attempt binding on the first turn (`_learning_attempt`), and
+- Attempt-token verification and binding on the first turn
+  (`_learning_attempt`), and
   `POST /learning/attempts/{attempt_id}/finish` with the `_learning_finished`
   marker, refused inside the turn lock. `ORRERY_LEARNING_DEBRIEF_KEY` and
   `_KEY_ID`.
@@ -333,8 +352,11 @@ the lab does not pull. Instead:
 - [ ] A non-owner, a non-human principal, a machine session and a
       non-learning deployment are refused. No route exists outside learning
       mode.
-- [ ] A turn without a bound attempt is refused, and a second session
-      presenting a bound `attempt_id` is refused.
+- [ ] A turn without a verified, bound attempt is refused. A made-up,
+      expired, foreign-subject or other-scenario attempt token cannot open
+      a session. A second session presenting a bound `attempt_id` is
+      refused, including after a restart.
+- [ ] Two concurrent first turns cannot both bind one attempt.
 - [ ] After a finish the session refuses turns, including one already
       waiting on the turn lock. A second finish is refused.
 - [ ] The browser-held token reveals nothing: decrypting without the key
