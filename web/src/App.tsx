@@ -9,7 +9,14 @@ export function App() {
   const auth = useAuth();
   const signedIn = auth.isAuthenticated && auth.token !== null;
   const access = useAccess(
-    signedIn ? (auth.identity?.subject ?? auth.token) : null,
+    // Subject and role: a silent renew keeps both (no re-check), while signing
+    // in again with another role for the same subject (`make dev-token`
+    // reuses one) is checked afresh.
+    signedIn
+      ? auth.identity
+        ? `${auth.identity.subject}\u0000${auth.identity.role}`
+        : auth.token
+      : null,
     signedIn ? auth.token : null,
   );
 
