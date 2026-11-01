@@ -72,7 +72,7 @@ otel = [
 # config loader. Imported lazily — a deployment without ORRERY_MCP_CONFIG
 # never loads the MCP SDK.
 mcp = [
-    "google-adk[mcp]>=2.12.0",
+    "google-adk[mcp]>=2.13.0",
     "pyyaml>=6.0.3",
 ]
 # Install with: uv sync --extra a2a
