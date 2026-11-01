@@ -2536,7 +2536,7 @@ provides-extras = ["postgres", "auth", "server", "a2a", "otel", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "google-adk", extras = ["eval"], specifier = ">=2.12.0" },
+    { name = "google-adk", extras = ["eval"], specifier = ">=2.13.0" },
     { name = "hypothesis", specifier = ">=6.170.5" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-gen-files", specifier = ">=0.6.1" },

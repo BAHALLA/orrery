@@ -72,7 +72,7 @@ dev = [
     # `make eval` (AgentEvaluator) and the eval test modules, which pytest
     # imports at collection even when the marker deselects them. A dev-only
     # need: orrery-core does not depend on it.
-    "google-adk[eval]>=2.12.0",
+    "google-adk[eval]>=2.13.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
