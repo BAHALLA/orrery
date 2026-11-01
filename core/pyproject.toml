@@ -10,7 +10,7 @@ dependencies = [
     # google-cloud-aiplatform[evaluation] caps litellm below this floor, which
     # made the published wheel unresolvable (the workspace-root override never
     # reaches package metadata). Evals get it from the root dev group.
-    "google-adk[db]>=2.12.0",
+    "google-adk[db]>=2.13.0",
     # Keep this floor in lockstep with the workspace-root override-dependencies.
     "litellm>=1.106.2",
     "pydantic>=2.14.1",
