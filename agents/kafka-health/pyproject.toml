@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "orrery-core[kubernetes]",
-    "confluent-kafka>=2.16.0",
+    "confluent-kafka>=2.16.1",
     "kubernetes>=37.0.0",
 ]
 
