@@ -80,7 +80,7 @@ mcp = [
 # protocol 1.0 server, with owner-scoped task stores (1.1.4+) and push URL
 # validation (1.2.3+). Imported lazily — off unless ORRERY_A2A_ENABLED.
 a2a = [
-    "a2a-sdk[http-server]>=1.2.3,<2",
+    "a2a-sdk[http-server]>=1.3.0,<2",
 ]
 # Install with: uv sync --extra knowledge
 # Elasticsearch-backed knowledge retrieval (AEP-025). Talks to the REST API
