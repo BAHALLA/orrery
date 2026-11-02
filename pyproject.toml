@@ -17,7 +17,7 @@ dependencies = [
     "slack-bot",
     "google-chat-bot",
     "google-adk>=2.12.0",
-    "litellm>=1.106.2",
+    "litellm>=1.106.6",
 ]
 
 [project.urls]
@@ -73,17 +73,17 @@ dev = [
     # imports at collection even when the marker deselects them. A dev-only
     # need: orrery-core does not depend on it.
     "google-adk[eval]>=2.13.0",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1",
     "pytest-cov>=7.1.0",
-    "hypothesis>=6.170.5",
-    "ruff>=0.17.1",
-    "ty>=0.0.90",
+    "hypothesis>=6.170.13",
+    "ruff>=0.17.3",
+    "ty>=0.0.94",
     "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.7",
+    "mkdocs-material>=9.8.0",
     "mkdocstrings[python]>=1.0.8",
     "mkdocs-minify-plugin>=0.8.0",
-    "mkdocs-git-revision-date-localized-plugin>=1.6.0",
+    "mkdocs-git-revision-date-localized-plugin>=1.6.2",
     "mkdocs-gen-files>=0.6.1",
     "pymdown-extensions>=12.3",
 ]
