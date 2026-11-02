@@ -69,7 +69,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── Runtime stage ─────────────────────────────────────────────────────
-FROM python:3.14-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084d1f1a0a6ef6bcaae871a30
+FROM python:3.15-slim-bookworm@sha256:4e03260adeeebafccd084f3584e6b84823aba5651cfb53ef8a078ed441ddf9cd
 
 # Apply Debian security updates on top of the pinned base.
 #
