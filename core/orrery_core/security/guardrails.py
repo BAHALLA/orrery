@@ -171,6 +171,9 @@ class _ActivePendingStore:
     def latest_for_session(self, scope: str, session_id: str) -> PendingConfirmation | None:
         return self._resolve().latest_for_session(scope, session_id)
 
+    def latest_for_session_prefix(self, scope: str, prefix: str) -> PendingConfirmation | None:
+        return self._resolve().latest_for_session_prefix(scope, prefix)
+
     def get(self, action_id: str) -> PendingConfirmation | None:
         return self._resolve().get(action_id)
 
@@ -229,6 +232,15 @@ def latest_pending_for_session(scope: str, session_id: str) -> PendingConfirmati
     elsewhere does not hide this one.
     """
     return _pending_confirmations.latest_for_session(scope, session_id)
+
+
+def latest_pending_for_session_prefix(scope: str, prefix: str) -> PendingConfirmation | None:
+    """Peek at the live pending for *scope* in a session starting with *prefix*, if any.
+
+    Read-only and TTL-filtered like :func:`latest_pending_for_scope`, for a
+    machine principal: its user's newer pending does not hide its own.
+    """
+    return _pending_confirmations.latest_for_session_prefix(scope, prefix)
 
 
 class OutOfBandDecisionError(Exception):

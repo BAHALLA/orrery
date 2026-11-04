@@ -1289,17 +1289,25 @@ def create_app(
         who may approve. Strict-mode pendings are scoped by requester, so
         the lookup can only ever surface the caller's own action.
         """
-        from ..security.guardrails import latest_pending_for_scope
+        from ..security.guardrails import (
+            latest_pending_for_scope,
+            latest_pending_for_session_prefix,
+        )
 
         # The console polls this endpoint every few seconds while a request is
         # in flight, and the postgres confirmation backend is a synchronous
         # engine — calling it inline would block the event loop on a database
         # round-trip, per polling client, on a timer.
-        pending = await asyncio.to_thread(latest_pending_for_scope, auth.subject)
         # A machine principal shares its user's scope; it sees only a pending
         # raised in one of its own sessions, never the user's or another agent's.
-        if pending is not None and not owns_session(auth, pending.session_id or ""):
-            pending = None
+        # Asked as such, not filtered afterwards: the user's newer pending would
+        # otherwise hide the agent's own.
+        if auth.principal_kind == PrincipalKind.HUMAN:
+            pending = await asyncio.to_thread(latest_pending_for_scope, auth.subject)
+        else:
+            pending = await asyncio.to_thread(
+                latest_pending_for_session_prefix, auth.subject, machine_session_prefix(auth)
+            )
         if pending is None:
             return PendingResponse(pending=None)
         return PendingResponse(

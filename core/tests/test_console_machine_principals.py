@@ -207,6 +207,44 @@ def test_an_agent_does_not_see_its_users_pending_action(client):
         _pending_confirmations.configure(None)
 
 
+def test_a_newer_pending_of_its_user_does_not_hide_an_agents_own(client):
+    from orrery_core.security.confirmation_store import ConfirmationStore, PendingConfirmation
+    from orrery_core.security.guardrails import _pending_confirmations
+
+    sid = _say(client, ALICE, "scale it")["session_id"]
+    x_sid = _say(client, AGENT_X, "scale it too")["session_id"]
+    store = ConfirmationStore()
+    _pending_confirmations.configure(store)
+    try:
+        store.add(
+            PendingConfirmation(
+                action_id="agent-x-older",
+                tool_name="restart_pod",
+                requester="alice",
+                scope_key="alice",
+                session_id=x_sid,
+                created_at=time.time() - 5,
+            )
+        )
+        store.add(
+            PendingConfirmation(
+                action_id="alice-newer",
+                tool_name="scale_deployment",
+                requester="alice",
+                scope_key="alice",
+                session_id=sid,
+            )
+        )
+        mine = client.get("/confirmations/pending", headers=AGENT_X).json()["pending"]
+        assert mine["action_id"] == "agent-x-older"
+        # Still nobody else's: not another agent's, and the person keeps their latest.
+        assert client.get("/confirmations/pending", headers=AGENT_Y).json()["pending"] is None
+        theirs = client.get("/confirmations/pending", headers=ALICE).json()["pending"]
+        assert theirs["action_id"] == "alice-newer"
+    finally:
+        _pending_confirmations.configure(None)
+
+
 def test_legacy_mode_keeps_every_token_without_act_a_person(monkeypatch):
     # ORRERY_HUMAN_CLIENTS unset: the pre-ADR-006 console, unchanged.
     monkeypatch.delenv("ORRERY_HUMAN_CLIENTS", raising=False)

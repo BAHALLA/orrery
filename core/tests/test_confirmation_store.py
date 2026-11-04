@@ -134,6 +134,18 @@ def test_memory_latest_for_session_ignores_expired():
     assert store.latest_for_session("threads/T1", "s") is None
 
 
+def test_memory_latest_for_session_prefix_is_not_hidden_by_a_newer_one_elsewhere():
+    store = ConfirmationStore()
+    mine = _pending(session_id="m-abc-1", tool_name="scale", created_at=time.time() - 5)
+    store.add(mine)
+    store.add(_pending(session_id="other", tool_name="restart"))
+
+    found = store.latest_for_session_prefix("threads/T1", "m-abc-")
+    assert found is not None and found.action_id == mine.action_id
+    assert store.latest_for_session_prefix("threads/T9", "m-abc-") is None
+    assert store.latest_for_session_prefix("threads/T1", "m-zzz-") is None
+
+
 def test_memory_mark_approved_then_consume_approved():
     store = ConfirmationStore()
     p = _pending()
@@ -282,6 +294,23 @@ def test_pg_latest_for_session_is_not_hidden_by_a_newer_one_elsewhere(pg_store):
 def test_pg_latest_for_session_ignores_expired(pg_store):
     pg_store.add(_pending(session_id="s", created_at=time.time() - CONFIRMATION_TTL_SECONDS - 1))
     assert pg_store.latest_for_session("threads/T1", "s") is None
+
+
+def test_pg_latest_for_session_prefix_is_not_hidden_by_a_newer_one_elsewhere(pg_store):
+    mine = _pending(session_id="m-abc-1", tool_name="scale", created_at=time.time() - 5)
+    pg_store.add(mine)
+    pg_store.add(_pending(session_id="other", tool_name="restart"))
+
+    found = pg_store.latest_for_session_prefix("threads/T1", "m-abc-")
+    assert found is not None and found.action_id == mine.action_id
+    assert pg_store.latest_for_session_prefix("threads/T9", "m-abc-") is None
+    assert pg_store.latest_for_session_prefix("threads/T1", "m-zzz-") is None
+
+
+def test_pg_session_prefix_is_a_literal_not_a_like_pattern(pg_store):
+    pg_store.add(_pending(session_id="m-abc-1"))
+    assert pg_store.latest_for_session_prefix("threads/T1", "%") is None
+    assert pg_store.latest_for_session_prefix("threads/T1", "m_abc") is None
 
 
 def test_pg_mark_approved_persists_for_fresh_reader(pg_store):

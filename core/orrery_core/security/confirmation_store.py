@@ -183,6 +183,16 @@ class ConfirmationStore:
             self._prune_expired_locked()
             return self._latest_locked(scope, session_id=session_id)
 
+    def latest_for_session_prefix(self, scope: str, prefix: str) -> PendingConfirmation | None:
+        """Peek at the latest live pending for this scope in a session starting with *prefix*.
+
+        For a machine principal, which owns a family of sessions under the scope
+        it shares with its user: the user's newer pending must not hide its own.
+        """
+        with self._lock:
+            self._prune_expired_locked()
+            return self._latest_locked(scope, session_prefix=prefix)
+
     def pop_latest_for_scope(self, scope: str) -> PendingConfirmation | None:
         """Pop the most-recently-added live pending for this scope (Deny flow)."""
         with self._lock:
@@ -279,11 +289,15 @@ class ConfirmationStore:
         return scope in (pending.scope_key, pending.parent_scope)
 
     def _latest_locked(
-        self, scope: str, *, session_id: str | None = None
+        self, scope: str, *, session_id: str | None = None, session_prefix: str | None = None
     ) -> PendingConfirmation | None:
         for pending in sorted(self._pending.values(), key=lambda p: p.created_at, reverse=True):
-            if self._matches_scope(pending, scope) and (
-                session_id is None or pending.session_id == session_id
+            if (
+                self._matches_scope(pending, scope)
+                and (session_id is None or pending.session_id == session_id)
+                and (
+                    session_prefix is None or (pending.session_id or "").startswith(session_prefix)
+                )
             ):
                 return pending
         return None
@@ -439,6 +453,16 @@ class PostgresConfirmationStore:
         with self._engine.connect() as conn:
             row = conn.execute(
                 self._latest_select(scope).where(_confirmations.c.session_id == session_id)
+            ).first()
+            return _row_to_pending(row) if row else None
+
+    def latest_for_session_prefix(self, scope: str, prefix: str) -> PendingConfirmation | None:
+        """Peek at the latest live pending for this scope in a session starting with *prefix*."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                self._latest_select(scope).where(
+                    _confirmations.c.session_id.startswith(prefix, autoescape=True)
+                )
             ).first()
             return _row_to_pending(row) if row else None
 

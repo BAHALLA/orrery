@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   action for the same person in another conversation made a waiting task report
   completed, and an earlier turn's action made a later turn that raised nothing
   report `input-required`. The lookup now covers this conversation and this turn.
+- **A person's newer pending action no longer hides their agent's own.**
+  `GET /confirmations/pending` took the subject's latest action and dropped it
+  if the machine caller didn't own it, so an agent saw nothing while its own
+  action waited. It now asks for the latest in that caller's own sessions. What
+  a person sees is unchanged.
 - **A refused A2A message no longer ends a waiting task.** A message too long, not
   text or over the in-flight cap, sent on an existing task, used to reject it, and
   resuming then failed with "in terminal state". The task now stays
