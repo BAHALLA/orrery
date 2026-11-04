@@ -23,7 +23,13 @@ import {
 import type { StudioClient } from "./api";
 import { ApprovalCards } from "./ApprovalCard";
 import { PlayIcon } from "./icons";
-import { budgetUse, isFinished, type RunView, waitingApprovals } from "./runState";
+import {
+  budgetUse,
+  contentNotCaptured,
+  isFinished,
+  type RunView,
+  waitingApprovals,
+} from "./runState";
 import type { StudioEvent } from "./types";
 import type { Connection } from "./useStudioRun";
 import type { Issue } from "./validate";
@@ -254,6 +260,8 @@ function RunDetail({
 
       <ApprovalCards client={client} runId={view.runId} asks={waitingApprovals(view)} now={now} />
 
+      <RunContent view={view} />
+
       {view.budgetHit ? (
         <div
           role="alert"
@@ -354,29 +362,70 @@ function RunDetail({
 
       {view.totals ? <TotalsCard view={view} /> : null}
 
-      {view.input || view.output ? (
-        <section aria-labelledby="studio-content" className="flex flex-col gap-2">
-          <h3 id="studio-content" className={sectionTitle}>
-            Content (redacted)
-          </h3>
-          {view.input ? <ContentBlock label="Input" text={view.input} /> : null}
-          {view.output ? <ContentBlock label="Output" text={view.output} /> : null}
-        </section>
-      ) : null}
-
       <Timeline view={view} />
     </>
   );
 }
 
-function ContentBlock({ label, text }: { label: string; text: string }) {
+/** What the run was asked and answered, or why that isn't here. */
+function RunContent({ view }: { view: RunView }) {
+  if (view.input || view.output) {
+    return (
+      <section aria-labelledby="studio-content" className="flex flex-col gap-2">
+        <h3 id="studio-content" className={sectionTitle}>
+          Content (redacted)
+        </h3>
+        {view.output ? <ContentBlock label="Output" text={view.output} prominent /> : null}
+        {view.input ? <ContentBlock label="Input" text={view.input} /> : null}
+      </section>
+    );
+  }
+  // Only a run that succeeded had an answer to keep: on a failed one this would
+  // read as the reason nothing came back.
+  if (view.status === "succeeded" && contentNotCaptured(view)) {
+    return (
+      <p
+        className={`${panelCard} border-dashed p-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300`}
+      >
+        This run's text isn't kept on this deployment, so its answer can't be shown. An admin can
+        keep it for later runs by setting{" "}
+        <code className="font-mono wrap-break-word">ORRERY_STUDIO_CAPTURE_CONTENT=true</code>.
+      </p>
+    );
+  }
+  return null;
+}
+
+function ContentBlock({
+  label,
+  text,
+  prominent = false,
+}: {
+  label: string;
+  text: string;
+  prominent?: boolean;
+}) {
   return (
-    <figure className={`${panelCard} p-2.5`}>
-      <figcaption className="flex items-center text-[11px] font-medium text-slate-500 dark:text-slate-400">
+    <figure
+      className={`${panelCard} ${prominent ? "p-3 ring-1 ring-brand-300 dark:ring-brand-800" : "p-2.5"}`}
+    >
+      <figcaption
+        className={`flex items-center font-medium ${
+          prominent
+            ? "text-xs text-slate-900 dark:text-slate-100"
+            : "text-[11px] text-slate-500 dark:text-slate-400"
+        }`}
+      >
         {label}
         <CopyButton value={text} label={`Copy ${label.toLowerCase()}`} className="ml-auto" />
       </figcaption>
-      <pre className="orrery-scroll mt-1 max-h-48 overflow-auto font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-800 dark:text-slate-200">
+      <pre
+        className={`orrery-scroll mt-1 overflow-auto leading-relaxed whitespace-pre-wrap ${
+          prominent
+            ? "max-h-96 font-sans text-sm text-slate-900 dark:text-slate-100"
+            : "max-h-24 font-mono text-[11.5px] text-slate-600 dark:text-slate-300"
+        }`}
+      >
         {text}
       </pre>
     </figure>
