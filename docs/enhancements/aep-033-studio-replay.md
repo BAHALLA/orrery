@@ -135,7 +135,4 @@ Made by the owner:
 - **Text:** the first recording shows some text, from a local capture-on run with an input written for publication.
 - **Instructions:** node instructions stay private and are never published.
 - **Review:** the CLI is enough as the explicit admin action for phase 1.
-
-Still open:
-
-1. **Recordings in this repository's git history,** or in the deploy repo?
+- **Recordings:** committed in this repository, so the schema tests fail in the PR that breaks them. The deploy repo ships only the built bundle.
