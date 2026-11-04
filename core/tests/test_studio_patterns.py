@@ -120,7 +120,12 @@ _TOKEN_TTL_S = 3600
 
 def _bearer(sub: str = "alice", roles: tuple[str, ...] = ("admin",)) -> dict[str, str]:
     token = jwt.encode(
-        {"sub": sub, "roles": list(roles), "azp": "orrery-console", "exp": time.time() + _TOKEN_TTL_S},
+        {
+            "sub": sub,
+            "roles": list(roles),
+            "azp": "orrery-console",
+            "exp": time.time() + _TOKEN_TTL_S,
+        },
         SECRET,
         algorithm="HS256",
     )
