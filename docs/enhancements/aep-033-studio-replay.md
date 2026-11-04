@@ -80,7 +80,7 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 
 ### 3. Serving
 
-**Phase 1: a standalone static bundle, hosted by tirraflow on its own host. No console route.**
+**Phase 1: a standalone static bundle at `replay.tirraflow.com`, delivered through the deploy repo. No console route.**
 
 - **Why not a console route.** The lab host answers anonymous visitors with a redirect to the catalog (ADR-013), and the lab is started by hand with Kafka and a model key (`labs.md`). A page for everyone must not depend on either. A console origin also holds a bearer token, possibly an admin's (`security_headers.py:3`), so published text should stay off it.
 - **Why not a path on tirraflow.com.** `connect-src 'self'` there would include the site's API. A dedicated host (the origin certificate covers `*.tirraflow.com`) has nothing to call.
@@ -112,7 +112,7 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 
 ## Rollout
 
-1. **Phase 1 (medium, the bulk).** Exporter and `replay_check`; `RunPanel` split; player, phone list, tests; one recording of a composition with an A2A call and an approval. Done when `dist-replay` passes the smoke. Hosting is a small separate PR in the deploy repo (server block, headers, DNS, routing tests), plus a link from a tirraflow article.
+1. **Phase 1 (medium, the bulk).** Exporter and `replay_check`; `RunPanel` split; player, phone list, tests; one recording of a composition with an A2A call and an approval. Done when `dist-replay` passes the smoke. Hosting at `replay.tirraflow.com` and delivery of the bundle are a small separate PR in the deploy repo (server block, headers, DNS, routing tests), plus a link from a tirraflow article.
 2. **Phase 2 (small to medium).** More recordings and a picker; the review as a console dialog on a saved run, still ending in a file, with a new admin-only route only if the CLI proves too awkward.
 3. **Phase 3 (small, optional).** Embedding in articles (`frame-ancestors https://tirraflow.com` on the replay host only; the console's policy never changes) and links to a moment. A console route only if another deployment asks.
 
@@ -124,11 +124,18 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 - Whether a read-only `Canvas` (`editable={false}`, no-op handlers) leaves any control that looks editable, such as the lock button (`Canvas.tsx:85`).
 - Whether every `RunEnd.error` is free of content: I read two sources (`runner.py:1149`, `:1517`), not all. It is dropped by default for this reason.
 
-## Decisions for the owner
+- The exact delivery mechanism inside the deploy repo. That repo builds nothing on the VPS (its ADR-003), so the bundle must arrive already built.
 
-1. **Host.** A dedicated `replay.tirraflow.com` (recommended), or something else?
-2. **How the bundle reaches the VPS.** The deploy repo builds nothing on the VPS (its ADR-003). A signed image, a release asset, or files in the blog's own image?
-3. **Does the first recording show text?** Recommended: yes, a little, from a local capture-on run with a written input, with instructions left out. The alternative is structure plus captions, with less to review.
-4. **May node instructions ever be published?** They are the most instructive part and the most sensitive.
-5. **Recordings in this repository's git history,** or in the deploy repo?
-6. **Is the CLI enough as the "explicit admin action" for phase 1,** or must the review be in the console from the start?
+## Decisions
+
+Made by the owner:
+
+- **Host:** `replay.tirraflow.com`.
+- **Delivery:** through the deploy repo.
+
+Still open:
+
+1. **Does the first recording show text?** Recommended: yes, a little, from a local capture-on run with a written input, with instructions left out. The alternative is structure plus captions, with less to review.
+2. **May node instructions ever be published?** They are the most instructive part and the most sensitive.
+3. **Recordings in this repository's git history,** or in the deploy repo?
+4. **Is the CLI enough as the "explicit admin action" for phase 1,** or must the review be in the console from the start?
