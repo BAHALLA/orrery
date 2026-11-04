@@ -113,9 +113,14 @@ def principals(monkeypatch):
     monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
 
 
+#: These tokens are minted once, when pytest collects this file, so they must
+#: outlive a slow run of the whole suite rather than one test.
+_TOKEN_TTL_S = 3600
+
+
 def _bearer(sub: str = "alice", roles: tuple[str, ...] = ("admin",)) -> dict[str, str]:
     token = jwt.encode(
-        {"sub": sub, "roles": list(roles), "azp": "orrery-console", "exp": time.time() + 300},
+        {"sub": sub, "roles": list(roles), "azp": "orrery-console", "exp": time.time() + _TOKEN_TTL_S},
         SECRET,
         algorithm="HS256",
     )

@@ -71,9 +71,14 @@ def client(monkeypatch: pytest.MonkeyPatch):
         yield test_client
 
 
+#: These tokens are minted once, when pytest collects this file, so they must
+#: outlive a slow run of the whole suite rather than one test.
+_TOKEN_TTL_S = 3600
+
+
 def _bearer(claims: dict) -> dict:
     token = jwt.encode(
-        {"sub": "alice", "roles": ["operator"], "exp": time.time() + 60, **claims},
+        {"sub": "alice", "roles": ["operator"], "exp": time.time() + _TOKEN_TTL_S, **claims},
         SECRET,
         algorithm="HS256",
     )

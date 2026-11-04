@@ -304,9 +304,14 @@ def client(principals, registry_file, stub, memory) -> Iterator[TestClient]:
         yield test_client
 
 
+#: These tokens are minted once, when pytest collects this file, so they must
+#: outlive a slow run of the whole suite rather than one test.
+_TOKEN_TTL_S = 3600
+
+
 def _bearer(sub: str = "alice", roles: tuple[str, ...] = ("admin",), azp: str = "orrery-console"):
     token = jwt.encode(
-        {"sub": sub, "roles": list(roles), "azp": azp, "exp": time.time() + 300},
+        {"sub": sub, "roles": list(roles), "azp": azp, "exp": time.time() + _TOKEN_TTL_S},
         SECRET,
         algorithm="HS256",
     )

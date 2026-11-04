@@ -212,9 +212,14 @@ class _EchoLlm(BaseLlm):
         )
 
 
+#: These tokens are minted once, when pytest collects this file, so they must
+#: outlive a slow run of the whole suite rather than one test.
+_TOKEN_TTL_S = 3600
+
+
 def _bearer(sub: str = "alice", **claims) -> dict:
     token = jwt.encode(
-        {"sub": sub, "roles": ["viewer"], "exp": time.time() + 60, **claims},
+        {"sub": sub, "roles": ["viewer"], "exp": time.time() + _TOKEN_TTL_S, **claims},
         SECRET,
         algorithm="HS256",
     )
