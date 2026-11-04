@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and hidden entries (Kubernetes' `..data`) are still skipped. Note for
   operators: unset the variable on any instance that has no secret files. The
   chart needs no change: every pod it gives the variable mounts the volume.
+- **An A2A task reports the action it is really waiting on.** A newer pending
+  action for the same person in another conversation made a waiting task report
+  completed, and an earlier turn's action made a later turn that raised nothing
+  report `input-required`. The lookup now covers this conversation and this turn.
+- **A refused A2A message no longer ends a waiting task.** A message too long, not
+  text or over the in-flight cap, sent on an existing task, used to reject it, and
+  resuming then failed with "in terminal state". The task now stays
+  `input-required`, says why, and keeps the action's data part. A refused new task
+  is still rejected.
+- **A remote A2A agent still working is not reported as a failure.** Calling a
+  remote that answers `working` or `submitted` now returns `status: in_progress`
+  with its `task_id` and a warning not to call again blindly, rather than an error
+  the model might retry and the circuit breaker would count. Nothing polls that
+  task yet (ADR-008). `auth-required` now says what is wrong rather than that the
+  task ended.
 
 ## [0.17.0] - 2026-11-01
 
