@@ -83,7 +83,7 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
-from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_scope
+from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_session
 from ..security.identity import CallerIdentity
 from ..security.principal import (
     A2A_SESSION_PREFIX,
@@ -362,8 +362,8 @@ class OrreryAgentExecutor(AgentExecutor):
             can_decide=False,
         )
         # The postgres confirmation backend is synchronous: off the event loop.
-        pending = await asyncio.to_thread(latest_pending_for_scope, auth.subject)
-        if pending is not None and pending.session_id == session_id:
+        pending = await asyncio.to_thread(latest_pending_for_session, auth.subject, session_id)
+        if pending is not None:
             parts = [new_data_part(_pending_payload(pending, self.approval_base))]
             if reply.text:
                 parts.insert(0, new_text_part(reply.text))

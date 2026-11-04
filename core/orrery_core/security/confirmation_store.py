@@ -172,6 +172,17 @@ class ConfirmationStore:
             self._prune_expired_locked()
             return self._latest_locked(scope)
 
+    def latest_for_session(self, scope: str, session_id: str) -> PendingConfirmation | None:
+        """Peek at the latest live pending for this scope raised in conversation *session_id*.
+
+        Not :meth:`latest_for_scope` plus a comparison: a scope (strict mode: a
+        person) spans conversations, so a newer pending in another one would
+        hide this one.
+        """
+        with self._lock:
+            self._prune_expired_locked()
+            return self._latest_locked(scope, session_id=session_id)
+
     def pop_latest_for_scope(self, scope: str) -> PendingConfirmation | None:
         """Pop the most-recently-added live pending for this scope (Deny flow)."""
         with self._lock:
@@ -267,9 +278,13 @@ class ConfirmationStore:
     def _matches_scope(pending: PendingConfirmation, scope: str) -> bool:
         return scope in (pending.scope_key, pending.parent_scope)
 
-    def _latest_locked(self, scope: str) -> PendingConfirmation | None:
+    def _latest_locked(
+        self, scope: str, *, session_id: str | None = None
+    ) -> PendingConfirmation | None:
         for pending in sorted(self._pending.values(), key=lambda p: p.created_at, reverse=True):
-            if self._matches_scope(pending, scope):
+            if self._matches_scope(pending, scope) and (
+                session_id is None or pending.session_id == session_id
+            ):
                 return pending
         return None
 
@@ -417,6 +432,14 @@ class PostgresConfirmationStore:
         """Peek at the most-recently-added live pending for this scope."""
         with self._engine.connect() as conn:
             row = conn.execute(self._latest_select(scope)).first()
+            return _row_to_pending(row) if row else None
+
+    def latest_for_session(self, scope: str, session_id: str) -> PendingConfirmation | None:
+        """Peek at the latest live pending for this scope raised in conversation *session_id*."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                self._latest_select(scope).where(_confirmations.c.session_id == session_id)
+            ).first()
             return _row_to_pending(row) if row else None
 
     def pop_latest_for_scope(self, scope: str) -> PendingConfirmation | None:

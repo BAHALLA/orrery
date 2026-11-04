@@ -116,6 +116,24 @@ def test_memory_latest_for_scope_matches_parent_scope():
     assert found is not None and found.action_id == p.action_id
 
 
+def test_memory_latest_for_session_is_not_hidden_by_a_newer_one_elsewhere():
+    store = ConfirmationStore()
+    here = _pending(session_id="s-here", tool_name="scale", created_at=time.time() - 5)
+    store.add(here)
+    store.add(_pending(session_id="s-other", tool_name="restart"))
+
+    found = store.latest_for_session("threads/T1", "s-here")
+    assert found is not None and found.action_id == here.action_id
+    assert store.latest_for_session("threads/T9", "s-here") is None
+    assert store.latest_for_session("threads/T1", "s-none") is None
+
+
+def test_memory_latest_for_session_ignores_expired():
+    store = ConfirmationStore()
+    store.add(_pending(session_id="s", created_at=time.time() - CONFIRMATION_TTL_SECONDS - 1))
+    assert store.latest_for_session("threads/T1", "s") is None
+
+
 def test_memory_mark_approved_then_consume_approved():
     store = ConfirmationStore()
     p = _pending()
@@ -248,6 +266,22 @@ def test_pg_latest_for_scope_matches_parent_scope(pg_store):
     pg_store.add(p)
     found = pg_store.latest_for_scope("spaces/S1")
     assert found is not None and found.action_id == p.action_id
+
+
+def test_pg_latest_for_session_is_not_hidden_by_a_newer_one_elsewhere(pg_store):
+    here = _pending(session_id="s-here", tool_name="scale", created_at=time.time() - 5)
+    pg_store.add(here)
+    pg_store.add(_pending(session_id="s-other", tool_name="restart"))
+
+    found = pg_store.latest_for_session("threads/T1", "s-here")
+    assert found is not None and found.action_id == here.action_id
+    assert pg_store.latest_for_session("threads/T9", "s-here") is None
+    assert pg_store.latest_for_session("threads/T1", "s-none") is None
+
+
+def test_pg_latest_for_session_ignores_expired(pg_store):
+    pg_store.add(_pending(session_id="s", created_at=time.time() - CONFIRMATION_TTL_SECONDS - 1))
+    assert pg_store.latest_for_session("threads/T1", "s") is None
 
 
 def test_pg_mark_approved_persists_for_fresh_reader(pg_store):

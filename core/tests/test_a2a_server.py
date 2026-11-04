@@ -558,6 +558,43 @@ def test_another_conversations_pending_does_not_hold_this_task(turns, pending_st
     assert task["status"]["state"] == "TASK_STATE_COMPLETED"
 
 
+def test_a_newer_pending_elsewhere_does_not_hide_this_tasks_action(turns, pending_store):
+    """Same person, newer console pending: the agent's task is still waiting."""
+
+    async def raise_two(self, **kwargs):
+        pending_store.add(
+            PendingConfirmation(
+                action_id="here",
+                tool_name="scale_deployment",
+                requester="alice",
+                scope_key="alice",
+                level="confirm",
+                args={},
+                session_id=kwargs["session_id"],
+            )
+        )
+        pending_store.add(
+            PendingConfirmation(
+                action_id="newer-elsewhere",
+                tool_name="restart_deployment",
+                requester="alice",
+                scope_key="alice",
+                level="confirm",
+                args={},
+                session_id="console-thread",
+                created_at=time.time() + 1,
+            )
+        )
+        return OutboundReply(text="needs approval", session_id=kwargs["session_id"])
+
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    with patch.object(AgentGateway, "run_in_session", raise_two):
+        task = _result(TestClient(_app()).post("/a2a", json=_send("scale it"), headers=headers))
+
+    assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert task["status"]["message"]["parts"][1]["data"]["action_id"] == "here"
+
+
 # ── Agent card ───────────────────────────────────────────────────────
 
 
