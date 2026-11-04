@@ -454,6 +454,190 @@ describe("Studio runs", () => {
   });
 });
 
+describe("Studio runs when the composition changes", () => {
+  /** Load the demo, run it to the end, and stay on the Run tab. */
+  async function finishedRun(user: ReturnType<typeof userEvent.setup>) {
+    await loadDemo(user);
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    await user.type(screen.getByLabelText("Run input"), "lag");
+    await user.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^run$/i }));
+    expect(await within(screen.getByRole("tabpanel")).findByText("succeeded")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("group", { name: /^LLM agent critic, ok$/ }),
+    ).toBeInTheDocument();
+  }
+
+  async function loadPipeline(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Patterns" }));
+    const dialog = screen.getByRole("dialog", { name: "Start from a pattern" });
+    await user.click(within(dialog).getByRole("button", { name: /^Pipeline/ }));
+    expect(await screen.findByRole("group", { name: /^LLM agent analyst$/ })).toBeInTheDocument();
+  }
+
+  const ended = () =>
+    new Response(releaseNotesRun().map(frame).join(""), {
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+  it("clears a finished run when a template is loaded; History and Undo bring it back", async () => {
+    stubStudio({ events: ended });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await finishedRun(user);
+
+    await loadPipeline(user);
+    const panel = () => within(screen.getByRole("tabpanel"));
+    expect(panel().queryByText("succeeded")).not.toBeInTheDocument();
+    expect(panel().queryByText("Nodes in this run")).not.toBeInTheDocument();
+    expect(panel().getByText(/hasn't run here yet/)).toBeInTheDocument();
+
+    // Undo puts back the canvas and the run it had on show.
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await panel().findByText("succeeded")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("group", { name: /^LLM agent critic, ok$/ }),
+    ).toBeInTheDocument();
+
+    // Cleared again, the run is still in History, and showing it puts its canvas back.
+    await loadPipeline(user);
+    await user.click(screen.getByRole("tab", { name: /history/i }));
+    expect(panel().getByText("release-notes")).toBeInTheDocument();
+    await user.click(panel().getByRole("button", { name: "Show" }));
+    expect(await panel().findByText("succeeded")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("group", { name: /^LLM agent critic, ok$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("marks no node of the new composition with the old run's status", async () => {
+    stubStudio({ events: ended });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await finishedRun(user);
+
+    // Imported with a node id the run also had: only the run being gone keeps it unmarked.
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox"), {
+      target: {
+        value: JSON.stringify({
+          spec_version: 1,
+          name: "other",
+          pattern: "pipeline",
+          nodes: [{ id: "critic", kind: "llm_agent", instruction: "Check." }],
+          edges: [],
+        }),
+      },
+    });
+    await user.click(within(dialog).getByRole("button", { name: /load|import/i }));
+    expect(await screen.findByRole("group", { name: /^LLM agent critic$/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("tabpanel")).queryByText("succeeded")).not.toBeInTheDocument();
+  });
+
+  it("keeps the results when a node of the same composition is edited", async () => {
+    stubStudio({ events: ended });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await finishedRun(user);
+
+    node(/^LLM agent writer/).focus();
+    await user.keyboard("{Enter}");
+    await user.type(await screen.findByLabelText("Instruction"), " Be brief.");
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    expect(within(screen.getByRole("tabpanel")).getByText("succeeded")).toBeInTheDocument();
+    expect(node(/^LLM agent critic, ok$/)).toBeInTheDocument();
+  });
+
+  it("locks every way of loading while a run is live, and the run goes on", async () => {
+    const stream = controlledStream();
+    const calls = stubStudio({ events: () => stream.response });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    await user.type(screen.getByLabelText("Run input"), "lag");
+    await user.click(within(screen.getByRole("tabpanel")).getByRole("button", { name: /^run$/i }));
+    stream.push(...releaseNotesRun().slice(0, 3));
+    expect(await screen.findByText("locked while running")).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Patterns" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
+    // Export stays open, but its Import tab can't replace the canvas.
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("tab", { name: "Import" }));
+    expect(within(dialog).getByText(/locked while a run is going/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /close/i }));
+
+    expect(screen.getByRole("button", { name: /cancel run/i })).toBeInTheDocument();
+    expect(calls.some((c) => c.url.endsWith("/cancel"))).toBe(false);
+  });
+
+  it("keeps a run still going elsewhere on show, labelled, when a template is loaded", async () => {
+    const stream = controlledStream();
+    const running = {
+      run_id: "run-9",
+      status: "running",
+      spec_name: "release-notes",
+      spec_digest: "5815aa",
+      created_at: 100,
+      ended_at: null,
+      error: null,
+      totals: null,
+      event_count: 3,
+      dropped_events: 0,
+      // Another replica's: it can be watched from here, not followed as the live run.
+      cancellable: false,
+    };
+    const calls = stubStudio({
+      events: () => stream.response,
+      other: (url) => (url.startsWith("/studio/runs?") ? json({ runs: [running] }) : undefined),
+    });
+    const user = userEvent.setup();
+    render(<StudioView token="t" />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("tab", { name: /history/i }));
+    await user.click(await screen.findByRole("button", { name: /^Follow run run-9/ }));
+    const start = releaseNotesRun("run-9");
+    stream.push(...start.slice(0, 2), {
+      run_id: "run-9",
+      seq: 3,
+      ts: 101,
+      type: "approval.requested",
+      node_id: "research",
+      approval_id: "a1",
+      kind: "approval",
+      prompt: "Publish these notes?",
+      digest: "d",
+      size: 1,
+      expires_at: 9999999999,
+    } as StudioEvent);
+    const panel = () => within(screen.getByRole("tabpanel"));
+    expect(await panel().findByText("Publish these notes?")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("group", { name: /^LLM agent research, awaiting/ }),
+    ).toBeInTheDocument();
+
+    await loadPipeline(user);
+    // Still there, waiting, and it says whose it is.
+    expect(panel().getByText("Publish these notes?")).toBeInTheDocument();
+    expect(panel().getByText(/not of\s+the composition on the canvas/)).toHaveTextContent(
+      "This is a run of release-notes",
+    );
+    expect(calls.some((c) => c.url.endsWith("/cancel"))).toBe(false);
+
+    // It stays on show when it ends, and gives way only to the next thing loaded.
+    stream.push(...start.slice(-1));
+    stream.close();
+    expect(await panel().findByText("succeeded")).toBeInTheDocument();
+    expect(panel().getByText(/not of\s+the composition on the canvas/)).toBeInTheDocument();
+    await loadPipeline(user);
+    expect(panel().queryByText("succeeded")).not.toBeInTheDocument();
+  });
+});
+
 describe("Studio import and export", () => {
   it("loads a pasted spec, expanding the remote-agent shorthand, and exports it back", async () => {
     stubStudio();

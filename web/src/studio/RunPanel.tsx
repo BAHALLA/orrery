@@ -40,6 +40,10 @@ interface Props {
   /** Reads and decides the run's pending approvals. */
   client: StudioClient;
   view: RunView | null;
+  /** The name of the composition the run on show is of, when that is not the one on the canvas. */
+  offCanvasOf?: string | null;
+  /** Runs of other compositions are in History: "nothing has run" would be untrue. */
+  hasPastRuns?: boolean;
   input: string;
   onInput: (text: string) => void;
   /** Focus the input whenever this changes (and is not 0). */
@@ -64,6 +68,8 @@ interface Props {
 export function RunPanel({
   client,
   view,
+  offCanvasOf = null,
+  hasPastRuns = false,
   input: text,
   onInput,
   focusSignal,
@@ -175,23 +181,28 @@ export function RunPanel({
         <RunDetail
           client={client}
           view={view}
+          offCanvasOf={offCanvasOf}
           connection={connection}
           finished={finished}
           now={now}
         />
       ) : (
-        <EmptyRun />
+        <EmptyRun hasPastRuns={hasPastRuns} />
       )}
     </div>
   );
 }
 
-function EmptyRun() {
+function EmptyRun({ hasPastRuns }: { hasPastRuns: boolean }) {
   return (
     <div
       className={`${panelCard} border-dashed p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400`}
     >
-      <p className="font-medium text-slate-700 dark:text-slate-200">Nothing has run yet.</p>
+      <p className="font-medium text-slate-700 dark:text-slate-200">
+        {hasPastRuns
+          ? "This composition hasn't run here yet. Earlier runs are in History."
+          : "Nothing has run yet."}
+      </p>
       <p className="mt-1">
         A run is separate from the live system: it never changes agents, the catalogue, chat
         sessions or memory, and it is held to autonomy L2 (reads only). Its trace streams here as it
@@ -204,12 +215,14 @@ function EmptyRun() {
 function RunDetail({
   client,
   view,
+  offCanvasOf,
   connection,
   finished,
   now,
 }: {
   client: StudioClient;
   view: RunView;
+  offCanvasOf: string | null;
   connection: Connection;
   finished: boolean;
   now: number;
@@ -225,6 +238,12 @@ function RunDetail({
   return (
     <>
       <div className={`${panelCard} p-3`}>
+        {offCanvasOf ? (
+          <p className={`mb-2 rounded-md border px-2 py-1.5 text-xs ${toneChip.warn}`}>
+            This is a run of <span className="font-mono font-semibold">{offCanvasOf}</span>, not of
+            the composition on the canvas.
+          </p>
+        ) : null}
         <div className="flex items-center gap-2">
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${tonePill[tone]}`}
