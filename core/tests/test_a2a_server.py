@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt as pyjwt
@@ -15,12 +18,23 @@ pytest.importorskip("fastapi")
 
 from a2a.types.a2a_pb2 import TaskState  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from google.adk.agents import LlmAgent  # noqa: E402
+from google.adk.models.base_llm import BaseLlm  # noqa: E402
+from google.adk.models.llm_response import LlmResponse  # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
+from google.adk.tools import FunctionTool  # noqa: E402
+from google.adk.tools.agent_tool import AgentTool  # noqa: E402
+from google.genai import types  # noqa: E402
 
 from orrery_core.security.auth import AUTH_STATE_KEY, JWTConfig  # noqa: E402
 from orrery_core.security.confirmation_store import (  # noqa: E402
     ConfirmationStore,
     PendingConfirmation,
+)
+from orrery_core.security.guardrails import (  # noqa: E402
+    confirm,
+    decide_out_of_band,
+    require_confirmation,
 )
 from orrery_core.serving.a2a_config import A2AConfig  # noqa: E402
 from orrery_core.serving.a2a_server import session_id_for  # noqa: E402
@@ -413,8 +427,6 @@ async def test_a_running_turn_cannot_be_cancelled():
 
 @pytest.mark.asyncio
 async def test_concurrent_turns_per_caller_are_capped():
-    import asyncio
-
     from orrery_core.security.auth import AuthContext
     from orrery_core.serving.a2a_server import OrreryAgentExecutor
 
@@ -593,6 +605,176 @@ def test_a_newer_pending_elsewhere_does_not_hide_this_tasks_action(turns, pendin
 
     assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
     assert task["status"]["message"]["parts"][1]["data"]["action_id"] == "here"
+
+
+def test_an_earlier_turns_pending_does_not_mark_a_later_turn(turns, pending_store):
+    """Turn 1 raises; turn 2 in the same context raises nothing and is done."""
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    first_turn = {"pending": True}
+
+    async def turn(self, **kwargs):
+        if first_turn.pop("pending", False):
+            pending_store.add(
+                PendingConfirmation(
+                    action_id="old",
+                    tool_name="scale_deployment",
+                    requester="alice",
+                    scope_key="alice",
+                    level="confirm",
+                    args={},
+                    session_id=kwargs["session_id"],
+                )
+            )
+        return OutboundReply(text="reply", session_id=kwargs["session_id"])
+
+    client = TestClient(_app())
+    with patch.object(AgentGateway, "run_in_session", turn):
+        first = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+        ctx = first["contextId"]
+        second = _result(
+            client.post("/a2a", json=_send("what time is it", context_id=ctx), headers=headers)
+        )
+
+    assert first["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert second["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert second["artifacts"][0]["parts"][0]["text"] == "reply"
+    assert pending_store.get("old") is not None  # still answerable for its own task
+
+
+# ── Approvals through the real gate ──────────────────────────────────
+
+
+class _ScriptedLlm(BaseLlm):
+    """Calls *tool* when the last user message mentions *trigger*, then answers."""
+
+    model: str = "scripted"
+    tool: str
+    trigger: str = "scale"
+    args: dict = {}
+
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse]:
+        last = llm_request.contents[-1].parts[-1]
+        if last.function_response is not None:
+            parts = [types.Part.from_text(text=f"tool said {last.function_response.response}")]
+        elif self.trigger in (last.text or ""):
+            parts = [types.Part.from_function_call(name=self.tool, args=self.args)]
+        else:
+            parts = [types.Part.from_text(text="nothing to do")]
+        yield LlmResponse(content=types.Content(role="model", parts=parts))
+
+
+@pytest.fixture
+def real_gate(pending_store):
+    """A coordinator reaching a guarded tool through an AgentTool specialist, as shipped."""
+    ran: list[int] = []
+
+    @confirm("rescales the deployment")
+    async def scale_deployment(replicas: int) -> dict:
+        ran.append(replicas)
+        return {"status": "success", "replicas": replicas}
+
+    specialist = LlmAgent(
+        name="k8s_specialist",
+        description="Kubernetes",
+        model=_ScriptedLlm(tool="scale_deployment", args={"replicas": 3}),
+        instruction="Scale.",
+        tools=[FunctionTool(scale_deployment)],
+        before_tool_callback=require_confirmation(),
+    )
+    root = LlmAgent(
+        name="root",
+        description="coordinator",
+        model=_ScriptedLlm(tool="k8s_specialist", args={"request": "scale"}),
+        instruction="Delegate.",
+        tools=[AgentTool(agent=specialist)],
+    )
+    config = ServerConfig(
+        auth_enabled=True,
+        jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
+        a2a=A2AConfig(enabled=True, audience=_A2A_AUD),
+    )
+    sessions = InMemorySessionService()
+    with patch("orrery_core.serving.server.create_session_service", return_value=sessions):
+        app = create_app(root_agent=root, app_name="gated", plugins=[], config=config)
+    with TestClient(app) as client:
+        yield client, ran, sessions
+
+
+def _action_of(task: dict) -> dict:
+    return task["status"]["message"]["parts"][-1]["data"]
+
+
+def test_real_gate_a_pending_in_a_specialist_belongs_to_the_top_level_session(
+    real_gate, pending_store
+):
+    client, ran, sessions = real_gate
+    headers = _headers("alice", act={"sub": "partner-agent"})
+
+    task = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+
+    assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert ran == []
+    pending = pending_store.get(_action_of(task)["action_id"])
+    assert pending is not None
+    # Raised in the AgentTool's throwaway sub-session, whose id is not in this
+    # store: it is attributed to the one top-level conversation regardless.
+    listed = asyncio.run(sessions.list_sessions(app_name="gated", user_id="alice"))
+    assert [s.id for s in listed.sessions] == [pending.session_id]
+    assert pending.session_id.startswith("a2a-")
+    assert pending.scope_key == pending.requester == "alice"
+
+
+def test_real_gate_a_retried_call_is_still_waiting_with_a_fresh_action(real_gate, pending_store):
+    """The gate re-raises on a retry rather than reusing the old pending."""
+    client, ran, _sessions = real_gate
+    headers = _headers("alice", act={"sub": "partner-agent"})
+
+    first = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+    old = pending_store.get(_action_of(first)["action_id"])
+    time.sleep(0.01)
+    again = _result(
+        client.post(
+            "/a2a",
+            json=_send("scale it, please", task_id=first["id"], context_id=first["contextId"]),
+            headers=headers,
+        )
+    )
+
+    assert again["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    new = pending_store.get(_action_of(again)["action_id"])
+    assert new is not None and old is not None
+    assert new.action_id != old.action_id
+    assert new.created_at > old.created_at
+    assert pending_store.get(old.action_id) is None  # superseded: it can authorize nothing
+    assert ran == []
+
+
+def test_real_gate_an_unrelated_turn_completes_and_an_approval_resumes(real_gate, pending_store):
+    client, ran, _sessions = real_gate
+    headers = _headers("alice", act={"sub": "partner-agent"})
+
+    first = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+    action = _action_of(first)["action_id"]
+    ctx = first["contextId"]
+
+    unrelated = _result(
+        client.post("/a2a", json=_send("how is kafka", context_id=ctx), headers=headers)
+    )
+    assert unrelated["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert pending_store.get(action) is not None
+
+    decide_out_of_band(action, "approve", decider="alice")
+    resumed = _result(
+        client.post(
+            "/a2a",
+            json=_send("scale it now", task_id=first["id"], context_id=ctx),
+            headers=headers,
+        )
+    )
+    assert resumed["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert ran == [3]
 
 
 # ── Agent card ───────────────────────────────────────────────────────

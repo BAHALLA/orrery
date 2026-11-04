@@ -350,6 +350,7 @@ class OrreryAgentExecutor(AgentExecutor):
             session_id=session_id,
             task_id=updater.task_id,
         )
+        started_at = time.time()
         reply = await self.gateway.run_in_session(
             user_id=auth.subject,
             session_id=session_id,
@@ -363,7 +364,14 @@ class OrreryAgentExecutor(AgentExecutor):
         )
         # The postgres confirmation backend is synchronous: off the event loop.
         pending = await asyncio.to_thread(latest_pending_for_session, auth.subject, session_id)
-        if pending is not None:
+        # Only what this turn raised holds the task: an older pending stays
+        # answerable, but a later unrelated turn is not waiting on it. A timestamp
+        # is enough because the gate never reuses a pending: a retried call
+        # supersedes it with a new id and created_at, so a turn that is waiting
+        # always has a fresh one. Same process, same clock: A2A refuses
+        # ORRERY_MULTI_REPLICA. A turn queued behind another on this session's
+        # lock may report that turn's action, which is at least a real one.
+        if pending is not None and pending.created_at >= started_at:
             parts = [new_data_part(_pending_payload(pending, self.approval_base))]
             if reply.text:
                 parts.insert(0, new_text_part(reply.text))
