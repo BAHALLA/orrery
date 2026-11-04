@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A missing `ORRERY_SECRETS_DIR` stops startup, and so do the remaining ways
+  to lose a secret file.** If the variable is set, the path must be a directory
+  this process can list; a dangling symlink named like a variable, or any read
+  error, also stops startup. Each used to be logged or silently skipped, so a
+  typo or an unmounted volume left `DATABASE_URL` unset and started the server
+  on in-memory sessions, against the database fail-fast policy. Subdirectories
+  and hidden entries (Kubernetes' `..data`) are still skipped. Note for
+  operators: unset the variable on any instance that has no secret files. The
+  chart needs no change: every pod it gives the variable mounts the volume.
+
 ## [0.17.0] - 2026-11-01
 
 **Durable chats without lasting memory.** `ORRERY_LONG_TERM_MEMORY=false`

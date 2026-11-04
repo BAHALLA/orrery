@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import stat
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -88,11 +89,13 @@ _MAX_SECRET_BYTES = 64 * 1024
 
 
 class SecretFileUnreadable(RuntimeError):
-    """A secret file named like an environment variable exists but can't be used.
+    """The secrets directory, or a file in it named like a variable, can't be used.
 
-    Unreadable, not UTF-8, oversized or holding a NUL byte. Skipping it would
-    start the service as if the variable were unset, so startup stops instead.
-    The message names the file, never its content.
+    A configured directory that is missing, not a directory or unlistable; a
+    dangling symlink; a file that is unreadable, not UTF-8, oversized or holding
+    a NUL byte. Skipping any of these would start the service as if the
+    variables were unset, so startup stops instead. The message names the path,
+    never a file's content.
     """
 
 
@@ -101,7 +104,7 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
 
     *directory* defaults to ``$ORRERY_SECRETS_DIR``; with neither, this is a
     no-op. Called once when ``orrery_core`` is imported, before any config is
-    read.
+    read, so a :class:`SecretFileUnreadable` here stops the process at startup.
 
     **Why the environment, rather than a lookup API.** Credentials here are
     read three ways: ``os.getenv`` (``DATABASE_URL``, ``JWT_SECRET``), pydantic
@@ -123,24 +126,47 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
 
     Returns:
         The names that were set, sorted.
+
+    Raises:
+        SecretFileUnreadable: A directory was configured and can't be used, or
+            an entry named like a variable can't be read. A real subdirectory
+            or a hidden entry (Kubernetes' ``..data``) is not an error.
     """
     raw = directory if directory is not None else os.getenv(SECRETS_DIR_ENV)
     if not raw:
         return []
     root = Path(raw)
+    # A typo or an unmounted volume is a deployment error, not "no secrets":
+    # carrying on would leave DATABASE_URL unset, so in-memory sessions, against
+    # the DB fail-fast policy.
     if not root.is_dir():
-        logger.warning("%s=%s is not a directory; no secrets loaded", SECRETS_DIR_ENV, root)
-        return []
+        raise SecretFileUnreadable(
+            f"Secrets directory {root} ({SECRETS_DIR_ENV}) does not exist or is not a "
+            "directory. Mount it, fix the path, or unset the variable."
+        )
+    try:
+        entries = sorted(root.iterdir())
+    except OSError as exc:
+        raise SecretFileUnreadable(
+            f"Secrets directory {root} ({SECRETS_DIR_ENV}) could not be listed by this "
+            f"process (uid {os.getuid()}): {exc.strerror or type(exc).__name__}"
+        ) from exc
 
     loaded: list[str] = []
-    for entry in sorted(root.iterdir()):
+    for entry in entries:
         name = entry.name
         # Hidden entries include Kubernetes' own `..data` / `..<timestamp>`
         # indirection directories; the visible keys are symlinks into them.
-        if name.startswith(".") or not _ENV_NAME.fullmatch(name) or not entry.is_file():
+        if name.startswith(".") or not _ENV_NAME.fullmatch(name):
             continue
         try:
-            if entry.stat().st_size > _MAX_SECRET_BYTES:
+            # Follows symlinks, so a Kubernetes key is judged by its target.
+            # Path.is_file() answers False to every stat failure, which can't
+            # tell a subdirectory from a dangling symlink.
+            info = entry.stat()
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            if info.st_size > _MAX_SECRET_BYTES:
                 raise SecretFileUnreadable(
                     f"Secret file {name} in {root} is over {_MAX_SECRET_BYTES} bytes"
                 )
@@ -159,9 +185,16 @@ def load_secrets_into_environment(directory: str | Path | None = None) -> list[s
             raise SecretFileUnreadable(
                 f"Secret file {name} in {root} is not UTF-8 text (saved as UTF-16?)"
             ) from None  # the decode error would quote the bytes
+        except FileNotFoundError:
+            raise SecretFileUnreadable(
+                f"Secret file {name} in {root} is a symlink to nothing, or vanished "
+                "while being read. Check what the volume mounts."
+            ) from None
         except OSError as exc:
-            logger.warning("Secret file %s could not be read: %s", name, exc)
-            continue
+            raise SecretFileUnreadable(
+                f"Secret file {name} in {root} could not be read: "
+                f"{exc.strerror or type(exc).__name__}"
+            ) from exc
         if "\0" in value:
             raise SecretFileUnreadable(f"Secret file {name} in {root} contains a NUL byte")
         existing = os.environ.get(name)

@@ -161,12 +161,16 @@ networks:
   Under rootless Docker, Podman or `userns-remap`, container uid 1000 maps to
   another host uid: use that one (`podman unshare chown 1000 …`). `chown`
   needs `sudo` unless your own uid is 1000.
-- **An unusable secret file stops startup**: unreadable, not UTF-8, over
-  64 KiB, or holding a NUL byte, for any file in `ORRERY_SECRETS_DIR` named
-  like a variable. Keep that directory for variable values only. Orrery
-  refuses to start rather than run as if `DATABASE_URL` were unset (which
-  would mean in-memory sessions again). The error names the file and, when
-  it cannot be read, the uid.
+- **An unusable secrets directory or file stops startup.** If
+  `ORRERY_SECRETS_DIR` is set, the directory must exist and be listable: a typo
+  or an unmounted volume is an error, so unset the variable on an instance
+  that has no secret files. For any entry in it named like a variable, so is a
+  dangling symlink or a file that is unreadable (for any reason), not UTF-8,
+  over 64 KiB, or holding a NUL byte. Subdirectories and hidden entries are
+  skipped. Keep that directory for variable values only. Orrery refuses to
+  start rather than run as if `DATABASE_URL` were unset (which would mean
+  in-memory sessions again). The error names the path, never a value, and,
+  when a permission is the cause, the uid.
 - **One database per instance.** Two instances (a lab and an ops console)
   get two databases, or two Postgres containers: sessions, memory and the
   agent catalog are not namespaced by instance.
@@ -376,7 +380,12 @@ key (Gemini, LiteLLM). The values never appear in the pod spec.
   never by value). Keys missing from the volume fall back to the environment,
   so this composes with the existing `envFrom` flow.
 - Keys that cannot be variable names (`ca.crt`, `tls-key`) are left as files for
-  path-based settings, and so are files over 64 KiB.
+  path-based settings. Keep bundles under such a name: a variable-named file
+  over 64 KiB stops startup.
+- A missing or unlistable mount, or a key that can't be read, **stops startup**
+  (see [the list above](#single-node-docker-compose)). The chart mounts the
+  volume on every pod that gets `ORRERY_SECRETS_DIR`, the Pub/Sub worker
+  included. If you set the variable by hand, do the same.
 - Values are read at startup: **restart the pods after rotating a secret**.
 
 ### Roll out
