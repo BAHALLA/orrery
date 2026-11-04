@@ -85,6 +85,8 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 - **Why not a console route.** The lab host answers anonymous visitors with a redirect to the catalog (ADR-013), and the lab is started by hand with Kafka and a model key (`labs.md`). A page for everyone must not depend on either. A console origin also holds a bearer token, possibly an admin's (`security_headers.py:3`), so published text should stay off it.
 - **Why not a path on tirraflow.com.** `connect-src 'self'` there would include the site's API. A dedicated host (the origin certificate covers `*.tirraflow.com`) has nothing to call.
 - **Separate entry.** `web/replay.html`, `web/replay/main.tsx` and `web/vite.replay.config.ts`, building to `web/dist-replay` with a relative base. It loads no `console-config.js` and no OIDC, and its output is apart from the console's, so it does not ship in the Orrery image.
+- **Delivery: a signed image pinned by digest.** This repository's release workflow builds and signs a small unprivileged static nginx image holding `dist-replay`, separate from the Orrery image. The deploy repo pins it as it pins Orrery (`image@sha256:…` in `docker-compose.prod.yml`), which follows its ADR-003 (nothing built on the VPS) and gives rollback. Its `deploy.yml` does not verify signatures, so the service gets its own `replay` compose profile and a `replay.yml` that runs cosign, modelled on `lab.yml`. The deploy repo's "one Orrery release everywhere" routing check must include this image or exclude it deliberately.
+- **Edge.** The container sits on its own network shared only with edge nginx, with the lab service's hardening (`read_only`, no capabilities, `no-new-privileges`, limits). Headers are set by one layer only. No gate, sign-in or cookie exists on this host, and a routing test asserts that. As a public edge it has a `limit_req` zone. Hashed assets cache long, `index.html` briefly, and a missing asset must not be cached long.
 - **The recording is imported at build time,** so the page makes no network call at all and code and recording cannot disagree.
 - **Size.** In a local build, `StudioView` is 342,628 bytes and the React chunk 210,583 (minified, not gzipped). The player drops dialogs, inspector forms, the palette and the API client, but keeps `@xyflow/react`. The saving is not measured (see open questions), so CI gets a size budget from the first real build. The canvas is lazy-loaded so phones never fetch it. Tailwind needs its own entry, since the console keeps one utilities bundle (AEP-031).
 - **CSP.** The host sends `build_csp()`'s policy, tightened: `connect-src 'none'`, `frame-src 'none'`, `form-action 'none'`. `script-src` and `style-src` stay `'self'`, and the canvas already runs under them (`web/scripts/studio_smoke.py:21`). `frame-ancestors 'none'` stays for phase 1: articles link rather than embed.
@@ -112,7 +114,7 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 
 ## Rollout
 
-1. **Phase 1 (medium, the bulk).** Exporter and `replay_check`; `RunPanel` split; player, phone list, tests; one recording of a composition with an A2A call and an approval. Done when `dist-replay` passes the smoke. Hosting at `replay.tirraflow.com` and delivery of the bundle are a small separate PR in the deploy repo (server block, headers, DNS, routing tests), plus a link from a tirraflow article.
+1. **Phase 1 (medium, the bulk).** Exporter and `replay_check`; `RunPanel` split; player, phone list, tests; one recording of a composition with an A2A call and an approval. A signed replay image from the release workflow. Done when `dist-replay` passes the smoke and the image is published. Hosting at `replay.tirraflow.com` is a separate PR in the deploy repo (`replay` profile, `replay.yml`, server block, port 80 redirect, headers, DNS, routing tests), plus a link from a tirraflow article.
 2. **Phase 2 (small to medium).** More recordings and a picker; the review as a console dialog on a saved run, still ending in a file, with a new admin-only route only if the CLI proves too awkward.
 3. **Phase 3 (small, optional).** Embedding in articles (`frame-ancestors https://tirraflow.com` on the replay host only; the console's policy never changes) and links to a moment. A console route only if another deployment asks.
 
@@ -124,7 +126,8 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 - Whether a read-only `Canvas` (`editable={false}`, no-op handlers) leaves any control that looks editable, such as the lock button (`Canvas.tsx:85`).
 - Whether every `RunEnd.error` is free of content: I read two sources (`runner.py:1149`, `:1517`), not all. It is dropped by default for this reason.
 
-- The exact delivery mechanism inside the deploy repo. That repo builds nothing on the VPS (its ADR-003), so the bundle must arrive already built.
+- Whether Cloudflare injects anything on this zone (Web Analytics, Rocket Loader): `connect-src 'none'` would block it, and the deploy repo does not record those settings. Check on the host.
+- Whether the certificate covers `replay.tirraflow.com`: the deploy docs say it covers `*.tirraflow.com`, but nobody has read the certificate itself.
 
 ## Decisions
 
