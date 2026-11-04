@@ -150,7 +150,7 @@ export function MessageInput({ disabled, isSending, attachments, onSend, onStop 
           ) : null}
           <textarea
             ref={textareaRef}
-            className="orrery-scroll min-h-[2.75rem] flex-1 resize-none bg-transparent px-2.5 py-2.5 text-[15px] text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:opacity-60 dark:text-slate-100 dark:placeholder:text-slate-500"
+            className="orrery-scroll min-h-[2.75rem] flex-1 resize-none bg-transparent px-2.5 py-2.5 text-[15px] text-slate-900 placeholder-shown:truncate placeholder:text-slate-400 focus:outline-none disabled:opacity-60 dark:text-slate-100 dark:placeholder:text-slate-500"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -161,7 +161,7 @@ export function MessageInput({ disabled, isSending, attachments, onSend, onStop 
               e.preventDefault();
               addFiles(pasted);
             }}
-            placeholder="Ask Orrery about your systems…"
+            placeholder="Ask about your systems…"
             rows={1}
             disabled={disabled}
             aria-label="Message"

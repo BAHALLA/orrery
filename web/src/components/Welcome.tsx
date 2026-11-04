@@ -1,15 +1,18 @@
 import { ActivityIcon, GaugeIcon, RadarIcon, ShieldIcon } from "./icons";
-import type { SpecialistInfo } from "../api/types";
+import type { MeResponse, SpecialistInfo } from "../api/types";
 import { joinLabels, specialistLabel, systemSpecialists } from "../specialists";
 import { OrreryMark } from "./OrreryMark";
+
+/** The part of `/me` that says what the caller can do here. */
+export type Posture = Pick<MeResponse, "role" | "autonomy_level">;
 
 interface Props {
   onSuggest: (prompt: string) => void;
   onSweep: () => void;
   /** The deployment's specialists; suggestions for the others are hidden. */
   specialists: readonly SpecialistInfo[];
-  /** "L2" | "L3" | "L4" from /me, or null when no autonomy gate is set. */
-  autonomy: string | null;
+  /** From `/me`; null until it answers. */
+  me: Posture | null;
 }
 
 /** Starting points that exercise each specialist with a read-only question. */
@@ -55,17 +58,35 @@ function askAbout(specialists: readonly SpecialistInfo[]): string {
   return `Ask about ${joinLabels(named, "or")}.`;
 }
 
-/** What this deployment lets Orrery do, from the autonomy level in force. */
-function postureLine(autonomy: string | null): string {
+/**
+ * What this caller can do here, from their role and the autonomy level in force.
+ * Display only: the server decides. Until `/me` answers (or if it says something
+ * this console doesn't know) the line claims nothing either way.
+ */
+function postureLine(me: Posture | null): string {
+  const neutral = "Orrery looks into them and explains what it finds.";
+  if (!me) return neutral;
+  const { role, autonomy_level: autonomy } = me;
+  if (role === "viewer") {
+    return autonomy === "L2"
+      ? "You can investigate here. Neither your viewer role nor this read-only deployment (autonomy L2) can change a system."
+      : "You can investigate and get recommendations. Your viewer role can't change systems, so Orrery refuses those requests.";
+  }
+  if (autonomy === "L2") {
+    return "This deployment is read-only (autonomy L2): Orrery investigates and recommends, and won't change a system.";
+  }
+  if (role !== "operator" && role !== "admin") return neutral;
   switch (autonomy) {
-    case "L2":
-      return "This deployment is read-only (autonomy L2): Orrery investigates and recommends, and won't change a system.";
     case "L3":
       return "Anything that would change a system waits for your approval first; destructive actions are off here (autonomy L3).";
     case "L4":
-      return "Anything that would change a system waits for your approval first, destructive actions included (autonomy L4).";
-    default:
+      return role === "admin"
+        ? "Anything that would change a system waits for your approval first, destructive actions included (autonomy L4)."
+        : "Anything that would change a system waits for your approval first; destructive actions need an admin (autonomy L4).";
+    case null:
       return "Anything that would change a system waits for your approval first.";
+    default:
+      return neutral;
   }
 }
 
@@ -74,7 +95,7 @@ function postureLine(autonomy: string | null): string {
  * points — an operator usually arrives with a symptom, so the suggestions are
  * symptoms, each a read-only question a specialist can answer straight away.
  */
-export function Welcome({ onSuggest, onSweep, specialists, autonomy }: Props) {
+export function Welcome({ onSuggest, onSweep, specialists, me }: Props) {
   const enabled = new Set(specialists.map((s) => s.key));
   const suggestions = SUGGESTIONS.filter((s) => enabled.has(s.specialist));
   return (
@@ -84,10 +105,11 @@ export function Welcome({ onSuggest, onSweep, specialists, autonomy }: Props) {
           <OrreryMark className="h-9 w-9" />
         </div>
         <h2 className="text-center text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-          What's happening in your estate?
+          What would you like to check?
         </h2>
-        <p className="mt-2 max-w-lg text-center text-sm text-slate-500 dark:text-slate-400">
-          {askAbout(specialists)} {postureLine(autonomy)}
+        {/* Room for the longest line, so the page doesn't move when /me answers. */}
+        <p className="mt-2 min-h-20 max-w-lg text-center text-sm text-slate-500 sm:min-h-15 dark:text-slate-400">
+          {askAbout(specialists)} {postureLine(me)}
         </p>
 
         <div className="mt-8 grid w-full gap-3 sm:grid-cols-2">

@@ -10,7 +10,7 @@ import { CheckIcon, CloseIcon } from "./icons";
 import { OrreryMark } from "./OrreryMark";
 import { RunTrace } from "./RunTrace";
 import { toneChip } from "./severity";
-import { Welcome } from "./Welcome";
+import { type Posture, Welcome } from "./Welcome";
 
 interface Props {
   messages: ChatMessage[];
@@ -20,7 +20,7 @@ interface Props {
   onSweep: () => void;
   /** For the empty state's copy and suggestions. */
   specialists: readonly SpecialistInfo[];
-  autonomy: string | null;
+  me: Posture | null;
 }
 
 function formatTime(at: number): string {
@@ -150,14 +150,7 @@ const AssistantMessage = memo(function AssistantMessage({ m }: { m: ChatMessage 
  * they are reports with tables and code, and a bubble squeezed them into a
  * column too narrow to read either.
  */
-export function MessageList({
-  messages,
-  isSending,
-  onSuggest,
-  onSweep,
-  specialists,
-  autonomy,
-}: Props) {
+export function MessageList({ messages, isSending, onSuggest, onSweep, specialists, me }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
@@ -176,14 +169,7 @@ export function MessageList({
   }, [messages, isSending, streaming]);
 
   if (messages.length === 0 && !isSending) {
-    return (
-      <Welcome
-        onSuggest={onSuggest}
-        onSweep={onSweep}
-        specialists={specialists}
-        autonomy={autonomy}
-      />
-    );
+    return <Welcome onSuggest={onSuggest} onSweep={onSweep} specialists={specialists} me={me} />;
   }
 
   return (

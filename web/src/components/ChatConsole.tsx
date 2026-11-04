@@ -390,7 +390,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                   onSuggest={onSuggest}
                   onSweep={onSweep}
                   specialists={specialists}
-                  autonomy={system.me?.autonomy_level ?? null}
+                  me={system.me}
                 />
               </ShowApprovalContext.Provider>
 
