@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("a2a")
 
+from google.adk.events import Event  # noqa: E402
 from google.protobuf.json_format import MessageToDict  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
@@ -18,6 +19,7 @@ from starlette.routing import Route  # noqa: E402
 
 from orrery_core.a2a import remote  # noqa: E402
 from orrery_core.a2a.remote import (  # noqa: E402
+    STATUS_IN_PROGRESS,
     GuardedRemoteA2aTool,
     InputUnavailable,
     RemoteAgentEntry,
@@ -32,6 +34,7 @@ from orrery_core.plugins.delegation_guard_plugin import DelegationGuardPlugin  #
 from orrery_core.plugins.pii_plugin import PIIRedactionPlugin  # noqa: E402
 from orrery_core.plugins.progress_plugin import ProgressPlugin, progress_scope  # noqa: E402
 from orrery_core.plugins.safety_plugin import FILTER_MARKER, SafetyScreenPlugin  # noqa: E402
+from orrery_core.reliability.resilience import ToolOutcome, classify_tool_outcome  # noqa: E402
 from orrery_core.security.guardrails import (  # noqa: E402
     LEVEL_DESTRUCTIVE,
     get_guard_level,
@@ -502,6 +505,145 @@ def test_input_required_returns_the_ids_to_resume_with(serve_asgi, writer_module
     assert result["task_state"] == "input-required"
     assert result["task_id"] and result["context_id"]
     assert "A person must answer it" in result["message"]
+
+
+def _writer_ending(writer_module, end):
+    """A writer whose task stops wherever *end(updater)* leaves it."""
+    from a2a.helpers import new_task
+    from a2a.server.tasks import TaskUpdater
+    from a2a.types.a2a_pb2 import TaskState
+
+    class Ending(writer_module.WriterExecutor):
+        async def execute(self, context, event_queue):
+            task_id, context_id = context.task_id or "", context.context_id or ""
+            await event_queue.enqueue_event(
+                new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=[])
+            )
+            await end(TaskUpdater(event_queue, task_id, context_id))
+
+    return Ending()
+
+
+async def _stay_submitted(_updater):
+    return None
+
+
+async def _stay_working(updater):
+    await updater.start_work()
+
+
+@pytest.mark.parametrize(
+    ("end", "state"), [(_stay_working, "working"), (_stay_submitted, "submitted")]
+)
+def test_a_task_still_running_is_in_progress_not_an_error(serve_asgi, writer_module, end, state):
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(base, _writer_ending(writer_module, end))
+    )
+    seen: list[Any] = []
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards(), observer=seen.append)
+
+    result = _call(tool)
+
+    assert result["status"] == STATUS_IN_PROGRESS
+    assert result["task_state"] == state
+    assert result["task_id"] and result["context_id"]
+    assert "error_type" not in result
+    message = result["message"]
+    assert "still working" in message
+    assert "no result yet" in message
+    assert "do not call the remote again" in message
+    assert "ended" not in message
+    # Not a failure for the breaker, and the call it made is still charged.
+    assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
+    inbound = next(e for e in seen if e.direction == "inbound")
+    assert inbound.status == STATUS_IN_PROGRESS
+    assert inbound.task_state == state
+    assert inbound.task_id == result["task_id"]
+    assert inbound.awaiting_input is False
+
+
+def test_in_progress_without_adks_stream_error_too(writer):
+    """Same answer when the runner reports the state and no error event."""
+    url, _received, _seen = writer
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards())
+
+    class Runner:
+        async def run_async(self, **_kwargs):
+            yield Event(
+                author="remote",
+                custom_metadata={
+                    "a2a:task_id": "t-1",
+                    "a2a:context_id": "c-1",
+                    "a2a:response": {"status": {"state": "TASK_STATE_WORKING"}},
+                },
+            )
+
+    result = asyncio.run(tool._exchange(Runner(), "remote", "s", "hi"))
+    assert result["status"] == STATUS_IN_PROGRESS
+    assert result["task_id"] == "t-1"
+    assert "error_type" not in result
+
+
+def test_an_error_before_any_task_state_is_still_an_error(writer):
+    url, _received, _seen = writer
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards())
+
+    class Runner:
+        async def run_async(self, **_kwargs):
+            yield Event(author="remote", error_message="A2A request failed: boom")
+
+    result = asyncio.run(tool._exchange(Runner(), "remote", "s", "hi"))
+    assert result["status"] == "error"
+    assert result["error_type"] == "remote_error"
+
+
+def test_in_progress_is_never_put_to_a_person(serve_asgi, writer_module):
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(
+            base, _writer_ending(writer_module, _stay_working)
+        )
+    )
+
+    async def never_asked(_question: str) -> str | None:
+        raise AssertionError("a running task asks nobody anything")
+
+    tool = GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards(), ask=never_asked)
+    assert _call(tool)["status"] == STATUS_IN_PROGRESS
+
+
+def test_auth_required_says_what_is_wrong_not_that_the_task_ended(serve_asgi, writer_module):
+    async def end(updater):
+        await updater.requires_auth()
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(base, _writer_ending(writer_module, end))
+    )
+    result = _call(GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards()))
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "remote_task_auth_required"
+    assert result["task_state"] == "auth-required"
+    assert "waiting for authentication" in result["message"]
+    assert "ended" not in result["message"]
+
+
+@pytest.mark.parametrize(
+    ("method", "state"),
+    [("failed", "failed"), ("reject", "rejected"), ("cancel", "canceled")],
+)
+def test_a_task_that_really_ended_badly_is_still_an_error(serve_asgi, writer_module, method, state):
+    async def end(updater):
+        await getattr(updater, method)()
+
+    url = serve_asgi(
+        factory=lambda base: writer_module.build_app(base, _writer_ending(writer_module, end))
+    )
+    result = _call(GuardedRemoteA2aTool(_entry(url), "draft", cards=RemoteCards()))
+
+    assert result["status"] == "error"
+    assert result["error_type"] == f"remote_task_{state}"
+    assert result["message"].endswith(f"the remote task ended {state}")
+    assert classify_tool_outcome(result) is ToolOutcome.FAILURE
 
 
 def _asking_writer(

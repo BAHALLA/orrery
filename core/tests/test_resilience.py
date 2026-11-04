@@ -430,6 +430,22 @@ class TestClassifyToolOutcome:
         assert classify_tool_outcome({"status": 500}) is ToolOutcome.SUCCESS
 
 
+class TestRemoteA2aStatuses:
+    """A remote still working answered: it is up, and the call counts as made.
+
+    SUCCESS rather than IGNORE: IGNORE means the tool never ran, and the run
+    budgets charge nothing for it, so a model re-sending an action that is
+    still running would never hit DelegationGuardPlugin.
+    """
+
+    def test_a_task_still_running_is_a_success_for_the_breaker(self):
+        from orrery_core.reliability.resilience import _NEUTRAL_STATUSES
+
+        remote = pytest.importorskip("orrery_core.a2a.remote")
+        assert classify_tool_outcome({"status": remote.STATUS_IN_PROGRESS}) is ToolOutcome.SUCCESS
+        assert remote.STATUS_IN_PROGRESS not in _NEUTRAL_STATUSES
+
+
 class TestNeutralStatusesStayInSync:
     """``_NEUTRAL_STATUSES`` duplicates literals owned by other modules (a
     ``plugins`` import here would be circular). Pin them to their real source so

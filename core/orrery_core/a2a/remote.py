@@ -103,7 +103,12 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_]")
 #: Result statuses this tool returns. ``error`` is counted by the breaker.
 STATUS_SUCCESS = "success"
 STATUS_INPUT_REQUIRED = "input_required"
+#: The remote accepted the task and has not finished it: no result yet, not a
+#: failure. Nothing polls it (ADR-008), so it is reported as it is.
+STATUS_IN_PROGRESS = "in_progress"
 STATUS_ERROR = "error"
+#: Task states meaning the remote is still at it, with nothing asked of anyone.
+_STILL_RUNNING_STATES = frozenset({"working", "submitted"})
 #: Answers a person may give one remote call (AEP-031 P0c); past them the call
 #: ends ``input_required``.
 MAX_INPUT_ROUNDS = 3
@@ -1015,7 +1020,11 @@ class GuardedRemoteA2aTool(BaseTool):
             "parts": [{"kind": p.kind, "size": p.size} for p in parts],
             "_states": states,
         }
-        if error is not None:
+        # ADK also reports a reply stopping on an unfinished task as an error ("stream
+        # ended before task X reached a terminal state"). The remote did say it is
+        # working, and only one reply comes back here (streaming=False), so an
+        # error that follows it is no evidence the task failed.
+        if error is not None and task_state not in _STILL_RUNNING_STATES:
             return {**self._error("remote_error", _short(error)), **base}
         if len(parts) > self.entry.max_parts:
             return {
@@ -1036,12 +1045,27 @@ class GuardedRemoteA2aTool(BaseTool):
             status = STATUS_INPUT_REQUIRED
         elif task_state in (None, "completed", "message"):
             status = STATUS_SUCCESS
+        elif task_state in _STILL_RUNNING_STATES:
+            status = STATUS_IN_PROGRESS
         else:
             status = STATUS_ERROR
         result: dict[str, Any] = {"status": status, "reply": joined, **base}
         if status == STATUS_ERROR:
             result["error_type"] = "remote_task_" + (task_state or "unknown").replace("-", "_")
-            result["message"] = f"{self.name}: the remote task ended {task_state}"
+            result["message"] = (
+                f"{self.name}: the remote task is waiting for authentication this call cannot "
+                "provide, so it has not finished. Its credentials need an administrator: do "
+                "not call it again until they are fixed."
+                if task_state == "auth-required"
+                else f"{self.name}: the remote task ended {task_state}"
+            )
+        if status == STATUS_IN_PROGRESS:
+            result["message"] = (
+                f"{self.name}: the remote is still working on this task, so there is no result "
+                "yet, and nothing here checks on it later. What it was asked to do may still "
+                "happen. Do not report it as done or failed, and do not call the remote again "
+                "blindly: that could do it twice. Tell the user it is still running."
+            )
         if status == STATUS_INPUT_REQUIRED:
             result["message"] = (
                 "The remote agent needs more input. A person must answer it; do not "
