@@ -54,7 +54,7 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 1. **Export.** `orrery_core/studio/replay_export.py` is a CLI run with the run owner's admin token. It reads existing routes (`GET /studio/runs/{id}`, `/events`, `/studio/compositions/{cid}?version=`), so phase 1 adds no server route, and the server's owner check (`own_run`, `api.py`) applies. Nothing exports on its own.
 2. **Allowlist, per event type.** Each output event is built field by field from the table below. Strings outside it never reach the file. An unknown event type or field **refuses the export** until the allowlist is reviewed, so a new `events.py` field fails closed.
 3. **Names are declared.** MCP entries, remotes and models must be passed as `--public-name`; any other value refuses. Route labels and node ids must match the spec.
-4. **Free text is off.** Each `content`, `prompt`, `instruction`, `description` or `error` is dropped unless named by `--keep-text <json path>`.
+4. **Free text is off.** Each `content`, `prompt`, `description` or `error` is dropped unless named by `--keep-text <json path>`. A node's `instruction` is never published: `--keep-text` refuses it, and `replay_check` fails on a committed file that holds one.
 5. **Scan what is kept.** `redact_text` with emails and IPs forced on, plus checks for URLs, hostnames and an operator's private `--deny-file`. A hit refuses rather than rewrites, because a rewrite would differ from what was reviewed. `--allow-host` admits public hosts such as `tirraflow.com`.
 6. **Review.** The CLI writes the file and prints every string in it with its JSON path, its class (name or kept text) and the counts dropped. The author reads this **before pushing**: git history is publication, on the assumption that the repository stays public.
 7. **CI re-checks.** A `replay_check` test runs steps 2 to 5 on committed files, so a hand edit cannot add a field. The pull request diff is the second reader.
@@ -70,7 +70,7 @@ An import walk confirms `runState`, `graph`, `format`, `Canvas`, `NodeCard`, `A2
 | `approval.requested` | `node_id`, `kind`, `remote`, `size`, rebased `expires_at` | `approval_id` renumbered; `digest` emptied (it confirms guesses at short text); `prompt` made generic and `content` dropped unless kept |
 | `approval.decided` | `node_id`, `kind`, `decision`, `waited_ms` | `approval_id` renumbered; the reviewer's comment, always |
 | `run.end` | `outcome`, `totals`, `dropped_events` (always 0) | `error`, `content` unless kept |
-| spec | `name`, `pattern`, `budgets`; node `id`, `kind`, `remote`, `tools`, `children`, `model`, output labels; edges | `instruction`, `description`, `prompt` unless kept |
+| spec | `name`, `pattern`, `budgets`; node `id`, `kind`, `remote`, `tools`, `children`, `model`, output labels; edges | `instruction`, always; `description`, `prompt` unless kept |
 
 **Stays out entirely:** the registry (URLs, trust settings, card status), `RunRecord`, tokens, wall-clock dates beyond the author's `recorded_on`, and the full spec's digest.
 
@@ -132,10 +132,10 @@ Made by the owner:
 
 - **Host:** `replay.tirraflow.com`.
 - **Delivery:** through the deploy repo.
+- **Text:** the first recording shows some text, from a local capture-on run with an input written for publication.
+- **Instructions:** node instructions stay private and are never published.
+- **Review:** the CLI is enough as the explicit admin action for phase 1.
 
 Still open:
 
-1. **Does the first recording show text?** Recommended: yes, a little, from a local capture-on run with a written input, with instructions left out. The alternative is structure plus captions, with less to review.
-2. **May node instructions ever be published?** They are the most instructive part and the most sensitive.
-3. **Recordings in this repository's git history,** or in the deploy repo?
-4. **Is the CLI enough as the "explicit admin action" for phase 1,** or must the review be in the console from the start?
+1. **Recordings in this repository's git history,** or in the deploy repo?
