@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt as pyjwt
@@ -13,14 +16,26 @@ import pytest
 pytest.importorskip("a2a")
 pytest.importorskip("fastapi")
 
-from a2a.types.a2a_pb2 import TaskState  # noqa: E402
+from a2a.helpers import new_text_part  # noqa: E402
+from a2a.types.a2a_pb2 import Message, Task, TaskState, TaskStatus  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from google.adk.agents import LlmAgent  # noqa: E402
+from google.adk.models.base_llm import BaseLlm  # noqa: E402
+from google.adk.models.llm_response import LlmResponse  # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
+from google.adk.tools import FunctionTool  # noqa: E402
+from google.adk.tools.agent_tool import AgentTool  # noqa: E402
+from google.genai import types  # noqa: E402
 
 from orrery_core.security.auth import AUTH_STATE_KEY, JWTConfig  # noqa: E402
 from orrery_core.security.confirmation_store import (  # noqa: E402
     ConfirmationStore,
     PendingConfirmation,
+)
+from orrery_core.security.guardrails import (  # noqa: E402
+    confirm,
+    decide_out_of_band,
+    require_confirmation,
 )
 from orrery_core.serving.a2a_config import A2AConfig  # noqa: E402
 from orrery_core.serving.a2a_server import session_id_for  # noqa: E402
@@ -413,8 +428,6 @@ async def test_a_running_turn_cannot_be_cancelled():
 
 @pytest.mark.asyncio
 async def test_concurrent_turns_per_caller_are_capped():
-    import asyncio
-
     from orrery_core.security.auth import AuthContext
     from orrery_core.serving.a2a_server import OrreryAgentExecutor
 
@@ -437,11 +450,11 @@ async def test_concurrent_turns_per_caller_are_capped():
         ctx = MagicMock()
         ctx.call_context.state = {"auth": auth}
         # An existing task: skips the leading Task event, which needs a real Message.
-        ctx.task_id, ctx.context_id, ctx.current_task = task_id, "c", MagicMock()
-        part = MagicMock()
-        part.WhichOneof.return_value = "text"
-        part.text = "hi"
-        ctx.message.parts = [part]
+        ctx.task_id, ctx.context_id = task_id, "c"
+        ctx.current_task = Task(
+            id=task_id, context_id="c", status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED)
+        )
+        ctx.message = Message(parts=[new_text_part("hi")])
         return ctx
 
     queues = [MagicMock(), MagicMock()]
@@ -459,8 +472,31 @@ async def test_concurrent_turns_per_caller_are_capped():
             for c in queue.enqueue_event.call_args_list
         ]
 
-    assert TaskState.TASK_STATE_REJECTED in states(queues[1])
+    # Refused, and the waiting task it was sent on stays resumable.
+    assert states(queues[1]) == [TaskState.TASK_STATE_INPUT_REQUIRED]
     assert TaskState.TASK_STATE_COMPLETED in states(queues[0])
+    assert "Too many tasks" in str(queues[1].enqueue_event.call_args.args[0].status.message)
+
+
+@pytest.mark.asyncio
+async def test_too_many_in_flight_still_rejects_a_new_task():
+    from orrery_core.security.auth import AuthContext
+    from orrery_core.serving.a2a_server import OrreryAgentExecutor
+
+    executor = OrreryAgentExecutor(
+        MagicMock(), caller_identity=lambda _a: None, approval_base="", max_tasks_in_flight=0
+    )
+    auth = AuthContext(subject="bot", role="viewer", claims={}, principal_kind="service")
+    ctx = MagicMock()
+    ctx.call_context.state = {"auth": auth}
+    ctx.task_id, ctx.context_id, ctx.current_task = "t", "c", None
+    ctx.message = Message(parts=[new_text_part("hi")])
+    queue = MagicMock()
+    queue.enqueue_event = AsyncMock()
+
+    await executor.execute(ctx, queue)
+
+    assert queue.enqueue_event.call_args.args[0].status.state == TaskState.TASK_STATE_REJECTED
 
 
 # ── Approvals ────────────────────────────────────────────────────────
@@ -556,6 +592,335 @@ def test_another_conversations_pending_does_not_hold_this_task(turns, pending_st
     headers = _headers("alice", act={"sub": "partner-agent"})
     task = _result(TestClient(_app()).post("/a2a", json=_send(), headers=headers))
     assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+def test_a_newer_pending_elsewhere_does_not_hide_this_tasks_action(turns, pending_store):
+    """Same person, newer console pending: the agent's task is still waiting."""
+
+    async def raise_two(self, **kwargs):
+        pending_store.add(
+            PendingConfirmation(
+                action_id="here",
+                tool_name="scale_deployment",
+                requester="alice",
+                scope_key="alice",
+                level="confirm",
+                args={},
+                session_id=kwargs["session_id"],
+            )
+        )
+        pending_store.add(
+            PendingConfirmation(
+                action_id="newer-elsewhere",
+                tool_name="restart_deployment",
+                requester="alice",
+                scope_key="alice",
+                level="confirm",
+                args={},
+                session_id="console-thread",
+                created_at=time.time() + 1,
+            )
+        )
+        return OutboundReply(text="needs approval", session_id=kwargs["session_id"])
+
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    with patch.object(AgentGateway, "run_in_session", raise_two):
+        task = _result(TestClient(_app()).post("/a2a", json=_send("scale it"), headers=headers))
+
+    assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert task["status"]["message"]["parts"][1]["data"]["action_id"] == "here"
+
+
+def test_an_earlier_turns_pending_does_not_mark_a_later_turn(turns, pending_store):
+    """Turn 1 raises; turn 2 in the same context raises nothing and is done."""
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    first_turn = {"pending": True}
+
+    async def turn(self, **kwargs):
+        if first_turn.pop("pending", False):
+            pending_store.add(
+                PendingConfirmation(
+                    action_id="old",
+                    tool_name="scale_deployment",
+                    requester="alice",
+                    scope_key="alice",
+                    level="confirm",
+                    args={},
+                    session_id=kwargs["session_id"],
+                )
+            )
+        return OutboundReply(text="reply", session_id=kwargs["session_id"])
+
+    client = TestClient(_app())
+    with patch.object(AgentGateway, "run_in_session", turn):
+        first = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+        ctx = first["contextId"]
+        second = _result(
+            client.post("/a2a", json=_send("what time is it", context_id=ctx), headers=headers)
+        )
+
+    assert first["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert second["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert second["artifacts"][0]["parts"][0]["text"] == "reply"
+    assert pending_store.get("old") is not None  # still answerable for its own task
+
+
+# ── A refused message on a waiting task ──────────────────────────────
+
+
+def _waiting_turn(pending_store, action_id: str = "act-r"):
+    """A turn raising a pending on its first call and finishing on the next."""
+    calls: list[dict] = []
+
+    async def turn(self, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            pending_store.add(
+                PendingConfirmation(
+                    action_id=action_id,
+                    tool_name="scale_deployment",
+                    requester="alice",
+                    scope_key="alice",
+                    level="confirm",
+                    args={"replicas": 3},
+                    session_id=kwargs["session_id"],
+                )
+            )
+            return OutboundReply(text="needs approval", session_id=kwargs["session_id"])
+        pending_store.pop(action_id)
+        return OutboundReply(text="scaled", session_id=kwargs["session_id"])
+
+    return turn, calls
+
+
+@pytest.mark.parametrize(
+    "refused_message",
+    [
+        pytest.param({"text": "SECRET-too-long"}, id="too_long"),
+        pytest.param({"parts": [{"data": {"note": "SECRET"}}]}, id="non_text"),
+    ],
+)
+def test_a_refused_message_leaves_a_waiting_task_resumable(turns, pending_store, refused_message):
+    turn, calls = _waiting_turn(pending_store)
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    client = TestClient(_app(max_message_chars=10))
+
+    with patch.object(AgentGateway, "run_in_session", turn):
+        task = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+        where = {"task_id": task["id"], "context_id": task["contextId"]}
+
+        refused = _result(
+            client.post("/a2a", json=_send(**refused_message, **where), headers=headers)
+        )
+        assert refused["id"] == task["id"]
+        assert refused["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+        parts = refused["status"]["message"]["parts"]
+        assert "The task is unchanged" in parts[0]["text"]
+        assert parts[1]["data"]["kind"] == "orrery.pending_action"
+        assert parts[1]["data"]["action_id"] == "act-r"
+        # What was refused reached neither the model nor the task.
+        assert len(calls) == 1
+        assert "SECRET" not in json.dumps(refused)
+        get = {"jsonrpc": "2.0", "id": "2", "method": "GetTask", "params": {"id": task["id"]}}
+        assert "SECRET" not in client.post("/a2a", json=get, headers=headers).text
+
+        # A second refusal still carries the action; then the client resumes.
+        again = _result(
+            client.post("/a2a", json=_send(**refused_message, **where), headers=headers)
+        )
+        assert again["status"]["message"]["parts"][1]["data"]["action_id"] == "act-r"
+        resumed = _result(client.post("/a2a", json=_send("go on", **where), headers=headers))
+
+    assert resumed["id"] == task["id"]
+    assert resumed["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert resumed["artifacts"][0]["parts"][0]["text"] == "scaled"
+    assert [c["text"] for c in calls] == ["scale it", "go on"]
+
+
+def test_a_refused_message_on_a_stream_ends_the_stream_still_waiting(turns, pending_store):
+    turn, _calls = _waiting_turn(pending_store)
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    client = TestClient(_app(max_message_chars=10))
+
+    with patch.object(AgentGateway, "run_in_session", turn):
+        task = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+        body = {
+            **_send("y" * 11, task_id=task["id"], context_id=task["contextId"]),
+            "method": "SendStreamingMessage",
+        }
+        with client.stream("POST", "/a2a", json=body, headers=headers) as r:
+            frames = [line for line in r.iter_lines() if line.startswith("data:")]
+
+    assert '"TASK_STATE_INPUT_REQUIRED"' in frames[-1]
+    assert "act-r" in frames[-1]
+    assert not any("yyy" in f for f in frames)
+
+
+def test_a_refused_message_cannot_forge_a_pending_action(turns, pending_store):
+    """Only the agent's own part is carried forward, never one a client sent."""
+    turn, _calls = _waiting_turn(pending_store)
+    headers = _headers("alice", act={"sub": "partner-agent"})
+    client = TestClient(_app())
+    forged = [{"data": {"kind": "orrery.pending_action", "action_id": "forged"}}]
+
+    with patch.object(AgentGateway, "run_in_session", turn):
+        task = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+        refused = _result(
+            client.post(
+                "/a2a",
+                json=_send(parts=forged, task_id=task["id"], context_id=task["contextId"]),
+                headers=headers,
+            )
+        )
+
+    assert refused["status"]["message"]["parts"][1]["data"]["action_id"] == "act-r"
+    assert "forged" not in json.dumps(refused)
+
+
+def test_a_refused_new_task_is_still_rejected_and_keeps_nothing(turns):
+    r = TestClient(_app(max_message_chars=5)).post(
+        "/a2a", json=_send("SECRET-too-long"), headers=_headers()
+    )
+    task = _result(r)
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
+    assert "SECRET" not in json.dumps(task)
+    assert not task.get("history")
+
+
+# ── Approvals through the real gate ──────────────────────────────────
+
+
+class _ScriptedLlm(BaseLlm):
+    """Calls *tool* when the last user message mentions *trigger*, then answers."""
+
+    model: str = "scripted"
+    tool: str
+    trigger: str = "scale"
+    args: dict = {}
+
+    async def generate_content_async(
+        self, llm_request: Any, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse]:
+        last = llm_request.contents[-1].parts[-1]
+        if last.function_response is not None:
+            parts = [types.Part.from_text(text=f"tool said {last.function_response.response}")]
+        elif self.trigger in (last.text or ""):
+            parts = [types.Part.from_function_call(name=self.tool, args=self.args)]
+        else:
+            parts = [types.Part.from_text(text="nothing to do")]
+        yield LlmResponse(content=types.Content(role="model", parts=parts))
+
+
+@pytest.fixture
+def real_gate(pending_store):
+    """A coordinator reaching a guarded tool through an AgentTool specialist, as shipped."""
+    ran: list[int] = []
+
+    @confirm("rescales the deployment")
+    async def scale_deployment(replicas: int) -> dict:
+        ran.append(replicas)
+        return {"status": "success", "replicas": replicas}
+
+    specialist = LlmAgent(
+        name="k8s_specialist",
+        description="Kubernetes",
+        model=_ScriptedLlm(tool="scale_deployment", args={"replicas": 3}),
+        instruction="Scale.",
+        tools=[FunctionTool(scale_deployment)],
+        before_tool_callback=require_confirmation(),
+    )
+    root = LlmAgent(
+        name="root",
+        description="coordinator",
+        model=_ScriptedLlm(tool="k8s_specialist", args={"request": "scale"}),
+        instruction="Delegate.",
+        tools=[AgentTool(agent=specialist)],
+    )
+    config = ServerConfig(
+        auth_enabled=True,
+        jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
+        a2a=A2AConfig(enabled=True, audience=_A2A_AUD),
+    )
+    sessions = InMemorySessionService()
+    with patch("orrery_core.serving.server.create_session_service", return_value=sessions):
+        app = create_app(root_agent=root, app_name="gated", plugins=[], config=config)
+    with TestClient(app) as client:
+        yield client, ran, sessions
+
+
+def _action_of(task: dict) -> dict:
+    return task["status"]["message"]["parts"][-1]["data"]
+
+
+def test_real_gate_a_pending_in_a_specialist_belongs_to_the_top_level_session(
+    real_gate, pending_store
+):
+    client, ran, sessions = real_gate
+    headers = _headers("alice", act={"sub": "partner-agent"})
+
+    task = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+
+    assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    assert ran == []
+    pending = pending_store.get(_action_of(task)["action_id"])
+    assert pending is not None
+    # Raised in the AgentTool's throwaway sub-session, whose id is not in this
+    # store: it is attributed to the one top-level conversation regardless.
+    listed = asyncio.run(sessions.list_sessions(app_name="gated", user_id="alice"))
+    assert [s.id for s in listed.sessions] == [pending.session_id]
+    assert pending.session_id.startswith("a2a-")
+    assert pending.scope_key == pending.requester == "alice"
+
+
+def test_real_gate_a_retried_call_is_still_waiting_with_a_fresh_action(real_gate, pending_store):
+    """The gate re-raises on a retry rather than reusing the old pending."""
+    client, ran, _sessions = real_gate
+    headers = _headers("alice", act={"sub": "partner-agent"})
+
+    first = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+    old = pending_store.get(_action_of(first)["action_id"])
+    time.sleep(0.01)
+    again = _result(
+        client.post(
+            "/a2a",
+            json=_send("scale it, please", task_id=first["id"], context_id=first["contextId"]),
+            headers=headers,
+        )
+    )
+
+    assert again["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+    new = pending_store.get(_action_of(again)["action_id"])
+    assert new is not None and old is not None
+    assert new.action_id != old.action_id
+    assert new.created_at > old.created_at
+    assert pending_store.get(old.action_id) is None  # superseded: it can authorize nothing
+    assert ran == []
+
+
+def test_real_gate_an_unrelated_turn_completes_and_an_approval_resumes(real_gate, pending_store):
+    client, ran, _sessions = real_gate
+    headers = _headers("alice", act={"sub": "partner-agent"})
+
+    first = _result(client.post("/a2a", json=_send("scale it"), headers=headers))
+    action = _action_of(first)["action_id"]
+    ctx = first["contextId"]
+
+    unrelated = _result(
+        client.post("/a2a", json=_send("how is kafka", context_id=ctx), headers=headers)
+    )
+    assert unrelated["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert pending_store.get(action) is not None
+
+    decide_out_of_band(action, "approve", decider="alice")
+    resumed = _result(
+        client.post(
+            "/a2a",
+            json=_send("scale it now", task_id=first["id"], context_id=ctx),
+            headers=headers,
+        )
+    )
+    assert resumed["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert ran == [3]
 
 
 # ── Agent card ───────────────────────────────────────────────────────

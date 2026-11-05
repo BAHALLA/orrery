@@ -360,6 +360,16 @@ export function isFinished(view: RunView): boolean {
   return view.status !== "starting" && view.status !== "running";
 }
 
+/**
+ * The server keeps no text for this run: its `run.start` came without the input.
+ * That event is the one thing that always has content when capture is on, so
+ * this tells "capture off" from "no output yet", and from a run whose events
+ * are gone (its outcome read from the summary), where nothing can be said.
+ */
+export function contentNotCaptured(view: RunView): boolean {
+  return view.input === null && view.events.some((e) => e.type === "run.start");
+}
+
 /** Tokens so far: the totals once the run ended, else the sum of finished nodes. */
 export function tokensSoFar(view: RunView): TokenCount {
   if (view.totals) return view.totals.tokens;

@@ -172,8 +172,17 @@ decision above, and why:
   `max_reply_chars`, and `dropped_parts` (the kinds of non-text parts, which
   never reach the model). The part count is checked after the exchange; bytes
   are capped while they stream.
-- **Status values** are `success`, `input_required` and `error`, not the task
-  state; `task_state` carries that (`completed`, `input-required`, …).
+- **Status values** are `success`, `input_required`, `in_progress` and `error`,
+  not the task state; `task_state` carries that (`completed`, `input-required`,
+  …). `in_progress` is a remote still `working` or `submitted`. It is a success
+  for the breaker, since the remote answered, and is charged to the run's budgets
+  like any call, since it may have started something. `auth-required` stays an
+  `error`: only an admin can fix it, and repeating it does not help.
+- **No polling.** A remote that answers while still working comes back
+  `in_progress`, with its `task_id`, no result and a message telling the model
+  not to call again blindly. Nothing here calls `tasks/get` or follows it up
+  later, so the model never learns how that task ended. A long-running remote
+  is therefore not usable through this tool yet.
 - **No `tasks/cancel`** is sent when the calling run is cancelled; the
   exchange's HTTP call is cancelled and the remote task may finish.
 - **Only JSON-RPC** interfaces are used. A gRPC channel would open its own

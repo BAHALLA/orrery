@@ -165,7 +165,15 @@ export default function StudioView({ token, active = true, onAttention }: Props)
     graph: StudioGraph;
     label: string;
     saved: Saved | null;
+    /** The run on show with that canvas, and whether it was off that canvas. */
+    runId: string | null;
+    offCanvasRunId: string | null;
   } | null>(null);
+  /**
+   * A run still going when something else was put on the canvas: it stays on
+   * show, labelled, and marks no node of a composition that isn't its own.
+   */
+  const [offCanvasRunId, setOffCanvasRunId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("inspect");
   // From `lg` up the panel beside the canvas folds away to give the canvas the room.
@@ -320,13 +328,24 @@ export default function StudioView({ token, active = true, onAttention }: Props)
    * composition it belonged to) for Undo. *saved* is what *next* belongs to:
    * nothing for a template or an import, so a Save never overwrites the
    * composition that was open with something else.
+   *
+   * The run on show was a run of the old canvas: a finished one leaves the Run
+   * tab and the node overlays (History keeps it, Undo brings it back), and one
+   * still going stays on show as a run of something else.
    */
   /** Bumped by anything that changes the canvas: a Replay still fetching then gives up. */
   const openRequest = useRef(0);
   const replaceGraph = useCallback(
     (next: StudioGraph, label: string, saved: Saved | null = null) => {
       openRequest.current += 1;
-      setUndo(graph.nodes.length ? { graph, label, saved: composition.saved } : null);
+      const shown = run.view;
+      setUndo(
+        graph.nodes.length
+          ? { graph, label, saved: composition.saved, runId: shown?.runId ?? null, offCanvasRunId }
+          : null,
+      );
+      if (shown && !isFinished(shown)) setOffCanvasRunId(shown.runId);
+      else run.hide();
       composition.restore(saved);
       setSaveProblem(null);
       setGraph(next);
@@ -335,15 +354,17 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       setDialog(null);
       refit();
     },
-    [graph, refit, composition],
+    [graph, refit, composition, run, offCanvasRunId],
   );
 
   const loadTemplate = useCallback(
     (t: Template) => {
+      // The canvas is locked while a run is live (the gallery on an empty canvas stays clickable).
+      if (run.busy) return;
       replaceGraph(specToGraph(t.spec, directionRef.current), `Loaded ${t.title}`);
       announce(`Loaded the ${t.title} template.`);
     },
-    [replaceGraph, announce],
+    [replaceGraph, announce, run.busy],
   );
 
   const addKind = useCallback(
@@ -409,6 +430,8 @@ export default function StudioView({ token, active = true, onAttention }: Props)
             : null,
         );
       }
+      // The canvas now holds what it ran.
+      if (record?.spec) setOffCanvasRunId(null);
       run.show(runId);
       setTab("run");
     },
@@ -514,6 +537,13 @@ export default function StudioView({ token, active = true, onAttention }: Props)
   const selected = graph.nodes.find((n) => n.id === selectedId)?.data.spec ?? null;
   const problemCount = issues.count;
   const view = run.view;
+  const shownRecord = view ? run.history.find((r) => r.runId === view.runId) : undefined;
+  // A run whose spec isn't known marks nodes by id, as it says when opened, but
+  // its name can still tell it is not the composition on the canvas.
+  const runOffCanvas =
+    view !== null &&
+    (view.runId === offCanvasRunId ||
+      (shownRecord?.spec === null && !!view.specName && view.specName !== graph.meta.name));
 
   if (!schemaSettled) {
     return <p className="p-6 text-sm text-slate-500 dark:text-slate-400">Loading the Studio…</p>;
@@ -768,6 +798,15 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 composition.restore(undo.saved);
                 setUndo(null);
                 setSelectedId(null);
+                // Back to the run that canvas had on show, unless another is still going.
+                const shown = run.view;
+                if (shown && !isFinished(shown) && shown.runId !== undo.runId) {
+                  setOffCanvasRunId(shown.runId);
+                } else {
+                  setOffCanvasRunId(undo.offCanvasRunId);
+                  if (undo.runId) run.show(undo.runId);
+                  else run.hide();
+                }
                 refit();
               }}
             >
@@ -860,7 +899,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               graph={graph}
               onGraph={edit}
               issues={issues}
-              run={view}
+              run={view?.runId === offCanvasRunId ? null : view}
               caps={caps}
               editable={editable && wide}
               selectedId={selectedId}
@@ -1062,6 +1101,10 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                     <RunPanel
                       client={client}
                       view={view}
+                      offCanvasOf={
+                        runOffCanvas ? (view?.specName ?? shownRecord?.name ?? "another") : null
+                      }
+                      hasPastRuns={run.history.length > 0}
                       input={input}
                       onInput={setInput}
                       focusSignal={focusInput}
@@ -1147,6 +1190,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         <SpecDialog
           spec={spec}
           initialTab={dialog}
+          locked={live}
           onClose={() => setDialog(null)}
           onImport={(imported, notes) => {
             replaceGraph(specToGraph(imported, directionRef.current), `Imported ${imported.name}`);

@@ -8,6 +8,7 @@ visible keys are symlinks into a hidden, timestamped ``..data`` directory.
 
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
@@ -15,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from orrery_core.security.secrets import SECRETS_DIR_ENV, load_secrets_into_environment
+from orrery_core.security.secrets import (
+    SECRETS_DIR_ENV,
+    SecretFileUnreadable,
+    load_secrets_into_environment,
+)
 
 
 def kubernetes_secret_volume(root: Path, files: dict[str, str | bytes]) -> Path:
@@ -92,8 +97,6 @@ def test_kubelet_indirection_directories_are_not_loaded(tmp_path, clean_env):
 )
 def test_an_unusable_secret_file_stops_startup(tmp_path, clean_env, content):
     """Skipping it would start as if the variable were unset."""
-    from orrery_core.security.secrets import SecretFileUnreadable
-
     kubernetes_secret_volume(tmp_path, {"ORRERY_TEST_DB_URL": content})
     with pytest.raises(SecretFileUnreadable, match="ORRERY_TEST_DB_URL") as raised:
         load_secrets_into_environment(tmp_path)
@@ -107,11 +110,111 @@ def test_no_directory_configured_is_a_no_op(clean_env):
     assert load_secrets_into_environment() == []
 
 
-def test_missing_directory_warns(tmp_path, clean_env, caplog):
-    clean_env.setenv(SECRETS_DIR_ENV, str(tmp_path / "absent"))
+def test_an_empty_variable_means_unset(clean_env):
+    clean_env.setenv(SECRETS_DIR_ENV, "")
 
     assert load_secrets_into_environment() == []
-    assert "is not a directory" in caplog.text
+
+
+def test_a_missing_directory_stops_startup(tmp_path, clean_env):
+    """A typo or an unmounted volume would otherwise leave DATABASE_URL unset,
+    so the service would quietly fall back to in-memory sessions."""
+    clean_env.setenv(SECRETS_DIR_ENV, str(tmp_path / "absent"))
+
+    with pytest.raises(SecretFileUnreadable, match=SECRETS_DIR_ENV) as raised:
+        load_secrets_into_environment()
+    assert str(tmp_path / "absent") in str(raised.value)
+
+
+def test_a_file_as_the_directory_stops_startup(tmp_path, clean_env):
+    not_a_directory = tmp_path / "secrets"
+    not_a_directory.write_text("the-value-inside")
+    clean_env.setenv(SECRETS_DIR_ENV, str(not_a_directory))
+
+    with pytest.raises(SecretFileUnreadable, match="not a directory") as raised:
+        load_secrets_into_environment()
+    assert "the-value-inside" not in str(raised.value)
+
+
+def test_a_directory_that_cannot_be_listed_stops_startup(tmp_path, clean_env, monkeypatch):
+    def denied(_self):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(Path, "iterdir", denied)
+
+    with pytest.raises(SecretFileUnreadable, match="could not be listed.*Permission denied"):
+        load_secrets_into_environment(tmp_path)
+
+
+def test_a_dangling_symlink_stops_startup(tmp_path, clean_env):
+    (tmp_path / "ORRERY_TEST_DB_URL").symlink_to("..data/ORRERY_TEST_DB_URL")
+
+    with pytest.raises(SecretFileUnreadable, match="ORRERY_TEST_DB_URL.*symlink"):
+        load_secrets_into_environment(tmp_path)
+    assert "ORRERY_TEST_DB_URL" not in os.environ
+
+
+def test_a_dangling_symlink_that_cannot_be_a_variable_is_ignored(tmp_path, clean_env):
+    (tmp_path / "ca.crt").symlink_to("..data/ca.crt")
+    (tmp_path / "..data").symlink_to("..gone")
+
+    assert load_secrets_into_environment(tmp_path) == []
+
+
+def test_a_symlink_loop_stops_startup(tmp_path, clean_env):
+    (tmp_path / "ORRERY_TEST_DB_URL").symlink_to("ORRERY_TEST_DB_URL")
+
+    with pytest.raises(SecretFileUnreadable, match="ORRERY_TEST_DB_URL.*could not be read"):
+        load_secrets_into_environment(tmp_path)
+
+
+def test_any_other_read_error_stops_startup(tmp_path, clean_env, monkeypatch):
+    (tmp_path / "ORRERY_TEST_DB_URL").write_text("postgresql://u:hunter2@db/x")
+
+    def failing_read(_self, *_args, **_kwargs):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(Path, "read_text", failing_read)
+
+    with pytest.raises(SecretFileUnreadable, match="ORRERY_TEST_DB_URL.*Input/output") as raised:
+        load_secrets_into_environment(tmp_path)
+    assert "hunter2" not in str(raised.value)
+    assert "ORRERY_TEST_DB_URL" not in os.environ
+
+
+def test_kubernetes_style_symlinks_still_load(tmp_path, clean_env):
+    """The visible key is a symlink, through ``..data``, to a timestamped file."""
+    kubernetes_secret_volume(tmp_path, {"ORRERY_TEST_DB_URL": "postgresql://u:p@db/x"})
+    assert (tmp_path / "ORRERY_TEST_DB_URL").is_symlink()
+
+    assert load_secrets_into_environment(tmp_path) == ["ORRERY_TEST_DB_URL"]
+    assert os.environ["ORRERY_TEST_DB_URL"] == "postgresql://u:p@db/x"
+
+
+def test_a_subdirectory_is_still_skipped(tmp_path, clean_env):
+    (tmp_path / "ORRERY_TEST_DB_URL").mkdir()
+    (tmp_path / "ORRERY_TEST_API_KEY").write_text("k")
+
+    assert load_secrets_into_environment(tmp_path) == ["ORRERY_TEST_API_KEY"]
+    assert "ORRERY_TEST_DB_URL" not in os.environ
+
+
+def test_importing_orrery_core_with_a_missing_directory_exits_with_the_reason(tmp_path):
+    """Where the failure surfaces: the import every entry point runs first."""
+    env = dict(os.environ, **{SECRETS_DIR_ENV: str(tmp_path / "absent")})
+    result = subprocess.run(
+        [sys.executable, "-c", "import orrery_core; print('started')"],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "started" not in result.stdout
+    assert "SecretFileUnreadable: Secrets directory" in result.stderr
 
 
 def test_importing_orrery_core_loads_the_volume_before_any_config(tmp_path):
@@ -152,8 +255,6 @@ print(len(cfg.secret), ES().elasticsearch_password)
 @pytest.mark.skipif(os.getuid() == 0, reason="root reads any file")
 def test_an_unreadable_secret_file_stops_startup(tmp_path, clean_env):
     """Skipping it would start as if unset: DATABASE_URL -> in-memory sessions."""
-    from orrery_core.security.secrets import SecretFileUnreadable
-
     secret = tmp_path / "DATABASE_URL"
     secret.write_text("postgresql+asyncpg://orrery:pw@db/orrery")
     secret.chmod(0)

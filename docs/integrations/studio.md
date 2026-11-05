@@ -760,6 +760,9 @@ the event stream:
 
 - the active node is haloed, nodes that have finished show tokens and latency,
   and the edge into the active node is drawn as live;
+- with content capture on, the run's output comes first, right under its
+  status, with the input beside it. With capture off, a run that succeeded says
+  its text isn't kept;
 - budgets fill as events come in, the timeline lists every event, and totals
   (tokens per model, tool calls, remote calls, delegations, wall time) arrive
   with `run.end`;
@@ -791,7 +794,12 @@ the event stream:
   read at all (gone, or on another replica) ends as *outcome unknown*;
 - *Cancel run* calls `POST /studio/runs/{id}/cancel`, also while the run is
   being started (it is sent as soon as the run has an id). The canvas is
-  locked while a run is live.
+  locked while a run is live;
+- putting something else on the canvas (a template, an import, a saved
+  composition) takes a finished run off the *Run* tab and the nodes: it stays
+  in *History*, and *Undo* brings it back. Editing a node does not. A run still
+  going that you only watch from here (on another replica) stays on show,
+  labelled with its composition's name, and marks no node of the new canvas.
 
 **A2A.** For each remote call in the run: the request (method, parts and
 sizes), the task's states (`submitted → working → completed`, or where it

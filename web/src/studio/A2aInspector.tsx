@@ -79,7 +79,8 @@ export function A2aInspector({
           </li>
           <li>
             The remote opens a <strong>task</strong> and moves it through states (submitted,
-            working, completed…). A task that ends anywhere but completed is an error for the node.
+            working, completed…). A task that ends anywhere but completed is an error for the node;
+            one still working comes back as in progress, with no result yet, and nothing polls it.
           </li>
           <li>
             The reply comes back as <strong>parts</strong>. Text parts reach the model after the
@@ -347,7 +348,15 @@ function Exchange({
               ]
                 .filter(Boolean)
                 .join(" · ")}
-              tone={reply.status === "success" ? "ok" : refused ? "refused" : "crit"}
+              tone={
+                reply.status === "success"
+                  ? "ok"
+                  : refused
+                    ? "refused"
+                    : reply.status === "in_progress"
+                      ? "warn"
+                      : "crit"
+              }
             />
           ) : (
             <p className="mt-1 flex items-center gap-1.5 text-slate-500 dark:text-slate-400">

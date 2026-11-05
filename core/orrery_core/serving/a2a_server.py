@@ -22,6 +22,7 @@ replaces what sits behind it, so every turn goes through
   to ``input-required`` with the action's id. A reply on the task is not a
   decision: the delegating person approves out of band
   (``POST /confirmations/{id}/decision``) and the client then resumes the task.
+  A message refused on an existing task leaves that task's state alone.
 
 The public agent card names the agent, its endpoint and the bearer scheme.
 Skills, read from the live agent tree, are in the authenticated extended card.
@@ -56,6 +57,9 @@ from a2a.types.a2a_pb2 import (
     AgentInterface,
     AgentSkill,
     HTTPAuthSecurityScheme,
+    Message,
+    Part,
+    Role,
     SecurityRequirement,
     SecurityScheme,
     StringList,
@@ -83,7 +87,7 @@ from ..security.auth import (
     JWTConfig,
     verify_token_async,
 )
-from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_scope
+from ..security.guardrails import CONFIRMATION_TTL_SECONDS, latest_pending_for_session
 from ..security.identity import CallerIdentity
 from ..security.principal import (
     A2A_SESSION_PREFIX,
@@ -107,6 +111,9 @@ logger = logging.getLogger("orrery.a2a")
 
 #: Where the verified caller travels from the route guard to the SDK.
 _AUTH_SCOPE_KEY = "orrery.a2a.auth"
+
+#: What a task's history keeps of a message refused on it.
+_REFUSED_MESSAGE_PLACEHOLDER = "[message refused]"
 
 
 def session_id_for(owner: str, context_id: str) -> str:
@@ -270,6 +277,36 @@ def _pending_payload(pending: Any, approval_base: str) -> dict[str, Any]:
     }
 
 
+def _pending_parts(task: Task) -> list[Part]:
+    """The ``orrery.pending_action`` part the agent last put on *task*, if any."""
+    messages = [task.status.message] if task.status.HasField("message") else []
+    for message in [*messages, *reversed(task.history)]:
+        if message.role != Role.ROLE_AGENT:
+            continue
+        for part in message.parts:
+            if part.WhichOneof("content") != "data":
+                continue
+            fields = part.data.struct_value.fields
+            if "kind" in fields and fields["kind"].string_value == PENDING_ACTION_KIND:
+                return [part]
+    return []
+
+
+def _drop_refused_content(message: Message | None) -> None:
+    """Leave only a placeholder of a message refused on a task that already exists.
+
+    The SDK saves the request's message to the task's history when the executor
+    publishes its first status update, and on an existing task nothing opts out
+    (a new task's first event, a ``Task``, is what clears it). It saves this
+    same object, so emptying it keeps the content out.
+    """
+    if message is None:
+        return
+    for name in ("parts", "metadata", "extensions", "reference_task_ids"):
+        message.ClearField(name)
+    message.parts.append(new_text_part(_REFUSED_MESSAGE_PLACEHOLDER))
+
+
 class OrreryAgentExecutor(AgentExecutor):
     """One A2A task turn = one gateway turn, as a non-deciding caller."""
 
@@ -319,7 +356,10 @@ class OrreryAgentExecutor(AgentExecutor):
                 new_task(task_id, context_id, TaskState.TASK_STATE_SUBMITTED, history=history)
             )
         if refusal is not None:
-            await updater.reject(updater.new_agent_message([new_text_part(refusal)]))
+            if context.current_task is None:
+                await updater.reject(updater.new_agent_message([new_text_part(refusal)]))
+            else:
+                await self._refuse_on_existing(context, context.current_task, updater, refusal)
             return
         assert text is not None  # every text-less message is refused above
 
@@ -336,6 +376,20 @@ class OrreryAgentExecutor(AgentExecutor):
             if self._in_flight[owner] <= 0:
                 del self._in_flight[owner]
 
+    async def _refuse_on_existing(
+        self, context: RequestContext, task: Task, updater: TaskUpdater, refusal: str
+    ) -> None:
+        """Refuse a message without touching its task's state.
+
+        Rejecting is terminal, so one oversized message would end a task whose
+        action a person may be approving, and the client could never resume it.
+        The state stays, and the status message says why and still carries the
+        action, since the SDK moves the previous status message into history.
+        """
+        parts = [new_text_part(f"{refusal} The task is unchanged."), *_pending_parts(task)]
+        _drop_refused_content(context.message)
+        await updater.update_status(task.status.state, updater.new_agent_message(parts))
+
     async def _run(
         self, auth: AuthContext, text: str, context_id: str, updater: TaskUpdater
     ) -> None:
@@ -350,6 +404,7 @@ class OrreryAgentExecutor(AgentExecutor):
             session_id=session_id,
             task_id=updater.task_id,
         )
+        started_at = time.time()
         reply = await self.gateway.run_in_session(
             user_id=auth.subject,
             session_id=session_id,
@@ -362,8 +417,15 @@ class OrreryAgentExecutor(AgentExecutor):
             can_decide=False,
         )
         # The postgres confirmation backend is synchronous: off the event loop.
-        pending = await asyncio.to_thread(latest_pending_for_scope, auth.subject)
-        if pending is not None and pending.session_id == session_id:
+        pending = await asyncio.to_thread(latest_pending_for_session, auth.subject, session_id)
+        # Only what this turn raised holds the task: an older pending stays
+        # answerable, but a later unrelated turn is not waiting on it. A timestamp
+        # is enough because the gate never reuses a pending: a retried call
+        # supersedes it with a new id and created_at, so a turn that is waiting
+        # always has a fresh one. Same process, same clock: A2A refuses
+        # ORRERY_MULTI_REPLICA. A turn queued behind another on this session's
+        # lock may report that turn's action, which is at least a real one.
+        if pending is not None and pending.created_at >= started_at:
             parts = [new_data_part(_pending_payload(pending, self.approval_base))]
             if reply.text:
                 parts.insert(0, new_text_part(reply.text))

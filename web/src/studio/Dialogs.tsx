@@ -120,11 +120,14 @@ const SPEC_TABS = ["export", "import"] as const;
 export function SpecDialog({
   spec,
   initialTab,
+  locked = false,
   onImport,
   onClose,
 }: {
   spec: CompositionSpec;
   initialTab: "export" | "import";
+  /** A run is live: the canvas can't be replaced, so only Export is offered. */
+  locked?: boolean;
   onImport: (spec: CompositionSpec, notes: string[]) => void;
   onClose: () => void;
 }) {
@@ -174,7 +177,16 @@ export function SpecDialog({
         {tabButton("export", "Export")}
         {tabButton("import", "Import")}
       </div>
-      {tab === "export" ? (
+      {tab === "import" && locked ? (
+        <p
+          role="tabpanel"
+          id={panelId}
+          aria-labelledby={`${panelId}-import`}
+          className="text-xs text-slate-600 dark:text-slate-300"
+        >
+          The canvas is locked while a run is going. Import once it ends.
+        </p>
+      ) : tab === "export" ? (
         <div role="tabpanel" id={panelId} aria-labelledby={`${panelId}-export`}>
           <pre className="orrery-scroll max-h-[50dvh] overflow-auto rounded-lg bg-slate-950 p-3 font-mono text-[12px] leading-relaxed text-slate-100">
             {json}

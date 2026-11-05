@@ -68,12 +68,20 @@ A thin, custom A2A adapter on the a2a-sdk (1.x, `orrery-core[a2a]`) whose
 
 ### Approvals
 
-- When a turn ends with a pending guarded action, the task moves to
-  `input-required` with a data part `{action_id, tool, args, level,
-  expires_at, approve_url}`. Arguments are redacted like any tool result.
+- When a turn raises a pending guarded action in its own conversation, the task
+  moves to `input-required` with a data part `{action_id, tool, args, level,
+  expires_at, approve_url}`. Arguments are redacted like any tool result. An
+  older pending neither holds a later turn (it stays answerable until it
+  expires) nor is hidden by the same person's newer pending in another
+  conversation. A retried call counts: the gate re-raises it as a new action.
 - A reply on the task is **not** a decision (ADR-006 §2). The delegating human
   approves in the console or through the out-of-band endpoint; the client then
   sends any message on the task to resume, and the gate consumes the approval.
+- A message refused on an existing task (too long, not text, too many in
+  flight) does not change the task's state: rejecting is terminal and would end
+  a task a person may be approving. The status message says why and still
+  carries the action's data part; the task's history keeps only a placeholder.
+  A refused message that would start a new task is rejected.
 - A service principal never reaches this state: it is pinned to L2.
 
 ### Agent card

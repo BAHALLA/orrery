@@ -75,6 +75,48 @@ function eventsOf(runId: string): StudioEvent[] {
 afterEach(() => vi.useRealTimers());
 
 describe("useStudioRun", () => {
+  it("hides a finished run from view but keeps it, and drops its error banner", async () => {
+    const { client, asClient } = fakeClient();
+    client.events.mockImplementation((_id, opts) =>
+      Promise.resolve((eventsOf("run-a").forEach(opts.onEvent), "ended")),
+    );
+    client.startRun.mockResolvedValueOnce({ run_id: "run-a" });
+    const { result } = renderHook(() => useStudioRun(asClient));
+    await act(() => result.current.start(RELEASE_NOTES, "lag"));
+    await waitFor(() => expect(result.current.busy).toBe(false));
+
+    client.startRun.mockRejectedValueOnce(new Error("nope"));
+    await act(() => result.current.start(RELEASE_NOTES, "lag"));
+    expect(result.current.error).not.toBeNull();
+
+    act(() => result.current.hide());
+    expect(result.current.view).toBeNull();
+    expect(result.current.error).toBeNull();
+    expect(result.current.history.map((r) => r.runId)).toEqual(["run-a"]);
+
+    act(() => result.current.show("run-a"));
+    expect(result.current.view?.status).toBe("succeeded");
+  });
+
+  it("hiding a live run neither stops its stream nor clears its banner", async () => {
+    const { client, asClient } = fakeClient();
+    let signal: AbortSignal | undefined;
+    client.events.mockImplementation((_id, opts) => {
+      signal = opts.signal;
+      return openStream(opts, eventsOf("run-a").slice(0, 3));
+    });
+    client.startRun.mockResolvedValueOnce({ run_id: "run-a" });
+    const { result } = renderHook(() => useStudioRun(asClient));
+    await act(() => result.current.start(RELEASE_NOTES, "lag"));
+    await waitFor(() => expect(result.current.view?.status).toBe("running"));
+
+    act(() => result.current.hide());
+    expect(signal?.aborted).toBe(false);
+    expect(result.current.busy).toBe(true);
+    expect(client.cancel).not.toHaveBeenCalled();
+    expect(result.current.history[0]?.view.status).toBe("running");
+  });
+
   it("a cancel asked during the POST goes to the new run, not the one before", async () => {
     const { client, asClient } = fakeClient();
     const first = eventsOf("run-a");

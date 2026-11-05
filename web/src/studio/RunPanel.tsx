@@ -23,7 +23,13 @@ import {
 import type { StudioClient } from "./api";
 import { ApprovalCards } from "./ApprovalCard";
 import { PlayIcon } from "./icons";
-import { budgetUse, isFinished, type RunView, waitingApprovals } from "./runState";
+import {
+  budgetUse,
+  contentNotCaptured,
+  isFinished,
+  type RunView,
+  waitingApprovals,
+} from "./runState";
 import type { StudioEvent } from "./types";
 import type { Connection } from "./useStudioRun";
 import type { Issue } from "./validate";
@@ -34,6 +40,10 @@ interface Props {
   /** Reads and decides the run's pending approvals. */
   client: StudioClient;
   view: RunView | null;
+  /** The name of the composition the run on show is of, when that is not the one on the canvas. */
+  offCanvasOf?: string | null;
+  /** Runs of other compositions are in History: "nothing has run" would be untrue. */
+  hasPastRuns?: boolean;
   input: string;
   onInput: (text: string) => void;
   /** Focus the input whenever this changes (and is not 0). */
@@ -58,6 +68,8 @@ interface Props {
 export function RunPanel({
   client,
   view,
+  offCanvasOf = null,
+  hasPastRuns = false,
   input: text,
   onInput,
   focusSignal,
@@ -169,23 +181,28 @@ export function RunPanel({
         <RunDetail
           client={client}
           view={view}
+          offCanvasOf={offCanvasOf}
           connection={connection}
           finished={finished}
           now={now}
         />
       ) : (
-        <EmptyRun />
+        <EmptyRun hasPastRuns={hasPastRuns} />
       )}
     </div>
   );
 }
 
-function EmptyRun() {
+function EmptyRun({ hasPastRuns }: { hasPastRuns: boolean }) {
   return (
     <div
       className={`${panelCard} border-dashed p-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400`}
     >
-      <p className="font-medium text-slate-700 dark:text-slate-200">Nothing has run yet.</p>
+      <p className="font-medium text-slate-700 dark:text-slate-200">
+        {hasPastRuns
+          ? "This composition hasn't run here yet. Earlier runs are in History."
+          : "Nothing has run yet."}
+      </p>
       <p className="mt-1">
         A run is separate from the live system: it never changes agents, the catalogue, chat
         sessions or memory, and it is held to autonomy L2 (reads only). Its trace streams here as it
@@ -198,12 +215,14 @@ function EmptyRun() {
 function RunDetail({
   client,
   view,
+  offCanvasOf,
   connection,
   finished,
   now,
 }: {
   client: StudioClient;
   view: RunView;
+  offCanvasOf: string | null;
   connection: Connection;
   finished: boolean;
   now: number;
@@ -219,6 +238,12 @@ function RunDetail({
   return (
     <>
       <div className={`${panelCard} p-3`}>
+        {offCanvasOf ? (
+          <p className={`mb-2 rounded-md border px-2 py-1.5 text-xs ${toneChip.warn}`}>
+            This is a run of <span className="font-mono font-semibold">{offCanvasOf}</span>, not of
+            the composition on the canvas.
+          </p>
+        ) : null}
         <div className="flex items-center gap-2">
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${tonePill[tone]}`}
@@ -253,6 +278,8 @@ function RunDetail({
       </div>
 
       <ApprovalCards client={client} runId={view.runId} asks={waitingApprovals(view)} now={now} />
+
+      <RunContent view={view} />
 
       {view.budgetHit ? (
         <div
@@ -354,29 +381,70 @@ function RunDetail({
 
       {view.totals ? <TotalsCard view={view} /> : null}
 
-      {view.input || view.output ? (
-        <section aria-labelledby="studio-content" className="flex flex-col gap-2">
-          <h3 id="studio-content" className={sectionTitle}>
-            Content (redacted)
-          </h3>
-          {view.input ? <ContentBlock label="Input" text={view.input} /> : null}
-          {view.output ? <ContentBlock label="Output" text={view.output} /> : null}
-        </section>
-      ) : null}
-
       <Timeline view={view} />
     </>
   );
 }
 
-function ContentBlock({ label, text }: { label: string; text: string }) {
+/** What the run was asked and answered, or why that isn't here. */
+function RunContent({ view }: { view: RunView }) {
+  if (view.input || view.output) {
+    return (
+      <section aria-labelledby="studio-content" className="flex flex-col gap-2">
+        <h3 id="studio-content" className={sectionTitle}>
+          Content (redacted)
+        </h3>
+        {view.output ? <ContentBlock label="Output" text={view.output} prominent /> : null}
+        {view.input ? <ContentBlock label="Input" text={view.input} /> : null}
+      </section>
+    );
+  }
+  // Only a run that succeeded had an answer to keep: on a failed one this would
+  // read as the reason nothing came back.
+  if (view.status === "succeeded" && contentNotCaptured(view)) {
+    return (
+      <p
+        className={`${panelCard} border-dashed p-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300`}
+      >
+        This run's text isn't kept on this deployment, so its answer can't be shown. An admin can
+        keep it for later runs by setting{" "}
+        <code className="font-mono wrap-break-word">ORRERY_STUDIO_CAPTURE_CONTENT=true</code>.
+      </p>
+    );
+  }
+  return null;
+}
+
+function ContentBlock({
+  label,
+  text,
+  prominent = false,
+}: {
+  label: string;
+  text: string;
+  prominent?: boolean;
+}) {
   return (
-    <figure className={`${panelCard} p-2.5`}>
-      <figcaption className="flex items-center text-[11px] font-medium text-slate-500 dark:text-slate-400">
+    <figure
+      className={`${panelCard} ${prominent ? "p-3 ring-1 ring-brand-300 dark:ring-brand-800" : "p-2.5"}`}
+    >
+      <figcaption
+        className={`flex items-center font-medium ${
+          prominent
+            ? "text-xs text-slate-900 dark:text-slate-100"
+            : "text-[11px] text-slate-500 dark:text-slate-400"
+        }`}
+      >
         {label}
         <CopyButton value={text} label={`Copy ${label.toLowerCase()}`} className="ml-auto" />
       </figcaption>
-      <pre className="orrery-scroll mt-1 max-h-48 overflow-auto font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-slate-800 dark:text-slate-200">
+      <pre
+        className={`orrery-scroll mt-1 overflow-auto leading-relaxed whitespace-pre-wrap ${
+          prominent
+            ? "max-h-96 font-sans text-sm text-slate-900 dark:text-slate-100"
+            : "max-h-24 font-mono text-[11.5px] text-slate-600 dark:text-slate-300"
+        }`}
+      >
         {text}
       </pre>
     </figure>

@@ -53,6 +53,8 @@ export interface StudioRunController {
   reconnect: () => void;
   /** Show a past run of this session (its graph state, timeline and totals). */
   show: (runId: string) => void;
+  /** Show no run: the canvas moved on from it. It stays in `history`, and the live run goes on. */
+  hide: () => void;
   clearError: () => void;
 }
 
@@ -341,6 +343,12 @@ export function useStudioRun(client: StudioClient): StudioRunController {
   const busyRef = useRef(false);
   busyRef.current = busy;
 
+  const hide = useCallback(() => {
+    setShownId(null);
+    // A banner about the hidden run goes with it; one about a live run stays.
+    if (!busyRef.current) setError(null);
+  }, []);
+
   /** Read a past run's events from the start; the server ends the stream after `run.end`. */
   const replay = useCallback(
     async (summary: RunSummary) => {
@@ -422,6 +430,7 @@ export function useStudioRun(client: StudioClient): StudioRunController {
       cancel,
       reconnect,
       show,
+      hide,
       clearError,
     }),
     [
@@ -437,6 +446,7 @@ export function useStudioRun(client: StudioClient): StudioRunController {
       cancel,
       reconnect,
       show,
+      hide,
       clearError,
     ],
   );
