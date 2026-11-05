@@ -1049,3 +1049,15 @@ def test_a_bad_public_url_stops_startup_without_repeating_it(url):
     with pytest.raises(ValueError, match="ORRERY_A2A_PUBLIC_URL") as refused:
         cfg.validate(auth_enabled=True)
     assert "hunter2" not in str(refused.value)
+
+
+def test_a_bad_approval_url_stops_startup_without_repeating_it():
+    cfg = A2AConfig(
+        enabled=True,
+        audience="a",
+        public_url="https://orrery.example.com/a2a",
+        approval_base_url="https://u:hunter2@ex\u2100mple.com",
+    )
+    with pytest.raises(ValueError, match="ORRERY_A2A_APPROVAL_BASE_URL") as refused:
+        cfg.validate(auth_enabled=True)
+    assert "hunter2" not in str(refused.value)

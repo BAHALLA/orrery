@@ -51,9 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meant to hold no secrets. MCP entries, A2A entries and the A2A public URLs now refuse
   credentials, a URL with no host, and one that can't be parsed, which catches an
   unescaped password like `https://u:pass/word@host`. Refusals and validation errors no
-  longer print the URL. A URL can't be checked for every secret: a value in its path or
-  query is still accepted, and so is a numeric password before a `/`, which reads as a
-  port. Note for operators: a server with credentials in its URL now fails startup, from
+  longer print the URL. A URL can't be checked for every secret, so some are still
+  accepted, and stored: a value in its path or query, a numeric password before a `/`,
+  which reads as a port, and a password with no username before a `/`, `?` or `#`, which
+  reads as the host. Connection errors can show such a host. Note for operators: a server with credentials in its URL now fails startup, from
   `ORRERY_MCP_CONFIG` or `ORRERY_STUDIO_REGISTRY`. For `ORRERY_MCP_CONFIG`, move them to
   `headers_from_env`. Studio MCP entries have no way to send credentials yet. Rotate any
   password that was already in a registry: a stored version stops being served, but stays
