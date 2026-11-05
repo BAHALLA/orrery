@@ -71,6 +71,8 @@ from urllib.parse import urlsplit
 import httpx as httpx_std
 from google.adk.dependencies._mcp import IS_MCP_SDK_V2
 
+from ..safe_url import split_url
+
 if IS_MCP_SDK_V2:
     import httpx2 as httpx
 else:  # pragma: no cover - mcp 1.x
@@ -157,12 +159,12 @@ def proxied_refusal(url: Any, allowed: Collection[Origin], *, label: str) -> str
         return why
     if target[0] != "https":
         return (
-            f"{label} request to {_show(target)} refused: only https goes through the "
+            f"{label} request to {show_origin(target)} refused: only https goes through the "
             f"egress proxy ({EGRESS_PROXY_ENV}), inside a CONNECT tunnel"
         )
     if ":" in target[1]:
         return (
-            f"{label} request to {_show(target)} refused: an IPv6 address cannot go "
+            f"{label} request to {show_origin(target)} refused: an IPv6 address cannot go "
             f"through the egress proxy ({EGRESS_PROXY_ENV}); name the host instead"
         )
     return None
@@ -340,12 +342,12 @@ Origin = tuple[str, str, int]
 
 def origin_of(url: str) -> Origin:
     """The :data:`Origin` of *url*."""
-    parts = urlsplit(url)
+    parts = split_url(url)
     scheme = parts.scheme.lower()
     return (scheme, (parts.hostname or "").lower(), parts.port or _DEFAULT_PORTS.get(scheme, 0))
 
 
-def _show(origin: Origin) -> str:
+def show_origin(origin: Origin) -> str:
     return f"{origin[0]}://{origin[1]}:{origin[2]}"
 
 
@@ -410,8 +412,8 @@ def origin_refusal(target: Origin, allowed: Collection[Origin], *, label: str) -
     """Why a request to *target* is refused, or ``None`` when it is one of *allowed*."""
     if target in allowed:
         return None
-    shown = ", ".join(sorted(_show(o) for o in allowed)) or "nothing"
-    return f"{label} request to {_show(target)} refused: only {shown} is configured"
+    shown = ", ".join(sorted(show_origin(o) for o in allowed)) or "nothing"
+    return f"{label} request to {show_origin(target)} refused: only {shown} is configured"
 
 
 def address_refusal(

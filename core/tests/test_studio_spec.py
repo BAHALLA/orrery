@@ -10,7 +10,12 @@ from pydantic import ValidationError
 
 from orrery_core.security.guardrails import LEVEL_DESTRUCTIVE, set_guard
 from orrery_core.studio.config import BudgetCeilings, StudioConfig
-from orrery_core.studio.registry import StudioRegistry, load_registry
+from orrery_core.studio.registry import (
+    StudioRegistry,
+    _is_loopback,
+    load_registry,
+    parse_registry,
+)
 from orrery_core.studio.spec import (
     SPEC_VERSION,
     CompositionSpec,
@@ -388,7 +393,7 @@ def test_mcp_entries_refuse_stdio_env_headers_and_files(key, value):
 
 def test_mcp_entries_refuse_stdio_and_off_loopback_http():
     with pytest.raises(ValidationError, match="stdio"):
-        StudioRegistry.model_validate({"mcp": [{"id": "x", "transport": "stdio", "tools": ["t"]}]})
+        StudioRegistry.model_validate({"mcp": [{"id": "xx", "transport": "stdio", "tools": ["t"]}]})
     with pytest.raises(ValidationError, match="https"):
         StudioRegistry.model_validate(
             {"mcp": [{**REGISTRY["mcp"][0], "url": "http://docs.example.com/mcp"}]}
@@ -825,3 +830,47 @@ def test_every_compiled_agent_supervisor_children_included_gets_the_studio_gate(
         import asyncio
 
         asyncio.run(compiled.close())
+
+
+def test_a_registry_with_credentials_in_an_mcp_url_is_refused_without_repeating_them():
+    raw = {
+        "mcp": [
+            {
+                "id": "inv",
+                "url": "https://u:hunter2@mcp.example.com/mcp",
+                "transport": "streamable_http",
+                "tools": ["t"],
+            }
+        ]
+    }
+    with pytest.raises(ValidationError, match="carries credentials") as refused:
+        parse_registry(raw)
+    assert "hunter2" not in str(refused.value)
+
+
+def test_a_registry_validation_error_does_not_print_its_input():
+    with pytest.raises(ValidationError) as refused:
+        parse_registry({"a2a": [{"id": "wr", "card_url": ["hunter2"], "skills": ["s"]}]})
+    assert "hunter2" not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://u:hunter2/x@h.example.com/m",
+        "https://u:hunter2?x@h.example.com/m",
+        "https://u:hunter2#x@h.example.com/m",
+        "https://u:hunter2",
+        "https://u:hunter2@ex\u2100mple.com/m",
+        "https://u:hunter2\uff03@h.example.com/m",
+    ],
+)
+def test_a_registry_refuses_an_unescaped_password_without_repeating_it(url):
+    raw = {
+        "mcp": [{"id": "inv", "url": url, "transport": "streamable_http", "tools": ["t"]}],
+        "a2a": [{"id": "wr", "card_url": url, "skills": ["s"]}],
+    }
+    assert _is_loopback(url) is False  # runs ahead of the schema on an edit
+    with pytest.raises(ValidationError) as refused:
+        parse_registry(raw)
+    assert "hunter2" not in str(refused.value)

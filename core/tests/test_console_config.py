@@ -170,3 +170,18 @@ def test_the_console_learns_that_access_is_restricted(monkeypatch):
     assert ConsoleConfig.from_env().as_dict()["accessRestricted"] is True
     monkeypatch.setenv("ORRERY_REQUIRED_ROLES", " , ")
     assert "accessRestricted" not in ConsoleConfig.from_env().as_dict()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://u:hunter2@labs.example.com/",
+        "https://u:hunter2/x@labs.example.com/",
+        "https://u:hunter2@ex\u2100mple.com/",
+        "http://labs.example.com/?x=hunter2",
+    ],
+)
+def test_a_refused_access_denied_url_is_not_repeated(url):
+    with pytest.raises(ValueError, match="ORRERY_CONSOLE_ACCESS_DENIED_URL") as refused:
+        ConsoleConfig(access_denied_url=url).validate(None)
+    assert "hunter2" not in str(refused.value)
