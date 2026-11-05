@@ -179,6 +179,7 @@ async def test_rewrites_the_roots_answer_in_place(store):
     assert audit.call_args.args == ("learning_answer_withheld",)
     fields = audit.call_args.kwargs
     assert fields["target"] == "lag" and fields["scenario_id"] == "kafka-lag-01"
+    assert "disclosure_level" in fields and "level" not in fields  # ``level`` is the entry's own
     # The value itself is never audited.
     assert "5100" not in json.dumps(fields) and "5,100" not in json.dumps(fields)
 

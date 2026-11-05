@@ -356,6 +356,22 @@ def test_credentials_in_an_audit_events_text_are_redacted(caplog):
     assert line["subject"] == "alice"
 
 
+def test_credentials_in_the_formatters_allowlisted_fields_are_redacted(caplog):
+    leaked = "ghp_" + "a" * 36
+    line = _audited_line(
+        caplog,
+        "evt",
+        reason=f"refused {leaked}",
+        status=leaked,
+        requester=leaked,
+        tool=leaked,
+        args={"cmd": f"curl {leaked}"},
+    )
+    assert leaked not in json.dumps(line)
+    assert line["reason"].startswith("refused ")
+    assert line["tool_args"]["cmd"].startswith("curl ")
+
+
 def test_an_audit_event_accepts_keys_that_are_not_strings(caplog):
     assert _audited_line(caplog, "evt", counts={1: 2})["counts"] == {"1": 2}
 

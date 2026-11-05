@@ -219,12 +219,13 @@ class RemoteAgentEntry(BaseModel):
 def _check_url(url: str, what: str, *, private_network: bool) -> None:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
+    # First, and without the URL: every message here reaches the caller and the audit log.
+    if parts.username or parts.password:
+        raise ValueError(f"{what}: the URL carries credentials; use auth.bearer_env")
     if parts.scheme not in {"http", "https"} or not host:
         raise ValueError(f"{what}: {url!r} is not an http(s) URL")
     if parts.scheme == "http" and host not in LOOPBACK_HOSTS:
         raise ValueError(f"{what}: {url!r} must use https (plain http only on loopback)")
-    if parts.username or parts.password:
-        raise ValueError(f"{what}: {url!r} carries credentials; use auth.bearer_env")
     address = literal_ip(host)
     if address and never_allowed(address):
         raise ValueError(f"{what}: {url!r} is a link-local or metadata address")

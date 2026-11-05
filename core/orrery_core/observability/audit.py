@@ -249,10 +249,14 @@ def audit_event(event: str, **fields: Any) -> None:
     # new event's fields silently vanish in production, where that formatter runs.
     # A field's own name (``keys``, ``tokens``) is the caller's choice, so only what
     # is inside a value is masked. Text is redacted too: an admin's note is free text.
-    extra["audit_fields"] = {
+    safe = {
         key: _redact_strings(_sanitize(value)) for key, value in extra.items() if key != "event"
     }
-    logger.info("%s: %s", event, fields.get("tool", ""), extra=extra)
+    # The formatter writes allowlisted names (``reason``, ``tool_args``) from the
+    # record itself, ahead of ``audit_fields``, so they must carry the safe values too.
+    extra.update(safe)
+    extra["audit_fields"] = safe
+    logger.info("%s: %s", event, safe.get("tool", ""), extra=extra)
 
 
 def _audit_response(tool_response: Any, mode: str = "full") -> Any:
