@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-05
+
+**OAuth hardening, with settings to check before you upgrade.** With auth on, the
+server now refuses to start without `JWT_AUDIENCE` and `JWT_ISSUER`, and an http
+`JWT_JWKS_URL` off loopback needs `JWT_JWKS_ALLOW_INSECURE_HTTP=true`. Startup also fails
+on an MCP or A2A entry with credentials in its URL, credentials in the A2A public URLs,
+and a set `ORRERY_SECRETS_DIR` that is missing. The console keeps SSO tokens in memory
+only, token exchanges are audited, and audit events keep their fields in the JSON log.
+
 ### Changed
 
 - **Auth now needs `JWT_AUDIENCE` and `JWT_ISSUER`.** With auth on, the server
@@ -20,11 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose tokens are valid. Note for operators: on a network you trust, such as a
   same-host network, set `JWT_JWKS_ALLOW_INSECURE_HTTP=true` (chart:
   `auth.allowInsecureJwks`).
+- **`orrery-core` needs `google-adk>=2.13.0`, and `a2a-sdk>=1.3.0` with its `a2a` extra.**
+  This matters if you install it outside this workspace.
 
 ### Added
 
-- **`JWT_REQUIRED_TYP`** requires a `typ` header such as `at+jwt` (RFC 9068), which
-  refuses ID tokens when `JWT_AUDIENCE` is the console's client id. `make run-api
+- **`JWT_REQUIRED_TYP`** (chart: `auth.requiredTyp`) requires a `typ` header such as
+  `at+jwt` (RFC 9068), which refuses ID tokens when `JWT_AUDIENCE` is the console's
+  client id. It doesn't apply to `/a2a`, which has its own audience. `make run-api
   SSO=1` and the bundled realm now use it. Note for developers: an existing local
   Keycloak needs `make reset` to import the realm again.
 - **Token exchanges are audited and counted.** Each round-trip to the provider
@@ -54,8 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer print the URL. A URL can't be checked for every secret, so some are still
   accepted, and stored: a value in its path or query, a numeric password before a `/`,
   which reads as a port, and a password with no username before a `/`, `?` or `#`, which
-  reads as the host. Connection errors can show such a host. Note for operators: a server with credentials in its URL now fails startup, from
-  `ORRERY_MCP_CONFIG` or `ORRERY_STUDIO_REGISTRY`. For `ORRERY_MCP_CONFIG`, move them to
+  reads as the host. Connection errors can show such a host. Note for operators: a
+  server with credentials in its URL now fails startup, from `ORRERY_MCP_CONFIG` or
+  `ORRERY_STUDIO_REGISTRY`, and so does `ORRERY_A2A_PUBLIC_URL` or
+  `ORRERY_A2A_APPROVAL_BASE_URL` with credentials. For `ORRERY_MCP_CONFIG`, move them to
   `headers_from_env`. Studio MCP entries have no way to send credentials yet. Rotate any
   password that was already in a registry: a stored version stops being served, but stays
   readable in the registry's history.
@@ -93,6 +107,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the model might retry and the circuit breaker would count. Nothing polls that
   task yet (ADR-008). `auth-required` now says what is wrong rather than that the
   task ended.
+- **Studio no longer shows a previous composition's run as the current one's.** Loading
+  a template, an import or a saved composition left the old run on the Run tab and its
+  status on any node with a matching id. A finished run now leaves the view and stays
+  in History. The canvas lock during a live run also covers the Import tab and the
+  empty-canvas template gallery.
+- **A Studio run shows its answer first, or says why there is none.** Output now comes
+  right under the status header, and a run with capture off says its text isn't kept.
+- **The console's welcome text is true for your role and level.** It promised approval
+  to viewers and at L2, where a change is refused. It now follows `/me`.
 
 ## [0.17.0] - 2026-11-01
 
@@ -2122,7 +2145,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/BAHALLA/orrery/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/BAHALLA/orrery/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/BAHALLA/orrery/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
