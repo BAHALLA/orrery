@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { isOidcEnabled, legacyStorageKeys, storageKeys } from "../config";
 import {
   completeSignIn,
+  forgetSession,
   getUserManager,
   hasAuthResponse,
-  loadUser,
+  rememberSession,
+  restoreSession,
   signInRedirect,
   signOutRedirect,
 } from "./oidc";
@@ -34,9 +36,15 @@ export const SESSION_ENDED = "Your sign-in session ended. Sign in again to conti
 export const EXPIRY_GRACE_MS = 10_000;
 
 /** OAuth errors that mean the provider no longer honours this session. */
-const SESSION_REFUSALS = new Set(["invalid_grant", "login_required", "interaction_required"]);
+const SESSION_REFUSALS = new Set([
+  "invalid_grant",
+  "login_required",
+  "interaction_required",
+  "consent_required",
+  "account_selection_required",
+]);
 
-/** True when a silent-renew failure is the provider refusing, not the network. */
+/** True when a silent sign-in failed because the provider refused, not the network. */
 export function isSessionRefusal(err: unknown): boolean {
   const code = (err as { error?: unknown } | null)?.error;
   return typeof code === "string" && SESSION_REFUSALS.has(code);
@@ -73,8 +81,9 @@ function clearLocalState(): void {
  * every request — so the shape below is deliberately identical for each, and
  * the rest of the console never learns which one is in play.
  *
- * - **OIDC** (`VITE_OIDC_ISSUER` set): Authorization Code + PKCE. The access
- *   token stays in memory and is renewed silently.
+ * - **OIDC** (`VITE_OIDC_ISSUER` set): Authorization Code + PKCE. Tokens stay in
+ *   memory, are renewed silently, and come back after a reload from the
+ *   provider's session.
  * - **Token** (default): the operator pastes a token, e.g. from
  *   `make dev-token`. Kept so CI and offline work need no identity provider.
  */
@@ -98,13 +107,17 @@ export function useAuth(): AuthState {
 
     void (async () => {
       try {
-        const user = hasAuthResponse() ? await completeSignIn() : await loadUser();
+        const user = hasAuthResponse() ? await completeSignIn() : await restoreSession();
+        if (user) rememberSession();
         current = user?.access_token ?? null;
         if (!cancelled) setToken(current);
       } catch (err) {
         if (!cancelled) {
           setToken(null);
-          setError(err instanceof Error ? err.message : "Single sign-on failed.");
+          // A reload's silent sign-in coming back `login_required` is the one
+          // way this happens: the session is over, and that is all it means.
+          if (isSessionRefusal(err)) setError(SESSION_ENDED);
+          else setError(err instanceof Error ? err.message : "Single sign-on failed.");
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -115,11 +128,13 @@ export function useAuth(): AuthState {
     // console would keep sending the old one until the next full reload.
     const um = getUserManager();
     const onLoaded = (user: { access_token: string }) => {
+      rememberSession();
       current = user.access_token;
       setToken(current);
       setError(null);
     };
     const onUnloaded = () => {
+      forgetSession();
       current = null;
       setToken(null);
     };
@@ -129,6 +144,7 @@ export function useAuth(): AuthState {
     // console kept a dead token and every call failed with 401 until a reload.
     const endSession = () => {
       if (cancelled) return;
+      forgetSession();
       current = null;
       setToken(null);
       setError(SESSION_ENDED);
@@ -147,7 +163,7 @@ export function useAuth(): AuthState {
       // sign-in panel; the stored user stays, so a renew still retrying can
       // bring the session back.
       const expired = current;
-      if (expired === null) return; // nothing was signed in (a reload with a stale record)
+      if (expired === null) return; // nothing was signed in
       clearTimeout(expiryTimer);
       expiryTimer = setTimeout(() => {
         if (current === expired) endSession();

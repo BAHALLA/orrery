@@ -96,11 +96,17 @@ JWT_ALGORITHM=RS256
 JWT_JWKS_URL=https://idp.example.com/realms/orrery/protocol/openid-connect/certs
 JWT_AUDIENCE=orrery-console
 JWT_ISSUER=https://idp.example.com/realms/orrery
+JWT_REQUIRED_TYP=at+jwt   # if the provider marks access tokens (Keycloak: see below)
 JWT_ROLE_CLAIM=realm_access.roles
 ```
 
-The access token is held **in memory** and renewed silently, so it is not
-sitting in `localStorage` for any script on the origin to read. Signing out ends
+Tokens are held **in memory** and renewed silently, so none sits in web storage
+for a script on the origin to read. Web storage keeps only the sign-in redirect's
+`state` and PKCE verifier until it completes, and a note that the tab is signed
+in. A reload loses the tokens, so the console redirects once to the provider with
+`prompt=none`: a brief navigation with no provider page while its session lasts,
+and the sign-in panel once it has ended. A new tab shows the sign-in panel, and
+one click signs in without a password. Signing out ends
 the provider session too — a local-only sign-out would silently sign the same
 user straight back in, which is not what anyone means by signing out of a shared
 machine.
@@ -178,7 +184,7 @@ stops it.
        `viewer`. Dotted paths are supported on both sides.
     2. **The audience is wrong by default.** Keycloak issues access tokens with
        `aud: account`. Add an **audience mapper** on the client emitting your
-       client id, or leave `JWT_AUDIENCE` unset. The bundled realm includes the
+       client id. The bundled realm includes the
        mapper.
 
     The bundled realm also enables direct access grants so the chain can be

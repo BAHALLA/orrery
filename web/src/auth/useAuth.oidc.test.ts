@@ -30,7 +30,9 @@ vi.mock("./oidc", () => {
   return {
     hasAuthResponse: () => false,
     completeSignIn: vi.fn(),
-    loadUser: async () => stored.user,
+    restoreSession: async () => stored.user,
+    rememberSession: vi.fn(),
+    forgetSession: vi.fn(),
     signInRedirect: vi.fn(async () => {}),
     signOutRedirect: vi.fn(async () => {}),
     getUserManager: () => ({

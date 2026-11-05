@@ -1,5 +1,5 @@
-import { type User, UserManager, WebStorageStateStore } from "oidc-client-ts";
-import { isOidcEnabled, oidcConfig } from "../config";
+import { InMemoryWebStorage, type User, UserManager, WebStorageStateStore } from "oidc-client-ts";
+import { isOidcEnabled, oidcConfig, storageKeys } from "../config";
 
 /**
  * OIDC single sign-on for the console (Authorization Code + PKCE).
@@ -17,10 +17,12 @@ import { isOidcEnabled, oidcConfig } from "../config";
  *   404s unknown deep paths — a `/auth/callback` route would work under the
  *   Vite dev server and break in production. Returning to `/` with the code and
  *   state as query params needs no SPA router and no server change.
- * - **The access token lives in memory**, held by the UserManager and refreshed
- *   silently, rather than in localStorage as the paste-a-token flow does. Only
- *   oidc-client-ts's own session record is persisted, so a stolen localStorage
- *   snapshot doesn't hand over a bearer token.
+ * - **Tokens live in memory only.** oidc-client-ts's user record holds the
+ *   access, ID and refresh tokens, and its default store is sessionStorage, where
+ *   any script on the origin can read them. So a reload loses them, and
+ *   {@link restoreSession} gets new ones from the provider's own session with a
+ *   `prompt=none` redirect. That is a top-level navigation rather than a hidden
+ *   iframe, because browsers block the provider's cookies in an iframe.
  */
 
 /** Where the provider sends the browser back to. Always the console root. */
@@ -45,8 +47,10 @@ export function getUserManager(): UserManager | null {
     // Renew in the background so a long incident session doesn't hit a login
     // wall mid-investigation.
     automaticSilentRenew: true,
-    // Session records only — never the access token itself.
-    userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+    // The user record holds the tokens: memory only.
+    userStore: new WebStorageStateStore({ store: new InMemoryWebStorage() }),
+    // One redirect's `state` and PKCE verifier, which must survive it and are
+    // removed when it completes. No token.
     stateStore: new WebStorageStateStore({ store: window.sessionStorage }),
   });
   return manager;
@@ -75,12 +79,48 @@ export async function completeSignIn(): Promise<User | null> {
   }
 }
 
-/** Restore an existing session without contacting the provider. */
-export async function loadUser(): Promise<User | null> {
+/** Note that this tab is signed in, so a reload may try to restore the session. */
+export function rememberSession(): void {
+  try {
+    window.sessionStorage.setItem(storageKeys.oidcSession, "1");
+  } catch {
+    // Storage disabled: a reload shows the sign-in panel instead.
+  }
+}
+
+export function forgetSession(): void {
+  try {
+    window.sessionStorage.removeItem(storageKeys.oidcSession);
+  } catch {
+    // Storage disabled: nothing was remembered.
+  }
+}
+
+/** Whether this tab was signed in. Clears the note, so one reload tries at most once. */
+function takeRememberedSession(): boolean {
+  try {
+    const remembered = window.sessionStorage.getItem(storageKeys.oidcSession) !== null;
+    forgetSession();
+    return remembered;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The user held in memory, or a new sign-in if this tab had one before a reload.
+ *
+ * Asking with `prompt=none` shows no provider page: it comes back with a code,
+ * or with `login_required` when the provider's session has ended. Nothing else
+ * starts a redirect, so a tab that never signed in shows the sign-in panel.
+ */
+export async function restoreSession(): Promise<User | null> {
   const um = getUserManager();
   if (!um) return null;
   const user = await um.getUser();
-  return user && !user.expired ? user : null;
+  if (user && !user.expired) return user;
+  if (takeRememberedSession()) await um.signinRedirect({ prompt: "none" });
+  return null;
 }
 
 export async function signInRedirect(): Promise<void> {
@@ -89,6 +129,7 @@ export async function signInRedirect(): Promise<void> {
 
 /** Sign out of the provider too — a local-only sign-out silently signs back in. */
 export async function signOutRedirect(): Promise<void> {
+  forgetSession();
   const um = getUserManager();
   if (!um) return;
   try {
