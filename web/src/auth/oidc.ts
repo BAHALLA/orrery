@@ -1,5 +1,5 @@
-import { type User, UserManager, WebStorageStateStore } from "oidc-client-ts";
-import { isOidcEnabled, oidcConfig } from "../config";
+import { InMemoryWebStorage, type User, UserManager, WebStorageStateStore } from "oidc-client-ts";
+import { isOidcEnabled, oidcConfig, storageKeys } from "../config";
 
 /**
  * OIDC single sign-on for the console (Authorization Code + PKCE).
@@ -17,10 +17,12 @@ import { isOidcEnabled, oidcConfig } from "../config";
  *   404s unknown deep paths — a `/auth/callback` route would work under the
  *   Vite dev server and break in production. Returning to `/` with the code and
  *   state as query params needs no SPA router and no server change.
- * - **The access token lives in memory**, held by the UserManager and refreshed
- *   silently, rather than in localStorage as the paste-a-token flow does. Only
- *   oidc-client-ts's own session record is persisted, so a stolen localStorage
- *   snapshot doesn't hand over a bearer token.
+ * - **Tokens live in memory only.** oidc-client-ts's user record holds the
+ *   access, ID and refresh tokens, and its default store is sessionStorage, where
+ *   any script on the origin can read them. So a reload loses them, and
+ *   {@link restoreSession} gets new ones from the provider's own session with a
+ *   `prompt=none` redirect. That is a top-level navigation rather than a hidden
+ *   iframe, because browsers block the provider's cookies in an iframe.
  */
 
 /** Where the provider sends the browser back to. Always the console root. */
@@ -30,11 +32,28 @@ export function redirectUri(): string {
 
 let manager: UserManager | null = null;
 
+/** Earlier builds kept the user record here, tokens included, for as long as a tab lived. */
+const STORED_USER_PREFIX = "oidc.user:";
+
+function removeStoredUsers(): void {
+  try {
+    Object.keys(window.sessionStorage)
+      .filter((key) => key.startsWith(STORED_USER_PREFIX))
+      .forEach((key) => window.sessionStorage.removeItem(key));
+  } catch {
+    // Storage disabled: nothing was stored.
+  }
+}
+
+/** The sign-in being completed: its `state` can be redeemed once, and StrictMode asks twice. */
+let completing: Promise<User | null> | null = null;
+
 /** The shared UserManager, or null when SSO isn't configured. */
 export function getUserManager(): UserManager | null {
   if (!isOidcEnabled) return null;
   if (manager) return manager;
 
+  removeStoredUsers();
   manager = new UserManager({
     authority: oidcConfig.issuer,
     client_id: oidcConfig.clientId,
@@ -45,8 +64,10 @@ export function getUserManager(): UserManager | null {
     // Renew in the background so a long incident session doesn't hit a login
     // wall mid-investigation.
     automaticSilentRenew: true,
-    // Session records only — never the access token itself.
-    userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+    // The user record holds the tokens: memory only.
+    userStore: new WebStorageStateStore({ store: new InMemoryWebStorage() }),
+    // One redirect's `state` and PKCE verifier, which must survive it and are
+    // removed when it completes. No token.
     stateStore: new WebStorageStateStore({ store: window.sessionStorage }),
   });
   return manager;
@@ -65,22 +86,62 @@ export function hasAuthResponse(search: string = window.location.search): boolea
  * to redeem an already-used authorization code (which the provider rejects) and
  * so the code never lingers in browser history.
  */
-export async function completeSignIn(): Promise<User | null> {
+export function completeSignIn(): Promise<User | null> {
   const um = getUserManager();
-  if (!um) return null;
-  try {
-    return await um.signinRedirectCallback();
-  } finally {
+  if (!um) return Promise.resolve(null);
+  completing ??= um.signinRedirectCallback().finally(() => {
+    completing = null;
     window.history.replaceState({}, document.title, window.location.pathname);
+  });
+  return completing;
+}
+
+/** Note that this tab is signed in, so a reload may try to restore the session. */
+export function rememberSession(): void {
+  try {
+    window.sessionStorage.setItem(storageKeys.oidcSession, "1");
+  } catch {
+    // Storage disabled: a reload shows the sign-in panel instead.
   }
 }
 
-/** Restore an existing session without contacting the provider. */
-export async function loadUser(): Promise<User | null> {
+export function forgetSession(): void {
+  try {
+    window.sessionStorage.removeItem(storageKeys.oidcSession);
+  } catch {
+    // Storage disabled: nothing was remembered.
+  }
+}
+
+/** Whether this tab was signed in. Clears the note, so one reload tries at most once. */
+function takeRememberedSession(): boolean {
+  try {
+    const remembered = window.sessionStorage.getItem(storageKeys.oidcSession) !== null;
+    forgetSession();
+    return remembered;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The user held in memory, or a new sign-in if this tab had one before a reload.
+ *
+ * Asking with `prompt=none` shows no provider page: it comes back with a code,
+ * or with `login_required` when the provider's session has ended. Nothing else
+ * starts a redirect, so a tab that never signed in shows the sign-in panel.
+ *
+ * It replaces the page in the tab's history: an entry left behind would redirect
+ * again on Back, or come back from the browser's cache with no one signed in.
+ */
+export async function restoreSession(): Promise<User | null> {
   const um = getUserManager();
   if (!um) return null;
   const user = await um.getUser();
-  return user && !user.expired ? user : null;
+  if (user && !user.expired) return user;
+  if (takeRememberedSession())
+    await um.signinRedirect({ prompt: "none", redirectMethod: "replace" });
+  return null;
 }
 
 export async function signInRedirect(): Promise<void> {
@@ -89,6 +150,7 @@ export async function signInRedirect(): Promise<void> {
 
 /** Sign out of the provider too — a local-only sign-out silently signs back in. */
 export async function signOutRedirect(): Promise<void> {
+  forgetSession();
   const um = getUserManager();
   if (!um) return;
   try {

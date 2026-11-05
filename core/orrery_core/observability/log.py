@@ -118,6 +118,14 @@ class JSONFormatter(logging.Formatter):
             if value is not None:
                 entry[key] = value
 
+        # An audit event names its own fields (``audit_event``), and they are the
+        # point of the entry. They can't replace what is already set above.
+        audit_fields = getattr(record, "audit_fields", None)
+        if isinstance(audit_fields, dict):
+            for key, value in audit_fields.items():
+                if value is not None:
+                    entry.setdefault(key, value)
+
         # Correlate logs with traces (request_id always; trace_id/span_id when
         # an OpenTelemetry span is active).
         entry.update(_trace_correlation())

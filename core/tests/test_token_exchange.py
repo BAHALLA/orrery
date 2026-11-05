@@ -89,6 +89,24 @@ def _as(token: str | None, subject: str = "alice"):
 # ── The exchange ─────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def exchanges(monkeypatch):
+    """What each exchange audited and counted."""
+    from orrery_core.security import token_exchange
+
+    audited: list[dict[str, Any]] = []
+    counted: list[str] = []
+    monkeypatch.setattr(
+        token_exchange,
+        "audit_event",
+        lambda event, **f: audited.append(f) if event == "token_exchange" else None,
+    )
+    monkeypatch.setattr(
+        token_exchange, "track_token_exchange", lambda *, outcome: counted.append(outcome)
+    )
+    return audited, counted
+
+
 @pytest.mark.asyncio
 async def test_the_exchange_is_rfc_8693_with_client_authentication():
     idp = FakeIdP(300)
@@ -179,7 +197,7 @@ async def test_a_wrong_platform_client_is_a_loud_misconfiguration(answer, caplog
 
     assert err.value.reason == "misconfigured" and not err.value.is_refusal
     assert any(r.levelno == logging.ERROR for r in caplog.records)
-    assert [event for event, _ in audited] == ["token_exchange_misconfigured"]
+    assert [event for event, _ in audited] == ["token_exchange_misconfigured", "token_exchange"]
     assert "s3cret" not in caplog.text and SUBJECT not in caplog.text
 
 
@@ -432,3 +450,91 @@ def test_the_caller_identity_carries_it_out_of_repr_and_equality():
     assert identity.subject_token == SUBJECT
     assert SUBJECT not in repr(identity)
     assert identity == identity_from_claims("alice", {"email": "a@example.com"})
+
+
+def _as_alice(broker: TokenBroker, audience: str = "inventory", scope: str | None = None) -> str:
+    async def call() -> str:
+        identity = CallerIdentity(subject="alice", username="alice", subject_token=SUBJECT)
+        with caller_scope(identity):
+            return await broker.token_for(audience, scope)
+
+    return asyncio.run(call())
+
+
+def test_an_issued_token_is_audited_and_counted_once_without_the_token(exchanges):
+    audited, counted = exchanges
+    broker = TokenBroker(SETTINGS, session=cast(Any, FakeIdP(3600)))
+
+    token = _as_alice(broker, scope="issues:read")
+    assert _as_alice(broker, scope="issues:read") == token  # a cache hit issues nothing
+
+    assert audited == [
+        {"subject": "alice", "audience": "inventory", "scope": "issues:read", "outcome": "issued"}
+    ]
+    assert counted == ["issued"]
+    assert token not in repr(audited) and SUBJECT not in repr(audited)
+
+
+@pytest.mark.parametrize(
+    ("answer", "outcome"),
+    [
+        (FakeResponse(400, {"error": "access_denied"}), "refused"),
+        (FakeResponse(503, {}), "unavailable"),
+        (FakeResponse(401, {"error": "invalid_client"}), "misconfigured"),
+    ],
+)
+def test_a_failed_exchange_is_audited_with_how_it_ended(exchanges, answer, outcome):
+    audited, counted = exchanges
+    broker = TokenBroker(SETTINGS, session=cast(Any, FakeIdP(answer)))
+
+    for _ in range(2):  # the second answer comes from the remembered failure
+        with pytest.raises(CredentialUnavailable):
+            _as_alice(broker)
+
+    assert [a["outcome"] for a in audited] == [outcome]
+    assert counted == [outcome]
+
+
+def test_secrets_stay_out_of_repr():
+    assert "s3cret" not in repr(SETTINGS)
+    assert "tok-value" not in repr(token_exchange_cached("tok-value"))
+
+
+def token_exchange_cached(token: str) -> Any:
+    from orrery_core.security.token_exchange import _Cached
+
+    return _Cached(token, 0.0)
+
+
+def test_an_unexpected_failure_is_audited_too(exchanges):
+    audited, counted = exchanges
+    broker = TokenBroker(SETTINGS, session=cast(Any, FakeIdP(RuntimeError("boom"))))
+
+    with pytest.raises(RuntimeError):
+        _as_alice(broker)
+
+    assert [a["outcome"] for a in audited] == ["error"]
+    assert counted == ["error"]
+
+
+def test_waiters_and_a_cancelled_first_caller_share_one_audited_exchange(exchanges):
+    audited, counted = exchanges
+    idp = FakeIdP(3600, delay=0.05)
+    broker = TokenBroker(SETTINGS, session=cast(Any, idp))
+
+    async def scenario() -> list[str]:
+        identity = CallerIdentity(subject="alice", username="alice", subject_token=SUBJECT)
+        with caller_scope(identity):
+            first = asyncio.create_task(broker.token_for("inventory"))
+            await asyncio.sleep(0)
+            waiters = [asyncio.create_task(broker.token_for("inventory")) for _ in range(3)]
+            await asyncio.sleep(0)
+            first.cancel()
+            return await asyncio.gather(*waiters)
+
+    tokens = asyncio.run(scenario())
+
+    assert len(set(tokens)) == 1
+    assert len(idp.calls) == 1
+    assert [(a["subject"], a["outcome"]) for a in audited] == [("alice", "issued")]
+    assert counted == ["issued"]

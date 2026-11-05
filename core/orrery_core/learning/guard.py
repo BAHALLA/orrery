@@ -295,7 +295,7 @@ class AnswerGuardPlugin(BasePlugin):
                 "learning_answer_withheld",
                 target=value.target_id,
                 scenario_id=value.scenario_id,
-                level=level,
+                disclosure_level=level,
                 agent=callback_context.agent_name,
             )
         _count_withheld(len(stated))

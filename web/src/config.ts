@@ -64,6 +64,8 @@ export const isOidcEnabled = oidcConfig.issuer.length > 0;
  */
 export const storageKeys = {
   token: "orrery.console.token",
+  /** This tab was signed in (no token): a reload may try to restore it. */
+  oidcSession: "orrery.console.oidcSession",
   /** Layout preferences: no content, just whether a rail is folded away. */
   navCollapsed: "orrery.console.navCollapsed",
   studioPanelCollapsed: "orrery.console.studioPanelCollapsed",

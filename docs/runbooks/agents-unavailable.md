@@ -38,6 +38,8 @@ Look for these, in rough order of frequency:
 |----------|-------|-----|
 | `JWT_SECRET is required when JWT_ALGORITHM=HS256` | Secret missing or unmounted | Restore the secret; see [deployment](../deployment.md) |
 | `JWT_JWKS_URL is required when JWT_ALGORITHM=RS256` | SSO config incomplete | Set the JWKS URL |
+| `Auth is on without JWT_AUDIENCE…` | Token binding not configured | Set `JWT_AUDIENCE` and `JWT_ISSUER` |
+| `JWT_JWKS_URL must be https` | JWKS URL in plain http off loopback | Use https, or set `JWT_JWKS_ALLOW_INSECURE_HTTP=true` on a network you trust |
 | `DatabaseUnavailableError` | Postgres unreachable at startup | [session-db-unreachable](session-db-unreachable.md) |
 | `Unknown ORRERY_KNOWLEDGE_BACKEND=…` | Typo in the knowledge backend name | Correct it or unset it — `none` disables retrieval |
 | `ValidationError` from pydantic-settings | A config value has the wrong type | The message names the field |

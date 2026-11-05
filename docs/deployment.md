@@ -258,6 +258,8 @@ auth:
   enabled: true
   algorithm: RS256
   jwksUrl: https://YOUR_TENANT.auth0.com/.well-known/jwks.json
+  audience: https://orrery.your-org.com
+  issuer: https://YOUR_TENANT.auth0.com/
 ```
 
 The chart's own defaults (one replica, in-memory state, no ingress) are for
@@ -514,6 +516,10 @@ Check the logs — the most common causes are:
   `cfg.jwt.validate()` at startup precisely so this fails fast — look
   for `JWT_SECRET is required` / `JWT_JWKS_URL is required` in the
   logs.
+- `Auth is on without JWT_AUDIENCE and JWT_ISSUER`: set `auth.audience` and
+  `auth.issuer`. A helm render fails the same way, before anything is deployed.
+- `JWT_JWKS_URL must be https`: use https, or set `auth.allowInsecureJwks: true`
+  on a network you trust.
 
 ### `401 Invalid token` on every `/chat` call after enabling auth
 
@@ -521,6 +527,9 @@ Check the logs — the most common causes are:
   `auth.issuer` in `values.yaml`. The server rejects mismatched tokens
   silently to avoid leaking the validation strategy — turn on
   `LOG_LEVEL=DEBUG` to see the underlying PyJWT error.
+- `auth.requiredTyp` is set and the token has another `typ` header. Check the
+  client that issued it: the setting applies to every client on the console's
+  routes. The log says `header typ`, at INFO.
 - Clock drift between the IdP and the cluster exceeds
   `auth.leewaySeconds` (default 30s). NTP is the right fix; don't
   raise leeway above 60s in production.

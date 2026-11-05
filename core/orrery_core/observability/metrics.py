@@ -92,6 +92,12 @@ TOKEN_BUDGET_STORE_ERRORS_TOTAL = Counter(
     "Token budget store calls that failed or timed out (the model call went ahead)",
 )
 
+TOKEN_EXCHANGES_TOTAL = Counter(
+    "orrery_token_exchanges_total",
+    "Round-trips to the identity provider for a per-user token, by how they ended",
+    ["outcome"],
+)
+
 LLM_FAILOVER_TOTAL = Counter(
     "orrery_llm_failover_total",
     "Model calls moved to the next model in the fallback chain",
@@ -502,6 +508,11 @@ def track_confirmation_decided(*, tool: str, decision: str, latency_s: float | N
     CONFIRMATIONS_DECIDED_TOTAL.labels(tool=tool, decision=decision).inc()
     if latency_s is not None and latency_s >= 0:
         CONFIRMATION_DECISION_SECONDS.labels(tool=tool).observe(latency_s)
+
+
+def track_token_exchange(*, outcome: str) -> None:
+    """Record one token exchange; ``outcome`` is ``issued`` or a bounded failure reason."""
+    TOKEN_EXCHANGES_TOTAL.labels(outcome=outcome).inc()
 
 
 def track_confirmation_refused(*, tool: str, reason: str) -> None:

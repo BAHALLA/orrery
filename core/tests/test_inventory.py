@@ -73,7 +73,11 @@ def _client() -> TestClient:
             root_agent=_root(),
             app_name="t",
             plugins=[],
-            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET)),
+            config=ServerConfig(
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+            ),
         )
     return TestClient(app)
 

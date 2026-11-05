@@ -72,6 +72,9 @@ supports it), on demand, per user and per target:
   backoff), and exchanges run on a dedicated four-thread pool, so a refused
   user or an IdP brownout costs neither an IdP call per model step nor the
   default executor the blocking tools share.
+- Each round-trip to the provider is audited (`token_exchange`: subject, audience,
+  scope, outcome) and counted, so who obtained a token for what can be answered
+  from the record. A cache hit issues nothing and writes neither.
 - Only `token_type: Bearer` with `issued_token_type` of an access token is
   sent: RFC 8693's `N_A` marks a token that is not an access token.
 

@@ -27,11 +27,13 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.plugins.base_plugin import BasePlugin
 
+from ..env import env_flag
 from .rbac import set_user_role
 
 logger = logging.getLogger("orrery.auth")
@@ -210,6 +212,8 @@ def extract_role(
 #: forged token here is a forged admin.
 _HMAC_MIN_SECRET_BYTES = {"HS256": 32, "HS384": 48, "HS512": 64}
 _ASYMMETRIC_ALGORITHMS = frozenset({"RS256", "RS384", "RS512", "ES256", "ES384", "ES512"})
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+ALLOW_INSECURE_JWKS_ENV = "JWT_JWKS_ALLOW_INSECURE_HTTP"
 
 
 @dataclass(frozen=True)
@@ -219,18 +223,29 @@ class JWTConfig:
     Symmetric path (HS256/384/512): provide ``secret``.
     Asymmetric path (RS*/ES*): provide ``jwks_url`` (a JWKS endpoint).
 
-    ``audience`` and ``issuer`` are optional but strongly recommended in
-    production — they bind the token to this service and its trusted
-    identity provider.
+    ``audience`` and ``issuer`` bind a token to this service and its identity
+    provider. They are optional here because verification is a library call;
+    the HTTP front door refuses to start without them
+    (:meth:`unbound_settings`).
+
+    ``required_typ`` (``JWT_REQUIRED_TYP``) makes the token's ``typ`` header
+    mandatory. Set it to ``at+jwt`` (RFC 9068) when the provider marks access
+    tokens that way and ``JWT_AUDIENCE`` is the console's client id: an ID token
+    has that same audience, and only its type tells them apart.
     """
 
     algorithm: str = "HS256"
-    secret: str | None = None
+    #: Out of ``repr``: a config in a log line or a traceback must not carry it.
+    secret: str | None = field(default=None, repr=False)
     jwks_url: str | None = None
     audience: str | None = None
     issuer: str | None = None
     role_claim: str = DEFAULT_ROLE_CLAIM
     leeway_seconds: int = 30
+    required_typ: str | None = None
+    #: Accept a JWKS URL in plain http on a non-loopback host (a same-host
+    #: network, say). Whoever can alter that traffic can sign their own tokens.
+    allow_insecure_jwks: bool = False
 
     @classmethod
     def from_env(cls) -> JWTConfig:
@@ -243,6 +258,8 @@ class JWTConfig:
             issuer=os.getenv("JWT_ISSUER") or None,
             role_claim=os.getenv("JWT_ROLE_CLAIM", DEFAULT_ROLE_CLAIM),
             leeway_seconds=int(os.getenv("JWT_LEEWAY_SECONDS", "30")),
+            required_typ=os.getenv("JWT_REQUIRED_TYP", "").strip() or None,
+            allow_insecure_jwks=env_flag(ALLOW_INSECURE_JWKS_ENV, default=False),
         )
 
     @property
@@ -264,8 +281,29 @@ class JWTConfig:
         elif self.algorithm in _ASYMMETRIC_ALGORITHMS:
             if not self.jwks_url:
                 raise AuthError(f"JWT_JWKS_URL is required when JWT_ALGORITHM={self.algorithm}")
+            self._validate_jwks_url(self.jwks_url)
         else:
             raise AuthError(f"Unsupported JWT_ALGORITHM: {self.algorithm}")
+
+    def _validate_jwks_url(self, url: str) -> None:
+        """Refuse a key set fetched in clear: its keys decide whose tokens are valid."""
+        parts = urlsplit(url)
+        if parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in _LOOPBACK):
+            return
+        if parts.scheme == "http" and self.allow_insecure_jwks:
+            return
+        raise AuthError(
+            "JWT_JWKS_URL must be https (http only for loopback, or on a network you trust "
+            f"with {ALLOW_INSECURE_JWKS_ENV}=true)"
+        )
+
+    def unbound_settings(self) -> list[str]:
+        """The settings left unset that would bind a token to this service."""
+        return [
+            name
+            for name, value in (("JWT_AUDIENCE", self.audience), ("JWT_ISSUER", self.issuer))
+            if not value
+        ]
 
 
 # ── JWKS key resolution ─────────────────────────────────────────────
@@ -378,6 +416,11 @@ def _get_jwks_resolver(jwks_url: str) -> _JwksKeyResolver:
 # ── Token verification ──────────────────────────────────────────────
 
 
+def _media_type(value: Any) -> str:
+    """A ``typ`` value in comparable form: RFC 7515 lets ``application/`` be omitted."""
+    return str(value or "").strip().lower().removeprefix("application/")
+
+
 def verify_token(token: str, config: JWTConfig) -> AuthContext:
     """Verify a JWT bearer token and return an ``AuthContext``.
 
@@ -413,6 +456,9 @@ def verify_token(token: str, config: JWTConfig) -> AuthContext:
             header.get("alg"),
             config.algorithm,
         )
+        raise AuthError("Invalid or expired token")
+    if config.required_typ and _media_type(header.get("typ")) != _media_type(config.required_typ):
+        logger.info("JWT rejected: header typ %r is not %r", header.get("typ"), config.required_typ)
         raise AuthError("Invalid or expired token")
 
     decode_kwargs: dict[str, Any] = {

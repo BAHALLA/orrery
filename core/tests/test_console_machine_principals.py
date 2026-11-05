@@ -59,7 +59,11 @@ def _make_client():
             root_agent=LlmAgent(name="root", model=_EchoLlm(), instruction="Answer."),
             app_name="t",
             plugins=[],
-            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET)),
+            config=ServerConfig(
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+            ),
         )
     return TestClient(app)
 

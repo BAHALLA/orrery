@@ -907,3 +907,17 @@ def test_the_ca_file_must_exist(monkeypatch, tmp_path):
     monkeypatch.setenv("ORRERY_A2A_CA_FILE", str(tmp_path / "missing.pem"))
     with pytest.raises(ValueError, match="ORRERY_A2A_CA_FILE"):
         RemoteNetwork.from_env()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:hunter2@agent.example/card",
+        "http://user:hunter2@agent.example/card",
+        "ftp://user:hunter2@agent.example/card",
+    ],
+)
+def test_a_url_with_credentials_is_refused_without_repeating_them(url):
+    with pytest.raises(ValueError, match="carries credentials") as refused:
+        remote._check_url(url, "card_url", private_network=False)
+    assert "hunter2" not in str(refused.value)

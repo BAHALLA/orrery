@@ -30,6 +30,7 @@ from google.adk.agents.context import Context
 from google.adk.tools.base_tool import BaseTool
 
 from ..payload import text_volume
+from ..security.redaction import redact_text
 
 logger = logging.getLogger("orrery.audit")
 
@@ -232,9 +233,10 @@ def audit_event(event: str, **fields: Any) -> None:
         event: Event name, e.g. ``"confirmation_raised"``.
         **fields: Structured fields. An ``args`` field is sanitized like a tool
             call's arguments and emitted as ``tool_args`` — ``args`` is reserved
-            on ``LogRecord`` and passing it through ``extra`` raises. Everything
-            else is recorded verbatim, so pass identifiers and enums rather than
-            free text.
+            on ``LogRecord`` and passing it through ``extra`` raises. Other values
+            have sensitive keys inside them masked and credentials in their text
+            redacted. Prefer identifiers and enums to free text anyway, and don't
+            name a field after an entry's own (``level``, ``logger``): it is dropped.
     """
     extra: dict[str, Any] = {"event": event}
     for key, value in fields.items():
@@ -242,10 +244,19 @@ def audit_event(event: str, **fields: Any) -> None:
             extra["tool_args"] = _sanitize(value)
         else:
             extra[key] = value
-    # Flat keys, matching ``attempt_logger`` — ``JSONFormatter`` promotes them
-    # to top-level fields and stamps request/trace ids, so an approval event
-    # correlates with the tool call it gated without any extra plumbing.
-    logger.info("%s: %s", event, fields.get("tool", ""), extra=extra)
+    # Flat keys, matching ``attempt_logger``. ``JSONFormatter`` promotes only the
+    # names on its allowlist, so ``audit_fields`` carries the rest: without it a
+    # new event's fields silently vanish in production, where that formatter runs.
+    # A field's own name (``keys``, ``tokens``) is the caller's choice, so only what
+    # is inside a value is masked. Text is redacted too: an admin's note is free text.
+    safe = {
+        key: _redact_strings(_sanitize(value)) for key, value in extra.items() if key != "event"
+    }
+    # The formatter writes allowlisted names (``reason``, ``tool_args``) from the
+    # record itself, ahead of ``audit_fields``, so they must carry the safe values too.
+    extra.update(safe)
+    extra["audit_fields"] = safe
+    logger.info("%s: %s", event, safe.get("tool", ""), extra=extra)
 
 
 def _audit_response(tool_response: Any, mode: str = "full") -> Any:
@@ -298,11 +309,22 @@ def _sanitize(data: Any) -> Any:
     """Recursively redact sensitive values from dicts and lists."""
     if isinstance(data, dict):
         return {
-            k: "***" if any(s in k.lower() for s in _SENSITIVE_KEYS) else _sanitize(v)
+            k: "***" if any(s in str(k).lower() for s in _SENSITIVE_KEYS) else _sanitize(v)
             for k, v in data.items()
         }
     if isinstance(data, list):
         return [_sanitize(item) for item in data]
+    return data
+
+
+def _redact_strings(data: Any) -> Any:
+    """*data* with credentials scrubbed from every string in it."""
+    if isinstance(data, str):
+        return redact_text(data)[0]
+    if isinstance(data, dict):
+        return {k: _redact_strings(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_redact_strings(item) for item in data]
     return data
 
 

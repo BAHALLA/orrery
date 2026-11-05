@@ -72,7 +72,9 @@ def test_api_responses_carry_security_headers_and_are_not_cached(patched_runner)
 
 
 def test_error_responses_carry_them_too(patched_runner):
-    r = _app(auth_enabled=True, jwt=JWTConfig(secret="x" * 64)).get("/me")
+    r = _app(auth_enabled=True, allow_unbound_tokens=True, jwt=JWTConfig(secret="x" * 64)).get(
+        "/me"
+    )
 
     assert r.status_code == 401
     assert r.headers["x-content-type-options"] == "nosniff"

@@ -38,9 +38,12 @@ The HTTP front door (`ServerConfig.from_env()`, `JWTConfig.from_env()`) reads:
 | `AUTH_ENABLED` | `true` | Verify a bearer JWT on every request. `false` makes every caller an anonymous **viewer** (local try-outs only). With it on, the JWT settings below must be valid or the server refuses to start. |
 | `JWT_ALGORITHM` | `HS256` | `HS256`/`HS384`/`HS512` (shared secret) or `RS*`/`ES*` (JWKS). |
 | `JWT_SECRET` | unset | Shared secret for `HS*`; at least 32/48/64 bytes. |
-| `JWT_JWKS_URL` | unset | The IdP's JWKS endpoint, required for `RS*`/`ES*`. |
-| `JWT_AUDIENCE` | unset | Expected `aud`. Recommended in production. |
-| `JWT_ISSUER` | unset | Expected `iss`. Recommended in production. |
+| `JWT_JWKS_URL` | unset | The IdP's JWKS endpoint, required for `RS*`/`ES*`. https only (http on loopback). |
+| `JWT_JWKS_ALLOW_INSECURE_HTTP` | `false` | Accept an http JWKS URL on another host, such as a same-host network. Whoever can alter that traffic can sign their own tokens. |
+| `JWT_AUDIENCE` | unset | Expected `aud`. Required with auth on. |
+| `JWT_ISSUER` | unset | Expected `iss`. Required with auth on. |
+| `ORRERY_ALLOW_UNBOUND_TOKENS` | `false` | Start without `JWT_AUDIENCE` or `JWT_ISSUER`, with a warning. A token from any issuer the key verifies, or one naming no audience, is then accepted. |
+| `JWT_REQUIRED_TYP` | unset | Require this `typ` header on every token, e.g. `at+jwt` (RFC 9068). Set it when `JWT_AUDIENCE` is the console's client id: an ID token has that same audience, and only its type tells them apart. It covers every client on the console's routes, not A2A. The provider must mark its access tokens this way (Keycloak: the client's `access.token.header.type.rfc9068` attribute). |
 | `JWT_ROLE_CLAIM` | `roles` | Claim holding the roles; may be a dotted path (see [Role mapping](#role-mapping)). |
 | `JWT_LEEWAY_SECONDS` | `30` | Clock-skew allowance on `exp`/`nbf`. |
 | `ORRERY_WEB_CONSOLE_ENABLED` | `false` | Serve the built web console. |
@@ -372,6 +375,12 @@ Full guide: [MCP servers](../integrations/mcp.md#per-user-credentials).
 | `ORRERY_TOKEN_EXCHANGE_URL` | unset | IdP token endpoint. https only (http on loopback). Required once a server uses `auth`. |
 | `ORRERY_TOKEN_EXCHANGE_CLIENT_ID` | unset | Confidential client allowed to exchange tokens. |
 | `ORRERY_TOKEN_EXCHANGE_CLIENT_SECRET` | unset | Its secret. |
+
+Each round-trip to the provider writes a `token_exchange` audit entry (subject,
+audience, scope, outcome, never a token) and counts in
+`orrery_token_exchanges_total{outcome}`: `issued`, `refused`,
+`unavailable`, `misconfigured` or `error`. A cache hit issues nothing, so it writes neither,
+and neither does a caller with no token, who is refused before any round-trip.
 
 ## What this does **not** cover (intentionally)
 

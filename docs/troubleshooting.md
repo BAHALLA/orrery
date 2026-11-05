@@ -9,6 +9,7 @@ The HTTP front door (`orrery_core.serving.server`) requires a valid JWT bearer t
 
 - **No Authorization header.** Send `Authorization: Bearer <jwt>`. `/healthz` and `/readyz` are intentionally exempt.
 - **Audience / issuer mismatch.** The token's `aud` and `iss` claims must match `JWT_AUDIENCE` / `JWT_ISSUER` byte-for-byte. The server returns a generic 401 to avoid leaking which check failed — set `LOG_LEVEL=DEBUG` to see the underlying PyJWT message.
+- **Wrong token type.** With `JWT_REQUIRED_TYP` set, a token with another `typ` header gets the same 401, logged at INFO as `header typ`. It applies to every client on the console's routes. A local Keycloak from before the bundled realm set `at+jwt` needs `make reset`.
 - **Token expired.** `exp` is mandatory; the default clock-skew leeway is 30s. NTP-drift is the right fix, not raising `JWT_LEEWAY_SECONDS`.
 - **Stale JWKS cache (RS256).** Public keys are cached for 10 minutes per pod. If the IdP just rotated, restart the pod or wait for the next refresh.
 - **`JWT_SECRET` mismatch (HS256).** The verifying secret must match what your gateway uses to sign. If you set it via `secretsVolume`, confirm `ORRERY_SECRETS_DIR/JWT_SECRET` exists in the pod (`kubectl exec ... -- ls /var/run/secrets/orrery`).
@@ -18,7 +19,7 @@ Full setup recipes: [Security & auth](config/security.md).
 ### `JWT_SECRET is required when JWT_ALGORITHM=HS256` at startup
 Authentication is on (`AUTH_ENABLED` defaults to `true`) but no secret reached the process.
 
-**Bare `docker run` of the image:** for a local try-out, pass `-e AUTH_ENABLED=false` (anonymous, every caller is a viewer) plus `-e ORRERY_WEB_CONSOLE_ENABLED=true` for the console, as in [Getting Started](getting-started.md#kick-the-tires-single-container-30-seconds). Otherwise pass `-e JWT_SECRET=…` (at least 32 bytes for HS256) or the `JWT_JWKS_URL` setup in [Security & auth](config/security.md).
+**Bare `docker run` of the image:** for a local try-out, pass `-e AUTH_ENABLED=false` (anonymous, every caller is a viewer) plus `-e ORRERY_WEB_CONSOLE_ENABLED=true` for the console, as in [Getting Started](getting-started.md#kick-the-tires-single-container-30-seconds). Otherwise pass `-e JWT_SECRET=…` (at least 32 bytes for HS256) with `-e JWT_AUDIENCE=…` and `-e JWT_ISSUER=…`, or the `JWT_JWKS_URL` setup in [Security & auth](config/security.md).
 
 **Helm:** the chart was rendered with `auth.enabled=true` but no secret reached the pod. Either:
 
@@ -99,6 +100,8 @@ The bot uses `auto_create_session=True`, so this shouldn't normally fire. If it 
 ### Pods crash-loop on startup
 Usually one of:
 - Auth on with no `JWT_SECRET` / `JWT_JWKS_URL` — see [above](#jwt_secret-is-required-when-jwt_algorithmhs256-at-startup).
+- `Auth is on without JWT_AUDIENCE and JWT_ISSUER`: set what it names. They bind a token to this service and its provider.
+- `JWT_JWKS_URL must be https`: use https, or set `JWT_JWKS_ALLOW_INSECURE_HTTP=true` on a network you trust.
 - `DATABASE_URL` points to a host the pod can't reach. Test from a debug pod: `kubectl run -it --rm psql --image=postgres:16 -- psql $DATABASE_URL`.
 - Missing Postgres driver — rebuild the image with `uv sync --extra postgres` (the provided `Dockerfile` does this by default).
 

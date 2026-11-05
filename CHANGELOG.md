@@ -7,8 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Auth now needs `JWT_AUDIENCE` and `JWT_ISSUER`.** With auth on, the server
+  refuses to start without both, and the Helm chart refuses to render. Without
+  them a token from any issuer the key verifies, or one naming no audience, was
+  accepted. Note for operators: set both, or set `ORRERY_ALLOW_UNBOUND_TOKENS=true`
+  (chart: `auth.allowUnboundTokens`) to keep the old behaviour with a warning. The
+  chart reads them from `auth.*`, `config` or `secrets`; if they come from
+  `existingSecret` or the secrets volume, move them to `auth.*`, as neither is a secret.
+- **`JWT_JWKS_URL` must be https** (http on loopback), since those keys decide
+  whose tokens are valid. Note for operators: on a network you trust, such as a
+  same-host network, set `JWT_JWKS_ALLOW_INSECURE_HTTP=true` (chart:
+  `auth.allowInsecureJwks`).
+
+### Added
+
+- **`JWT_REQUIRED_TYP`** requires a `typ` header such as `at+jwt` (RFC 9068), which
+  refuses ID tokens when `JWT_AUDIENCE` is the console's client id. `make run-api
+  SSO=1` and the bundled realm now use it. Note for developers: an existing local
+  Keycloak needs `make reset` to import the realm again.
+- **Token exchanges are audited and counted.** Each round-trip to the provider
+  writes a `token_exchange` audit entry and counts in
+  `orrery_token_exchanges_total{outcome}`.
+- **An MCP server exchanging tokens with no `scope` logs a warning** at startup: the
+  provider's default scopes apply.
+
+### Security
+
+- **The console no longer keeps SSO tokens in `sessionStorage`.** The docs and a
+  code comment said the access token stayed in memory, but the library's default
+  user store saved the access, ID and refresh tokens there, readable by any script
+  on the origin. They are now in memory only, and a record an earlier build stored
+  is removed on load. A reload gets new ones with a brief `prompt=none` redirect to
+  the provider, and a new tab shows the sign-in panel.
+- **`JWT_SECRET` and the token exchange client's secret are out of `repr()`,** so a
+  config in a log line or traceback doesn't carry them.
+
 ### Fixed
 
+- **Audit events keep their fields in the JSON log.** The formatter only wrote names
+  on an allowlist, so events such as `a2a_turn`, `agent_catalog_update_refused` and
+  the Studio's lost who and what, keeping little more than their name. Note for
+  operators: these entries now carry subjects and an admin's registry notes, with
+  credentials redacted from their text.
 - **A missing `ORRERY_SECRETS_DIR` stops startup, and so do the remaining ways
   to lose a secret file.** If the variable is set, the path must be a directory
   this process can list; a dangling symlink named like a variable, or any read

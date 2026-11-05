@@ -213,6 +213,7 @@ API_AUTH_ENV  := ORRERY_CONSOLE_OIDC_ISSUER=$(SSO_ISSUER) \
                  JWT_JWKS_URL=$(SSO_ISSUER)/protocol/openid-connect/certs \
                  JWT_AUDIENCE=$(SSO_CLIENT_ID) \
                  JWT_ISSUER=$(SSO_ISSUER) \
+                 JWT_REQUIRED_TYP=at+jwt \
                  JWT_ROLE_CLAIM=realm_access.roles
 else
 API_AUTH_ENV  := JWT_ALGORITHM=HS256 \

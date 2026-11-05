@@ -146,7 +146,7 @@ Google Chat resolves the role from the signed-in user's email claim in the token
 
 The JWT front door is the production replacement for `adk web`. The role is **verified per request** from the JWT — there is no env-var knob; role changes apply on the next call.
 
-1. Start the server with `AUTH_ENABLED=true` and either `JWT_SECRET` (HS256) or `JWT_JWKS_URL` (RS256). See [Security & auth](config/security.md) for full setup.
+1. Start the server with `AUTH_ENABLED=true`, `JWT_AUDIENCE`, `JWT_ISSUER` and either `JWT_SECRET` (HS256) or `JWT_JWKS_URL` (RS256). See [Security & auth](config/security.md) for full setup.
 2. Mint a test token. With `make run-api`, `make dev-token ROLE=operator` mints one against the local secret. By hand, for HS256:
 
     ```bash

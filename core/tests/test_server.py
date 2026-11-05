@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -72,6 +73,7 @@ def patched_runner(mock_session):
 def app_with_auth(patched_runner):
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
     )
     return create_app(
@@ -141,6 +143,41 @@ def test_unreachable_idp_returns_503_not_401_or_500(app_with_auth):
     assert "unreachable" not in r.text  # no internals in the response
 
 
+@pytest.mark.parametrize(
+    ("bound", "missing"),
+    [
+        ({}, "JWT_AUDIENCE and JWT_ISSUER"),
+        ({"audience": "orrery"}, "JWT_ISSUER"),
+        ({"issuer": "https://idp"}, "JWT_AUDIENCE"),
+    ],
+)
+def test_create_app_refuses_tokens_bound_to_nothing(patched_runner, bound, missing):
+    config = ServerConfig(auth_enabled=True, jwt=JWTConfig(secret=_TEST_SECRET, **bound))
+    with pytest.raises(ValueError, match=f"without {missing},"):
+        create_app(root_agent=MagicMock(name="root"), app_name="test", plugins=[], config=config)
+
+
+def test_create_app_starts_with_tokens_bound(patched_runner):
+    jwt_config = JWTConfig(secret=_TEST_SECRET, audience="orrery", issuer="https://idp")
+    config = ServerConfig(auth_enabled=True, jwt=jwt_config)
+    create_app(root_agent=MagicMock(name="root"), app_name="test", plugins=[], config=config)
+
+
+def test_the_opt_out_starts_and_says_so(patched_runner, monkeypatch, caplog):
+    monkeypatch.setenv("ORRERY_ALLOW_UNBOUND_TOKENS", "true")
+    monkeypatch.setenv("JWT_SECRET", _TEST_SECRET)
+    monkeypatch.delenv("JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("JWT_ISSUER", raising=False)
+    with caplog.at_level(logging.WARNING):
+        create_app(
+            root_agent=MagicMock(name="root"),
+            app_name="test",
+            plugins=[],
+            config=ServerConfig.from_env(),
+        )
+    assert "tokens are not bound" in caplog.text
+
+
 def test_create_app_refuses_a_short_hmac_secret(patched_runner):
     from orrery_core.security.auth import AuthError
 
@@ -149,7 +186,11 @@ def test_create_app_refuses_a_short_hmac_secret(patched_runner):
             root_agent=MagicMock(name="root"),
             app_name="test",
             plugins=[],
-            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret="x")),
+            config=ServerConfig(
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret="x"),
+            ),
         )
 
 
@@ -285,7 +326,9 @@ def test_auth_enabled_with_missing_secret_fails_fast(patched_runner):
     """create_app must fail at startup when auth_enabled=True but JWT is misconfigured."""
     from orrery_core.security.auth import AuthError
 
-    config = ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=None))
+    config = ServerConfig(
+        auth_enabled=True, allow_unbound_tokens=True, jwt=JWTConfig(algorithm="HS256", secret=None)
+    )
     with pytest.raises(AuthError, match="JWT_SECRET"):
         create_app(
             root_agent=MagicMock(),
@@ -727,6 +770,7 @@ def test_triage_lookup_is_pinned_to_the_verified_subject(app_with_auth, patched_
 def _limited_app(patched_runner, limit: str = "2/minute"):
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
         chat_rate_limit=limit,
     )
@@ -852,6 +896,7 @@ def test_startup_starts_the_metrics_server(patched_runner):
 def _probe_app(patched_runner, probes):
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
     )
     return create_app(
@@ -913,6 +958,7 @@ def test_me_lists_the_specialists_the_coordinator_reaches(patched_runner, monkey
         plugins=[],
         config=ServerConfig(
             auth_enabled=True,
+            allow_unbound_tokens=True,
             jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
         ),
     )
@@ -1026,7 +1072,12 @@ def test_me_reports_whether_a_selftest_is_possible(patched_runner):
 def test_docs_are_off_by_default_when_auth_is_on(app_with_auth):
     """The schema is unauthenticatable (a navigation carries no bearer token),
     so it must not enumerate every route on an authenticated deployment."""
-    assert ServerConfig(auth_enabled=True, jwt=JWTConfig(secret="s")).serve_docs is False
+    assert (
+        ServerConfig(
+            auth_enabled=True, allow_unbound_tokens=True, jwt=JWTConfig(secret="s")
+        ).serve_docs
+        is False
+    )
 
     client = TestClient(app_with_auth)
     assert client.get("/docs").status_code == 404
@@ -1117,6 +1168,7 @@ def test_chat_turn_runs_as_the_verified_caller(monkeypatch, mock_session):
     ):
         config = ServerConfig(
             auth_enabled=True,
+            allow_unbound_tokens=True,
             jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
         )
         app = create_app(root_agent=MagicMock(name="root"), app_name="t", plugins=[], config=config)
@@ -1216,6 +1268,7 @@ def _app_with_principals(monkeypatch, patched_runner, **env):
         plugins=[],
         config=ServerConfig(
             auth_enabled=True,
+            allow_unbound_tokens=True,
             jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
         ),
     )

@@ -380,3 +380,76 @@ class TestDottedRoleClaimResolution:
         assert any("realm_access.roles" in r.getMessage() for r in caplog.records), (
             "an unresolved role claim must leave a trace explaining the viewer fallback"
         )
+
+
+# ── Binding a token to this service ──────────────────────────────────
+
+
+class TestUnboundSettings:
+    def test_names_what_is_missing(self):
+        assert JWTConfig().unbound_settings() == ["JWT_AUDIENCE", "JWT_ISSUER"]
+        assert JWTConfig(audience="a").unbound_settings() == ["JWT_ISSUER"]
+        assert JWTConfig(issuer="i").unbound_settings() == ["JWT_AUDIENCE"]
+        assert JWTConfig(audience="a", issuer="i").unbound_settings() == []
+
+
+class TestJwksUrl:
+    @pytest.mark.parametrize(
+        "url",
+        ["https://idp.example.com/certs", "http://localhost:8081/certs", "http://127.0.0.1/certs"],
+    )
+    def test_accepts_https_and_loopback(self, url):
+        JWTConfig(algorithm="RS256", jwks_url=url).validate()
+
+    @pytest.mark.parametrize("url", ["http://nginx:8082/certs", "ftp://idp/certs", "idp/certs"])
+    def test_refuses_anything_else(self, url):
+        with pytest.raises(AuthError, match="must be https"):
+            JWTConfig(algorithm="RS256", jwks_url=url).validate()
+
+    def test_a_trusted_network_can_opt_in_to_http_only(self):
+        JWTConfig(
+            algorithm="RS256", jwks_url="http://nginx:8082/certs", allow_insecure_jwks=True
+        ).validate()
+        with pytest.raises(AuthError, match="must be https"):
+            JWTConfig(
+                algorithm="RS256", jwks_url="ftp://idp/certs", allow_insecure_jwks=True
+            ).validate()
+
+    def test_the_opt_in_is_read_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("JWT_JWKS_ALLOW_INSECURE_HTTP", "true")
+        assert JWTConfig.from_env().allow_insecure_jwks is True
+
+
+class TestRequiredTyp:
+    SECRET = "s" * 32
+
+    def _token(self, typ: str | None) -> str:
+        return pyjwt.encode(
+            {"sub": "alice", "exp": int(time.time()) + 60},
+            self.SECRET,
+            algorithm="HS256",
+            headers={"typ": typ} if typ else None,
+        )
+
+    def _config(self) -> JWTConfig:
+        return JWTConfig(secret=self.SECRET, required_typ="at+jwt")
+
+    @pytest.mark.parametrize("typ", ["at+jwt", "AT+JWT", "application/at+jwt"])
+    def test_accepts_the_type_in_any_form_rfc_7515_allows(self, typ):
+        assert verify_token(self._token(typ), self._config()).subject == "alice"
+
+    @pytest.mark.parametrize("typ", ["JWT", "id+jwt"])
+    def test_refuses_another_type(self, typ):
+        with pytest.raises(AuthError, match="Invalid or expired token"):
+            verify_token(self._token(typ), self._config())
+
+    def test_not_checked_unless_configured(self):
+        assert verify_token(self._token("JWT"), JWTConfig(secret=self.SECRET)).subject == "alice"
+
+    def test_read_from_the_environment(self, monkeypatch):
+        monkeypatch.setenv("JWT_REQUIRED_TYP", "at+jwt")
+        assert JWTConfig.from_env().required_typ == "at+jwt"
+
+
+def test_the_secret_stays_out_of_repr():
+    assert "hunter2" not in repr(JWTConfig(secret="hunter2"))
