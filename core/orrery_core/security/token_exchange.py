@@ -225,6 +225,10 @@ class TokenBroker:
             self._remember_failure(key, exc)
             self._record(audience, scope, exc.reason)
             raise
+        except Exception:
+            # Not a known failure, but still a round-trip the record must show.
+            self._record(audience, scope, "error")
+            raise
         finally:
             del self._inflight[(id(loop), key)]
         self._failures.pop(key, None)

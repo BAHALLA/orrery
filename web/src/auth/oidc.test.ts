@@ -11,7 +11,12 @@ vi.mock("../config", async (importOriginal) => ({
   },
 }));
 
-const { forgetSession, getUserManager, rememberSession, restoreSession } = await import("./oidc");
+// Set before the manager is built: a tab open across the upgrade to in-memory tokens.
+window.sessionStorage.setItem("oidc.user:https://idp/:console", '{"access_token":"secret-old"}');
+window.sessionStorage.setItem("orrery.console.keep", "1");
+
+const { completeSignIn, forgetSession, getUserManager, rememberSession, restoreSession } =
+  await import("./oidc");
 
 function manager() {
   const um = getUserManager();
@@ -35,6 +40,14 @@ function everythingInWebStorage(): string {
     Array.from({ length: s.length }, (_, i) => `${s.key(i)}=${s.getItem(s.key(i) ?? "")}`).join();
   return dump(window.sessionStorage) + dump(window.localStorage);
 }
+
+describe("a tab open across the upgrade", () => {
+  it("loses the tokens an earlier build stored, and nothing else", () => {
+    getUserManager();
+    expect(window.sessionStorage.getItem("oidc.user:https://idp/:console")).toBeNull();
+    expect(window.sessionStorage.getItem("orrery.console.keep")).toBe("1");
+  });
+});
 
 describe("OIDC session", () => {
   beforeEach(async () => {
@@ -69,12 +82,25 @@ describe("OIDC session", () => {
     expect(redirect).not.toHaveBeenCalled();
   });
 
+  it("redeems a redirect once when asked twice, and gives both callers its answer", async () => {
+    const refused = Object.assign(new Error("login_required"), { error: "login_required" });
+    const callback = vi.spyOn(manager(), "signinRedirectCallback").mockRejectedValue(refused);
+
+    const answers = await Promise.allSettled([completeSignIn(), completeSignIn()]);
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(answers.map((a) => a.status)).toEqual(["rejected", "rejected"]);
+  });
+
   it("asks the provider silently after a reload, and only once", async () => {
     rememberSession();
     const redirect = vi.spyOn(manager(), "signinRedirect").mockResolvedValue();
 
     await restoreSession();
-    expect(redirect).toHaveBeenCalledExactlyOnceWith({ prompt: "none" });
+    expect(redirect).toHaveBeenCalledExactlyOnceWith({
+      prompt: "none",
+      redirectMethod: "replace",
+    });
 
     // Coming back without a session must not redirect again: that would loop.
     await restoreSession();

@@ -504,3 +504,37 @@ def token_exchange_cached(token: str) -> Any:
     from orrery_core.security.token_exchange import _Cached
 
     return _Cached(token, 0.0)
+
+
+def test_an_unexpected_failure_is_audited_too(exchanges):
+    audited, counted = exchanges
+    broker = TokenBroker(SETTINGS, session=cast(Any, FakeIdP(RuntimeError("boom"))))
+
+    with pytest.raises(RuntimeError):
+        _as_alice(broker)
+
+    assert [a["outcome"] for a in audited] == ["error"]
+    assert counted == ["error"]
+
+
+def test_waiters_and_a_cancelled_first_caller_share_one_audited_exchange(exchanges):
+    audited, counted = exchanges
+    idp = FakeIdP(3600, delay=0.05)
+    broker = TokenBroker(SETTINGS, session=cast(Any, idp))
+
+    async def scenario() -> list[str]:
+        identity = CallerIdentity(subject="alice", username="alice", subject_token=SUBJECT)
+        with caller_scope(identity):
+            first = asyncio.create_task(broker.token_for("inventory"))
+            await asyncio.sleep(0)
+            waiters = [asyncio.create_task(broker.token_for("inventory")) for _ in range(3)]
+            await asyncio.sleep(0)
+            first.cancel()
+            return await asyncio.gather(*waiters)
+
+    tokens = asyncio.run(scenario())
+
+    assert len(set(tokens)) == 1
+    assert len(idp.calls) == 1
+    assert [(a["subject"], a["outcome"]) for a in audited] == [("alice", "issued")]
+    assert counted == ["issued"]

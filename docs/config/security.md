@@ -43,7 +43,7 @@ The HTTP front door (`ServerConfig.from_env()`, `JWTConfig.from_env()`) reads:
 | `JWT_AUDIENCE` | unset | Expected `aud`. Required with auth on. |
 | `JWT_ISSUER` | unset | Expected `iss`. Required with auth on. |
 | `ORRERY_ALLOW_UNBOUND_TOKENS` | `false` | Start without `JWT_AUDIENCE` or `JWT_ISSUER`, with a warning. A token from any issuer the key verifies, or one naming no audience, is then accepted. |
-| `JWT_REQUIRED_TYP` | unset | Require this `typ` header on every token, e.g. `at+jwt` (RFC 9068). Set it when `JWT_AUDIENCE` is the console's client id: an ID token has that same audience, and only its type tells them apart. The provider must mark its access tokens this way (Keycloak: the client's `access.token.header.type.rfc9068` attribute). |
+| `JWT_REQUIRED_TYP` | unset | Require this `typ` header on every token, e.g. `at+jwt` (RFC 9068). Set it when `JWT_AUDIENCE` is the console's client id: an ID token has that same audience, and only its type tells them apart. It covers every client on the console's routes, not A2A. The provider must mark its access tokens this way (Keycloak: the client's `access.token.header.type.rfc9068` attribute). |
 | `JWT_ROLE_CLAIM` | `roles` | Claim holding the roles; may be a dotted path (see [Role mapping](#role-mapping)). |
 | `JWT_LEEWAY_SECONDS` | `30` | Clock-skew allowance on `exp`/`nbf`. |
 | `ORRERY_WEB_CONSOLE_ENABLED` | `false` | Serve the built web console. |
@@ -379,7 +379,7 @@ Full guide: [MCP servers](../integrations/mcp.md#per-user-credentials).
 Each round-trip to the provider writes a `token_exchange` audit entry (subject,
 audience, scope, outcome, never a token) and counts in
 `orrery_token_exchanges_total{outcome}`: `issued`, `refused`,
-`unavailable` or `misconfigured`. A cache hit issues nothing, so it writes neither,
+`unavailable`, `misconfigured` or `error`. A cache hit issues nothing, so it writes neither,
 and neither does a caller with no token, who is refused before any round-trip.
 
 ## What this does **not** cover (intentionally)

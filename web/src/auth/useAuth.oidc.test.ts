@@ -17,6 +17,12 @@ const handlers = vi.hoisted<Handlers>(() => ({
 const removeUser = vi.hoisted(() => vi.fn(async () => {}));
 const stored = vi.hoisted(() => ({
   user: { access_token: "live" } as { access_token: string } | null,
+  redirectResponse: false,
+}));
+const session = vi.hoisted(() => ({
+  completeSignIn: vi.fn(),
+  rememberSession: vi.fn(),
+  forgetSession: vi.fn(),
 }));
 
 vi.mock("../config", async (importOriginal) => ({
@@ -28,11 +34,11 @@ vi.mock("./oidc", () => {
   const on = (set: Set<unknown>) => (cb: unknown) => set.add(cb);
   const off = (set: Set<unknown>) => (cb: unknown) => set.delete(cb);
   return {
-    hasAuthResponse: () => false,
-    completeSignIn: vi.fn(),
+    hasAuthResponse: () => stored.redirectResponse,
+    completeSignIn: session.completeSignIn,
     restoreSession: async () => stored.user,
-    rememberSession: vi.fn(),
-    forgetSession: vi.fn(),
+    rememberSession: session.rememberSession,
+    forgetSession: session.forgetSession,
     signInRedirect: vi.fn(async () => {}),
     signOutRedirect: vi.fn(async () => {}),
     getUserManager: () => ({
@@ -76,8 +82,51 @@ describe("useAuth when the provider ends the session", () => {
     Object.values(handlers).forEach((set: Set<unknown>) => set.clear());
     removeUser.mockClear();
     stored.user = { access_token: "live" };
+    stored.redirectResponse = false;
+    Object.values(session).forEach((mock) => mock.mockReset());
   });
   afterEach(() => vi.useRealTimers());
+
+  it("says the session ended when a silent sign-in comes back refused", async () => {
+    stored.redirectResponse = true;
+    session.completeSignIn.mockRejectedValue(refusal("login_required"));
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.token).toBeNull();
+    expect(result.current.error).toBe(SESSION_ENDED);
+    expect(session.rememberSession).not.toHaveBeenCalled();
+  });
+
+  it("shows any other sign-in failure as it is", async () => {
+    stored.redirectResponse = true;
+    session.completeSignIn.mockRejectedValue(new Error("No matching state"));
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => expect(result.current.error).toBe("No matching state"));
+  });
+
+  it("remembers a tab whose redirect completed", async () => {
+    stored.redirectResponse = true;
+    session.completeSignIn.mockResolvedValue({ access_token: "fresh" });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => expect(result.current.token).toBe("fresh"));
+    expect(session.rememberSession).toHaveBeenCalled();
+  });
+
+  it("forgets the tab when the session ends or the user is unloaded", async () => {
+    await signedIn();
+
+    fire.renewError(refusal("invalid_grant"));
+    expect(session.forgetSession).toHaveBeenCalledOnce();
+
+    act(() => handlers.unloaded.forEach((cb) => cb()));
+    expect(session.forgetSession).toHaveBeenCalledTimes(2);
+  });
 
   it("signs out with a message, and drops the user, when the refresh is refused", async () => {
     const { result } = await signedIn();

@@ -550,7 +550,10 @@ def mount_a2a(
     description: str,
 ) -> None:
     """Serve *gateway*'s root agent at :data:`A2A_PATH` (JSON-RPC + agent card)."""
-    a2a_jwt = replace(jwt, audience=config.audience)
+    # JWT_REQUIRED_TYP tells a console's access and ID tokens apart when they share
+    # an audience. This audience is agents' own, and an agent's client may not mark
+    # its tokens that way (it is per client on Keycloak), so it does not apply here.
+    a2a_jwt = replace(jwt, audience=config.audience, required_typ=None)
     rate = parse_rate(config.rate_limit)
     public_card = build_public_card(
         name=name, description=description, public_url=config.public_url

@@ -32,11 +32,28 @@ export function redirectUri(): string {
 
 let manager: UserManager | null = null;
 
+/** Earlier builds kept the user record here, tokens included, for as long as a tab lived. */
+const STORED_USER_PREFIX = "oidc.user:";
+
+function removeStoredUsers(): void {
+  try {
+    Object.keys(window.sessionStorage)
+      .filter((key) => key.startsWith(STORED_USER_PREFIX))
+      .forEach((key) => window.sessionStorage.removeItem(key));
+  } catch {
+    // Storage disabled: nothing was stored.
+  }
+}
+
+/** The sign-in being completed: its `state` can be redeemed once, and StrictMode asks twice. */
+let completing: Promise<User | null> | null = null;
+
 /** The shared UserManager, or null when SSO isn't configured. */
 export function getUserManager(): UserManager | null {
   if (!isOidcEnabled) return null;
   if (manager) return manager;
 
+  removeStoredUsers();
   manager = new UserManager({
     authority: oidcConfig.issuer,
     client_id: oidcConfig.clientId,
@@ -69,14 +86,14 @@ export function hasAuthResponse(search: string = window.location.search): boolea
  * to redeem an already-used authorization code (which the provider rejects) and
  * so the code never lingers in browser history.
  */
-export async function completeSignIn(): Promise<User | null> {
+export function completeSignIn(): Promise<User | null> {
   const um = getUserManager();
-  if (!um) return null;
-  try {
-    return await um.signinRedirectCallback();
-  } finally {
+  if (!um) return Promise.resolve(null);
+  completing ??= um.signinRedirectCallback().finally(() => {
+    completing = null;
     window.history.replaceState({}, document.title, window.location.pathname);
-  }
+  });
+  return completing;
 }
 
 /** Note that this tab is signed in, so a reload may try to restore the session. */
@@ -113,13 +130,17 @@ function takeRememberedSession(): boolean {
  * Asking with `prompt=none` shows no provider page: it comes back with a code,
  * or with `login_required` when the provider's session has ended. Nothing else
  * starts a redirect, so a tab that never signed in shows the sign-in panel.
+ *
+ * It replaces the page in the tab's history: an entry left behind would redirect
+ * again on Back, or come back from the browser's cache with no one signed in.
  */
 export async function restoreSession(): Promise<User | null> {
   const um = getUserManager();
   if (!um) return null;
   const user = await um.getUser();
   if (user && !user.expired) return user;
-  if (takeRememberedSession()) await um.signinRedirect({ prompt: "none" });
+  if (takeRememberedSession())
+    await um.signinRedirect({ prompt: "none", redirectMethod: "replace" });
   return null;
 }
 

@@ -334,6 +334,8 @@ auth:
   audience: ""
   issuer: ""
   ## Start without audience or issuer (the render and the server refuse otherwise).
+  ## The render can't see existingSecret or secretsVolume, so keep these two here:
+  ## neither is a secret.
   allowUnboundTokens: false
   ## Require this `typ` header on every token, e.g. "at+jwt" (RFC 9068) if the
   ## provider marks access tokens that way. Needed to refuse ID tokens when

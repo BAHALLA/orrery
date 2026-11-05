@@ -48,7 +48,9 @@ single replica. Conversations themselves live in the session store as usual.
 ## Who is calling
 
 Every call carries a bearer token for `ORRERY_A2A_JWT_AUDIENCE`, verified by
-the same code as the console's. Anonymous calls get a 401 before the A2A SDK
+the same code as the console's, with `JWT_ISSUER` and the signing settings it
+uses, though not `JWT_REQUIRED_TYP`: that tells a console's token types apart, and
+this audience is agents' own. Anonymous calls get a 401 before the A2A SDK
 parses anything. The caller is classified as in
 [People, agents and services](../config/security.md#people-agents-and-services-adr-006),
 except that on this surface no token is ever a person:

@@ -124,6 +124,30 @@ def _result(response) -> dict:
 # ── Startup ──────────────────────────────────────────────────────────
 
 
+def test_a2a_keeps_the_issuer_check_but_not_the_typ_check(turns):
+    config = ServerConfig(
+        auth_enabled=True,
+        jwt=JWTConfig(
+            algorithm="HS256",
+            secret=_SECRET,
+            audience="orrery",
+            issuer="https://idp",
+            required_typ="at+jwt",
+        ),
+        a2a=A2AConfig(enabled=True, audience=_A2A_AUD),
+    )
+    root = MagicMock(name="root")
+    root.description = "SRE coordinator"
+    root.tools = []
+    client = TestClient(create_app(root_agent=root, app_name="test", plugins=[], config=config))
+
+    plain_jwt = client.post("/a2a", json=_send(), headers=_headers(iss="https://idp"))
+    assert plain_jwt.status_code == 200
+    assert (
+        client.post("/a2a", json=_send(), headers=_headers(iss="https://evil")).status_code == 401
+    )
+
+
 def test_a2a_needs_an_audience():
     with pytest.raises(ValueError, match="ORRERY_A2A_JWT_AUDIENCE"):
         A2AConfig(enabled=True).validate(auth_enabled=True)

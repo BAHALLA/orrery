@@ -223,6 +223,18 @@ jobs:
       - name: Template chart (smoke test)
         run: helm template test deploy/helm/orrery-assistant > /tmp/rendered.yaml
 
+      - name: Chart refuses auth without token binding
+        run: |
+          chart=deploy/helm/orrery-assistant
+          if helm template test "$chart" --set auth.enabled=true > /dev/null 2>&1; then
+            echo "::error::auth.enabled rendered without auth.audience and auth.issuer"
+            exit 1
+          fi
+          helm template test "$chart" --set auth.enabled=true --set auth.audience=a \
+            --set auth.issuer=https://i > /dev/null
+          helm template test "$chart" --set auth.enabled=true \
+            --set auth.allowUnboundTokens=true > /dev/null
+
       - name: Validate rendered manifests (kubeconform)
         env:
           KUBECONFORM_VERSION: v0.8.0

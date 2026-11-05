@@ -242,9 +242,14 @@ def audit_event(event: str, **fields: Any) -> None:
             extra["tool_args"] = _sanitize(value)
         else:
             extra[key] = value
-    # Flat keys, matching ``attempt_logger`` — ``JSONFormatter`` promotes them
-    # to top-level fields and stamps request/trace ids, so an approval event
-    # correlates with the tool call it gated without any extra plumbing.
+    # Flat keys, matching ``attempt_logger``. ``JSONFormatter`` promotes only the
+    # names on its allowlist, so ``audit_fields`` carries the rest: without it a
+    # new event's fields silently vanish in production, where that formatter runs.
+    # Values are sanitized one level down: a field's own name (``keys``, ``tokens``)
+    # is the caller's choice, while a key inside a value may be anything.
+    extra["audit_fields"] = {
+        key: _sanitize(value) for key, value in extra.items() if key != "event"
+    }
     logger.info("%s: %s", event, fields.get("tool", ""), extra=extra)
 
 

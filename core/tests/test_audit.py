@@ -8,7 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from orrery_core.observability.audit import _sanitize, _sanitize_args, audit_logger
+from orrery_core.observability.audit import _sanitize, _sanitize_args, audit_event, audit_logger
+from orrery_core.observability.log import JSONFormatter
 
 
 def test_audit_logger_writes_jsonl(tmp_path: Path, fake_tool, fake_ctx):
@@ -308,3 +309,43 @@ def test_an_mcp_error_is_visible_in_a_summary(caplog):
     )
     assert recorded["is_error"] is True
     assert "boom" not in json.dumps(recorded)
+
+
+def _audited_line(caplog, event: str, **fields) -> dict:
+    """What an audit event writes in production: through the real formatter."""
+    with caplog.at_level(logging.INFO, logger="orrery.audit"):
+        audit_event(event, **fields)
+    return json.loads(JSONFormatter().format(caplog.records[-1]))
+
+
+def test_an_audit_events_fields_reach_the_json_log(caplog):
+    line = _audited_line(
+        caplog,
+        "token_exchange",
+        subject="alice",
+        audience="inventory",
+        scope="read",
+        outcome="issued",
+    )
+    assert line["event"] == "token_exchange"
+    assert (line["subject"], line["audience"], line["scope"], line["outcome"]) == (
+        "alice",
+        "inventory",
+        "read",
+        "issued",
+    )
+
+
+def test_an_audit_event_cannot_replace_the_entrys_own_fields(caplog):
+    line = _audited_line(caplog, "evt", level="L3", logger="forged")
+    assert line["level"] == "INFO"
+    assert line["logger"] == "orrery.audit"
+
+
+def test_an_audit_events_nested_secrets_are_masked_and_its_own_names_kept(caplog):
+    line = _audited_line(
+        caplog, "evt", keys=["user_role"], tokens=12, after={"api_token": "s3cret", "id": "x"}
+    )
+    assert line["keys"] == ["user_role"]
+    assert line["tokens"] == 12
+    assert line["after"] == {"api_token": "***", "id": "x"}
