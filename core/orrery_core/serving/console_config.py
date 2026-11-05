@@ -154,7 +154,7 @@ class ConsoleConfig:
             raise ValueError(
                 "ORRERY_CONSOLE_ACCESS_DENIED_URL must be an https URL with a host, no "
                 f"credentials and no spaces or control characters (at most {MAX_URL_CHARS} "
-                f"characters), got {url!r}"
+                "characters)"
             )
 
     def as_dict(self) -> dict[str, object]:

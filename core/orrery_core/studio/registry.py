@@ -89,7 +89,8 @@ def _mcp_entry(raw: Any) -> Any:
 class StudioRegistry(BaseModel):
     """The parsed registry file."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    # The config of the model validated decides, so nesting the others isn't enough.
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     mcp: list[McpServerConfig] = Field(default_factory=list)
     a2a: list[RemoteAgentEntry] = Field(default_factory=list)

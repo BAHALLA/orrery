@@ -119,6 +119,6 @@ class A2AConfig:
         ):
             parts = urlsplit(url)
             if parts.scheme not in {"http", "https"} or not parts.hostname:
-                raise ValueError(f"{name}: {url!r} is not an http(s) URL")
+                raise ValueError(f"{name}: not an http(s) URL with a host")
             if parts.scheme == "http" and parts.hostname not in _LOOPBACK_HOSTS:
-                raise ValueError(f"{name}: {url!r} must use https outside loopback")
+                raise ValueError(f"{name}: must use https outside loopback")

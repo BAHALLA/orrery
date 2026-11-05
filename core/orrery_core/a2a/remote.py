@@ -160,7 +160,7 @@ class RemoteAgentEntry(BaseModel):
     at all is the registry loader's check (``ORRERY_STUDIO_ACTING_REMOTES``).
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     id: str = Field(description="Lowercase id; names the tool (a2a_<id>_<skill>).")
     card_url: str
@@ -219,18 +219,19 @@ class RemoteAgentEntry(BaseModel):
 def _check_url(url: str, what: str, *, private_network: bool) -> None:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
-    # First, and without the URL: every message here reaches the caller and the audit log.
+    # No message here repeats the URL: it can hold a password even when this check
+    # can't see one (``u:pw@host``), and they reach the caller and the audit log.
     if parts.username or parts.password:
         raise ValueError(f"{what}: the URL carries credentials; use auth.bearer_env")
     if parts.scheme not in {"http", "https"} or not host:
-        raise ValueError(f"{what}: {url!r} is not an http(s) URL")
+        raise ValueError(f"{what}: not an http(s) URL with a host")
     if parts.scheme == "http" and host not in LOOPBACK_HOSTS:
-        raise ValueError(f"{what}: {url!r} must use https (plain http only on loopback)")
+        raise ValueError(f"{what}: must use https (plain http only on loopback)")
     address = literal_ip(host)
     if address and never_allowed(address):
-        raise ValueError(f"{what}: {url!r} is a link-local or metadata address")
+        raise ValueError(f"{what}: {host} is a link-local or metadata address")
     if address and not is_public(address) and host not in LOOPBACK_HOSTS and not private_network:
-        raise ValueError(f"{what}: {url!r} is a private address; set private_network: true")
+        raise ValueError(f"{what}: {host} is a private address; set private_network: true")
 
 
 def check_private_allow(entry_id: str, url: str, allow: PrivateAllowlist) -> None:
@@ -378,10 +379,10 @@ def check_rpc_targets(entry: RemoteAgentEntry, card: AgentCard) -> None:
             and target[1] in LOOPBACK_HOSTS
             and card_host in LOOPBACK_HOSTS
         ):
-            raise CardRefused(f"{entry.id}: RPC URL {interface.url!r} must use https")
+            raise CardRefused(f"{entry.id}: the RPC URL on {target[1]} must use https")
         if target not in entry.allowed_origins:
             raise CardRefused(
-                f"{entry.id}: RPC URL {interface.url!r} is not on the entry's origins "
+                f"{entry.id}: the RPC URL on {target[1]} is not on the entry's origins "
                 "(the card's own, or service_origins)"
             )
 

@@ -138,7 +138,7 @@ class McpAuth(BaseModel):
 class McpServerConfig(BaseModel):
     """One MCP server, as an operator declares it. Validated at startup."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     name: str = Field(
         description="Lowercase id; prefixes every tool (github -> github_list_issues)."
@@ -223,15 +223,24 @@ class McpServerConfig(BaseModel):
             if not self.url:
                 raise ValueError(f"transport {self.transport} needs `url`")
             parsed = urlparse(self.url)
+            # No message here repeats the URL: it can hold a password, and these
+            # messages reach the Studio's caller, the audit log and startup logs.
+            if parsed.username or parsed.password:
+                raise ValueError(
+                    f"server {self.name!r}: the URL carries credentials; send them in a header"
+                )
             if parsed.scheme != "https" and not (
                 parsed.scheme == "http"
                 and (self.allow_insecure_http or parsed.hostname in _LOOPBACK)
             ):
                 # A bearer token in a header over plain HTTP is a token on the wire.
                 raise ValueError(
-                    f"{self.url!r}: use https (plain http only for loopback, or with "
+                    f"server {self.name!r}: use https (plain http only for loopback, or with "
                     "allow_insecure_http: true)"
                 )
+            if not parsed.hostname:
+                # ``https:/u:pw@host`` parses with no host, and would be stored as written.
+                raise ValueError(f"server {self.name!r}: the URL has no host")
             if self.command or self.args or self.env_from:
                 raise ValueError(
                     f"transport {self.transport} takes no `command` / `args` / `env_from`"
@@ -239,7 +248,9 @@ class McpServerConfig(BaseModel):
             # An IP literal is checked here, once: there is no lookup to change it.
             address = literal_ip(parsed.hostname or "")
             if address and never_allowed(address):
-                raise ValueError(f"{self.url!r} is a link-local or metadata address")
+                raise ValueError(
+                    f"server {self.name!r}: {address} is a link-local or metadata address"
+                )
             if (
                 address
                 and not self.allow_private_network
@@ -247,14 +258,15 @@ class McpServerConfig(BaseModel):
                 and parsed.hostname not in _LOOPBACK
             ):
                 raise ValueError(
-                    f"{self.url!r} is a private address; set allow_private_network: true "
+                    f"server {self.name!r}: {address} is a private address; set "
+                    "allow_private_network: true "
                     "for an internal server"
                 )
         return self
 
 
 class McpConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     servers: list[McpServerConfig] = Field(default_factory=list)
 

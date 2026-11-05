@@ -921,3 +921,49 @@ def test_a_url_with_credentials_is_refused_without_repeating_them(url):
     with pytest.raises(ValueError, match="carries credentials") as refused:
         remote._check_url(url, "card_url", private_network=False)
     assert "hunter2" not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # No userinfo to a URL parser, so only leaving the URL out protects these.
+        "u:hunter2@agent.example/card",
+        "https:/u:hunter2@agent.example/card",
+        "https:u:hunter2@agent.example/card",
+        "https:\\\\u:hunter2@agent.example/card",
+        "http://agent.example/card?x=hunter2",
+        "https://10.0.0.5/card?x=hunter2",
+        "https://169.254.169.254/card?x=hunter2",
+    ],
+)
+def test_a_refused_url_is_not_repeated(url):
+    with pytest.raises(ValueError) as refused:
+        remote._check_url(url, "card_url", private_network=False)
+    assert "hunter2" not in str(refused.value)
+
+
+def test_a_validation_error_on_an_entry_does_not_print_its_input():
+    with pytest.raises(ValidationError) as refused:
+        RemoteAgentEntry(
+            id="wr",
+            card_url="https://writer.example.com/c",
+            skills=["s"],
+            service_origins=["https://u:hunter2@writer.example.com"],
+        )
+    assert "hunter2" not in str(refused.value)
+
+
+def test_a_cards_rpc_url_is_not_repeated_when_refused():
+    entry = RemoteAgentEntry(id="wr", card_url="https://writer.example.com/c", skills=["draft"])
+    card = remote.parse_agent_card(
+        {
+            "name": "w",
+            "supportedInterfaces": [
+                {"url": "https://u:hunter2@evil.example.net/", "protocolBinding": "JSONRPC"}
+            ],
+            "skills": [{"id": "draft", "name": "d", "description": "d"}],
+        }
+    )
+    with pytest.raises(remote.CardRefused, match="evil.example.net") as refused:
+        remote.check_rpc_targets(entry, card)
+    assert "hunter2" not in str(refused.value)

@@ -28,6 +28,7 @@ from orrery_core.tools.mcp import (  # noqa: E402
     McpServerConfig,
     _connection_params,
     fingerprint,
+    load_mcp_config,
     tool_text,
 )
 from orrery_core.tools.mcp_network import (  # noqa: E402
@@ -592,3 +593,65 @@ async def test_adk_google_mtls_probe_is_off_for_guarded_servers(monkeypatch):
     )
     assert await toolset._mcp_session_manager._get_mtls_transport() is None
     probe.assert_not_called()
+
+
+# ── Credentials in a URL ─────────────────────────────────────────────
+
+_PASSWORD = "hunter2"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://u:{_PASSWORD}@mcp.example.com/mcp",
+        f"https://{_PASSWORD}@mcp.example.com/mcp",
+        f"http://u:{_PASSWORD}@mcp.example.com/mcp",
+        f"https://u:{_PASSWORD}@10.0.0.5/mcp",
+        f"https://u:{_PASSWORD}@169.254.169.254/mcp",
+    ],
+)
+def test_a_url_with_credentials_is_refused_without_repeating_them(url):
+    with pytest.raises(ValidationError, match="carries credentials") as refused:
+        _http(url=url)
+    assert _PASSWORD not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # None of these has any userinfo to a URL parser, so only the host check stops them.
+        f"https:/u:{_PASSWORD}@mcp.example.com/mcp",
+        f"https:u:{_PASSWORD}@mcp.example.com/mcp",
+        f"https:\\\\u:{_PASSWORD}@mcp.example.com/mcp",
+        f"u:{_PASSWORD}@mcp.example.com/mcp",
+    ],
+)
+def test_a_malformed_url_is_refused_without_repeating_it(url):
+    with pytest.raises(ValidationError) as refused:
+        _http(url=url)
+    assert _PASSWORD not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("http://mcp.internal.example/mcp?t=hunter2", "use https"),
+        ("https://10.0.0.5/mcp?t=hunter2", "private address"),
+        ("https://169.254.169.254/mcp?t=hunter2", "link-local or metadata"),
+    ],
+)
+def test_a_refusal_names_the_problem_not_the_url(url, message):
+    with pytest.raises(ValidationError, match=message) as refused:
+        _http(url=url)
+    assert _PASSWORD not in str(refused.value)
+
+
+def test_a_config_file_error_does_not_print_its_input(tmp_path):
+    path = tmp_path / "mcp.yaml"
+    path.write_text(
+        f"servers:\n  - name: inv\n    description: d\n    unknown: {_PASSWORD}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError) as refused:
+        load_mcp_config(path)
+    assert _PASSWORD not in str(refused.value)
