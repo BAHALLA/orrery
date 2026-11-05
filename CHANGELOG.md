@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-05
+
+**OAuth hardening, with settings to check before you upgrade.** With auth on, the
+server now refuses to start without `JWT_AUDIENCE` and `JWT_ISSUER`, and an http
+`JWT_JWKS_URL` off loopback needs `JWT_JWKS_ALLOW_INSECURE_HTTP=true`. A server with
+credentials in its URL also fails startup. The console keeps SSO tokens in memory only,
+token exchanges are audited, and audit events keep their fields in the JSON log.
+
 ### Changed
 
 - **Auth now needs `JWT_AUDIENCE` and `JWT_ISSUER`.** With auth on, the server
@@ -2122,7 +2130,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/BAHALLA/orrery/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/BAHALLA/orrery/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/BAHALLA/orrery/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/BAHALLA/orrery/compare/v0.14.0...v0.15.0
