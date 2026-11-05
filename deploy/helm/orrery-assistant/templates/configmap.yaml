@@ -35,8 +35,13 @@ data:
   {{- end }}
   {{- if .Values.auth.allowUnboundTokens }}
   ORRERY_ALLOW_UNBOUND_TOKENS: "true"
-  {{- else if not (and (or .Values.auth.audience .Values.config.JWT_AUDIENCE .Values.secrets.JWT_AUDIENCE) (or .Values.auth.issuer .Values.config.JWT_ISSUER .Values.secrets.JWT_ISSUER)) }}
+  {{- else }}
+  {{- /* `secrets` is delivered only without existingSecret, and may be empty. */ -}}
+  {{- $secrets := dict }}
+  {{- if not .Values.existingSecret }}{{ $secrets = .Values.secrets | default dict }}{{ end }}
+  {{- if not (and (or .Values.auth.audience .Values.config.JWT_AUDIENCE $secrets.JWT_AUDIENCE) (or .Values.auth.issuer .Values.config.JWT_ISSUER $secrets.JWT_ISSUER)) }}
   {{- fail "auth.enabled needs auth.audience and auth.issuer, so a token meant for something else is not accepted. Set both, or set auth.allowUnboundTokens=true to accept that." }}
+  {{- end }}
   {{- end }}
   JWT_ROLE_CLAIM: {{ .Values.auth.roleClaim | quote }}
   JWT_LEEWAY_SECONDS: {{ .Values.auth.leewaySeconds | quote }}

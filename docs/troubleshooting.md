@@ -19,7 +19,7 @@ Full setup recipes: [Security & auth](config/security.md).
 ### `JWT_SECRET is required when JWT_ALGORITHM=HS256` at startup
 Authentication is on (`AUTH_ENABLED` defaults to `true`) but no secret reached the process.
 
-**Bare `docker run` of the image:** for a local try-out, pass `-e AUTH_ENABLED=false` (anonymous, every caller is a viewer) plus `-e ORRERY_WEB_CONSOLE_ENABLED=true` for the console, as in [Getting Started](getting-started.md#kick-the-tires-single-container-30-seconds). Otherwise pass `-e JWT_SECRET=…` (at least 32 bytes for HS256) or the `JWT_JWKS_URL` setup in [Security & auth](config/security.md).
+**Bare `docker run` of the image:** for a local try-out, pass `-e AUTH_ENABLED=false` (anonymous, every caller is a viewer) plus `-e ORRERY_WEB_CONSOLE_ENABLED=true` for the console, as in [Getting Started](getting-started.md#kick-the-tires-single-container-30-seconds). Otherwise pass `-e JWT_SECRET=…` with `-e JWT_AUDIENCE=…` and `-e JWT_ISSUER=…` (at least 32 bytes for HS256) or the `JWT_JWKS_URL` setup in [Security & auth](config/security.md).
 
 **Helm:** the chart was rendered with `auth.enabled=true` but no secret reached the pod. Either:
 

@@ -342,6 +342,24 @@ def test_an_audit_event_cannot_replace_the_entrys_own_fields(caplog):
     assert line["logger"] == "orrery.audit"
 
 
+def test_credentials_in_an_audit_events_text_are_redacted(caplog):
+    leaked = "ghp_" + "a" * 36
+    line = _audited_line(
+        caplog,
+        "evt",
+        note=f"rotated {leaked}",
+        after=[{"card_url": f"https://x/?t={leaked}"}],
+        subject="alice",
+    )
+    assert leaked not in json.dumps(line)
+    assert line["note"].startswith("rotated ")
+    assert line["subject"] == "alice"
+
+
+def test_an_audit_event_accepts_keys_that_are_not_strings(caplog):
+    assert _audited_line(caplog, "evt", counts={1: 2})["counts"] == {"1": 2}
+
+
 def test_an_audit_events_nested_secrets_are_masked_and_its_own_names_kept(caplog):
     line = _audited_line(
         caplog, "evt", keys=["user_role"], tokens=12, after={"api_token": "s3cret", "id": "x"}

@@ -49,7 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audit events keep their fields in the JSON log.** The formatter only wrote names
   on an allowlist, so events such as `a2a_turn`, `agent_catalog_update_refused` and
   the Studio's lost who and what, keeping little more than their name. Note for
-  operators: these entries now carry subjects and an admin's registry notes.
+  operators: these entries now carry subjects and an admin's registry notes, with
+  credentials redacted from their text.
 - **A missing `ORRERY_SECRETS_DIR` stops startup, and so do the remaining ways
   to lose a secret file.** If the variable is set, the path must be a directory
   this process can list; a dangling symlink named like a variable, or any read
