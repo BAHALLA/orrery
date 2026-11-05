@@ -50,6 +50,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..a2a.remote import RemoteAgentEntry, RemoteNetwork, check_private_allow
+from ..safe_url import split_url
 from ..tools.mcp import McpServerConfig
 from ..tools.mcp_network import LOOPBACK_HOSTS, PrivateAllowlist
 from .config import STUDIO_ACTING_REMOTES_ENV, STUDIO_REGISTRY_ENV
@@ -185,7 +186,10 @@ def load_registry(
 
 
 def _is_loopback(url: Any) -> bool:
-    host = (urlsplit(url).hostname or "").lower() if isinstance(url, str) else ""
+    try:
+        host = (split_url(url).hostname or "").lower() if isinstance(url, str) else ""
+    except ValueError:  # the schema refuses it next, with its own message
+        return False
     if host in LOOPBACK_HOSTS:
         return True
     try:

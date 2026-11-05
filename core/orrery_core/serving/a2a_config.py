@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from urllib.parse import urlsplit
 
 from ..env import env_flag, env_int
+from ..safe_url import split_url
 from .rate_limit import parse_rate
 
 A2A_ENABLED_ENV = "ORRERY_A2A_ENABLED"
@@ -88,7 +88,7 @@ class A2AConfig:
     def approval_base(self) -> str:
         if self.approval_base_url:
             return self.approval_base_url
-        parts = urlsplit(self.public_url)
+        parts = split_url(self.public_url, A2A_PUBLIC_URL_ENV)
         return f"{parts.scheme}://{parts.netloc}"
 
     def validate(self, *, auth_enabled: bool) -> None:
@@ -117,7 +117,9 @@ class A2AConfig:
             (A2A_PUBLIC_URL_ENV, self.public_url),
             (A2A_APPROVAL_BASE_URL_ENV, self.approval_base),
         ):
-            parts = urlsplit(url)
+            parts = split_url(url, name)
+            if parts.username or parts.password:
+                raise ValueError(f"{name}: the URL carries credentials; remove them")
             if parts.scheme not in {"http", "https"} or not parts.hostname:
                 raise ValueError(f"{name}: not an http(s) URL with a host")
             if parts.scheme == "http" and parts.hostname not in _LOOPBACK_HOSTS:

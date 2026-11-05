@@ -655,3 +655,31 @@ def test_a_config_file_error_does_not_print_its_input(tmp_path):
     with pytest.raises(ValidationError) as refused:
         load_mcp_config(path)
     assert _PASSWORD not in str(refused.value)
+
+
+#: Unescaped passwords: no userinfo to a parser, and its own errors quote them.
+_UNPARSEABLE = [
+    "https://u:hunter2/x@h.example.com/m",
+    "https://u:hunter2?x@h.example.com/m",
+    "https://u:hunter2#x@h.example.com/m",
+    "https://u:hunter2",
+    "https://u:hunter2@ex\u2100mple.com/m",
+    "https://u:hunter2\uff03@h.example.com/m",
+]
+
+
+@pytest.mark.parametrize("url", _UNPARSEABLE)
+def test_an_unescaped_password_is_refused_without_repeating_it(url):
+    with pytest.raises(ValidationError) as refused:
+        _http(url=url)
+    assert _PASSWORD not in str(refused.value)
+
+
+def test_a_server_entrys_validation_error_does_not_print_its_input():
+    with pytest.raises(ValidationError) as refused:
+        _http(url=[_PASSWORD])
+    assert _PASSWORD not in str(refused.value)
+
+
+def test_an_at_sign_in_a_path_stays_legitimate():
+    assert _http(url="https://mcp.example.com/@scope/mcp").url

@@ -967,3 +967,57 @@ def test_a_cards_rpc_url_is_not_repeated_when_refused():
     with pytest.raises(remote.CardRefused, match="evil.example.net") as refused:
         remote.check_rpc_targets(entry, card)
     assert "hunter2" not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://u:hunter2/x@h.example.com/m",
+        "https://u:hunter2?x@h.example.com/m",
+        "https://u:hunter2#x@h.example.com/m",
+        "https://u:hunter2",
+        "https://u:hunter2@ex\u2100mple.com/m",
+        "https://u:hunter2\uff03@h.example.com/m",
+    ],
+)
+def test_an_unescaped_password_is_refused_without_repeating_it(url):
+    with pytest.raises(ValueError, match="card_url") as refused:
+        remote._check_url(url, "card_url", private_network=False)
+    assert "hunter2" not in str(refused.value)
+
+
+def test_an_entrys_card_url_of_the_wrong_type_is_not_printed():
+    with pytest.raises(ValidationError) as refused:
+        RemoteAgentEntry.model_validate({"id": "wr", "card_url": ["hunter2"], "skills": ["s"]})
+    assert "hunter2" not in str(refused.value)
+
+
+def _card_with_rpc(url):
+    return remote.parse_agent_card(
+        {
+            "name": "w",
+            "supportedInterfaces": [{"url": url, "protocolBinding": "JSONRPC"}],
+            "skills": [{"id": "draft", "name": "d", "description": "d"}],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://u:hunter2@evil.example.net/",
+        "https://u:hunter2/x@evil.example.net/",
+        "https://u:hunter2@ex\u2100mple.com/m",
+    ],
+)
+def test_a_cards_bad_rpc_url_is_refused_without_repeating_it(url):
+    entry = RemoteAgentEntry(id="wr", card_url="https://w.example.com/c", skills=["draft"])
+    with pytest.raises(remote.CardRefused) as refused:
+        remote.check_rpc_targets(entry, _card_with_rpc(url))
+    assert "hunter2" not in str(refused.value)
+
+
+def test_a_refused_rpc_url_shows_the_port_that_differs():
+    entry = RemoteAgentEntry(id="wr", card_url="https://w.example.com/c", skills=["draft"])
+    with pytest.raises(remote.CardRefused, match="w.example.com:8443"):
+        remote.check_rpc_targets(entry, _card_with_rpc("https://w.example.com:8443/rpc"))

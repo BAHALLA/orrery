@@ -51,6 +51,7 @@ import unicodedata
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from ..safe_url import split_url
 from ..security.principal import REQUIRED_ROLES_ENV
 
 GLOBAL_NAME = "__ORRERY_CONSOLE_CONFIG__"
@@ -142,7 +143,15 @@ class ConsoleConfig:
         url = self.access_denied_url
         if url is None:
             return
-        parts = urlsplit(url)
+        refused = ValueError(
+            "ORRERY_CONSOLE_ACCESS_DENIED_URL must be an https URL with a host, no "
+            f"credentials and no spaces or control characters (at most {MAX_URL_CHARS} "
+            "characters)"
+        )
+        try:
+            parts = split_url(url)
+        except ValueError:
+            raise refused from None
         if (
             len(url) > MAX_URL_CHARS
             or parts.scheme != "https"
@@ -151,11 +160,7 @@ class ConsoleConfig:
             or parts.password is not None
             or not all(c.isprintable() and not c.isspace() for c in url)
         ):
-            raise ValueError(
-                "ORRERY_CONSOLE_ACCESS_DENIED_URL must be an https URL with a host, no "
-                f"credentials and no spaces or control characters (at most {MAX_URL_CHARS} "
-                "characters)"
-            )
+            raise refused
 
     def as_dict(self) -> dict[str, object]:
         """Only what is set: an absent key means "use the build-time value"."""

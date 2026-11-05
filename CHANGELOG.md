@@ -46,13 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A password in a server URL no longer reaches a message or the Studio registry.** An
-  MCP entry accepted `https://user:password@host` and kept it in the stored registry,
-  which is meant to hold no secrets. MCP entries now refuse credentials in the URL, as
-  A2A entries do, and a URL with no host. URL refusals no longer repeat the URL, and
-  validation errors from these files no longer print their input. Note for operators: if
-  a server in `ORRERY_MCP_CONFIG` has credentials in its URL, move them to
-  `headers_from_env`, or startup now fails.
+- **Passwords in server URLs are refused, and refusals stop repeating URLs.** An MCP
+  entry accepted `https://user:password@host` and kept it in the stored registry, which is
+  meant to hold no secrets. MCP entries, A2A entries and the A2A public URLs now refuse
+  credentials, a URL with no host, and one that can't be parsed, which catches an
+  unescaped password like `https://u:pass/word@host`. Refusals and validation errors no
+  longer print the URL. A URL can't be checked for every secret: a value in its path or
+  query is still accepted, and so is a numeric password before a `/`, which reads as a
+  port. Note for operators: a server with credentials in its URL now fails startup, from
+  `ORRERY_MCP_CONFIG` or `ORRERY_STUDIO_REGISTRY`. For `ORRERY_MCP_CONFIG`, move them to
+  `headers_from_env`. Studio MCP entries have no way to send credentials yet. Rotate any
+  password that was already in a registry: a stored version stops being served, but stays
+  readable in the registry's history.
 - **Audit events keep their fields in the JSON log.** The formatter only wrote names
   on an allowlist, so events such as `a2a_turn`, `agent_catalog_update_refused` and
   the Studio's lost who and what, keeping little more than their name. Note for

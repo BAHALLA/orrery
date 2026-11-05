@@ -60,7 +60,6 @@ import ssl
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
@@ -70,6 +69,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..observability.audit import audit_event
 from ..plugins.safety_plugin import screen_text
+from ..safe_url import split_url
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
 from ..security.token_exchange import CredentialUnavailable, TokenBroker, default_broker
@@ -222,13 +222,10 @@ class McpServerConfig(BaseModel):
         else:
             if not self.url:
                 raise ValueError(f"transport {self.transport} needs `url`")
-            parsed = urlparse(self.url)
-            # No message here repeats the URL: it can hold a password, and these
-            # messages reach the Studio's caller, the audit log and startup logs.
+            # No message here repeats the URL (see ``safe_url``).
+            parsed = split_url(self.url, f"server {self.name!r}")
             if parsed.username or parsed.password:
-                raise ValueError(
-                    f"server {self.name!r}: the URL carries credentials; send them in a header"
-                )
+                raise ValueError(f"server {self.name!r}: the URL carries credentials; remove them")
             if parsed.scheme != "https" and not (
                 parsed.scheme == "http"
                 and (self.allow_insecure_http or parsed.hostname in _LOOPBACK)

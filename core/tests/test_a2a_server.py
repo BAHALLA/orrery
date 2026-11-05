@@ -1032,3 +1032,20 @@ def test_a_stopped_turn_fails_the_task_saying_actions_may_have_run(turns):
 
     assert task["status"]["state"] == "TASK_STATE_FAILED"
     assert task["status"]["message"]["parts"][0]["text"] == TURN_TIMED_OUT_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://u:hunter2@orrery.example.com/a2a",
+        "https://u:hunter2/x@orrery.example.com/a2a",
+        "https://u:hunter2@ex\u2100mple.com/a2a",
+        "u:hunter2@orrery.example.com/a2a",
+        "http://orrery.example.com/a2a?x=hunter2",
+    ],
+)
+def test_a_bad_public_url_stops_startup_without_repeating_it(url):
+    cfg = A2AConfig(enabled=True, audience="a", public_url=url)
+    with pytest.raises(ValueError, match="ORRERY_A2A_PUBLIC_URL") as refused:
+        cfg.validate(auth_enabled=True)
+    assert "hunter2" not in str(refused.value)
