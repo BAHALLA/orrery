@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 import time
@@ -250,3 +251,14 @@ async def test_static_servers_are_unchanged(http_server, monkeypatch):
         await toolset.close()
     assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
     assert any("Bearer shared" in auths for auths in recorder.by_session.values())
+
+
+def test_token_exchange_without_a_scope_warns(caplog):
+    with caplog.at_level(logging.WARNING, logger="orrery.tools.mcp"):
+        _config(auth={"type": "token_exchange", "audience": "inventory-mcp"})
+    assert "requests no scope" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="orrery.tools.mcp"):
+        _config(auth={"type": "token_exchange", "audience": "inventory-mcp", "scope": "read"})
+    assert "requests no scope" not in caplog.text

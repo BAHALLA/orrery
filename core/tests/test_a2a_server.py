@@ -105,6 +105,7 @@ def turns():
 def _app(**a2a):
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
         a2a=A2AConfig(enabled=True, audience=_A2A_AUD, **a2a),
     )
@@ -144,6 +145,7 @@ def test_a2a_refuses_a_replicated_deployment(monkeypatch, turns):
     monkeypatch.setenv("ORRERY_CONFIRMATION_BACKEND", "postgres")
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
         database_url="postgresql://x/y",
         a2a=A2AConfig(enabled=True, audience=_A2A_AUD),
@@ -154,7 +156,9 @@ def test_a2a_refuses_a_replicated_deployment(monkeypatch, turns):
 
 def test_a2a_is_off_by_default(turns):
     config = ServerConfig(
-        auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery")
+        auth_enabled=True,
+        allow_unbound_tokens=True,
+        jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
     )
     client = TestClient(create_app(root_agent=MagicMock(), app_name="t", config=config))
     assert client.post("/a2a", json=_send(), headers=_headers()).status_code in (404, 405)
@@ -838,6 +842,7 @@ def real_gate(pending_store):
     )
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
         a2a=A2AConfig(enabled=True, audience=_A2A_AUD),
     )
@@ -946,6 +951,7 @@ def test_the_extended_card_lists_live_specialists(turns):
     root = Agent(name="root", description="coordinator", tools=[AgentTool(agent=kafka)])
     config = ServerConfig(
         auth_enabled=True,
+        allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_SECRET, audience="orrery"),
         a2a=A2AConfig(enabled=True, audience=_A2A_AUD),
     )

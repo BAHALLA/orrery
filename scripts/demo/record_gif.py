@@ -25,7 +25,7 @@ import jwt
 # supplied by `uv run --with` (see make demo-gif) and not a workspace dependency.
 from PIL import Image
 from playwright.async_api import Page, async_playwright  # ty: ignore[unresolved-import]
-from scripted_server import DEMO_SECRET  # type: ignore[import-not-found]  # same directory
+from scripted_server import DEMO_AUDIENCE, DEMO_ISSUER, DEMO_SECRET  # type: ignore[import-not-found]  # same directory
 
 FRAME_SECONDS = 0.35
 
@@ -64,7 +64,14 @@ class Recorder:
 
 def token() -> str:
     return jwt.encode(
-        {"sub": "ana", "email": "ana@example.com", "roles": ["operator"], "exp": time.time() + 900},
+        {
+            "sub": "ana",
+            "email": "ana@example.com",
+            "roles": ["operator"],
+            "aud": DEMO_AUDIENCE,
+            "iss": DEMO_ISSUER,
+            "exp": time.time() + 900,
+        },
         DEMO_SECRET,
         algorithm="HS256",
     )

@@ -251,7 +251,10 @@ def lab(tmp_path: Path, monkeypatch):
                 app_name="t",
                 plugins=[],
                 config=ServerConfig(
-                    auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET), **config
+                    auth_enabled=True,
+                    allow_unbound_tokens=True,
+                    jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+                    **config,
                 ),
             )
         return TestClient(app)
@@ -319,7 +322,11 @@ def test_no_hint_route_outside_learning_mode(monkeypatch):
             root_agent=LlmAgent(name="root", model=_EchoLlm(), instruction="Answer."),
             app_name="t",
             plugins=[],
-            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET)),
+            config=ServerConfig(
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+            ),
         )
     client = TestClient(app)
     assert client.post("/learning/hint", headers=LEARNER).status_code in (404, 405)

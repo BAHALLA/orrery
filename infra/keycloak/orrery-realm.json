@@ -29,6 +29,7 @@
       "serviceAccountsEnabled": false,
       "attributes": {
         "pkce.code.challenge.method": "S256",
+        "access.token.header.type.rfc9068": "true",
         "post.logout.redirect.uris": "http://localhost:8000/##http://localhost:5173/"
       },
       "redirectUris": ["http://localhost:8000/*", "http://localhost:5173/*"],

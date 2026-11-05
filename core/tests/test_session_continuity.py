@@ -81,6 +81,7 @@ def _client() -> TestClient:
             plugins=[],
             config=ServerConfig(
                 auth_enabled=True,
+                allow_unbound_tokens=True,
                 jwt=JWTConfig(algorithm="HS256", secret=SECRET),
                 admin_editing=True,
                 catalog_poll_seconds=0,

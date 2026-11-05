@@ -118,6 +118,8 @@ from .uploads import ChatInput, ChatRequest, read_chat_input
 
 logger = logging.getLogger("orrery.server")
 
+ALLOW_UNBOUND_TOKENS_ENV = "ORRERY_ALLOW_UNBOUND_TOKENS"
+
 #: Session-state key holding the conversation's sidebar label, written on the
 #: first turn of a new conversation. The title lives in *state* rather than being
 #: derived from the transcript because ``list_sessions`` returns state but never
@@ -156,6 +158,8 @@ class ServerConfig:
 
     auth_enabled: bool = True
     jwt: JWTConfig = field(default_factory=JWTConfig)
+    #: Start without ``JWT_AUDIENCE``/``JWT_ISSUER`` (``ORRERY_ALLOW_UNBOUND_TOKENS``).
+    allow_unbound_tokens: bool = False
     database_url: str | None = None
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
@@ -210,6 +214,8 @@ class ServerConfig:
 
         - ``AUTH_ENABLED`` (default ``true``)
         - ``JWT_*`` (see :class:`JWTConfig`)
+        - ``ORRERY_ALLOW_UNBOUND_TOKENS`` (default ``false``) — start with auth on
+          but without ``JWT_AUDIENCE`` or ``JWT_ISSUER``.
         - ``DATABASE_URL`` (Postgres recommended for multi-replica)
         - ``ORRERY_CORS_ORIGINS`` (comma-separated)
         - ``ORRERY_WEB_CONSOLE_ENABLED`` (default ``false``) — serve the built
@@ -244,6 +250,7 @@ class ServerConfig:
         return cls(
             auth_enabled=env_flag("AUTH_ENABLED", default=True),
             jwt=JWTConfig.from_env(),
+            allow_unbound_tokens=env_flag(ALLOW_UNBOUND_TOKENS_ENV, default=False),
             database_url=os.getenv("DATABASE_URL") or None,
             cors_origins=tuple(o.strip() for o in cors.split(",") if o.strip()),
             web_console_enabled=env_flag("ORRERY_WEB_CONSOLE_ENABLED", default=False),
@@ -530,6 +537,30 @@ class SelfTestResponse(BaseModel):
 MULTI_REPLICA_ENV = "ORRERY_MULTI_REPLICA"
 
 
+def _require_token_binding(cfg: ServerConfig) -> None:
+    """Refuse to start when a token isn't bound to this service and its provider.
+
+    Without ``JWT_ISSUER`` any issuer whose tokens the key verifies is accepted,
+    and without ``JWT_AUDIENCE`` so is a token naming no audience. Both were
+    "strongly recommended", which left the open setting as the default.
+    """
+    missing = cfg.jwt.unbound_settings()
+    if not missing:
+        return
+    names = " and ".join(missing)
+    if cfg.allow_unbound_tokens:
+        logger.warning(
+            "%s unset: tokens are not bound to this service (%s=true)",
+            names,
+            ALLOW_UNBOUND_TOKENS_ENV,
+        )
+        return
+    raise ValueError(
+        f"Auth is on without {names}, so a token meant for something else could be accepted. "
+        f"Set what is missing, or set {ALLOW_UNBOUND_TOKENS_ENV}=true to accept that."
+    )
+
+
 def _require_shared_state_when_replicated(cfg: ServerConfig) -> None:
     """Refuse to serve from several replicas on per-process state.
 
@@ -666,6 +697,7 @@ def create_app(
         _check_learning_server(cfg)
     if cfg.auth_enabled:
         cfg.jwt.validate()
+        _require_token_binding(cfg)
         logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)
         warn_if_unclassified(principal_policy)
     else:

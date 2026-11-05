@@ -497,7 +497,11 @@ def test_chat_stream_requires_auth_when_enabled(streaming_app):
         patch("orrery_core.serving.gateway.Runner"),
         patch("orrery_core.serving.gateway.App"),
     ):
-        config = ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret="x" * 32))
+        config = ServerConfig(
+            auth_enabled=True,
+            allow_unbound_tokens=True,
+            jwt=JWTConfig(algorithm="HS256", secret="x" * 32),
+        )
         app = create_app(root_agent=MagicMock(name="root"), app_name="t", plugins=[], config=config)
 
     assert TestClient(app).post("/chat/stream", json={"message": "hi"}).status_code == 401

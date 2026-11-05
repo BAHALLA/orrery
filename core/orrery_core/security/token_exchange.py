@@ -21,6 +21,10 @@ requests for one key share a single exchange. Failures are remembered too, per
 key: a refusal for 30 s, an IdP outage or misconfiguration with a backoff, so
 a refused user doesn't cost an IdP round-trip on every model step.
 
+**Audit.** Every round-trip to the IdP is audited and counted, with who asked,
+for which audience and scope, and how it ended. A cache hit is not: it issues
+nothing. The tokens themselves never reach either.
+
 **Off the shared executor.** Exchanges run on a small pool of their own: an
 IdP brownout then holds those threads, not the default executor every
 blocking tool (Kubernetes, Kafka, Docker) waits on.
@@ -48,13 +52,14 @@ import os
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import requests
 
 from ..observability.audit import audit_event
+from ..observability.metrics import track_token_exchange
 from .identity import current_caller
 
 logger = logging.getLogger("orrery.token_exchange")
@@ -109,7 +114,8 @@ class CredentialUnavailable(PermissionError):
 class ExchangeSettings:
     url: str
     client_id: str
-    client_secret: str
+    #: Out of ``repr``: settings in a log line or a traceback must not carry it.
+    client_secret: str = field(repr=False)
 
     @classmethod
     def from_env(cls) -> ExchangeSettings:
@@ -136,7 +142,7 @@ class ExchangeSettings:
 
 @dataclass(frozen=True)
 class _Cached:
-    token: str
+    token: str = field(repr=False)
     expires_at: float  # monotonic
 
 
@@ -217,12 +223,26 @@ class TokenBroker:
             )
         except CredentialUnavailable as exc:
             self._remember_failure(key, exc)
+            self._record(audience, scope, exc.reason)
             raise
         finally:
             del self._inflight[(id(loop), key)]
         self._failures.pop(key, None)
         self._store(key, token, lifetime)
+        self._record(audience, scope, "issued")
         return token
+
+    @staticmethod
+    def _record(audience: str, scope: str | None, outcome: str) -> None:
+        caller = current_caller()
+        audit_event(
+            "token_exchange",
+            subject=caller.subject if caller else None,
+            audience=audience,
+            scope=scope,
+            outcome=outcome,
+        )
+        track_token_exchange(outcome=outcome)
 
     def _remember_failure(self, key: _Key, exc: CredentialUnavailable) -> None:
         previous = self._failures.get(key)

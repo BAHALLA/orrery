@@ -215,7 +215,9 @@ def test_the_server_checks_again_after_the_tree_is_built(good_env, monkeypatch, 
             app_name="t",
             plugins=[],
             config=ServerConfig(
-                auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret="s" * 40)
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret="s" * 40),
             ),
         )
 
@@ -409,6 +411,8 @@ print(f"MEMORY={gateway.runner.memory_service is not None or remembers} "
         "AUTH_ENABLED": "true",
         "JWT_ALGORITHM": "HS256",
         "JWT_SECRET": "s" * 48,
+        "JWT_AUDIENCE": "orrery-lab",
+        "JWT_ISSUER": "https://idp.example.com",
         "ORRERY_HUMAN_CLIENTS": "orrery-lab",
         "ORRERY_AUTONOMY_LEVEL": "L2",
         "ORRERY_A2A_ENABLED": "false",

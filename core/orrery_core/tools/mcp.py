@@ -122,6 +122,18 @@ class McpAuth(BaseModel):
     audience: str = Field(min_length=1, description="The audience the IdP issues tokens for.")
     scope: str | None = Field(default=None, description="Space-separated scopes to request.")
 
+    @model_validator(mode="after")
+    def _warn_without_scope(self) -> McpAuth:
+        # Not an error: an audience alone is enough on a provider that scopes by
+        # audience. Elsewhere the token gets whatever scopes are its default.
+        if not self.scope:
+            logger.warning(
+                "MCP token exchange for %s requests no scope: the provider's default "
+                "scopes apply. Set `scope` to the minimum this server needs.",
+                self.audience,
+            )
+        return self
+
 
 class McpServerConfig(BaseModel):
     """One MCP server, as an operator declares it. Validated at startup."""

@@ -326,10 +326,19 @@ auth:
   ##   Okta     https://YOUR_ORG.okta.com/oauth2/default/v1/keys
   ##   Google   https://www.googleapis.com/oauth2/v3/certs
   jwksUrl: ""
-  ## Bind tokens to this service. Strongly recommended in production —
-  ## prevents tokens minted for another audience from being accepted.
+  ## Accept a jwksUrl in plain http on a non-loopback host. Whoever can alter
+  ## that traffic can sign their own tokens: only on a network you trust.
+  allowInsecureJwks: false
+  ## Bind tokens to this service. Both are required when auth is enabled, so a
+  ## token minted for another audience or by another issuer is not accepted.
   audience: ""
   issuer: ""
+  ## Start without audience or issuer (the render and the server refuse otherwise).
+  allowUnboundTokens: false
+  ## Require this `typ` header on every token, e.g. "at+jwt" (RFC 9068) if the
+  ## provider marks access tokens that way. Needed to refuse ID tokens when
+  ## `audience` is the console's client id, since an ID token has that audience.
+  requiredTyp: ""
   ## Custom claim that carries the role list. Auth0 RBAC typically uses
   ## "https://YOUR_API/roles". Defaults to "roles" for HS256 / Keycloak.
   roleClaim: roles

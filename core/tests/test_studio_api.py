@@ -285,6 +285,7 @@ def _app(
             catalog_store=catalog_store,
             config=ServerConfig(
                 auth_enabled=True,
+                allow_unbound_tokens=True,
                 jwt=JWTConfig(algorithm="HS256", secret=SECRET),
                 studio=StudioConfig(enabled=True, registry_path=str(registry_file), **studio),
             ),
@@ -762,7 +763,11 @@ def test_the_studio_is_off_by_default(principals, stub):
             root_agent=LlmAgent(name="root", model=stub, instruction="Answer."),
             app_name="t",
             plugins=[],
-            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET)),
+            config=ServerConfig(
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+            ),
         )
     with TestClient(app) as client:
         assert client.get("/studio/schema", headers=ADMIN).status_code == 404
@@ -957,7 +962,11 @@ def test_me_says_no_studio_when_it_is_off(principals, stub):
             root_agent=LlmAgent(name="root", model=stub, instruction="Answer."),
             app_name="t",
             plugins=[],
-            config=ServerConfig(auth_enabled=True, jwt=JWTConfig(algorithm="HS256", secret=SECRET)),
+            config=ServerConfig(
+                auth_enabled=True,
+                allow_unbound_tokens=True,
+                jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+            ),
         )
     with TestClient(app) as client:
         assert client.get("/me", headers=ADMIN).json()["studio_available"] is False

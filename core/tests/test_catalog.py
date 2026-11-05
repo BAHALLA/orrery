@@ -300,6 +300,7 @@ def _client(*, editing: bool = True) -> TestClient:
             plugins=[],
             config=ServerConfig(
                 auth_enabled=True,
+                allow_unbound_tokens=True,
                 jwt=JWTConfig(algorithm="HS256", secret=SECRET),
                 admin_editing=editing,
                 catalog_poll_seconds=0,

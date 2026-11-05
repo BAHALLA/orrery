@@ -154,6 +154,7 @@ def make_app(
             plugins=[],
             config=ServerConfig(
                 auth_enabled=True,
+                allow_unbound_tokens=True,
                 jwt=JWTConfig(algorithm="HS256", secret=SECRET),
                 studio=StudioConfig(
                     enabled=True,

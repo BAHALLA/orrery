@@ -29,6 +29,8 @@ from orrery_core.serving.server import ServerConfig, create_app
 
 WORKER = "orrery-demo-orders-worker"
 #: Local-only signing secret for the recording's token. Never a real one.
+DEMO_AUDIENCE = "orrery-demo"
+DEMO_ISSUER = "https://demo.local"
 DEMO_SECRET = "orrery-demo-recording-secret-not-for-production"  # nosec B105
 
 
@@ -221,7 +223,9 @@ app = create_app(
     # the token with this throwaway secret): a viewer would be refused the fix.
     config=ServerConfig(
         auth_enabled=True,
-        jwt=JWTConfig(algorithm="HS256", secret=DEMO_SECRET),
+        jwt=JWTConfig(
+            algorithm="HS256", secret=DEMO_SECRET, audience=DEMO_AUDIENCE, issuer=DEMO_ISSUER
+        ),
         web_console_enabled=True,
     ),
 )
