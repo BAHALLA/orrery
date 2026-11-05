@@ -29,9 +29,8 @@ only, token exchanges are audited, and audit events keep their fields in the JSO
   whose tokens are valid. Note for operators: on a network you trust, such as a
   same-host network, set `JWT_JWKS_ALLOW_INSECURE_HTTP=true` (chart:
   `auth.allowInsecureJwks`).
-
-- **`orrery-core` needs `google-adk>=2.13.0` and `a2a-sdk>=1.3.0`.** This matters if you
-  install it outside this workspace.
+- **`orrery-core` needs `google-adk>=2.13.0`, and `a2a-sdk>=1.3.0` with its `a2a` extra.**
+  This matters if you install it outside this workspace.
 
 ### Added
 
