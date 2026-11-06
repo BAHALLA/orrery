@@ -60,7 +60,7 @@ describe("Studio entry", () => {
     expect(localStorage.getItem(storageKeys.studioNavExpanded)).toBe("1");
     expect(localStorage.getItem(storageKeys.navCollapsed)).toBe("0");
 
-    await user.click(within(nav).getByRole("button", { name: /new chat/i }));
+    await user.click(within(nav).getByRole("button", { name: "New chat" }));
     expect(within(nav).getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
   });
 
