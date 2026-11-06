@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-06
+
+**A lab's brief in the console, and a Studio that gives the canvas more room.** Nothing to
+do when upgrading: the brief is opt-in through `ORRERY_CONSOLE_MISSION_FILE`.
+
 ### Changed
 
 - A refused tool call now starts open in the chat instead of folded into a summary line.
@@ -21,8 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than "ceiling", and nodes no longer repeat "deployment model".
 - Each Studio template offers an example input in the Run tab. It only fills the box.
 - The empty chat shows no suggestion cards until `/me` has answered, and none while it
-  is failing (it retries a 5xx or an unreachable server), so a lab's learner never gets the stock cards. A failed
-  refetch keeps what the console already knew. A server without `/me` still gets them.
+  is failing (it retries a 5xx or an unreachable server), so a lab's learner doesn't get
+  the stock cards when the server is failing. A failed refetch keeps what the console
+  already knew. A server without `/me` still gets them.
 
 ### Added
 
@@ -2218,7 +2224,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/BAHALLA/orrery/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/BAHALLA/orrery/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/BAHALLA/orrery/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/BAHALLA/orrery/compare/v0.16.0...v0.17.0
