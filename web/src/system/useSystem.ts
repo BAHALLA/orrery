@@ -15,6 +15,8 @@ export interface SystemController {
   me: MeResponse | null;
   /** Why `me` is unavailable, when the fetch failed for a reason worth showing. */
   meError: string | null;
+  /** `/me` has answered or failed: until then the console doesn't know this deployment. */
+  meLoaded: boolean;
   selfTest: SelfTestResponse | null;
   isChecking: boolean;
   error: string | null;
@@ -67,6 +69,7 @@ export function useSystem(token: string | null): SystemController {
   const client = useMemo(() => new ApiClient(token), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [me, setMe] = useState<MeResponse | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
+  const [meLoaded, setMeLoaded] = useState(false);
   const [selfTest, setSelfTest] = useState<SelfTestResponse | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,10 +88,12 @@ export function useSystem(token: string | null): SystemController {
         setActiveSpecialists(resolveSpecialists(res.specialists));
         setMe(res);
         setMeError(null);
+        setMeLoaded(true);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setMe(null);
+        setMeLoaded(true);
         // An older server genuinely without /me is fine — the posture rows just
         // stay empty. Anything else (unreachable, unauthorised, the dev proxy
         // answering with the SPA shell) used to be swallowed here, leaving the
@@ -181,6 +186,7 @@ export function useSystem(token: string | null): SystemController {
   return {
     me,
     meError,
+    meLoaded,
     selfTest,
     isChecking,
     error,

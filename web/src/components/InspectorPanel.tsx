@@ -1,15 +1,16 @@
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
-import type { ActivityEntry, TriageResponse } from "../api/types";
+import type { ActivityEntry, Mission, TriageResponse } from "../api/types";
 import type { SystemController } from "../system/useSystem";
 import { BREAKPOINT_XL, useFocusTrap, useMediaQuery } from "./a11y";
 import { CloseIcon } from "./icons";
+import { MissionBrief } from "./MissionBrief";
 import { SystemPanel } from "./SystemPanel";
 import { ToolCallsTable } from "./ToolCallsTable";
 import { TriageReport } from "./TriageReport";
 
-export type InspectorTab = "tools" | "triage" | "system";
+export type InspectorTab = "mission" | "tools" | "triage" | "system";
 
-const TABS: readonly InspectorTab[] = ["tools", "triage", "system"];
+const STOCK_TABS: readonly InspectorTab[] = ["tools", "triage", "system"];
 
 interface Props {
   tab: InspectorTab;
@@ -18,6 +19,8 @@ interface Props {
   activity: ActivityEntry[];
   triage: TriageResponse | null;
   system: SystemController;
+  /** A lab's brief, when this deployment has one: the panel's first tab. */
+  mission?: Mission | null | undefined;
 }
 
 /** Right-hand inspector: the tool-call table and the triage report, kept out
@@ -27,7 +30,8 @@ interface Props {
  * dialog: focus moves in, Tab stays in, and closing gives focus back. From `xl`
  * up it is a docked column and none of that applies. The tabs follow the WAI-ARIA
  * tabs pattern: one tab stop, arrow keys (and Home/End) move between tabs. */
-export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }: Props) {
+export function InspectorPanel({ tab, onTab, onClose, activity, triage, system, mission }: Props) {
+  const TABS: readonly InspectorTab[] = mission ? ["mission", ...STOCK_TABS] : STOCK_TABS;
   const docked = useMediaQuery(BREAKPOINT_XL);
   const ref = useRef<HTMLElement>(null);
   useFocusTrap(ref, !docked);
@@ -91,6 +95,7 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
     >
       <div className="flex items-center justify-between border-b border-slate-200 px-2 dark:border-slate-800">
         <div className="flex" role="tablist" aria-label="Inspector views" onKeyDown={onTabKey}>
+          {mission ? tabButton("mission", "Mission") : null}
           {tabButton(
             "tools",
             <>
@@ -134,7 +139,11 @@ export function InspectorPanel({ tab, onTab, onClose, activity, triage, system }
         tabIndex={0}
         className="orrery-scroll relative min-h-0 flex-1 overflow-y-auto focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500 focus-visible:outline-none"
       >
-        {tab === "tools" ? (
+        {tab === "mission" && mission ? (
+          <div className="p-4">
+            <MissionBrief mission={mission} headingLevel="h3" />
+          </div>
+        ) : tab === "tools" ? (
           <ToolCallsTable entries={activity} />
         ) : tab === "system" ? (
           <SystemPanel system={system} />

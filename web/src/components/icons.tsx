@@ -133,6 +133,12 @@ export const MonitorIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const FlagIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M5 21V4M5 4h11l-2 4 2 4H5" />
+  </Icon>
+);
+
 export const ChevronIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m9 6 6 6-6 6" />
