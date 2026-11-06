@@ -20,6 +20,7 @@ import { ConnectionsPanel } from "./ConnectionsPanel";
 import { CompositionsDialog } from "./CompositionsDialog";
 import { SpecDialog, TemplatesDialog } from "./Dialogs";
 import { RegistryDialog } from "./RegistryDialog";
+import { EnvironmentBadge } from "../components/EnvironmentBadge";
 import { panelCard, primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
 import {
   addNode,
@@ -332,6 +333,12 @@ export default function StudioView({ token, active = true, onAttention }: Props)
    * tab and the node overlays (History keeps it, Undo brings it back), and one
    * still going stays on show as a run of something else.
    */
+  /** An offered example goes with its template, and so does the input if it is still that example. */
+  const forgetExample = useCallback(() => {
+    setInput((current) => (current === example ? "" : current));
+    setExample(null);
+  }, [example]);
+
   /** Bumped by anything that changes the canvas: a Replay still fetching then gives up. */
   const openRequest = useRef(0);
   const replaceGraph = useCallback(
@@ -347,14 +354,14 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       else run.hide();
       composition.restore(saved);
       setSaveProblem(null);
-      setExample(null);
+      forgetExample();
       setGraph(next);
       setSelectedId(null);
       setPinned([]);
       setDialog(null);
       refit();
     },
-    [graph, refit, composition, run, offCanvasRunId],
+    [graph, refit, composition, run, offCanvasRunId, forgetExample],
   );
 
   const loadTemplate = useCallback(
@@ -650,6 +657,12 @@ export default function StudioView({ token, active = true, onAttention }: Props)
               </span>
             </span>
           </span>
+          {/* The console's header is visually hidden here from `lg` up and the rail
+              folds by default, so this is what keeps production marked. Screen
+              readers already have the header's. */}
+          <span aria-hidden="true" className="hidden lg:contents">
+            <EnvironmentBadge />
+          </span>
           {graph.nodes.length ? (
             <button
               type="button"
@@ -795,6 +808,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 openRequest.current += 1;
                 setGraph(reorient(undo.graph, directionRef.current));
                 composition.restore(undo.saved);
+                forgetExample();
                 setUndo(null);
                 setSelectedId(null);
                 // Back to the run that canvas had on show, unless another is still going.
@@ -1107,7 +1121,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                       input={input}
                       onInput={setInput}
                       focusSignal={focusInput}
-                      example={example}
+                      example={graph.nodes.length ? example : null}
                       inputIssues={issues.input}
                       problems={clientIssues.length}
                       busy={run.busy}

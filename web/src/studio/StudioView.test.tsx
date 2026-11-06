@@ -6,6 +6,7 @@ import { stubReactFlowDom, stubWideScreen } from "../test/reactflow";
 import { releaseNotesRun } from "./fixtures/events";
 import { DEMO_REGISTRY } from "./fixtures/registry";
 import schema from "./fixtures/studio-schema.json";
+import { branding } from "../theme/accent";
 import { KIND_MIME } from "./Canvas";
 import StudioView from "./StudioView";
 import type { StudioEvent } from "./types";
@@ -451,6 +452,76 @@ describe("Studio runs", () => {
     expect(
       await screen.findByRole("heading", { name: "The Studio is not enabled here" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Studio's toolbar", () => {
+  afterEach(() => {
+    branding.environment = null;
+  });
+
+  it("marks the environment, since the console's header is hidden here", async () => {
+    branding.environment = "production";
+    stubStudio();
+    render(<StudioView token="t" active onAttention={vi.fn()} />);
+    expect(await screen.findByText("production")).toBeInTheDocument();
+  });
+});
+
+describe("a template's example", () => {
+  const offered = () => screen.queryByRole("button", { name: /use an example/i });
+
+  it("goes with its template, along with an input still holding it", async () => {
+    const user = userEvent.setup();
+    stubStudio();
+    render(<StudioView token="t" active onAttention={vi.fn()} />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    await user.click(screen.getByRole("button", { name: /use an example/i }));
+    expect(screen.getByLabelText("Run input")).toHaveValue("Kafka consumer lag");
+
+    await user.click(screen.getByRole("button", { name: "Patterns" }));
+    const dialog = screen.getByRole("dialog", { name: "Start from a pattern" });
+    await user.click(within(dialog).getByRole("button", { name: /^Pipeline/ }));
+    await screen.findByRole("group", { name: /^LLM agent analyst$/ });
+
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    expect(screen.getByLabelText("Run input")).toHaveValue("");
+    expect(offered()).toBeInTheDocument();
+    expect(offered()).not.toHaveTextContent("Kafka consumer lag");
+  });
+
+  it("keeps what the person typed when a template loads", async () => {
+    const user = userEvent.setup();
+    stubStudio();
+    render(<StudioView token="t" active onAttention={vi.fn()} />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    await user.type(screen.getByLabelText("Run input"), "mine");
+
+    await user.click(screen.getByRole("button", { name: "Patterns" }));
+    const dialog = screen.getByRole("dialog", { name: "Start from a pattern" });
+    await user.click(within(dialog).getByRole("button", { name: /^Pipeline/ }));
+    await screen.findByRole("group", { name: /^LLM agent analyst$/ });
+
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    expect(screen.getByLabelText("Run input")).toHaveValue("mine");
+  });
+
+  it("isn't offered after Undo takes its template away", async () => {
+    const user = userEvent.setup();
+    stubStudio();
+    render(<StudioView token="t" active onAttention={vi.fn()} />);
+    await loadDemo(user);
+    await user.click(screen.getByRole("button", { name: "Patterns" }));
+    const dialog = screen.getByRole("dialog", { name: "Start from a pattern" });
+    await user.click(within(dialog).getByRole("button", { name: /^Pipeline/ }));
+    await screen.findByRole("group", { name: /^LLM agent analyst$/ });
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await screen.findByRole("group", { name: /^LLM agent writer/ });
+    await user.click(screen.getByRole("tab", { name: /^run/i }));
+    expect(offered()).not.toBeInTheDocument();
   });
 });
 

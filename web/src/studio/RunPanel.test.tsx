@@ -78,6 +78,7 @@ describe("a template's example", () => {
     fireEvent.click(screen.getByRole("button", { name: /use an example/i }));
     expect(onInput).toHaveBeenCalledWith("Kafka consumer lag");
     expect(onRun).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Run input")).toHaveFocus();
   });
 
   it("is not offered over something already typed", () => {
