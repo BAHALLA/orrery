@@ -144,6 +144,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "model_provider": "gemini",
                     "model_name": "gemini-2.5-flash",
                     "self_test_available": False,
+                    "studio_available": True,
                 }
             )
         if path == "/sessions":

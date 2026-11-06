@@ -162,8 +162,9 @@ export const NodeCard = memo(function NodeCard({ data, selected }: NodeProps<Stu
             <span>{formatMs(live ?? run.elapsedMs)}</span>
           </>
         ) : (
-          <span className="font-sans text-[10px]">
-            {run ? "waiting" : spec.kind === "llm_agent" ? "deployment model" : ""}
+          <span className="min-w-0 truncate font-sans text-[10px]" title={spec.model ?? undefined}>
+            {/* A space keeps the line, so "waiting" doesn't resize the node. */}
+            {run ? "waiting" : (spec.model ?? "\u00a0")}
           </span>
         )}
       </div>

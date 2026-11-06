@@ -48,6 +48,8 @@ interface Props {
   onInput: (text: string) => void;
   /** Focus the input whenever this changes (and is not 0). */
   focusSignal: number;
+  /** A sample input for the loaded template, offered while the input is empty. */
+  example?: string | null | undefined;
   inputIssues: Issue[];
   /** Problems the client found in the composition. */
   problems: number;
@@ -73,6 +75,7 @@ export function RunPanel({
   input: text,
   onInput,
   focusSignal,
+  example,
   inputIssues,
   problems,
   busy,
@@ -123,6 +126,19 @@ export function RunPanel({
           ))}
           <span className="ml-auto hidden sm:inline">Ctrl+Enter runs</span>
         </div>
+        {example && !text ? (
+          <button
+            type="button"
+            className="mt-1.5 w-full rounded-md border border-dashed border-slate-300 px-2 py-1.5 text-left text-xs text-slate-600 hover:border-brand-400 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-slate-700 dark:text-slate-300 dark:hover:text-white"
+            onClick={() => {
+              onInput(example);
+              // This button goes away with the click: keep Ctrl+Enter working.
+              inputRef.current?.focus();
+            }}
+          >
+            <span className="font-medium">Use an example:</span> {example}
+          </button>
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {busy ? (
             <>

@@ -14,12 +14,13 @@ import { useStoredFlag } from "../components/storedFlag";
 import { storageKeys } from "../config";
 import { toneChip, tonePill } from "../components/severity";
 import { describeApiError } from "../system/useSystem";
-import { A2aInspector } from "./A2aInspector";
 import { StudioClient } from "./api";
 import { Canvas } from "./Canvas";
+import { ConnectionsPanel } from "./ConnectionsPanel";
 import { CompositionsDialog } from "./CompositionsDialog";
 import { SpecDialog, TemplatesDialog } from "./Dialogs";
 import { RegistryDialog } from "./RegistryDialog";
+import { EnvironmentBadge } from "../components/EnvironmentBadge";
 import { panelCard, primaryButton, runLabel, sectionTitle, toolbarButton } from "./format";
 import {
   addNode,
@@ -50,7 +51,6 @@ import {
 import { CompositionInspector, NodeInspector } from "./Inspector";
 import { capabilitiesFrom, idStem, newNode } from "./kinds";
 import { Palette, TemplateGallery } from "./Library";
-import { McpInspector } from "./McpInspector";
 import { RunPanel } from "./RunPanel";
 import { isFinished, waitingApprovals } from "./runState";
 import { TEMPLATES, type Template } from "./templates";
@@ -69,13 +69,12 @@ import { useNow } from "./useNow";
 import { useTabs } from "./useTabs";
 import { groupIssues, validate, type Issue } from "./validate";
 
-type Tab = "inspect" | "run" | "a2a" | "mcp" | "history";
+type Tab = "inspect" | "run" | "connections" | "history";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "inspect", label: "Inspect" },
   { id: "run", label: "Run" },
-  { id: "a2a", label: "A2A" },
-  { id: "mcp", label: "MCP" },
+  { id: "connections", label: "Connections" },
   { id: "history", label: "History" },
 ];
 
@@ -193,6 +192,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
     setPanelCollapsed(fold);
   };
   const [input, setInput] = useState("");
+  const [example, setExample] = useState<string | null>(null);
   const [pinned, setPinned] = useState<PinnedIssue[]>([]);
   const [dialog, setDialog] = useState<
     null | "templates" | "export" | "import" | "registry" | "open"
@@ -333,6 +333,12 @@ export default function StudioView({ token, active = true, onAttention }: Props)
    * tab and the node overlays (History keeps it, Undo brings it back), and one
    * still going stays on show as a run of something else.
    */
+  /** An offered example goes with its template, and so does the input if it is still that example. */
+  const forgetExample = useCallback(() => {
+    setInput((current) => (current === example ? "" : current));
+    setExample(null);
+  }, [example]);
+
   /** Bumped by anything that changes the canvas: a Replay still fetching then gives up. */
   const openRequest = useRef(0);
   const replaceGraph = useCallback(
@@ -348,13 +354,14 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       else run.hide();
       composition.restore(saved);
       setSaveProblem(null);
+      forgetExample();
       setGraph(next);
       setSelectedId(null);
       setPinned([]);
       setDialog(null);
       refit();
     },
-    [graph, refit, composition, run, offCanvasRunId],
+    [graph, refit, composition, run, offCanvasRunId, forgetExample],
   );
 
   const loadTemplate = useCallback(
@@ -362,6 +369,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
       // The canvas is locked while a run is live (the gallery on an empty canvas stays clickable).
       if (run.busy) return;
       replaceGraph(specToGraph(t.spec, directionRef.current), `Loaded ${t.title}`);
+      setExample(t.sample);
       announce(`Loaded the ${t.title} template.`);
     },
     [replaceGraph, announce, run.busy],
@@ -590,13 +598,11 @@ export default function StudioView({ token, active = true, onAttention }: Props)
         ? isFinished(view)
           ? null
           : "●"
-        : id === "a2a" && view?.a2a.length
-          ? String(view.a2a.length)
-          : id === "mcp" && view?.mcp.length
-            ? String(view.mcp.length)
-            : id === "history" && run.history.length
-              ? String(run.history.length)
-              : null;
+        : id === "connections" && view && view.a2a.length + view.mcp.length
+          ? String(view.a2a.length + view.mcp.length)
+          : id === "history" && run.history.length
+            ? String(run.history.length)
+            : null;
 
   const emptyState = (
     <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-xl backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
@@ -650,6 +656,12 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 ) : null}
               </span>
             </span>
+          </span>
+          {/* The console's header is visually hidden here from `lg` up and the rail
+              folds by default, so this is what keeps production marked. Screen
+              readers already have the header's. */}
+          <span aria-hidden="true" className="hidden lg:contents">
+            <EnvironmentBadge />
           </span>
           {graph.nodes.length ? (
             <button
@@ -796,6 +808,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                 openRequest.current += 1;
                 setGraph(reorient(undo.graph, directionRef.current));
                 composition.restore(undo.saved);
+                forgetExample();
                 setUndo(null);
                 setSelectedId(null);
                 // Back to the run that canvas had on show, unless another is still going.
@@ -854,7 +867,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
           {wide ? (
             <aside
               aria-label="Palette"
-              className="orrery-scroll w-14 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-2 @6xl/studio:w-56 @6xl/studio:p-3 dark:border-slate-800 dark:bg-slate-900/40"
+              className="orrery-scroll w-14 shrink-0 overflow-y-auto border-r border-slate-200 bg-white/60 p-2 @6xl/studio:w-48 @6xl/studio:p-2.5 dark:border-slate-800 dark:bg-slate-900/40"
             >
               <Palette caps={caps} editable={editable} onAdd={addKind} />
               <p
@@ -1108,6 +1121,7 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                       input={input}
                       onInput={setInput}
                       focusSignal={focusInput}
+                      example={graph.nodes.length ? example : null}
                       inputIssues={issues.input}
                       problems={clientIssues.length}
                       busy={run.busy}
@@ -1120,15 +1134,13 @@ export default function StudioView({ token, active = true, onAttention }: Props)
                       onReconnect={run.reconnect}
                       now={now}
                     />
-                  ) : tab === "a2a" ? (
-                    <A2aInspector
+                  ) : tab === "connections" ? (
+                    <ConnectionsPanel
                       registry={registry}
                       view={view}
                       resolving={resolving}
                       onResolve={() => void resolveCards()}
                     />
-                  ) : tab === "mcp" ? (
-                    <McpInspector registry={registry} view={view} />
                   ) : (
                     <HistoryPanel
                       client={client}

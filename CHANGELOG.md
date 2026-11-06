@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A refused tool call now starts open in the chat instead of folded into a summary line.
+  A conversation reloaded from the server still shows no tool trace.
+- The learning sandbox's badge, hint level and hint cost sit in a strip of their own, so
+  they stay visible at any width. The cost used to reach screen readers only.
+- Studio gives the canvas more room: the console rail folds while you're there (and
+  remembers if you reopen it), and the node palette shows names only, with the
+  description in its tooltip.
+- Studio's A2A and MCP tabs are now one **Connections** tab. Pattern and budgets moved
+  under **Advanced**, which opens by itself over a problem. Budgets read "default" rather
+  than "ceiling", and nodes no longer repeat "deployment model".
+- Each Studio template offers an example input in the Run tab. It only fills the box.
+
 ## [0.19.0] - 2026-11-06
 
 **Credential and MCP hardening, with a few things to check before you upgrade.**

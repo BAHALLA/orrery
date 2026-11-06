@@ -53,14 +53,14 @@ export function Palette({
                     ? `${info.label}: ${later}`
                     : `${info.label}: ${info.blurb} Drag onto the canvas, or press to add at the end.`
                 }
-                className={`group flex w-full items-center justify-center gap-2.5 rounded-lg border px-1.5 py-2 text-left @6xl/studio:items-start @6xl/studio:justify-start @6xl/studio:px-2.5 transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
+                className={`group flex w-full items-center justify-center gap-2 rounded-lg border px-1.5 py-1.5 text-left @6xl/studio:justify-start @6xl/studio:px-2 transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none ${
                   usable
                     ? "cursor-grab border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/50 active:cursor-grabbing dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-800 dark:hover:bg-brand-950/30"
                     : "cursor-not-allowed border-dashed border-slate-200 bg-transparent dark:border-slate-800"
                 }`}
               >
                 <span
-                  className={`grid h-6 w-6 shrink-0 place-items-center rounded-md @6xl/studio:mt-0.5 ${
+                  className={`grid h-6 w-6 shrink-0 place-items-center rounded-md ${
                     usable
                       ? "bg-brand-50 text-brand-700 dark:bg-brand-950/70 dark:text-brand-200"
                       : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
@@ -85,9 +85,7 @@ export function Palette({
                       </span>
                     ) : null}
                   </span>
-                  <span className="block text-[11px] leading-snug text-slate-500 dark:text-slate-400">
-                    {info.blurb}
-                  </span>
+                  <span className="sr-only">{info.blurb}</span>
                 </span>
               </button>
             </li>

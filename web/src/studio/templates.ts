@@ -14,6 +14,8 @@ export interface Template {
   title: string;
   pattern: Pattern;
   blurb: string;
+  /** Something to try it on: offered in the Run tab, never sent on its own. */
+  sample: string;
   spec: CompositionSpec;
 }
 
@@ -136,6 +138,8 @@ export const TEMPLATES: readonly Template[] = [
     title: "Pipeline",
     pattern: "pipeline",
     blurb: "Each agent hands its answer to the next.",
+    sample:
+      "The checkout service returned 500s for ten minutes after the 14:02 deploy, then recovered.",
     spec: {
       spec_version: 1,
       name: "pipeline",
@@ -152,6 +156,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Research → writer → critic",
     pattern: "pipeline",
     blurb: "The demo: an MCP search, a remote A2A writer, an LLM critic.",
+    sample: "Kafka consumer lag",
     spec: RELEASE_NOTES,
   },
   {
@@ -159,6 +164,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Writer → your review",
     pattern: "critic_loop",
     blurb: "The demo, with you as the critic: approve to publish, or reject with a comment.",
+    sample: "Kafka consumer lag",
     spec: RELEASE_NOTES_REVIEWED,
   },
   {
@@ -166,6 +172,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Router",
     pattern: "router",
     blurb: "Classify, then send to the specialist that fits.",
+    sample: "Why is my consumer group's lag growing?",
     spec: {
       spec_version: 1,
       name: "router",
@@ -190,6 +197,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Fan-out / fan-in",
     pattern: "fan_out_fan_in",
     blurb: "Several agents work at once; one merges.",
+    sample: "checkout-api",
     spec: {
       spec_version: 1,
       name: "fan-out-fan-in",
@@ -218,6 +226,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Supervisor",
     pattern: "supervisor",
     blurb: "One agent calls the others as tools.",
+    sample: "What does Kafka consumer lag measure, and when should it page someone?",
     spec: {
       spec_version: 1,
       name: "supervisor",
@@ -240,6 +249,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Critic loop",
     pattern: "critic_loop",
     blurb: "A critic sends the draft back until it passes.",
+    sample: "Explain what a circuit breaker does for a flaky dependency.",
     spec: {
       spec_version: 1,
       name: "critic-loop",
@@ -265,6 +275,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Debate",
     pattern: "debate",
     blurb: "Two agents argue opposite sides; a judge decides.",
+    sample: "Move the checkout service from one replica to three.",
     spec: {
       spec_version: 1,
       name: "debate",
@@ -290,6 +301,8 @@ export const TEMPLATES: readonly Template[] = [
     title: "Map-reduce",
     pattern: "map_reduce",
     blurb: "Split the work, map each part, reduce the results.",
+    sample:
+      "09:00 alert fires. 09:05 on-call joins. 09:20 rollback starts. 09:35 errors stop. 09:50 incident closed.",
     spec: {
       spec_version: 1,
       name: "map-reduce",
@@ -320,6 +333,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Handoff",
     pattern: "handoff",
     blurb: "A front agent hands the conversation to a specialist.",
+    sample: "Queries on the orders database got slow after last night's migration.",
     spec: {
       spec_version: 1,
       name: "handoff",
@@ -344,6 +358,7 @@ export const TEMPLATES: readonly Template[] = [
     title: "Plan and execute",
     pattern: "plan_and_execute",
     blurb: "A planner writes steps; an executor runs them and may replan.",
+    sample: "Prepare a checklist for rotating the Kafka client certificates.",
     spec: {
       spec_version: 1,
       name: "plan-and-execute",
