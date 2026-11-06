@@ -527,12 +527,12 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         private_allow: PrivateAllowlist | None = None,
         max_response_bytes: int | None = None,
         egress_proxy: str | None = None,
-        on_rejected_token: Callable[[str, str], Any] | None = None,
+        on_http_error: Callable[[int, str, str | None], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._origin = origin_of(url)
-        self._on_rejected_token = on_rejected_token
+        self._on_http_error = on_http_error
         self._allow_private = allow_private_network
         self._private_allow = private_allow
         self._max_bytes = (
@@ -576,10 +576,14 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 raise McpProxyRefused(proxy_refusal_message(exc, request.url)) from exc
         else:
             response = await super().handle_async_request(request)
-        if response.status_code == 401 and self._on_rejected_token is not None:
+        if response.status_code >= 400 and self._on_http_error is not None:
             authorization = request.headers.get("authorization", "")
-            if authorization.startswith("Bearer "):
-                self._on_rejected_token(authorization.removeprefix("Bearer "), request.method)
+            bearer = (
+                authorization.removeprefix("Bearer ")
+                if authorization.startswith("Bearer ")
+                else None
+            )
+            self._on_http_error(response.status_code, request.method, bearer)
         host = request.url.host
         encoding = response.headers.get("content-encoding", "").strip().lower()
         if encoding not in ("", "identity"):
@@ -632,14 +636,14 @@ def client_factory(
     private_allow: PrivateAllowlist | None = None,
     max_response_bytes: int | None = None,
     egress_proxy: str | None = None,
-    on_rejected_token: Callable[[str, str], Any] | None = None,
+    on_http_error: Callable[[int, str, str | None], Any] | None = None,
 ) -> Callable[..., Any]:
     """An ``httpx_client_factory`` for ADK's MCP connection params.
 
     *max_response_bytes* defaults to ``ORRERY_MCP_MAX_RESPONSE_BYTES`` (8 MiB),
     read here, so a bad value fails when the server is configured.
-    *on_rejected_token* is told the bearer token and method of a request
-    answered 401.
+    *on_http_error* is told the status, method and bearer token of a request
+    answered 4xx or 5xx.
 
     Same signature as the SDK's default factory. Redirects stay off: the SDK
     follows the ones within the origin itself, and the transport refuses the
@@ -659,7 +663,7 @@ def client_factory(
                 private_allow=private_allow,
                 max_response_bytes=cap,
                 egress_proxy=egress_proxy,
-                on_rejected_token=on_rejected_token,
+                on_http_error=on_http_error,
                 verify=verify,
             ),
             "follow_redirects": False,

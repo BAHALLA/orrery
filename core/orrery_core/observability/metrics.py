@@ -329,8 +329,6 @@ class MetricsCollector:
 
             collector._update_circuit_breaker_gauge(tool.name)
 
-            return None
-
         return callback
 
     # ── Internal helpers ──────────────────────────────────────────────

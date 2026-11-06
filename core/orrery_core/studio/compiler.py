@@ -380,7 +380,7 @@ def _label_and_answer(node_input: Any) -> tuple[Any, str]:
     return data.get("label"), answer if isinstance(answer, str) else ""
 
 
-def compile_spec(
+def compile_spec(  # noqa: C901
     spec: CompositionSpec,
     *,
     registry: StudioRegistry,

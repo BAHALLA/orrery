@@ -341,6 +341,5 @@ def ensure_default_role(default: str = "viewer") -> Callable:
         state = callback_context.state
         if not state.get(_ROLE_LOCKED_KEY):
             state[USER_ROLE_STATE_KEY] = default
-        return None
 
     return callback

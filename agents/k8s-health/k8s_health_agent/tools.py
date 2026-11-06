@@ -213,7 +213,7 @@ async def get_cluster_info() -> dict[str, Any]:
         return {"status": "error", "message": f"Failed to get cluster info: {e.reason}"}
     except Exception as e:
         logger.exception("Failed to connect to cluster")
-        return {"status": "error", "message": f"Failed to connect to cluster: {str(e)}"}
+        return {"status": "error", "message": f"Failed to connect to cluster: {e!s}"}
 
 
 # ── Nodes ──────────────────────────────────────────────────────────────

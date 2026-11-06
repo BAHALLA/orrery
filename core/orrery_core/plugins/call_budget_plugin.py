@@ -87,11 +87,11 @@ class CallBudgetPlugin(BasePlugin):
         self, *, callback_context: CallbackContext, llm_request: LlmRequest
     ) -> None:
         if self._max <= 0:
-            return None
+            return
         run = run_key(callback_context)
         spent = self.spent(run) if run else 0
         if spent < self._warn_at:
-            return None
+            return
         left = max(0, self._max - spent)
         note = (
             f"[Tool-call budget: {spent} of {self._max} calls used in this run, "
@@ -100,7 +100,7 @@ class CallBudgetPlugin(BasePlugin):
             "user could narrow the question.]"
         )
         llm_request.contents.append(types.Content(role="user", parts=[types.Part(text=note)]))
-        return None
+        return
 
     async def before_tool_callback(
         self,
@@ -137,8 +137,8 @@ class CallBudgetPlugin(BasePlugin):
         result: Any,
     ) -> None:
         if self._max <= 0:
-            return None
+            return
         run = run_key(tool_context)
         if run and classify_tool_outcome(result) is not ToolOutcome.IGNORE:
             self._spent.get(run)[0] += 1
-        return None
+        return

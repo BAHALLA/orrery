@@ -238,6 +238,20 @@ async def test_a_probe_that_fails_again_closes_it_for_the_session():
 
 
 @pytest.mark.asyncio
+async def test_a_rejected_token_never_closes_it_for_the_session():
+    """The one failure that comes good by itself: the token gets replaced."""
+    plugin = RepeatGuardPlugin(max_failures=2)
+    rejected = {"status": "error", "error_type": "credential_rejected", "message": "401"}
+    await _attempt(plugin, {}, rejected)
+    await _attempt(plugin, {}, rejected)
+    assert await _attempt(plugin, {}, rejected) is not None  # refused, now half-open
+    assert await _attempt(plugin, {}, rejected) is None  # the probe runs... and fails
+    assert await _attempt(plugin, {}, rejected) is not None  # refused, but not closed
+    assert await _attempt(plugin, {}, {"status": "success"}) is None  # the next probe works
+    assert await _attempt(plugin, {}, {"status": "success"}) is None
+
+
+@pytest.mark.asyncio
 async def test_a_probe_that_succeeds_reopens_it():
     plugin = RepeatGuardPlugin(max_failures=2)
     args = {"namespace": "payments"}

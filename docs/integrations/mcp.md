@@ -234,8 +234,8 @@ Orrery, and a server holding it could replay it against Orrery.
   SSE session the rejection killed isn't reused. A 401 on the optional GET stream
   of streamable HTTP or on closing a session changes nothing, and neither does a
   403, which is about permissions. The call answers `credential_rejected` and warns
-  that it may have partly run. The run budgets count it, the shared circuit breaker
-  doesn't.
+  that it may have partly run. The run budgets and repeat guard count it, the shared
+  circuit breaker doesn't, and the repeat guard never closes on it for good.
 - **One tool text for everyone:** the allowlist screen and fingerprint pins
   are per server, not per user. A server that tailors a tool's description or
   schema to each user would see the first user's text pinned and everyone

@@ -603,7 +603,7 @@ def _labels_of(node: Any) -> list[str] | None:
     return list(output.labels) if output is not None else None
 
 
-def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]]:
+def plan_graph(spec: CompositionSpec) -> tuple[GraphPlan | None, list[SpecError]]:  # noqa: C901
     """Check the nodes and edges form a graph this release runs; the plan if they do.
 
     - **Supervisors**: children are ``llm_agent`` or ``supervisor`` nodes, each

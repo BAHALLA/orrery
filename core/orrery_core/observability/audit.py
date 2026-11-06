@@ -140,7 +140,6 @@ def attempt_logger(log_path: str | Path | None = None) -> Callable:
             },
         )
         _write_file_entry(resolved_path, entry)
-        return None
 
     return callback
 

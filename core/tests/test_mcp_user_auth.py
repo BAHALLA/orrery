@@ -516,3 +516,23 @@ def test_a_rejected_token_stays_out_of_the_shared_circuit():
 
     after(tool, {}, MagicMock(), {"error": "MCP tool execution failed: boom"})
     assert breaker.before_tool_callback()(tool, {}, MagicMock()) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_static_sse_server_recovers_from_a_failed_post(sse_server):
+    url, recorder = sse_server
+    toolset = GuardedMcpToolset(
+        _config(auth=None, transport="sse", url=url, call_timeout_seconds=2)
+    )
+    ctx = MagicMock()
+    try:
+        (tool,) = await toolset.get_tools(ctx)
+        recorder.outage = True
+        await tool.run_async(args={}, tool_context=ctx)
+        recorder.outage = False
+        result = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.outage = False
+        await toolset.close()
+
+    assert classify_tool_outcome(result) is ToolOutcome.SUCCESS

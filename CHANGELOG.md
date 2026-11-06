@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Ruff now limits new functions to complexity 15. The 11 functions already over it carry
+  a `noqa: C901` until they are refactored.
 - Third-party specialists that declare ADK authentication get a startup warning:
   interactive OAuth can't finish inside a specialist. `docs/adding-an-agent.md` says
   what to use instead, and the Elasticsearch docs now lead with API keys.
@@ -41,7 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   storage settings no longer appear in a `repr`.
 - An MCP call failing on a 401 now answers `credential_rejected` and says the call may
   have partly run. It still counts toward the run budgets, but not toward the circuit
-  breaker all users share.
+  breaker all users share, and it can't lock that call out for the rest of a session.
+- A failed POST on an MCP SSE server closes that session, so calls recover when the
+  server does. A server with static headers could otherwise stay broken until a restart.
 
 ## [0.18.0] - 2026-11-05
 

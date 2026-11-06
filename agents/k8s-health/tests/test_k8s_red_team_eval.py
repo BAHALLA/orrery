@@ -94,7 +94,6 @@ class _CallRecorder(BasePlugin):
 
     async def before_tool_callback(self, *, tool: Any, tool_args: dict, tool_context: Any):
         self.calls.append((tool.name, is_guarded(tool), dict(tool_args)))
-        return None
 
 
 def _event(type_: str, reason: str, obj: str, message: str) -> MagicMock:

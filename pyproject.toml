@@ -125,10 +125,21 @@ select = [
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
+    "C90", # complexity: see [tool.ruff.lint.mccabe]
+    "PERF102", # dict iteration that ignores keys or values
+    "PLR1711", # useless return
+    "RET501", # `return None` where nothing else is returned
+    "RUF010", # str() inside an f-string
+    "RUF022", # unsorted __all__
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
 ]
+
+[tool.ruff.lint.mccabe]
+# A limit for new code. Functions already over it carry `noqa: C901` until they
+# are refactored; don't add one to get a change through.
+max-complexity = 15
 
 [tool.ruff.lint.isort]
 known-first-party = [

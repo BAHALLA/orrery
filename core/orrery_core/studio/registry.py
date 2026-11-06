@@ -263,7 +263,7 @@ def _parsed(section: str, item: Mapping[str, Any]) -> RemoteAgentEntry | McpServ
     return McpServerConfig.model_validate(_mcp_entry(dict(item)))
 
 
-def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:
+def check_deployment_bound(document: Mapping[str, Any], file_document: Mapping[str, Any]) -> None:  # noqa: C901
     """Refuse an edit that reaches what only the deployment may bind.
 
     A secret is sent to its entry's origins, and a private or loopback address

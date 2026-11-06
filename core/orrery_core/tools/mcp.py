@@ -191,7 +191,7 @@ class McpServerConfig(BaseModel):
     instruction: str = ""
 
     @model_validator(mode="after")
-    def _check(self) -> McpServerConfig:
+    def _check(self) -> McpServerConfig:  # noqa: C901
         if not _NAME.match(self.name):
             raise ValueError(f"name {self.name!r} must match {_NAME.pattern}")
         allowed = set(self.tools)
@@ -390,7 +390,7 @@ def fingerprint(text: dict[str, Any]) -> str:
 
 async def _no_google_mtls() -> None:
     """Stands in for ``MCPSessionManager._get_mtls_transport`` (see the caller)."""
-    return None
+    return
 
 
 class GuardedMcpToolset(McpToolset):
@@ -432,7 +432,7 @@ class GuardedMcpToolset(McpToolset):
                 private_allow=private_allow,
                 verify=verify,
                 egress_proxy=egress_proxy,
-                on_rejected_token=self._on_rejected_token if config.auth else None,
+                on_http_error=self._on_http_error,
             ),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
@@ -468,6 +468,19 @@ class GuardedMcpToolset(McpToolset):
         auth, broker = self.server_config.auth, self._broker
         assert auth is not None and broker is not None  # only used with auth
         return await broker.token_for(auth.audience, auth.scope)
+
+    def _on_http_error(self, status: int, method: str, bearer: str | None) -> None:
+        """The server answered an error. See :meth:`_on_rejected_token` for a 401.
+
+        Any failed POST kills an SSE session while ADK's pool keeps handing it
+        back, and later calls fail with no request. On a server with static
+        headers nothing would ever replace that session, so it goes now.
+        """
+        if status == 401 and bearer and self._broker:
+            self._on_rejected_token(bearer, method)
+        elif method == "POST" and self.server_config.transport == "sse":
+            headers = {"Authorization": f"Bearer {bearer}"} if bearer and self._broker else None
+            self._mcp_session_manager._discard_session(headers=headers)
 
     def _on_rejected_token(self, token: str, method: str) -> None:
         """The server answered 401: stop using *token*, and on a POST its session.
@@ -604,7 +617,7 @@ def _connection_params(
     private_allow: PrivateAllowlist | None = None,
     verify: ssl.SSLContext | bool | None = None,
     egress_proxy: str | None = None,
-    on_rejected_token: Callable[[str, str], Any] | None = None,
+    on_http_error: Callable[[int, str, str | None], Any] | None = None,
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {
@@ -631,7 +644,7 @@ def _connection_params(
         else ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
         private_allow=private_allow,
         egress_proxy=egress_proxy,
-        on_rejected_token=on_rejected_token,
+        on_http_error=on_http_error,
     )
     if config.transport == "sse":
         # The SSE stream idles between calls, so its read timeout cannot be the

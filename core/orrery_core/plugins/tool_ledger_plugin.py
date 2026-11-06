@@ -157,7 +157,6 @@ class ToolLedgerPlugin(BasePlugin):
         ledger = _LEDGER.get()
         if ledger is not None and is_guarded(tool):
             ledger.in_flight[_call_key(tool, tool_context)] = tool.name
-        return None
 
     async def after_tool_callback(
         self,
@@ -169,7 +168,7 @@ class ToolLedgerPlugin(BasePlugin):
     ) -> None:
         ledger = _LEDGER.get()
         if ledger is None:
-            return None
+            return
         ledger.in_flight.pop(_call_key(tool, tool_context), None)
         refused = classify_tool_outcome(result) is ToolOutcome.IGNORE
         ledger.entries.append(
@@ -180,4 +179,4 @@ class ToolLedgerPlugin(BasePlugin):
                 refused=refused,
             )
         )
-        return None
+        return

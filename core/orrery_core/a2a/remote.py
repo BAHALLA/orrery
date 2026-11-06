@@ -984,7 +984,7 @@ class GuardedRemoteA2aTool(BaseTool):
                 except Exception:
                     logger.warning("remote A2A %s: closing timed out or failed", self.name)
 
-    async def _exchange(
+    async def _exchange(  # noqa: C901
         self, runner: Any, author: str, session_id: str, text: str
     ) -> dict[str, Any]:
         reply: list[str] = []
@@ -1102,6 +1102,7 @@ def remote_tools(
 
 __all__ = [
     "CA_FILE_ENV",
+    "SECRET_ENV_PREFIX",
     "CardRefused",
     "GuardedRemoteA2aTool",
     "PinnedCard",
@@ -1110,7 +1111,6 @@ __all__ = [
     "RemoteCards",
     "RemoteExchange",
     "RemoteNetwork",
-    "SECRET_ENV_PREFIX",
     "card_digest",
     "check_private_allow",
     "jcs",

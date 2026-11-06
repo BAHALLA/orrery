@@ -252,7 +252,7 @@ def capabilities(service: StudioService) -> dict[str, Any]:
     }
 
 
-def mount_studio(
+def mount_studio(  # noqa: C901
     api: FastAPI,
     *,
     service: StudioService,

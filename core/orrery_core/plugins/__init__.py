@@ -139,6 +139,7 @@ __all__ = [
     "DEFAULT_MAX_TOOL_CALLS_PER_RUN",
     "DEFAULT_MAX_TOOL_RESULT_BYTES",
     "DELEGATION_REFUSED_STATUS",
+    "GUARDED_STATE_KEYS",
     "REPEAT_REFUSED_STATUS",
     "RUN_OUTPUT_BUDGET_STATUS",
     "ActivityPlugin",
@@ -148,7 +149,6 @@ __all__ = [
     "CallBudgetPlugin",
     "DelegationGuardPlugin",
     "ErrorHandlerPlugin",
-    "GUARDED_STATE_KEYS",
     "GuardrailsPlugin",
     "IdentityStateGuardPlugin",
     "LedgerEntry",
@@ -160,9 +160,9 @@ __all__ = [
     "RepeatGuardPlugin",
     "ResiliencePlugin",
     "SafetyScreenPlugin",
+    "TokenBudgetPlugin",
     "ToolLedger",
     "ToolLedgerPlugin",
-    "TokenBudgetPlugin",
     "ToolOutputCapPlugin",
     "current_tool_ledger",
     "default_plugins",
@@ -187,7 +187,7 @@ def _resolve_autonomy_level(autonomy_level: str | None) -> str | None:
     return level
 
 
-def default_plugins(
+def default_plugins(  # noqa: C901
     *,
     role_policy: RolePolicy | None = None,
     guardrail_mode: str = "confirm",

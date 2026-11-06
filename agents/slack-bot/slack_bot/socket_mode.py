@@ -49,7 +49,7 @@ store = create_confirmation_store()
 session_map = SessionMap()
 
 
-def _create_bolt_app() -> tuple[AsyncApp, dict[str, SlackAgentHandler | None]]:
+def _create_bolt_app() -> tuple[AsyncApp, dict[str, SlackAgentHandler | None]]:  # noqa: C901
     """Create and configure the Slack Bolt app with all event handlers."""
     bolt_app = AsyncApp(token=config.slack_bot_token.get_secret_value())
 

@@ -356,7 +356,6 @@ class CircuitBreaker:
             error: Exception,
         ) -> None:
             breaker._record_failure(tool.name)
-            return None
 
         return callback
 
