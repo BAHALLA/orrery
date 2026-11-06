@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than "ceiling", and nodes no longer repeat "deployment model".
 - Each Studio template offers an example input in the Run tab. It only fills the box.
 - The empty chat shows no suggestion cards until `/me` has answered, and none while it
-  is failing (it retries), so a lab's learner never gets the stock cards. A failed
+  is failing (it retries a 5xx or an unreachable server), so a lab's learner never gets the stock cards. A failed
   refetch keeps what the console already knew. A server without `/me` still gets them.
 
 ### Added

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClient, ApiError } from "../api/client";
 import type {
   CatalogResponse,
@@ -13,7 +13,7 @@ import { resolveSpecialists, setActiveSpecialists } from "../specialists";
 export interface SystemController {
   /** The server's own view of the caller — null until it loads. */
   me: MeResponse | null;
-  /** Why `me` is unavailable, when the fetch failed for a reason worth showing. */
+  /** Why the last fetch of `me` failed, when that is worth showing. `me` may still hold an earlier answer. */
   meError: string | null;
   /** `/me` has answered, or this server has none. Until then the console doesn't know this deployment. */
   meLoaded: boolean;
@@ -57,7 +57,7 @@ export function describeApiError(err: unknown, fallback: string): string {
 /**
  * Deployment posture and first-run diagnostics (AEP-019 Milestone 3).
  *
- * `/me` is fetched once on mount: it carries the role the *server* resolved and
+ * `/me` is fetched on mount and whenever the token changes: it carries the role the *server* resolved and
  * the autonomy level actually in force, which is what decides whether a
  * mutating tool will run. The console also decodes the JWT locally for the
  * badge, but that is the browser's reading of a token it cannot verify — this
@@ -73,6 +73,9 @@ export function useSystem(token: string | null): SystemController {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
+  // A server that has answered /me isn't one without it, whatever a rollout's
+  // ingress says during a refetch.
+  const meAnswered = useRef(false);
   const [selfTest, setSelfTest] = useState<SelfTestResponse | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +94,7 @@ export function useSystem(token: string | null): SystemController {
           if (cancelled) return;
           // Labels and rollups outside React read the deployment's specialists.
           setActiveSpecialists(resolveSpecialists(res.specialists));
+          meAnswered.current = true;
           setMe(res);
           setMeError(null);
           setMeLoaded(true);
@@ -103,7 +107,7 @@ export function useSystem(token: string | null): SystemController {
           // swallowed here, leaving the panel showing "—" with no way to tell a
           // missing route from a broken one. That silence is what made the
           // reported bug hard to place.
-          if (err instanceof ApiError && err.status === 404) {
+          if (err instanceof ApiError && err.status === 404 && !meAnswered.current) {
             setMe(null);
             setMeError(null);
             setMeLoaded(true);
