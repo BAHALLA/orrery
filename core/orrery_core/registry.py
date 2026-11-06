@@ -335,6 +335,22 @@ def _agents_in(agent: BaseAgent) -> list[BaseAgent]:
     return seen
 
 
+def _declares_adk_auth(tool: Any) -> bool:
+    """Whether *tool* uses ADK's credential flow. Never fails startup: it only warns."""
+    from google.adk.tools.base_authenticated_tool import BaseAuthenticatedTool
+    from google.adk.tools.base_toolset import BaseToolset
+
+    if isinstance(tool, BaseAuthenticatedTool):
+        return getattr(tool, "_credentials_manager", None) is not None
+    if not isinstance(tool, BaseToolset):
+        return False
+    try:
+        return tool.get_auth_config() is not None
+    except Exception:
+        logger.warning("%s.get_auth_config() raised", type(tool).__name__, exc_info=True)
+        return False
+
+
 def _check_plugin_gates(key: str, spec: SpecialistSpec) -> None:
     """Hold a third-party specialist to the invariants the repo's tests hold ours to.
 
@@ -365,6 +381,15 @@ def _check_plugin_gates(key: str, spec: SpecialistSpec) -> None:
             if not isinstance(getattr(t, "agent", None), BaseAgent)
         ]
         for tool in tools:
+            if _declares_adk_auth(tool):
+                logger.warning(
+                    "Third-party specialist %r: %s declares ADK authentication. Interactive "
+                    "OAuth cannot finish inside a specialist (AgentTool cannot resume a "
+                    "credential request), and ADK caches credentials in session state. Use "
+                    "non-interactive credentials from the environment. See docs/adding-an-agent.md",
+                    key,
+                    agent.name,
+                )
             if isinstance(tool, BaseToolset):
                 continue  # no static names to check; gated below
             name = _tool_name(tool)

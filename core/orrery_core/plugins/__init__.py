@@ -79,6 +79,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from .. import learning_gate
 from ..env import env_flag, env_int
 from ..memory_switch import long_term_memory_enabled
+from ..observability.trace_context import bound_inbound_tracestate
 from ..security.auth import AuthPlugin
 from ..security.rbac import RolePolicy
 from .activity_plugin import ActivityPlugin
@@ -313,6 +314,10 @@ def default_plugins(
     # skipped by an earlier plugin's return.
     if enable_identity_guard:
         plugins.append(IdentityStateGuardPlugin())
+
+    # Not behind the flag: a tracer provider from anywhere else turns FastAPI's
+    # header extraction on just the same.
+    bound_inbound_tracestate()
 
     if enable_tracing:
         # Imported lazily: tracing.py imports OpenTelemetry at module load, so

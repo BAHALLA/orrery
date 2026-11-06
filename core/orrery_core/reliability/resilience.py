@@ -78,6 +78,10 @@ class ToolOutcome(Enum):
 #: half-open.
 CIRCUIT_OPEN_ERROR = "CircuitOpen"
 CIRCUIT_HALF_OPEN_ERROR = "CircuitHalfOpen"
+#: A server's 401 to one user's token. The call reached the server, so it is a
+#: failure to the run guards, but it says nothing about the server's health, so
+#: it doesn't count toward the circuit every user of the tool shares.
+CREDENTIAL_REJECTED_ERROR = "credential_rejected"
 _BREAKER_ERROR_TYPES = frozenset({CIRCUIT_OPEN_ERROR, CIRCUIT_HALF_OPEN_ERROR})
 
 #: The repo-wide convention for "this tool call failed" (``validate_string`` and
@@ -319,6 +323,8 @@ class CircuitBreaker:
             tool_response: Any,
         ) -> dict | None:
             outcome = classify_tool_outcome(tool_response)
+            if _response_field(tool_response, "error_type") == CREDENTIAL_REJECTED_ERROR:
+                outcome = ToolOutcome.IGNORE
             if outcome is ToolOutcome.SUCCESS:
                 breaker._record_success(tool.name)
             elif outcome is ToolOutcome.FAILURE:
@@ -328,7 +334,8 @@ class CircuitBreaker:
                 )
                 breaker._record_failure(tool.name)
             else:
-                # The tool never ran (policy gate, or this breaker answered).
+                # No evidence about the tool: a policy gate or this breaker
+                # answered, or the server rejected one user's token.
                 breaker._clear_half_open_probe(tool.name)
             return None
 

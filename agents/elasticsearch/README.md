@@ -44,7 +44,7 @@ Place a `.env` file in `agents/elasticsearch/elasticsearch_agent/.env` (see `.en
 
 ```bash
 ELASTICSEARCH_URL=http://localhost:9200
-# Authentication — pick one:
+# Authentication — prefer an API key, which takes precedence over basic auth:
 # ELASTICSEARCH_API_KEY=base64_encoded_api_key
 # ELASTICSEARCH_USERNAME=elastic
 # ELASTICSEARCH_PASSWORD=changeme

@@ -92,6 +92,12 @@ For production, prefer **External Secrets Operator** syncing from AWS
 Secrets Manager / GCP Secret Manager / HashiCorp Vault, or **Sealed
 Secrets** for a GitOps flow — do not commit the Secret manifest.
 
+Orrery reads secrets once at startup, so a rotated secret takes effect after a
+restart (`kubectl rollout restart`), whether it comes from the environment or
+a mounted file. Prefer short-lived credentials where a target offers them:
+Workload Identity for Google APIs, and `auth: {type: token_exchange}` for MCP
+servers ([per-user credentials](integrations/mcp.md#per-user-credentials)).
+
 ADK's `DatabaseSessionService` is built on SQLAlchemy and the schema
 is created automatically on first use. You do **not** need to run a
 migration step.
@@ -266,6 +272,10 @@ The chart's own defaults (one replica, in-memory state, no ingress) are for
 evaluation: they install with no database and no identity provider.
 
 ### Kubernetes access for the agent
+
+A kubeconfig `exec` credential plugin is started by the Kubernetes client with
+the agent's full environment, so only use one you trust with Orrery's secrets.
+In-cluster ServiceAccount access runs no plugin.
 
 The chart grants the pod's ServiceAccount what the Kubernetes, Strimzi and ECK
 tools call, rule for rule, and never secrets (`rbac` in `values.yaml`):

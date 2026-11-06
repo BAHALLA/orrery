@@ -377,7 +377,8 @@ async def test_a_403_refusal_is_logged_louder(caplog):
     with _as(SUBJECT), pytest.raises(CredentialUnavailable) as err:
         await _broker(idp).token_for("github-mcp")
     assert err.value.is_refusal
-    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    levels = [r.levelno for r in caplog.records if r.name == "orrery.token_exchange"]
+    assert levels == [logging.WARNING]
 
 
 def test_resetting_the_default_broker_releases_its_threads(monkeypatch):

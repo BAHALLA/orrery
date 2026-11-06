@@ -97,7 +97,8 @@ class PgVectorKnowledgeBackend:
     def _db_url(self) -> str:
         import os
 
-        url = self._config.knowledge_pg_url or os.getenv("DATABASE_URL")
+        configured = self._config.knowledge_pg_url
+        url = (configured.get_secret_value() if configured else "") or os.getenv("DATABASE_URL")
         if not url:
             raise KnowledgeBackendError(
                 "The pgvector knowledge backend needs KNOWLEDGE_PG_URL or DATABASE_URL."

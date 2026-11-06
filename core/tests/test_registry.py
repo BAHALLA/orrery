@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -289,6 +290,44 @@ def test_a_plugin_agent_with_guarded_tools_needs_a_confirmation_gate(monkeypatch
     bare = _agent("redis_agent", [get_status, restart_service])
     with pytest.raises(ValueError, match="no confirmation gate"):
         discover_specialists(loader=_eps(("redis", bare), dist="acme-redis-agent"))
+
+
+def test_a_plugin_toolset_declaring_adk_auth_is_warned_about(monkeypatch, caplog):
+    from google.adk.tools.base_toolset import BaseToolset
+
+    class _OAuth(BaseToolset):
+        async def get_tools(self, readonly_context=None):  # type: ignore[override]
+            return []
+
+        async def close(self):
+            return None
+
+        def get_auth_config(self):
+            return object()
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    agent = _gated("redis_agent", [get_status, _OAuth()])
+    with caplog.at_level(logging.WARNING, logger="orrery.registry"):
+        discover_specialists(loader=_eps(("redis", agent), dist="acme-redis-agent"))
+    assert "declares ADK authentication" in caplog.text
+
+
+def test_a_toolset_whose_auth_config_raises_does_not_stop_startup(monkeypatch):
+    from google.adk.tools.base_toolset import BaseToolset
+
+    class _Broken(BaseToolset):
+        async def get_tools(self, readonly_context=None):  # type: ignore[override]
+            return []
+
+        async def close(self):
+            return None
+
+        def get_auth_config(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    agent = _gated("redis_agent", [get_status, _Broken()])
+    discover_specialists(loader=_eps(("redis", agent), dist="acme-redis-agent"))
 
 
 def test_a_plugin_tool_named_as_a_mutation_must_be_guarded(monkeypatch):

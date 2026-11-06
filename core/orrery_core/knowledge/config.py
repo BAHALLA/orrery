@@ -59,5 +59,5 @@ class KnowledgeConfig(AgentConfig):
     #: Defaults to ``DATABASE_URL`` when unset — the corpus can share the
     #: platform's PostgreSQL, but only if that server has the ``vector``
     #: extension (``pgvector/pgvector:pg16``, not ``postgres:16-alpine``).
-    knowledge_pg_url: str | None = None
+    knowledge_pg_url: SecretStr | None = None
     knowledge_pg_table: str = "orrery_knowledge_chunks"

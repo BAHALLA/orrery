@@ -160,7 +160,8 @@ class ServerConfig:
     jwt: JWTConfig = field(default_factory=JWTConfig)
     #: Start without ``JWT_AUDIENCE``/``JWT_ISSUER`` (``ORRERY_ALLOW_UNBOUND_TOKENS``).
     allow_unbound_tokens: bool = False
-    database_url: str | None = None
+    #: Holds the database password, so it stays out of a repr of this config.
+    database_url: str | None = field(default=None, repr=False)
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
     chat_rate_limit: str = "30/minute"
@@ -169,7 +170,8 @@ class ServerConfig:
     hint_rate_limit: str = "3/minute"
     selftest_rate_limit: str = "10/minute"
     docs_enabled: bool | None = None
-    rate_limit_storage_uri: str = "memory://"
+    #: May hold a password (``redis://:pw@host``), so it stays out of a repr.
+    rate_limit_storage_uri: str = field(default="memory://", repr=False)
     csp_extra_origins: tuple[str, ...] = ()
     #: Let admins change the agent catalog from the console (PUT /admin/catalog).
     #: Off by default: reading the inventory is harmless, rewiring a running

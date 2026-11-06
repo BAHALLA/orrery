@@ -14,9 +14,13 @@ from orrery_core.security.secrets import subprocess_env
 
 ROOT = Path(__file__).resolve().parents[2]
 SECRET_NAME = re.compile(
-    r"(api_key|apikey|password|passwd|passphrase|secret|secret_key|secret_access_key|access_key"
-    r"|private_key|signing_key|credentials|(^|_)token)$"
+    r"(api_keys?|apikey|password|passwd|pwd|passphrase|secret|secret_key|secret_access_key"
+    r"|access_key|private_key|signing_key|client_key|ssh_key|credentials|(^|_)tokens?"
+    r"|db_url|pg_url)$",
+    re.IGNORECASE,
 )
+#: What such a field may be annotated as: a flag or a number holds no secret.
+ALLOWED = {"SecretStr", "SecretStr | None", "bool", "int", "float"}
 
 
 def _classes() -> Iterator[tuple[Path, ast.ClassDef]]:
@@ -29,6 +33,12 @@ def _classes() -> Iterator[tuple[Path, ast.ClassDef]]:
                     yield path, node
 
 
+def _base_name(base: ast.expr) -> str:
+    if isinstance(base, ast.Subscript):
+        return _base_name(base.value)
+    return base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
+
+
 def _secret_settings_fields() -> dict[str, str]:
     """``module.Class.field`` -> annotation, for settings classes in the repo."""
     classes = list(_classes())
@@ -38,8 +48,7 @@ def _secret_settings_fields() -> dict[str, str]:
         grew = False
         for _, node in classes:
             if node.name not in settings and any(
-                (base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")) in settings
-                for base in node.bases
+                _base_name(base) in settings for base in node.bases
             ):
                 settings.add(node.name)
                 grew = True
@@ -58,9 +67,7 @@ def _secret_settings_fields() -> dict[str, str]:
 
 
 def test_no_settings_field_holds_a_secret_as_a_plain_str():
-    plain = {
-        f: a for f, a in _secret_settings_fields().items() if "str" in a and "SecretStr" not in a
-    }
+    plain = {f: a for f, a in _secret_settings_fields().items() if a not in ALLOWED}
     assert not plain, f"use SecretStr, so a repr can't print it: {plain}"
 
 
