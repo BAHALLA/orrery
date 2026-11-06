@@ -138,8 +138,8 @@ client is held to what you configured:
 
 - **one origin**: requests go only to the configured scheme, host and port.
   The SSE transport takes its POST endpoint from the server, and the SDK
-  follows redirects; anything pointing elsewhere is refused, and redirects are
-  not followed at all.
+  follows 307/308 redirects within that origin; anything pointing elsewhere is
+  refused.
 - **public addresses**: every request checks what the host resolves to, and
   refuses a private, loopback or otherwise non-public address. IPv4 carried in
   IPv6 (mapped, NAT64 `64:ff9b::/96`, IPv4-compatible) is checked as the IPv4
@@ -236,12 +236,12 @@ Orrery, and a server holding it could replay it against Orrery.
   token alone, since it is about permissions. The call answers `credential_rejected` and warns
   that it may have partly run. The run budgets and repeat guard count it, the shared
   circuit breaker doesn't, and the repeat guard never closes on it for good.
-- **A failed POST over SSE:** an error status, a redirect or a lost connection on a
-  POST kills an SSE session (the client can't write to it again), so Orrery closes
-  it and the next call opens a new one. This holds for every server, with or without `auth`. Other calls waiting
-  on that session are cut off too, and answer `session_closed` with a warning that
-  they may have run. With `auth` that is one user's session; with static headers it
-  is the session all users share. Streamable HTTP sessions survive a failed POST.
+- **A failed POST over SSE:** an error status, a redirect the SDK won't follow or a
+  lost connection on a POST kills an SSE session (the client can't write to it again), so Orrery closes
+  it and the next call opens a new one. This holds for every server, with or without
+  `auth`. Other calls waiting on that session are cut off too, and answer
+  `session_closed` with a warning that they may have run. With `auth` that is one
+  user's session; with static headers it is the session all users share. Streamable HTTP sessions recover on their own.
 - **One tool text for everyone:** the allowlist screen and fingerprint pins
   are per server, not per user. A server that tailors a tool's description or
   schema to each user would see the first user's text pinned and everyone
