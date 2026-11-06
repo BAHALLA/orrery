@@ -53,6 +53,8 @@ class Recorder:
         self.outage = False
         #: The status an outage answers with.
         self.outage_status = 500
+        #: Answer this many POSTs with a same-origin 307 to the same URL.
+        self.redirects = 0
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -62,6 +64,13 @@ class Recorder:
         if auth is None:
             self.unauthenticated += 1
         method = scope["method"]
+        if self.redirects and method == "POST":
+            self.redirects -= 1
+            path = scope["path"].encode() + b"?" + scope["query_string"]
+            await send(
+                {"type": "http.response.start", "status": 307, "headers": [(b"location", path)]}
+            )
+            return await send({"type": "http.response.body", "body": b""})
         if self.outage and method == "POST":
             await send({"type": "http.response.start", "status": self.outage_status, "headers": []})
             return await send({"type": "http.response.body", "body": b""})
@@ -598,6 +607,44 @@ async def test_a_redirected_post_closes_an_sse_session(sse_server):
 
     assert failed["error_type"] == "session_closed"
     assert classify_tool_outcome(after) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_the_sdk_follows_keeps_the_session(sse_server):
+    url, recorder = sse_server
+    toolset = GuardedMcpToolset(_config(auth=None, transport="sse", url=url))
+    ctx = MagicMock()
+    try:
+        (tool,) = await toolset.get_tools(ctx)
+        recorder.redirects = 1
+        result = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.redirects = 0
+        closed = toolset._closed_session_count(None)
+        await toolset.close()
+
+    assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
+    assert closed == 0
+
+
+@pytest.mark.parametrize(
+    ("status", "location", "follows"),
+    [
+        (307, "/messages/", True),
+        (308, "http://127.0.0.1:1/other", True),
+        (307, "https://elsewhere.example/x", False),
+        (307, None, False),
+        (307, "http://u:p@127.0.0.1:1/x", False),
+        (302, "/messages/", False),
+    ],
+)
+def test_only_a_redirect_the_sdk_follows_is_not_a_failure(status, location, follows):
+    transport = GuardedTransport(url="http://127.0.0.1:1/sse", allow_private_network=True)
+    headers = {"location": location} if location else {}
+    response = httpx.Response(status, headers=headers)
+    request = httpx.Request("POST", "http://127.0.0.1:1/messages")
+
+    assert transport._sdk_follows(response, request) is follows
 
 
 @pytest.mark.asyncio

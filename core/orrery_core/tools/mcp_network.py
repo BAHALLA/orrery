@@ -558,6 +558,26 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
             self._report_http_error(NO_RESPONSE, request)
             raise
 
+    def _sdk_follows(self, response: Any, request: Any) -> bool:
+        """Whether this redirect is one the MCP SDK follows, so not yet a failure.
+
+        It follows 307/308 within the origin, unless the Location brings userinfo;
+        any other 3xx fails its request. If
+        the follow-up fails, that is reported in its turn. A redirect off this
+        origin the SDK either refuses or sends here to be blocked, a failure both
+        ways.
+        """
+        if response.status_code not in (307, 308):
+            return False
+        location = response.headers.get("location")
+        if not location:
+            return False
+        try:
+            target = request.url.join(location)
+            return not target.userinfo and origin_of(str(target)) == self._origin
+        except ValueError:
+            return False
+
     def _report_http_error(self, status: int, request: Any) -> None:
         if self._on_http_error is None:
             return
@@ -599,7 +619,7 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 raise McpProxyRefused(proxy_refusal_message(exc, request.url)) from exc
         else:
             response = await super().handle_async_request(request)
-        if response.status_code >= 300:  # redirects are off, so a 3xx is a failure too
+        if response.status_code >= 300 and not self._sdk_follows(response, request):
             self._report_http_error(response.status_code, request)
         host = request.url.host
         encoding = response.headers.get("content-encoding", "").strip().lower()
