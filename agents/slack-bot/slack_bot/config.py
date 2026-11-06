@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from pydantic import SecretStr
+
 from orrery_core import AgentConfig
 
 
@@ -13,9 +15,9 @@ class SlackBotConfig(AgentConfig):
     All values can be set via environment variables or a .env file.
     """
 
-    slack_bot_token: str = ""
-    slack_signing_secret: str = ""
-    slack_app_token: str = ""  # only needed for Socket Mode
+    slack_bot_token: SecretStr = SecretStr("")
+    slack_signing_secret: SecretStr = SecretStr("")
+    slack_app_token: SecretStr = SecretStr("")  # only needed for Socket Mode
     slack_bot_port: int = 3000
     # Empty → in-memory sessions. Set to a PostgreSQL URL (or DATABASE_URL) to
     # persist. SQLite is not supported.

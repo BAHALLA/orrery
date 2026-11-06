@@ -102,8 +102,8 @@ async def _slack_rate_limit(request: Request) -> None:
 # ── Slack Bolt app ────────────────────────────────────────────────────
 
 bolt_app = AsyncApp(
-    token=config.slack_bot_token,
-    signing_secret=config.slack_signing_secret,
+    token=config.slack_bot_token.get_secret_value(),
+    signing_secret=config.slack_signing_secret.get_secret_value(),
 )
 
 # ── ADK setup (initialized at startup) ───────────────────────────────

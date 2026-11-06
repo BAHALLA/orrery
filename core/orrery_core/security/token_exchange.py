@@ -19,7 +19,9 @@ rather than the user: a new console token starts fresh, and nothing outlives
 the token it was exchanged from by more than its own lifetime. Concurrent
 requests for one key share a single exchange. Failures are remembered too, per
 key: a refusal for 30 s, an IdP outage or misconfiguration with a backoff, so
-a refused user doesn't cost an IdP round-trip on every model step.
+a refused user doesn't cost an IdP round-trip on every model step. A token the
+target answers 401 to is dropped (:meth:`TokenBroker.invalidate`), so a revoked
+token stops failing at the next exchange rather than when it expires.
 
 **Audit.** Every round-trip to the IdP is audited and counted, with who asked,
 for which audience and scope, and how it ended. A cache hit is not: it issues
@@ -85,6 +87,10 @@ REFUSAL_RETRY_SECONDS = 30.0
 #: Backoff after an unavailable or misconfigured IdP: doubles per failure.
 BACKOFF_INITIAL_SECONDS = 5.0
 BACKOFF_MAX_SECONDS = 60.0
+#: A token younger than this is kept when the target rejects it: a new exchange
+#: is unlikely to help, and a target that rejects everything (a wrong audience,
+#: say) must not turn every model step into an IdP round-trip.
+MIN_AGE_TO_INVALIDATE_SECONDS = 30.0
 #: RFC 6749 error codes that mean the platform's client is wrong, not the user.
 _CLIENT_ERRORS = frozenset({"invalid_client", "unauthorized_client"})
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -144,6 +150,7 @@ class ExchangeSettings:
 class _Cached:
     token: str = field(repr=False)
     expires_at: float  # monotonic
+    issued_at: float  # monotonic
 
 
 @dataclass(frozen=True)
@@ -214,6 +221,35 @@ class TokenBroker:
             self._inflight[(id(loop), key)] = task
         return await asyncio.shield(task)
 
+    def invalidate(self, token: str) -> bool:
+        """Drop *token* from the cache because its target rejected it.
+
+        Matched by value, not by the current caller: a rejection can arrive on
+        an MCP session's background task, and it must not evict a newer token
+        for the same key that was issued in the meantime. Returns whether the
+        token was dropped.
+        """
+        now = self._clock()
+        for key, cached in list(self._cache.items()):
+            if cached.token != token:
+                continue
+            dropped = now - cached.issued_at >= MIN_AGE_TO_INVALIDATE_SECONDS
+            if dropped:
+                self._cache.pop(key, None)
+            logger.warning(
+                "%s rejected its exchanged token (HTTP 401); %s",
+                key[1],
+                "exchanging again on the next call" if dropped else "it was only just issued",
+            )
+            audit_event(
+                "token_rejected_by_target",
+                audience=key[1],
+                scope=key[2] or None,
+                invalidated=dropped,
+            )
+            return dropped
+        return False
+
     async def _fetch(self, key: _Key, subject_token: str, audience: str, scope: str | None) -> str:
         loop = asyncio.get_running_loop()
         try:
@@ -268,7 +304,8 @@ class TokenBroker:
         usable = (
             lifetime - EXPIRY_SKEW_SECONDS if lifetime > 2 * EXPIRY_SKEW_SECONDS else lifetime / 2
         )
-        self._cache[key] = _Cached(token, self._clock() + usable)
+        now = self._clock()
+        self._cache[key] = _Cached(token, now + usable, now)
         self._cache.move_to_end(key)
         while len(self._cache) > self._max_entries:
             self._cache.popitem(last=False)

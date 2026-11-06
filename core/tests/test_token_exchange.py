@@ -12,11 +12,13 @@ import jwt as pyjwt
 import pytest
 import requests
 
+from orrery_core.observability.log import JSONFormatter
 from orrery_core.security.auth import JWTConfig, verify_token
 from orrery_core.security.identity import CallerIdentity, caller_scope, identity_from_claims
 from orrery_core.security.token_exchange import (
     ACCESS_TOKEN_TYPE,
     GRANT_TYPE,
+    MIN_AGE_TO_INVALIDATE_SECONDS,
     CredentialUnavailable,
     ExchangeSettings,
     TokenBroker,
@@ -503,7 +505,7 @@ def test_secrets_stay_out_of_repr():
 def token_exchange_cached(token: str) -> Any:
     from orrery_core.security.token_exchange import _Cached
 
-    return _Cached(token, 0.0)
+    return _Cached(token, 0.0, 0.0)
 
 
 def test_an_unexpected_failure_is_audited_too(exchanges):
@@ -538,3 +540,74 @@ def test_waiters_and_a_cancelled_first_caller_share_one_audited_exchange(exchang
     assert len(idp.calls) == 1
     assert [(a["subject"], a["outcome"]) for a in audited] == [("alice", "issued")]
     assert counted == ["issued"]
+
+
+# ── A token the target rejects ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_token_is_exchanged_again():
+    clock = Clock()
+    idp = FakeIdP(300)
+    broker = _broker(idp, clock=clock)
+    with _as(SUBJECT):
+        token = await broker.token_for("mcp")
+        clock.now += 60
+        assert broker.invalidate(token) is True
+        await broker.token_for("mcp")
+    assert len(idp.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_token_only_just_issued_survives_a_rejection():
+    """A target rejecting everything must not cost an exchange per model step."""
+    clock = Clock()
+    idp = FakeIdP(300)
+    broker = _broker(idp, clock=clock)
+    with _as(SUBJECT):
+        token = await broker.token_for("mcp")
+        clock.now += MIN_AGE_TO_INVALIDATE_SECONDS - 1
+        assert broker.invalidate(token) is False
+        await broker.token_for("mcp")
+    assert len(idp.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_late_rejection_leaves_a_newer_token_alone():
+    clock = Clock()
+    issued = {"token_type": "Bearer", "issued_token_type": ACCESS_TOKEN_TYPE, "expires_in": 300}
+    idp = FakeIdP(
+        FakeResponse(200, {**issued, "access_token": "first"}),
+        FakeResponse(200, {**issued, "access_token": "second"}),
+    )
+    broker = _broker(idp, clock=clock)
+    with _as(SUBJECT):
+        old = await broker.token_for("mcp")
+        clock.now += 60
+        broker.invalidate(old)
+        await broker.token_for("mcp")
+        clock.now += 60
+        assert broker.invalidate(old) is False
+        await broker.token_for("mcp")
+    assert len(idp.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_only_drops_that_token(caplog):
+    clock = Clock()
+    idp = FakeIdP(300)
+    broker = _broker(idp, clock=clock)
+    with _as(SUBJECT):
+        rejected = await broker.token_for("mcp-a")
+        await broker.token_for("mcp-b")
+    clock.now += 60
+    caplog.set_level(logging.DEBUG)
+    assert broker.invalidate(rejected) is True
+    with _as(SUBJECT):
+        await broker.token_for("mcp-b")
+    assert len(idp.calls) == 2
+    assert rejected not in caplog.text
+    audit = next(r for r in caplog.records if getattr(r, "event", "") == "token_rejected_by_target")
+    written = JSONFormatter().format(audit)
+    assert '"audience": "mcp-a"' in written
+    assert '"invalidated": true' in written

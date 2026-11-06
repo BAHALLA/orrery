@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import socket
 import threading
@@ -37,6 +38,7 @@ class Recorder:
         self.app = app
         self.by_session: dict[str, set[str]] = defaultdict(set)
         self.unauthenticated = 0
+        self.rejected: set[str] = set()
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -45,6 +47,9 @@ class Recorder:
         auth = headers.get("authorization")
         if auth is None:
             self.unauthenticated += 1
+        if auth in self.rejected:
+            await send({"type": "http.response.start", "status": 401, "headers": []})
+            return await send({"type": "http.response.body", "body": b""})
 
         async def recording_send(message: dict[str, Any]) -> None:
             if message["type"] == "http.response.start":
@@ -262,3 +267,44 @@ def test_token_exchange_without_a_scope_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="orrery.tools.mcp"):
         _config(auth={"type": "token_exchange", "audience": "inventory-mcp", "scope": "read"})
     assert "requests no scope" not in caplog.text
+
+
+class RotatingIdP(FakeIdP):
+    """Issues a different token each time, as a real IdP does."""
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        response = super().post(url, **kwargs)
+        response.json.return_value["access_token"] = f"rotated-{self.calls}"
+        return response
+
+
+@pytest.mark.asyncio
+async def test_a_token_the_server_rejects_is_replaced_on_the_next_call(http_server):
+    url, recorder = http_server
+    now = [0.0]
+    idp = RotatingIdP()
+    settings = ExchangeSettings(url="https://idp.example.com/t", client_id="c", client_secret="s")
+    broker = TokenBroker(settings, session=cast(Any, idp), clock=lambda: now[0])
+    toolset = GuardedMcpToolset(_config(url=url, call_timeout_seconds=5), broker=broker)
+    ctx = MagicMock()
+    try:
+        with _as("console-carol", "carol"):
+            (tool,) = await toolset.get_tools(ctx)
+            assert classify_tool_outcome(await tool.run_async(args={}, tool_context=ctx)) is (
+                ToolOutcome.SUCCESS
+            )
+            assert idp.calls == 1
+
+            recorder.rejected.add("Bearer rotated-1")
+            now[0] += 60
+            with contextlib.suppress(Exception):
+                await tool.run_async(args={}, tool_context=ctx)
+
+            # Evicted by the 401: this call exchanges again and gets through.
+            result = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.rejected.clear()
+        await toolset.close()
+
+    assert idp.calls == 2
+    assert classify_tool_outcome(result) is ToolOutcome.SUCCESS

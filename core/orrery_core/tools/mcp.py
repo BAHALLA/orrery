@@ -426,7 +426,11 @@ class GuardedMcpToolset(McpToolset):
         self._broker = (broker or default_broker()) if config.auth else None
         super().__init__(
             connection_params=_connection_params(
-                config, private_allow=private_allow, verify=verify, egress_proxy=egress_proxy
+                config,
+                private_allow=private_allow,
+                verify=verify,
+                egress_proxy=egress_proxy,
+                on_rejected_token=self._broker.invalidate if self._broker else None,
             ),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
@@ -564,6 +568,7 @@ def _connection_params(
     private_allow: PrivateAllowlist | None = None,
     verify: ssl.SSLContext | bool | None = None,
     egress_proxy: str | None = None,
+    on_rejected_token: Callable[[str], Any] | None = None,
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {
@@ -590,6 +595,7 @@ def _connection_params(
         else ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
         private_allow=private_allow,
         egress_proxy=egress_proxy,
+        on_rejected_token=on_rejected_token,
     )
     if config.transport == "sse":
         # The SSE stream idles between calls, so its read timeout cannot be the

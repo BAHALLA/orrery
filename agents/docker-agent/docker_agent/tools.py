@@ -10,6 +10,7 @@ from typing import Any
 from orrery_core import confirm, destructive
 from orrery_core.agent.platform import pinned_by_labels, resource_scope
 from orrery_core.security.redaction import REDACTED, redact_text
+from orrery_core.security.secrets import subprocess_env
 from orrery_core.security.validation import (
     MAX_LOG_LINES,
     validate_positive_int,
@@ -69,6 +70,25 @@ def _redact_env_vars(env_list: list[str]) -> list[str]:
     return redacted
 
 
+#: Read by the docker CLI, including the registry credentials it exists to use.
+_DOCKER_ENV = (
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CONFIG",
+    "DOCKER_AUTH_CONFIG",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_CERT_PATH",
+    "DOCKER_API_VERSION",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+
+
 async def _run_docker(
     args: list[str], timeout: int = 15, *, merge_stderr: bool = False
 ) -> tuple[bool, str]:
@@ -83,6 +103,7 @@ async def _run_docker(
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT if merge_stderr else asyncio.subprocess.PIPE,
+            env=subprocess_env(*_DOCKER_ENV),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode != 0:

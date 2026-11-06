@@ -11,6 +11,7 @@ import pytest
 
 from docker_agent.tools import (
     _redact_env_vars,
+    _run_docker,
     docker_compose_status,
     get_container_logs,
     get_container_stats,
@@ -212,7 +213,7 @@ def fake_docker(tmp_path, monkeypatch):
         'echo "out 1"\n'
         'echo "err 1" >&2\n'
         'echo "out 2"\n'
-        'if [ "$FAKE_DOCKER_FAIL" = 1 ]; then echo "No such container: x" >&2; exit 1; fi\n'
+        'if [ -e "$(dirname "$0")/fail" ]; then echo "No such container: x" >&2; exit 1; fi\n'
     )
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
@@ -229,8 +230,8 @@ async def test_get_container_logs_includes_stderr(fake_docker):
 
 
 @pytest.mark.asyncio
-async def test_get_container_logs_failure_reports_the_cli_message(fake_docker):
-    fake_docker.setenv("FAKE_DOCKER_FAIL", "1")
+async def test_get_container_logs_failure_reports_the_cli_message(fake_docker, tmp_path):
+    (tmp_path / "fail").touch()
     result = await get_container_logs("x")
     assert result["status"] == "error"
     assert "No such container: x" in result["message"]
@@ -947,3 +948,18 @@ async def test_a_pinned_container_keeps_an_auxiliary_project_in_the_platform(moc
         "auxiliary_containers": 1,
         "auxiliary_states": {"restarting": 1},
     }
+
+
+@pytest.mark.asyncio
+async def test_the_docker_cli_gets_its_settings_but_not_the_process_secrets(monkeypatch):
+    monkeypatch.setenv("DOCKER_HOST", "tcp://docker:2375")
+    monkeypatch.setenv("JWT_SECRET", "hunter2")
+    proc = AsyncMock(returncode=0)
+    proc.communicate.return_value = (b"", b"")
+
+    with patch("asyncio.create_subprocess_exec", return_value=proc) as spawn:
+        await _run_docker(["ps"])
+
+    env = spawn.call_args.kwargs["env"]
+    assert env["DOCKER_HOST"] == "tcp://docker:2375"
+    assert "JWT_SECRET" not in env

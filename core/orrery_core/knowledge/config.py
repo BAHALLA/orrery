@@ -9,6 +9,8 @@ while the agent monitors production" impossible to express.
 
 from __future__ import annotations
 
+from pydantic import SecretStr
+
 from ..agent.config import AgentConfig
 
 #: Backends ``resolve_retriever()`` knows how to build.
@@ -40,9 +42,9 @@ class KnowledgeConfig(AgentConfig):
     # ── Elasticsearch backend ────────────────────────────────────────
     knowledge_es_url: str = "http://localhost:9200"
     knowledge_es_index: str = "orrery-knowledge"
-    knowledge_es_api_key: str | None = None
+    knowledge_es_api_key: SecretStr | None = None
     knowledge_es_username: str | None = None
-    knowledge_es_password: str | None = None
+    knowledge_es_password: SecretStr | None = None
     knowledge_es_verify_certs: bool = True
     knowledge_es_ca_certs: str | None = None
     knowledge_es_http_timeout: int = 15

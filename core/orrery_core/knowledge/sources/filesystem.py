@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ...security.secrets import subprocess_env
 from ..models import Document
 
 logger = logging.getLogger("orrery.knowledge.sources")
@@ -102,12 +103,17 @@ class FilesystemSource:
         )
 
 
+#: Where git finds its configuration, for a deployment that moves it.
+_GIT_ENV = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
+
+
 def _git(root: Path, *args: str) -> str:
     result = subprocess.run(  # noqa: S603 — fixed executable, no shell
         ["git", "-C", str(root), *args],
         capture_output=True,
         text=True,
         check=True,
+        env=subprocess_env(*_GIT_ENV),
     )
     return result.stdout.strip()
 
