@@ -226,8 +226,8 @@ Orrery, and a server holding it could replay it against Orrery.
   half its life). A token the server answers 401 to is dropped, so the next
   call exchanges again, unless it is under 30 s old: a new token rarely helps
   then, and a server rejecting everything shouldn't multiply IdP calls. A 403
-  keeps the token, since it is about permissions. Every 401 also closes that
-  token's MCP session, so an SSE session the rejection killed isn't reused. Concurrent calls share one
+  keeps the token, since it is about permissions. A 401 on a POST also closes
+  that token's MCP session, so an SSE session the rejection killed isn't reused. Concurrent calls share one
   exchange. Failures are remembered per key too: a refusal for 30 s, an IdP outage with a backoff from 5 s to
   60 s. Exchanges run on four threads of their own, so an IdP brownout can't
   starve the tools that share the default executor.

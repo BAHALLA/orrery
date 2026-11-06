@@ -41,6 +41,8 @@ class Recorder:
         self.rejected: set[str] = set()
         #: Rejected on POST only, the shape that kills an SSE session.
         self.rejected_posts: set[str] = set()
+        #: Rejected on the optional GET stream only, as some gateways do.
+        self.rejected_gets: set[str] = set()
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -49,7 +51,12 @@ class Recorder:
         auth = headers.get("authorization")
         if auth is None:
             self.unauthenticated += 1
-        if auth in self.rejected or (scope["method"] == "POST" and auth in self.rejected_posts):
+        method = scope["method"]
+        if (
+            auth in self.rejected
+            or (method == "POST" and auth in self.rejected_posts)
+            or (method == "GET" and auth in self.rejected_gets)
+        ):
             await send({"type": "http.response.start", "status": 401, "headers": []})
             return await send({"type": "http.response.body", "body": b""})
 
@@ -367,3 +374,35 @@ async def test_a_young_token_rejected_over_sse_does_not_wedge_the_user(sse_serve
 
     assert idp.calls == 1
     assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_401_on_the_optional_get_stream_leaves_the_session_working(http_server):
+    url, recorder = http_server
+    recorder.rejected_gets.add("Bearer rotated-1")
+    idp = RotatingIdP()
+    toolset = GuardedMcpToolset(_config(url=url, call_timeout_seconds=5), broker=_broker(idp))
+    ctx = MagicMock()
+    try:
+        with _as("console-erin", "erin"):
+            (tool,) = await toolset.get_tools(ctx)
+            results = [await tool.run_async(args={}, tool_context=ctx) for _ in range(2)]
+    finally:
+        recorder.rejected_gets.clear()
+        await toolset.close()
+
+    assert all(classify_tool_outcome(r) is ToolOutcome.SUCCESS for r in results)
+    assert idp.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("method", "discards"), [("POST", True), ("GET", False), ("DELETE", False)]
+)
+def test_only_a_rejected_post_discards_the_session(method, discards):
+    toolset = GuardedMcpToolset(_config(), broker=_broker())
+    manager = MagicMock()
+    toolset._mcp_session_manager = manager
+
+    toolset._on_rejected_token("tok", method)
+
+    assert manager._discard_session.called is discards

@@ -462,18 +462,23 @@ class GuardedMcpToolset(McpToolset):
         assert auth is not None and broker is not None  # only used with auth
         return await broker.token_for(auth.audience, auth.scope)
 
-    def _on_rejected_token(self, token: str) -> None:
-        """The server answered 401: stop using *token* and its pooled session.
+    def _on_rejected_token(self, token: str, method: str) -> None:
+        """The server answered 401: stop using *token*, and on a POST its session.
 
-        The session goes on every 401, even when the broker keeps a token too
-        young to replace. Over SSE a rejected POST kills the session while the
-        pool keeps handing it back, and those later calls fail without sending
-        a request, so no further 401 would ever arrive. The pool is keyed by
-        these headers, so a newer token's session is not touched.
+        The session goes on every rejected POST, even when the broker keeps a
+        token too young to replace. Over SSE that 401 kills the session while
+        the pool keeps handing it back, and those later calls fail without
+        sending a request, so no further 401 would ever arrive.
+
+        Only a POST carries a call. A 401 on the GET stream is one the SDK treats
+        as optional, on a session that may work fine, and one on a teardown
+        DELETE comes from the old session while a replacement sits under the
+        same key: discarding on either kills a session that is in use.
         """
         assert self._broker is not None  # only wired with auth
         self._broker.invalidate(token)
-        self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
+        if method == "POST":
+            self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._credential()}"}
@@ -581,7 +586,7 @@ def _connection_params(
     private_allow: PrivateAllowlist | None = None,
     verify: ssl.SSLContext | bool | None = None,
     egress_proxy: str | None = None,
-    on_rejected_token: Callable[[str], Any] | None = None,
+    on_rejected_token: Callable[[str, str], Any] | None = None,
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {

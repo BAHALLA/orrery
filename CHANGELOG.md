@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `opentelemetry-api` stays at 1.44.0, still below the fix for GHSA-xcq7-p3pf-p88h,
   because `google-adk` 2.13.0 requires `<=1.44`. The inbound `tracestate` limit added
   earlier still covers the HTTP route. Bump it once ADK allows 1.45.1.
-- MCP per-user tokens: a token the server answers 401 to is dropped from the cache and
-  its MCP session closed, so the next call starts again instead of failing until the
+- MCP per-user tokens: a token the server answers 401 to is dropped from the cache and,
+  on a rejected call, its MCP session closed, so the next call starts again instead of failing until the
   token expires. A token under 30 s old is kept, so a server that rejects everything
   can't drive up IdP calls.
 - Elasticsearch, knowledge Elasticsearch, Slack and Google API credentials are now
