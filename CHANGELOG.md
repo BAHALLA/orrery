@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0] - 2026-11-06
+## [0.20.0] - 2026-11-07
 
 **A lab's brief in the console, and a Studio that gives the canvas more room.** Nothing to
 do when upgrading: the brief is opt-in through `ORRERY_CONSOLE_MISSION_FILE`.
@@ -20,15 +20,17 @@ do when upgrading: the brief is opt-in through `ORRERY_CONSOLE_MISSION_FILE`.
   they stay visible at any width. The cost used to reach screen readers only.
 - Studio gives the canvas more room: the console rail folds while you're there (and
   remembers if you reopen it), and the node palette shows names only, with the
-  description in its tooltip.
+  description in its tooltip. The environment badge moved into Studio's toolbar, so
+  production stays marked with the rail folded.
 - Studio's A2A and MCP tabs are now one **Connections** tab. Pattern and budgets moved
   under **Advanced**, which opens by itself over a problem. Budgets read "default" rather
   than "ceiling", and nodes no longer repeat "deployment model".
 - Each Studio template offers an example input in the Run tab. It only fills the box.
-- The empty chat shows no suggestion cards until `/me` has answered, and none while it
-  is failing (it retries a 5xx or an unreachable server), so a lab's learner doesn't get
-  the stock cards when the server is failing. A failed refetch keeps what the console
-  already knew. A server without `/me` still gets them.
+- The empty chat shows no suggestion cards or health sweep card until `/me` has answered,
+  so a lab's learner doesn't get the stock ones when the server is failing. A 5xx or an
+  unreachable server is retried for about 14 s, then the cards wait for a reload or a
+  token renew. This applies to every deployment, and chat itself still works. A failed
+  refetch keeps what the console already knew. A server without `/me` still gets them.
 
 ### Added
 
