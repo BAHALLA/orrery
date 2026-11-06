@@ -250,21 +250,33 @@ class _ByteCap:
 
 
 class _McpCappedStream(httpx.AsyncByteStream):  # ty: ignore[unsupported-base]
-    def __init__(self, inner: Any, counter: _ByteCap, request: Any) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        counter: _ByteCap,
+        request: Any,
+        on_error: Callable[[], Any] = lambda: None,
+    ) -> None:
         self._inner = inner
         self._counter = counter
         self._request = request
+        self._on_error = on_error
 
     async def __aiter__(self) -> Any:
-        async for chunk in self._inner:
-            if not self._counter.add(chunk):
-                unit = "an event of " if self._counter.per_event else ""
-                raise McpResponseTooLarge(
-                    f"{unit}the response from MCP server {self._request.url.host} exceeds "
-                    f"{self._counter.cap} bytes ({MCP_MAX_RESPONSE_BYTES_ENV})",
-                    request=self._request,
-                )
-            yield chunk
+        try:
+            async for chunk in self._inner:
+                if not self._counter.add(chunk):
+                    unit = "an event of " if self._counter.per_event else ""
+                    raise McpResponseTooLarge(
+                        f"{unit}the response from MCP server {self._request.url.host} exceeds "
+                        f"{self._counter.cap} bytes ({MCP_MAX_RESPONSE_BYTES_ENV})",
+                        request=self._request,
+                    )
+                yield chunk
+        except Exception:
+            # The transport has returned by now, so it can't see this failure.
+            self._on_error()
+            raise
 
     async def aclose(self) -> None:
         await self._inner.aclose()
@@ -640,7 +652,10 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 request=request,
             )
         response.stream = _McpCappedStream(
-            response.stream, _ByteCap(self._max_bytes, per_event=sse), request
+            response.stream,
+            _ByteCap(self._max_bytes, per_event=sse),
+            request,
+            on_error=lambda: self._report_http_error(NO_RESPONSE, request),
         )
         return response
 

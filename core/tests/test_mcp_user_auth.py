@@ -34,7 +34,12 @@ from orrery_core.security.token_exchange import (  # noqa: E402
     TokenBroker,
 )
 from orrery_core.tools.mcp import GuardedMcpToolset, McpServerConfig, _with_deadline  # noqa: E402
-from orrery_core.tools.mcp_network import GuardedTransport, httpx  # noqa: E402
+from orrery_core.tools.mcp_network import (  # noqa: E402
+    GuardedTransport,
+    _ByteCap,
+    _McpCappedStream,
+    httpx,
+)
 
 
 class Recorder:
@@ -674,6 +679,26 @@ async def test_a_post_with_no_response_closes_an_sse_session(sse_server, monkeyp
     assert resets
     assert failed["error_type"] == "session_closed"
     assert classify_tool_outcome(after) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_body_that_fails_after_the_headers_is_reported():
+    """The SDK reads the body after the transport returned, so the stream has to say."""
+    errors = []
+
+    async def cut_off() -> Any:
+        yield b"x"
+        raise httpx.ReadError("connection reset")
+
+    stream = _McpCappedStream(
+        cut_off(), _ByteCap(1024, per_event=False), MagicMock(), lambda: errors.append("failed")
+    )
+
+    with pytest.raises(httpx.ReadError):
+        async for _chunk in stream:
+            pass
+
+    assert errors == ["failed"]
 
 
 @pytest.mark.asyncio
