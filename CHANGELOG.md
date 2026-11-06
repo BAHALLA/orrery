@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-06
+
+**Credential and MCP hardening, with a few things to check before you upgrade.**
+A third-party specialist reading the Elasticsearch, Slack or Google API settings must
+now call `.get_secret_value()`, and `docker` no longer inherits your whole environment,
+so `DOCKER_AUTH_CONFIG` stops reaching it (the list is `_DOCKER_ENV`).
+
 ### Changed
 
 - Ruff now limits new functions to complexity 15. The 11 functions already over it carry
@@ -2186,7 +2193,8 @@ First public release of the AI Agents for DevOps & SRE platform.
 - Guardrail confirmation bypass fixed with args-hash + TTL tracking
 - Server-side role enforcement prevents privilege escalation
 
-[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/BAHALLA/orrery/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/BAHALLA/orrery/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/BAHALLA/orrery/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/BAHALLA/orrery/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/BAHALLA/orrery/compare/v0.15.0...v0.16.0
