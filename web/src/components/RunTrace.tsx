@@ -225,8 +225,14 @@ export const RunTrace = memo(function RunTrace({ trace, live, durationMs }: Prop
   }
 
   if (trace.length === 0) return null;
+  // A refusal stays open: it is part of the answer, and often the most useful
+  // part of it. Everything else is the receipt.
+  const refused = flatten(trace).some((c) => c.state === "refused");
   return (
-    <details className="group mb-3 rounded-xl border border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-900/40">
+    <details
+      open={refused}
+      className="group mb-3 rounded-xl border border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-900/40"
+    >
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-3 py-2 text-xs text-slate-500 select-none hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:text-slate-400 dark:hover:text-slate-200">
         <ChevronIcon size={14} className="transition group-open:rotate-90" />
         <span>{summarize(trace)}</span>

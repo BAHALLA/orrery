@@ -51,6 +51,8 @@ describe("learning sandbox", () => {
     expect(screen.getByText("Hint 1/3")).toBeInTheDocument();
     const button = screen.getByRole("button", { name: /take a hint/i });
     expect(button).toHaveAccessibleDescription(/which tool to run.*recorded/i);
+    // Read before it is taken: visible text, not only a description for screen readers.
+    expect(screen.getByText(/the next hint reveals which tool to run/i)).not.toHaveClass("sr-only");
 
     await user.click(button);
     expect(await screen.findByText("Hint 2/3")).toBeInTheDocument();

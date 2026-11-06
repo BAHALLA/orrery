@@ -55,12 +55,20 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useStoredFlag(storageKeys.navCollapsed);
-  const toggleNavCollapsed = useCallback(() => setNavCollapsed((c) => !c), [setNavCollapsed]);
+  const [studioNavExpanded, setStudioNavExpanded] = useStoredFlag(storageKeys.studioNavExpanded);
   const [requestedView, setView] = useState<ConsoleView>("chat");
   // A Studio the server does not offer (switched off, or a role change) is
   // never shown, whatever was asked for: the chat stands in for it.
   const studioAvailable = system.me?.studio_available === true;
   const view: ConsoleView = requestedView === "studio" && !studioAvailable ? "chat" : requestedView;
+  // The Studio remembers its own choice, so reopening the rail for a moment
+  // there leaves the chat's as it was.
+  const inStudio = view === "studio";
+  const navFolded = inStudio ? !studioNavExpanded : navCollapsed;
+  const toggleNavCollapsed = useCallback(() => {
+    if (inStudio) setStudioNavExpanded((expanded) => !expanded);
+    else setNavCollapsed((collapsed) => !collapsed);
+  }, [inStudio, setStudioNavExpanded, setNavCollapsed]);
   // The Agents page mounts on first visit and then stays mounted (hidden), so
   // an unsaved catalog draft survives a trip back to the chat.
   const [agentsOpened, setAgentsOpened] = useState(false);
@@ -247,7 +255,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
         isSending={chat.isSending}
         open={navOpen}
         onClose={closeNav}
-        collapsed={navCollapsed}
+        collapsed={navFolded}
         onToggleCollapsed={toggleNavCollapsed}
         onNewChat={onNewChat}
         onRunTriage={onRunTriage}
@@ -297,9 +305,6 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           {/* Here as well as in the sidebar: a folded rail or a closed drawer
               must not leave production unmarked. */}
           <EnvironmentBadge />
-          {system.me?.learning ? (
-            <LearningHint learning={system.me.learning} onTakeHint={system.takeHint} />
-          ) : null}
           {live ? (
             <span
               aria-hidden="true"
@@ -357,6 +362,10 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
             </>
           ) : null}
         </header>
+
+        {system.me?.learning ? (
+          <LearningHint learning={system.me.learning} onTakeHint={system.takeHint} />
+        ) : null}
 
         {agentsOpened ? (
           <div className={view === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>

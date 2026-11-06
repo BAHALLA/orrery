@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { storageKeys } from "./config";
 import { makeToken, jsonResponse, restoreGlobals } from "./test/appHarness";
+import { stubWideScreen } from "./test/reactflow";
 
 // The Studio entry: offered only where the server says this caller may use it.
 
@@ -44,6 +45,23 @@ describe("Studio entry", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("folds the rail for the canvas, leaving the chat's choice alone", async () => {
+    stubWideScreen();
+    stubAs("admin", true);
+    const user = userEvent.setup();
+    render(<App />);
+    const nav = await screen.findByRole("complementary", { name: "Navigation" });
+    expect(within(nav).getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+
+    await user.click(await within(nav).findByRole("button", { name: /^studio/i }));
+    await user.click(within(nav).getByRole("button", { name: "Expand sidebar" }));
+    expect(localStorage.getItem(storageKeys.studioNavExpanded)).toBe("1");
+    expect(localStorage.getItem(storageKeys.navCollapsed)).toBe("0");
+
+    await user.click(within(nav).getByRole("button", { name: /new chat/i }));
+    expect(within(nav).getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
   });
 
   it("is hidden from an admin when the deployment does not mount it", async () => {

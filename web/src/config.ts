@@ -69,6 +69,8 @@ export const storageKeys = {
   /** Layout preferences: no content, just whether a rail is folded away. */
   navCollapsed: "orrery.console.navCollapsed",
   studioPanelCollapsed: "orrery.console.studioPanelCollapsed",
+  /** The rail starts folded in the Studio, which needs the width, unless reopened there. */
+  studioNavExpanded: "orrery.console.studioNavExpanded",
 } as const;
 
 /** Keys earlier builds wrote and this one doesn't. Purged on load (see

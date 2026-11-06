@@ -304,8 +304,8 @@ describe("Studio runs", () => {
       within(panel).getByText(/research called tirraflow.search_articles · success/),
     ).toBeInTheDocument();
 
-    // The A2A tab tells the call as the protocol does: request, task states, reply.
-    await user.click(screen.getByRole("tab", { name: /A2A/ }));
+    // Connections tells the A2A call as the protocol does: request, task states, reply.
+    await user.click(screen.getByRole("tab", { name: /Connections/ }));
     const call = screen.getByRole("list", { name: "Call from writer to demo-writer" });
     expect(within(call).getByText("message/send")).toBeInTheDocument();
     const states = within(call).getByRole("list", { name: "Task states" });
@@ -315,7 +315,7 @@ describe("Studio runs", () => {
         .map((li) => li.textContent?.replace("→", "")),
     ).toEqual(["submitted", "working", "completed"]);
 
-    await user.click(screen.getByRole("tab", { name: /MCP/ }));
+    await user.click(screen.getByRole("button", { name: /MCP servers/ }));
     expect(
       within(screen.getByRole("tabpanel")).getByText("tirraflow.search_articles"),
     ).toBeInTheDocument();

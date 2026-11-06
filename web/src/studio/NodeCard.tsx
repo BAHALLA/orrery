@@ -162,9 +162,7 @@ export const NodeCard = memo(function NodeCard({ data, selected }: NodeProps<Stu
             <span>{formatMs(live ?? run.elapsedMs)}</span>
           </>
         ) : (
-          <span className="font-sans text-[10px]">
-            {run ? "waiting" : spec.kind === "llm_agent" ? "deployment model" : ""}
-          </span>
+          <span className="font-sans text-[10px]">{run ? "waiting" : (spec.model ?? "")}</span>
         )}
       </div>
       <Handle

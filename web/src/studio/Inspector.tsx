@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { AlertIcon, TrashIcon } from "../components/icons";
+import { AlertIcon, ChevronIcon, TrashIcon } from "../components/icons";
 import { toneChip } from "../components/severity";
 import { fieldLabel, input, invalidInput, sectionTitle, subtleButton } from "./format";
 import { APPROVAL_LABELS, isValidId, type StudioGraph } from "./graph";
@@ -428,6 +428,13 @@ export function CompositionInspector({
       budgets: { ...(meta.budgets ?? {}), [name]: n !== null && Number.isFinite(n) ? n : null },
     });
   };
+  // Closed until asked for, but never over a problem it holds.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const showAdvanced =
+    advancedOpen ||
+    BUDGET_NAMES.some((n) => specIssues(n).length) ||
+    specIssues("pattern").length > 0;
+  const budgetsSet = BUDGET_NAMES.filter((n) => meta.budgets?.[n] != null).length;
   const spec = graphToSpec(graph);
   const all: { issue: Issue; node: string | null }[] = [];
   for (const [node, list] of issues.byNode) for (const issue of list) all.push({ issue, node });
@@ -467,53 +474,73 @@ export function CompositionInspector({
           />
         )}
       </Field>
-      <Field
-        label="Pattern"
-        issues={specIssues("pattern")}
-        hint="A hint for templates and checks; the graph is what runs."
+      <details
+        open={showAdvanced}
+        onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+        className="group"
       >
-        {(props) => (
-          <select
-            {...props}
-            value={meta.pattern ?? "pipeline"}
-            disabled={!editable}
-            onChange={(e) => onMeta({ ...meta, pattern: e.target.value as Pattern })}
-            className={input}
+        <summary
+          className={`${fieldLabel} flex cursor-pointer list-none items-center gap-1 select-none`}
+        >
+          <ChevronIcon size={14} className="transition group-open:rotate-90" />
+          Advanced
+          <span className="font-normal text-slate-500 dark:text-slate-400">
+            ·{" "}
+            {budgetsSet
+              ? `${budgetsSet} budget${budgetsSet === 1 ? "" : "s"} set`
+              : "pattern, budgets"}
+          </span>
+        </summary>
+        <div className="mt-2 flex flex-col gap-4">
+          <Field
+            label="Pattern"
+            issues={specIssues("pattern")}
+            hint="A hint for templates and checks; the graph is what runs."
           >
-            {(Object.keys(PATTERN_LABEL) as Pattern[]).map((p) => (
-              <option key={p} value={p}>
-                {PATTERN_LABEL[p]}
-                {caps.patterns.has(p) ? "" : ` (${patternPhase(p, caps)})`}
-              </option>
-            ))}
-          </select>
-        )}
-      </Field>
-      <fieldset>
-        <legend className={fieldLabel}>Budgets</legend>
-        <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-          Empty: the deployment's ceiling. The first budget to run out ends the run.
-        </p>
-        <div className="mt-1.5 grid grid-cols-2 gap-2">
-          {BUDGET_NAMES.map((name) => (
-            <Field key={name} label={budgetLabel[name] ?? name} issues={specIssues(name)}>
-              {(props) => (
-                <input
-                  {...props}
-                  type="number"
-                  min={1}
-                  inputMode="numeric"
-                  value={meta.budgets?.[name] ?? ""}
-                  disabled={!editable}
-                  placeholder="ceiling"
-                  onChange={(e) => setBudget(name, e.target.value)}
-                  className={`${input} font-mono tabular-nums`}
-                />
-              )}
-            </Field>
-          ))}
+            {(props) => (
+              <select
+                {...props}
+                value={meta.pattern ?? "pipeline"}
+                disabled={!editable}
+                onChange={(e) => onMeta({ ...meta, pattern: e.target.value as Pattern })}
+                className={input}
+              >
+                {(Object.keys(PATTERN_LABEL) as Pattern[]).map((p) => (
+                  <option key={p} value={p}>
+                    {PATTERN_LABEL[p]}
+                    {caps.patterns.has(p) ? "" : ` (${patternPhase(p, caps)})`}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <fieldset>
+            <legend className={fieldLabel}>Budgets</legend>
+            <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+              Empty uses the deployment's limit. The first budget to run out ends the run.
+            </p>
+            <div className="mt-1.5 grid grid-cols-2 gap-2">
+              {BUDGET_NAMES.map((name) => (
+                <Field key={name} label={budgetLabel[name] ?? name} issues={specIssues(name)}>
+                  {(props) => (
+                    <input
+                      {...props}
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={meta.budgets?.[name] ?? ""}
+                      disabled={!editable}
+                      placeholder="default"
+                      onChange={(e) => setBudget(name, e.target.value)}
+                      className={`${input} font-mono tabular-nums`}
+                    />
+                  )}
+                </Field>
+              ))}
+            </div>
+          </fieldset>
         </div>
-      </fieldset>
+      </details>
 
       <section aria-labelledby="studio-problems">
         <h3 id="studio-problems" className={sectionTitle}>

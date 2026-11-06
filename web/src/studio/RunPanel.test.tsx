@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { StudioClient } from "./api";
 import { releaseNotesRun } from "./fixtures/events";
@@ -50,6 +50,41 @@ function captured(input: string, output: string): StudioEvent[] {
 function before(a: Element, b: Element): boolean {
   return Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 }
+
+describe("a template's example", () => {
+  const props = {
+    client: {} as StudioClient,
+    view: null,
+    focusSignal: 0,
+    inputIssues: [],
+    problems: 0,
+    busy: false,
+    cancelling: false,
+    connection: "idle" as const,
+    error: null,
+    onClearError: vi.fn(),
+    onRun: vi.fn(),
+    onCancel: vi.fn(),
+    onReconnect: vi.fn(),
+    now: 200,
+  };
+
+  it("fills the input when chosen, and never starts a run", () => {
+    const onInput = vi.fn();
+    const onRun = vi.fn();
+    render(
+      <RunPanel {...props} input="" onInput={onInput} onRun={onRun} example="Kafka consumer lag" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /use an example/i }));
+    expect(onInput).toHaveBeenCalledWith("Kafka consumer lag");
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("is not offered over something already typed", () => {
+    render(<RunPanel {...props} input="mine" onInput={vi.fn()} example="Kafka consumer lag" />);
+    expect(screen.queryByRole("button", { name: /use an example/i })).not.toBeInTheDocument();
+  });
+});
 
 describe("RunPanel content", () => {
   it("puts the output first, above budgets, with the input beside it", () => {
