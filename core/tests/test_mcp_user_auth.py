@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import socket
@@ -341,6 +342,12 @@ def sse_server() -> Iterator[tuple[str, Recorder]]:
         """List inventory items."""
         return ["widget"]
 
+    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
+    async def slow_item() -> str:
+        """Answer after a moment, for a call in flight."""
+        await asyncio.sleep(1)
+        return "done"
+
     recorder = Recorder(server.sse_app())
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -503,6 +510,59 @@ async def test_a_refusal_during_the_call_is_answered_as_a_refusal():
 
     assert result["status"] == "access_denied"
     assert result["error_type"] == "credential_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_call_cut_off_by_a_closed_session_says_it_may_have_run(sse_server):
+    """ADK's "execution failed" would invite a model to repeat a change that went through."""
+    url, recorder = sse_server
+    names = ["list_items", "slow_item"]
+    toolset = GuardedMcpToolset(
+        _config(auth=None, transport="sse", url=url, tools=names, read_only=names)
+    )
+    ctx = MagicMock()
+    try:
+        tools = {tool.name: tool for tool in await toolset.get_tools(ctx)}
+        slow = asyncio.create_task(tools["slow_item"].run_async(args={}, tool_context=ctx))
+        await asyncio.sleep(0.3)
+        recorder.outage = True
+        failed = await tools["list_items"].run_async(args={}, tool_context=ctx)
+        recorder.outage = False
+        cut_off = await slow
+        after = await tools["list_items"].run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.outage = False
+        await toolset.close()
+
+    for result in (failed, cut_off):
+        assert result["status"] == "error"
+        assert result["error_type"] == "session_closed"
+        assert "may have run" in result["message"]
+        assert classify_tool_outcome(result) is ToolOutcome.FAILURE
+    assert classify_tool_outcome(after) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_failure_with_no_closed_session_keeps_the_error():
+    tool = MagicMock(spec=["name", "run_async"])
+    tool.name = "list_items"
+    bare = {"error": "MCP tool execution failed: boom"}
+    tool.run_async = AsyncMock(return_value=bare)
+
+    _with_deadline(tool, _config(auth=None))
+
+    assert await tool.run_async(args={}, tool_context=MagicMock()) == bare
+
+
+@pytest.mark.asyncio
+async def test_a_closed_session_is_counted_for_its_own_user():
+    toolset = GuardedMcpToolset(_config(transport="sse"), broker=_broker())
+
+    toolset._on_http_error(500, "POST", "ann")
+
+    assert toolset._closed_session_count("ann") == 1
+    assert toolset._closed_session_count("bob") == 0
+    assert toolset._closed_session_count(None) == 0
 
 
 def test_a_rejected_token_stays_out_of_the_shared_circuit():

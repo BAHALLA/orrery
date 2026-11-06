@@ -455,6 +455,10 @@ class GuardedMcpToolset(McpToolset):
         #: not label that token's later failures, say a real outage, as 401s.
         #: Bounded; a miss only costs the more generic message.
         self._rejections: OrderedDict[str, int] = OrderedDict()
+        #: The same for SSE sessions closed after a failed POST, by token digest
+        #: ("" for the session a static server's callers share). A close cuts off
+        #: every call in flight on that session, and those may have run.
+        self._closed_sessions: OrderedDict[str, int] = OrderedDict()
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
         self._pinned: dict[str, str] = pin_store if pin_store is not None else {}
         #: Tool name -> the description and input schema of the text that was
@@ -474,13 +478,16 @@ class GuardedMcpToolset(McpToolset):
 
         Any failed POST kills an SSE session while ADK's pool keeps handing it
         back, and later calls fail with no request. On a server with static
-        headers nothing would ever replace that session, so it goes now.
+        headers nothing would ever replace that session, so it goes now. Closing
+        it fails the calls still waiting on its stream, even ones that ran, so it
+        is counted for them to say so (see :func:`_with_deadline`).
         """
         if status == 401 and bearer and self._broker:
             self._on_rejected_token(bearer, method)
         elif method == "POST" and self.server_config.transport == "sse":
             headers = {"Authorization": f"Bearer {bearer}"} if bearer and self._broker else None
             self._mcp_session_manager._discard_session(headers=headers)
+            _bump(self._closed_sessions, _digest(bearer) if bearer and self._broker else "")
 
     def _on_rejected_token(self, token: str, method: str) -> None:
         """The server answered 401: stop using *token*, and on a POST its session.
@@ -499,16 +506,15 @@ class GuardedMcpToolset(McpToolset):
         assert self._broker is not None  # only wired with auth
         if method == "POST" or (method == "GET" and self.server_config.transport == "sse"):
             self._broker.invalidate(token)
-            digest = _digest(token)
-            self._rejections[digest] = self._rejections.get(digest, 0) + 1
-            self._rejections.move_to_end(digest)
-            while len(self._rejections) > _MAX_REJECTED_TOKENS:
-                self._rejections.popitem(last=False)
+            _bump(self._rejections, _digest(token))
         if method == "POST":
             self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
 
     def _rejection_count(self, token: str) -> int:
         return self._rejections.get(_digest(token), 0)
+
+    def _closed_session_count(self, token: str | None) -> int:
+        return self._closed_sessions.get(_digest(token) if token else "", 0)
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._credential()}"}
@@ -554,6 +560,7 @@ class GuardedMcpToolset(McpToolset):
                 self.server_config,
                 credential=self._credential if self.server_config.auth else None,
                 rejection_count=self._rejection_count,
+                closed_session_count=self._closed_session_count,
             )
             exposed.append(tool)
         if not self._reported_missing:
@@ -665,11 +672,20 @@ def _connection_params(
 
 
 _DEADLINE_MARK = "_orrery_deadline"
-_MAX_REJECTED_TOKENS = 256
+SESSION_CLOSED_ERROR = "session_closed"
+_MAX_COUNTED_KEYS = 256
 
 
 def _digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _bump(counts: OrderedDict[str, int], key: str) -> None:
+    """Count one more for *key*, keeping the most recent keys."""
+    counts[key] = counts.get(key, 0) + 1
+    counts.move_to_end(key)
+    while len(counts) > _MAX_COUNTED_KEYS:
+        counts.popitem(last=False)
 
 
 def _is_bare_error(result: Any) -> bool:
@@ -683,13 +699,16 @@ def _with_deadline(
     *,
     credential: Callable[[], Awaitable[str]] | None = None,
     rejection_count: Callable[[str], int] = lambda _token: 0,
+    closed_session_count: Callable[[str | None], int] = lambda _token: 0,
 ) -> None:
     """Bound every call of *tool* by ``call_timeout_seconds``, once per object.
 
     A timed-out call returns an error result rather than raising: it flows
     through the after-tool chain like any failure, so audit records it and the
     circuit breaker counts it. The remote side effect may still happen; the
-    message says so, and the call is never retried here.
+    message says so, and the call is never retried here. The same goes for a
+    call cut off by a closed session: ADK reports it as "execution failed", which
+    would invite a model to repeat a change that went through.
     """
     if getattr(tool, _DEADLINE_MARK, False):
         return
@@ -701,15 +720,26 @@ def _with_deadline(
     async def run_with_deadline(*, args: dict[str, Any], tool_context: Any) -> Any:
         try:
             async with asyncio.timeout(seconds):
-                if credential is None:
-                    return await run(args=args, tool_context=tool_context)
                 # Resolved here, where a refusal can be answered as one: ADK
                 # turns an exception from its header provider into a bare
                 # error. The provider then reads the broker's cache.
-                token = await credential()
-                rejections = rejection_count(token)
+                token = await credential() if credential else None
+                rejections = rejection_count(token) if token else 0
+                closed_sessions = closed_session_count(token)
                 result = await run(args=args, tool_context=tool_context)
                 if not _is_bare_error(result):
+                    return result
+                if closed_session_count(token) != closed_sessions:
+                    return {
+                        "status": "error",
+                        "error_type": SESSION_CLOSED_ERROR,
+                        "message": (
+                            f"{name}: the MCP session closed during this call, after a "
+                            "request on it failed. The call may have run on the server: "
+                            "check its effect before calling it again."
+                        ),
+                    }
+                if credential is None or token is None:
                     return result
                 if rejection_count(token) == rejections:
                     # The token may have gone just before the call, and the

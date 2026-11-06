@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   breaker all users share, and it can't lock that call out for the rest of a session.
 - A failed POST on an MCP SSE server closes that session, so calls recover when the
   server does. A server with static headers could otherwise stay broken until a restart.
+  Other calls cut off by that close answer `session_closed` and say they may have run.
 
 ## [0.18.0] - 2026-11-05
 

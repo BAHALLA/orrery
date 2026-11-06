@@ -232,10 +232,16 @@ Orrery, and a server holding it could replay it against Orrery.
   a new token rarely helps then, and a server rejecting everything shouldn't
   multiply IdP calls. A 401 on a call also closes that token's MCP session, so an
   SSE session the rejection killed isn't reused. A 401 on the optional GET stream
-  of streamable HTTP or on closing a session changes nothing, and neither does a
-  403, which is about permissions. The call answers `credential_rejected` and warns
+  of streamable HTTP or on closing a session changes nothing, and a 403 leaves the
+  token alone, since it is about permissions. The call answers `credential_rejected` and warns
   that it may have partly run. The run budgets and repeat guard count it, the shared
   circuit breaker doesn't, and the repeat guard never closes on it for good.
+- **A failed POST over SSE:** any 4xx or 5xx on a POST kills an SSE session (the
+  client can't write to it again), so Orrery closes it and the next call opens a
+  new one. This holds for every server, with or without `auth`. Other calls waiting
+  on that session are cut off too, and answer `session_closed` with a warning that
+  they may have run. With `auth` that is one user's session; with static headers it
+  is the session all users share. Streamable HTTP sessions survive a failed POST.
 - **One tool text for everyone:** the allowlist screen and fingerprint pins
   are per server, not per user. A server that tailors a tool's description or
   schema to each user would see the first user's text pinned and everyone
