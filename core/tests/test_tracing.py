@@ -389,3 +389,19 @@ def test_log_includes_trace_id_within_span():
         entry = _format()
     assert len(entry["trace_id"]) == 32
     assert len(entry["span_id"]) == 16
+
+
+def test_default_plugins_bound_tracestate_with_tracing_off(monkeypatch):
+    """Another tracer provider turns FastAPI's extraction on just the same."""
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    from orrery_core.plugins import default_plugins
+
+    monkeypatch.setenv("OTEL_TRACING_ENABLED", "false")
+    before = propagate.get_global_textmap()
+    propagate.set_global_textmap(TraceContextTextMapPropagator())
+    try:
+        default_plugins()
+        assert isinstance(propagate.get_global_textmap(), tracing.BoundedTraceStatePropagator)
+    finally:
+        propagate.set_global_textmap(before)

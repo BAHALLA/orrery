@@ -193,7 +193,7 @@ async def main() -> None:
     # Initialize ADK
     from orrery_assistant.agent import root_agent
 
-    session_service = create_session_service(config.slack_db_url or None)
+    session_service = create_session_service(config.slack_db_url.get_secret_value() or None)
 
     wire_tool_callbacks(
         root_agent,

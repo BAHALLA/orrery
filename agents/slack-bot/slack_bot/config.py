@@ -21,7 +21,7 @@ class SlackBotConfig(AgentConfig):
     slack_bot_port: int = 3000
     # Empty → in-memory sessions. Set to a PostgreSQL URL (or DATABASE_URL) to
     # persist. SQLite is not supported.
-    slack_db_url: str = ""
+    slack_db_url: SecretStr = SecretStr("")
 
     # Rate limiting for the /slack/events endpoint (per source IP).
     # Rate-limit notation, e.g. "60/minute" or "5/second" (parsed by `limits`).
@@ -45,7 +45,7 @@ class SlackBotConfig(AgentConfig):
         ``DATABASE_URL`` should be set and takes precedence over ``slack_db_url``.
         Empty means an in-memory session store.
         """
-        return os.getenv("DATABASE_URL") or self.slack_db_url
+        return os.getenv("DATABASE_URL") or self.slack_db_url.get_secret_value()
 
     # RBAC: comma-separated Slack user IDs per role.
     # Users not listed default to "viewer".

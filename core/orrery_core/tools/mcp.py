@@ -57,6 +57,7 @@ import logging
 import os
 import re
 import ssl
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -448,6 +449,10 @@ class GuardedMcpToolset(McpToolset):
         # Orrery MCP server's TLS comes from its config (``client_cert_file``).
         self._mcp_session_manager._get_mtls_transport = _no_google_mtls  # ty: ignore[invalid-assignment]
         self._reported_missing = False
+        #: Digests of tokens the server rejected on a call, so that call's bare
+        #: error can be answered as what it was. Bounded; a miss only costs the
+        #: more generic message.
+        self._rejected: OrderedDict[str, None] = OrderedDict()
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
         self._pinned: dict[str, str] = pin_store if pin_store is not None else {}
         #: Tool name -> the description and input schema of the text that was
@@ -470,15 +475,23 @@ class GuardedMcpToolset(McpToolset):
         the pool keeps handing it back, and those later calls fail without
         sending a request, so no further 401 would ever arrive.
 
-        Only a POST carries a call. A 401 on the GET stream is one the SDK treats
-        as optional, on a session that may work fine, and one on a teardown
-        DELETE comes from the old session while a replacement sits under the
-        same key: discarding on either kills a session that is in use.
+        Only a POST carries a call. A 401 on the streamable GET stream is one the
+        SDK treats as optional, on a session that may work fine, and one on a
+        teardown DELETE comes from the old session while a replacement sits under
+        the same key: acting on either kills a session in use or churns tokens.
+        An SSE GET is different: it opens the session, so its 401 is the rejection.
         """
         assert self._broker is not None  # only wired with auth
-        self._broker.invalidate(token)
+        if method == "POST" or (method == "GET" and self.server_config.transport == "sse"):
+            self._broker.invalidate(token)
         if method == "POST":
+            self._rejected[_digest(token)] = None
+            while len(self._rejected) > _MAX_REJECTED_TOKENS:
+                self._rejected.popitem(last=False)
             self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
+
+    def _was_rejected(self, token: str) -> bool:
+        return _digest(token) in self._rejected
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._credential()}"}
@@ -523,6 +536,7 @@ class GuardedMcpToolset(McpToolset):
                 tool,
                 self.server_config,
                 credential=self._credential if self.server_config.auth else None,
+                was_rejected=self._was_rejected,
             )
             exposed.append(tool)
         if not self._reported_missing:
@@ -634,6 +648,16 @@ def _connection_params(
 
 
 _DEADLINE_MARK = "_orrery_deadline"
+_MAX_REJECTED_TOKENS = 256
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _is_bare_error(result: Any) -> bool:
+    """ADK's shape for an exception inside an MCP call."""
+    return isinstance(result, dict) and set(result) == {"error"}
 
 
 def _with_deadline(
@@ -641,6 +665,7 @@ def _with_deadline(
     config: McpServerConfig,
     *,
     credential: Callable[[], Awaitable[str]] | None = None,
+    was_rejected: Callable[[str], bool] = lambda _token: False,
 ) -> None:
     """Bound every call of *tool* by ``call_timeout_seconds``, once per object.
 
@@ -659,12 +684,31 @@ def _with_deadline(
     async def run_with_deadline(*, args: dict[str, Any], tool_context: Any) -> Any:
         try:
             async with asyncio.timeout(seconds):
-                if credential is not None:
-                    # Resolved here, where a refusal can be answered as one: ADK
-                    # turns an exception from its header provider into a bare
-                    # error. The provider then reads the broker's cache.
-                    await credential()
-                return await run(args=args, tool_context=tool_context)
+                if credential is None:
+                    return await run(args=args, tool_context=tool_context)
+                # Resolved here, where a refusal can be answered as one: ADK
+                # turns an exception from its header provider into a bare
+                # error. The provider then reads the broker's cache.
+                token = await credential()
+                result = await run(args=args, tool_context=tool_context)
+                if not _is_bare_error(result):
+                    return result
+                # The token may have gone during the call, and the provider's
+                # exchange refused: asking again answers that as a refusal.
+                await credential()
+                if not was_rejected(token):
+                    return result
+                # About this user's token, so not a failure of the server that
+                # should open the circuit everyone shares.
+                return {
+                    "status": "access_denied",
+                    "error_type": "credential_rejected",
+                    "message": (
+                        f"{name}: the server rejected this user's token (HTTP 401). The "
+                        "call may have been cut off partway: check its effect before "
+                        "calling it again."
+                    ),
+                }
         except CredentialUnavailable as exc:
             # A refusal is an answer (the tool never ran), so the breaker
             # ignores it; an unreachable IdP is a failure it counts.

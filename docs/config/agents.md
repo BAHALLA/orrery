@@ -15,9 +15,9 @@ Each agent defines its own configuration class that inherits from `AgentConfig`.
 | **observability** | `LOKI_URL` | unset | Loki server URL. Unset: the Loki tools are not offered to the model |
 | **observability** | `ALERTMANAGER_URL` | `http://localhost:9093` | Alertmanager server URL |
 | **elasticsearch** | `ELASTICSEARCH_URL` | `http://localhost:9200` | Elasticsearch REST endpoint |
-| **elasticsearch** | `ELASTICSEARCH_USERNAME` | — | Basic auth username |
+| **elasticsearch** | `ELASTICSEARCH_USERNAME` | — | Basic auth username. Prefer `ELASTICSEARCH_API_KEY` |
 | **elasticsearch** | `ELASTICSEARCH_PASSWORD` | — | Basic auth password |
-| **elasticsearch** | `ELASTICSEARCH_API_KEY` | — | API key authentication |
+| **elasticsearch** | `ELASTICSEARCH_API_KEY` | — | API key authentication (preferred; wins over basic auth) |
 | **slack-bot** | `SLACK_BOT_TOKEN` | — | Slack bot token (`xoxb-...`) |
 | **slack-bot** | `SLACK_APP_TOKEN` | — | App-level token for Socket Mode (`xapp-...`) |
 | **slack-bot** | `SLACK_SIGNING_SECRET` | — | Request signing secret |

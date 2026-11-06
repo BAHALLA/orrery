@@ -160,7 +160,8 @@ class ServerConfig:
     jwt: JWTConfig = field(default_factory=JWTConfig)
     #: Start without ``JWT_AUDIENCE``/``JWT_ISSUER`` (``ORRERY_ALLOW_UNBOUND_TOKENS``).
     allow_unbound_tokens: bool = False
-    database_url: str | None = None
+    #: Holds the database password, so it stays out of a repr of this config.
+    database_url: str | None = field(default=None, repr=False)
     cors_origins: tuple[str, ...] = ()
     web_console_enabled: bool = False
     chat_rate_limit: str = "30/minute"

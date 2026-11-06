@@ -306,8 +306,7 @@ async def test_a_token_the_server_rejects_is_replaced_on_the_next_call(http_serv
 
             recorder.rejected.add("Bearer rotated-1")
             now[0] += 60
-            with contextlib.suppress(Exception):
-                await tool.run_async(args={}, tool_context=ctx)
+            rejected = await tool.run_async(args={}, tool_context=ctx)
 
             # Evicted by the 401: this call exchanges again and gets through.
             result = await tool.run_async(args={}, tool_context=ctx)
@@ -320,6 +319,9 @@ async def test_a_token_the_server_rejects_is_replaced_on_the_next_call(http_serv
     assert idp.calls == 2
     assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
     assert pooled == 1
+    # About this user's token, so it can't open the circuit everyone shares.
+    assert rejected["error_type"] == "credential_rejected"
+    assert classify_tool_outcome(rejected) is ToolOutcome.IGNORE
 
 
 @pytest.fixture(scope="module")
@@ -396,13 +398,54 @@ async def test_a_401_on_the_optional_get_stream_leaves_the_session_working(http_
 
 
 @pytest.mark.parametrize(
-    ("method", "discards"), [("POST", True), ("GET", False), ("DELETE", False)]
+    ("transport", "method", "invalidates", "discards"),
+    [
+        ("streamable_http", "POST", True, True),
+        ("streamable_http", "GET", False, False),
+        ("streamable_http", "DELETE", False, False),
+        ("sse", "POST", True, True),
+        ("sse", "GET", True, False),
+    ],
 )
-def test_only_a_rejected_post_discards_the_session(method, discards):
-    toolset = GuardedMcpToolset(_config(), broker=_broker())
-    manager = MagicMock()
-    toolset._mcp_session_manager = manager
+def test_what_a_401_does_depends_on_what_it_rejected(transport, method, invalidates, discards):
+    toolset = GuardedMcpToolset(_config(transport=transport), broker=_broker())
+    broker, manager = MagicMock(), MagicMock()
+    toolset._broker, toolset._mcp_session_manager = broker, manager
 
     toolset._on_rejected_token("tok", method)
 
+    assert broker.invalidate.called is invalidates
     assert manager._discard_session.called is discards
+
+
+class RefusingAfterFirstIdP(RotatingIdP):
+    def post(self, url: str, **kwargs: Any) -> Any:
+        if self.calls >= 1:
+            self.calls += 1
+            refused = MagicMock(status_code=403)
+            refused.json.return_value = {"error": "access_denied"}
+            return refused
+        return super().post(url, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_a_user_refused_after_a_rejection_is_answered_as_refused(http_server):
+    url, recorder = http_server
+    now = [0.0]
+    settings = ExchangeSettings(url="https://idp.example.com/t", client_id="c", client_secret="s")
+    idp = RefusingAfterFirstIdP()
+    broker = TokenBroker(settings, session=cast(Any, idp), clock=lambda: now[0])
+    toolset = GuardedMcpToolset(_config(url=url, call_timeout_seconds=5), broker=broker)
+    ctx = MagicMock()
+    try:
+        with _as("console-frank", "frank"):
+            (tool,) = await toolset.get_tools(ctx)
+            recorder.rejected.add("Bearer rotated-1")
+            now[0] += 60
+            result = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.rejected.clear()
+        await toolset.close()
+
+    assert result["status"] == "access_denied"
+    assert result["error_type"] == "credential_unavailable"

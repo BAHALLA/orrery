@@ -79,6 +79,22 @@ async def delete_resource(name: str) -> dict:
 
 ---
 
+## Credentials for your tools {: #credentials }
+
+Read a tool's credentials from the environment into a `SecretStr` setting
+(`AgentConfig`), never from session state. To act as the signed-in user, use
+[impersonation](impersonation.md) or an MCP server with
+[`token_exchange`](integrations/mcp.md#per-user-credentials).
+
+Don't use ADK's interactive OAuth (`tool_context.request_credential`, a toolset's
+`get_auth_config()`) in a specialist. Specialists run as `AgentTool`s, which can't
+resume a credential request, so the coordinator only sees an error. ADK's own
+pattern also caches tokens in session state, which is copied into each
+specialist's session and, with Postgres sessions, stored there. A third-party
+specialist that declares ADK authentication gets a warning at startup.
+
+---
+
 ## 3. Wire Up the Agent {: #wiring }
 
 In `agent.py`, use the `create_agent` factory. If any of your tools is `@confirm`/`@destructive`, `create_agent()` wires the confirmation gate (`require_confirmation()`) for you — there is nothing to remember. Pass `dry_run()` instead to rehearse guarded calls without running them, or put an RBAC callback first with `before_tool_callback=[authorize(), require_confirmation()]` to control the order.

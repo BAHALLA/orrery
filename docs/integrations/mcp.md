@@ -257,6 +257,10 @@ appear in the live trace under their specialist.
 
 ## Deployment notes
 
+- **A rejected token can briefly stall others:** while a server rejects one user's
+  token, each of that user's calls opens a new MCP session, and other users of that
+  server wait for it (up to `timeout_seconds` per call, until the token is 30 s old
+  and gets replaced). Other servers aren't affected.
 - **Credentials are static per server** unless it sets `auth`: every
   user's call then uses the token in `headers_from_env`. See
   [Per-user credentials](#per-user-credentials).

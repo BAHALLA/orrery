@@ -353,6 +353,7 @@ def _check_plugin_gates(key: str, spec: SpecialistSpec) -> None:
       cannot be shown safe here and counts as guarded, as it does in
       ``create_agent()``.
     """
+    from google.adk.tools.base_authenticated_tool import BaseAuthenticatedTool
     from google.adk.tools.base_toolset import BaseToolset
 
     from .security.classify import looks_mutating
@@ -365,6 +366,17 @@ def _check_plugin_gates(key: str, spec: SpecialistSpec) -> None:
             if not isinstance(getattr(t, "agent", None), BaseAgent)
         ]
         for tool in tools:
+            if isinstance(tool, BaseAuthenticatedTool) or (
+                isinstance(tool, BaseToolset) and tool.get_auth_config() is not None
+            ):
+                logger.warning(
+                    "Third-party specialist %r: %s declares ADK authentication. Interactive "
+                    "OAuth cannot finish inside a specialist (AgentTool cannot resume a "
+                    "credential request), and ADK caches credentials in session state. Use "
+                    "non-interactive credentials from the environment. See docs/adding-an-agent.md",
+                    key,
+                    agent.name,
+                )
             if isinstance(tool, BaseToolset):
                 continue  # no static names to check; gated below
             name = _tool_name(tool)

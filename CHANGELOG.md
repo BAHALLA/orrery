@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Third-party specialists that declare ADK authentication get a startup warning:
+  interactive OAuth can't finish inside a specialist. `docs/adding-an-agent.md` says
+  what to use instead, and the Elasticsearch docs now lead with API keys.
+
 ### Security
 
 - `oauthlib` 4.0.1 (GHSA-3jp2-3mrg-2vxc). Orrery only reaches it through the Kubernetes
@@ -29,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inheriting every secret. If you rely on another variable reaching `docker`, such as
   `DOCKER_AUTH_CONFIG`, it no longer does: the list is `_DOCKER_ENV` in
   `docker_agent/tools.py`.
+- The inbound `tracestate` limit is now always installed, not only with
+  `OTEL_TRACING_ENABLED`, so a tracer provider set up another way is covered too.
+- `SLACK_DB_URL`, `KNOWLEDGE_PG_URL` and the HTTP server's `DATABASE_URL` setting no
+  longer appear in a `repr`.
+- An MCP call cut off by a 401 now says the token was rejected and that the call may
+  have partly run. It no longer counts toward the circuit breaker all users share.
 
 ## [0.18.0] - 2026-11-05
 
