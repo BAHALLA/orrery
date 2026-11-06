@@ -15,7 +15,7 @@ export interface SystemController {
   me: MeResponse | null;
   /** Why `me` is unavailable, when the fetch failed for a reason worth showing. */
   meError: string | null;
-  /** `/me` has answered or failed: until then the console doesn't know this deployment. */
+  /** `/me` has answered, or this server has none. Until then the console doesn't know this deployment. */
   meLoaded: boolean;
   selfTest: SelfTestResponse | null;
   isChecking: boolean;
@@ -38,6 +38,9 @@ export interface SystemController {
 
 /** After a save, how long before reading the served agents again when the first read failed. */
 const AGENTS_RETRY_MS = 2000;
+
+/** Delays before asking `/me` again after a failure that may pass. */
+const ME_RETRY_MS = [2000, 4000, 8000];
 
 /** Turn a failure into something that tells the operator what to do about it. */
 export function describeApiError(err: unknown, fallback: string): string {
@@ -80,33 +83,47 @@ export function useSystem(token: string | null): SystemController {
 
   useEffect(() => {
     let cancelled = false;
-    client
-      .me()
-      .then((res) => {
-        if (cancelled) return;
-        // Labels and rollups outside React read the deployment's specialists.
-        setActiveSpecialists(resolveSpecialists(res.specialists));
-        setMe(res);
-        setMeError(null);
-        setMeLoaded(true);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setMe(null);
-        setMeLoaded(true);
-        // An older server genuinely without /me is fine — the posture rows just
-        // stay empty. Anything else (unreachable, unauthorised, the dev proxy
-        // answering with the SPA shell) used to be swallowed here, leaving the
-        // panel showing "—" with no way to tell a missing route from a broken
-        // one. That silence is what made the reported bug hard to place.
-        setMeError(
-          err instanceof ApiError && err.status === 404
-            ? null
-            : describeApiError(err, "Could not load deployment posture."),
-        );
-      });
+    let retry: number | undefined;
+    const load = (attempt: number) => {
+      client
+        .me()
+        .then((res) => {
+          if (cancelled) return;
+          // Labels and rollups outside React read the deployment's specialists.
+          setActiveSpecialists(resolveSpecialists(res.specialists));
+          setMe(res);
+          setMeError(null);
+          setMeLoaded(true);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          // An older server genuinely without /me is fine — the posture rows just
+          // stay empty, and it has no brief to wait for. Anything else (unreachable,
+          // unauthorised, the dev proxy answering with the SPA shell) used to be
+          // swallowed here, leaving the panel showing "—" with no way to tell a
+          // missing route from a broken one. That silence is what made the
+          // reported bug hard to place.
+          if (err instanceof ApiError && err.status === 404) {
+            setMe(null);
+            setMeError(null);
+            setMeLoaded(true);
+            return;
+          }
+          // Keep what we knew: a token renews every few minutes, and one failed
+          // refetch must not take a lab's brief away. If this is the first answer,
+          // meLoaded stays false, because the stock suggestions can give a lab away.
+          setMeError(describeApiError(err, "Could not load deployment posture."));
+          const delay = ME_RETRY_MS[attempt];
+          const passing = err instanceof ApiError && (err.status === 0 || err.status >= 500);
+          if (passing && delay !== undefined) {
+            retry = window.setTimeout(() => load(attempt + 1), delay);
+          }
+        });
+    };
+    load(0);
     return () => {
       cancelled = true;
+      window.clearTimeout(retry);
     };
   }, [client, token]);
 

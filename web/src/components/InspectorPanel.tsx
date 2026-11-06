@@ -30,7 +30,17 @@ interface Props {
  * dialog: focus moves in, Tab stays in, and closing gives focus back. From `xl`
  * up it is a docked column and none of that applies. The tabs follow the WAI-ARIA
  * tabs pattern: one tab stop, arrow keys (and Home/End) move between tabs. */
-export function InspectorPanel({ tab, onTab, onClose, activity, triage, system, mission }: Props) {
+export function InspectorPanel({
+  tab: requested,
+  onTab,
+  onClose,
+  activity,
+  triage,
+  system,
+  mission,
+}: Props) {
+  // The brief can go while its tab is open (a restart without the file).
+  const tab = requested === "mission" && !mission ? "tools" : requested;
   const TABS: readonly InspectorTab[] = mission ? ["mission", ...STOCK_TABS] : STOCK_TABS;
   const docked = useMediaQuery(BREAKPOINT_XL);
   const ref = useRef<HTMLElement>(null);

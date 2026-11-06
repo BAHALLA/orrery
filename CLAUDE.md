@@ -142,7 +142,7 @@ This is a **DevOps/SRE agent platform** built on **Google ADK** (Agent Developme
 
 ### A lab's brief is display only
 
-`ORRERY_CONSOLE_MISSION_FILE` (`serving/mission.py`) reaches the console through the authenticated `GET /me`, not the public `console-config.js`. It never reaches the model, and scoring stays out of Orrery (AEP-032). Welcome waits for `/me` (`SystemController.meLoaded`) before showing any suggestion, because the stock cards can answer a lab's task.
+`ORRERY_CONSOLE_MISSION_FILE` (`serving/mission.py`) reaches the console through the authenticated `GET /me`, not the public `console-config.js`. It never reaches the model (a clicked starter is sent as the learner's own message), and scoring stays out of Orrery (AEP-032). Welcome waits for `/me` (`SystemController.meLoaded`) before showing any suggestion, because the stock cards can answer a lab's task: a failure other than 404 leaves `meLoaded` false, and a failed refetch keeps the last good `me`, since an SSO renew refetches every few minutes. `AnswerGuardPlugin` never sees this text, so nothing checks a brief against a learning manifest.
 
 ### Specialists are discovered, not imported
 

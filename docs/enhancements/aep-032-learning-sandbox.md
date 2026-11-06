@@ -462,6 +462,7 @@ lag.
 | Level reached on one scenario unlocks the next | Level bound to `scenario_id` |
 | The coach is talked past its level | The level comes only from the server stamp, appended to the coach's sub-run; the answer guard still checks every root reply |
 | SSE `progress` and `/activity` name the tool the coach (or a specialist) ran, below the level that names tools | Accepted: a teaching-layer gap that discloses no value (arguments and results are never shown) |
+| An operator's console brief (`ORRERY_CONSOLE_MISSION_FILE`) states a target value; the guard only sees model text | Accepted for now: operator-written, and the docs say to keep answers out. A startup check against the manifest is possible future work |
 | Learner raises another learner's level, or a machine principal does | Endpoint keyed by the verified human subject; non-human principals refused |
 | Hint endpoint abused for load | Per-subject rate limit; one step per call |
 | New values unguarded during a re-seed | Manifest written before seeding; reload checked on every guard call; lab waits for `/healthz` to report the new id |

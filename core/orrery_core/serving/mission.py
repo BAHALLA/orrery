@@ -5,9 +5,10 @@ like to check?" with generic suggestions knows nothing about it. These may even
 answer the exercise. So an operator can name the situation, the goal, where the
 tasks live and a few places to start (``ORRERY_CONSOLE_MISSION_FILE``, JSON).
 
-It is display only. The model never sees it, nothing here grades or tracks
-progress (AEP-032 leaves that to the lab platform), and every signed-in caller
-reads the same text through ``GET /me``, so it must not hold an exercise's answer.
+It is display only. The brief never reaches the model (a starter the learner
+clicks is sent as their own message), nothing here grades or tracks progress
+(AEP-032 leaves that to the lab platform), and every caller of ``GET /me`` reads
+the same text, so it must not hold an exercise's answer.
 """
 
 from __future__ import annotations
@@ -58,6 +59,10 @@ class Mission(BaseModel):
         """Only a link a browser can follow safely; messages never repeat the URL."""
         if url is None:
             return None
+        # urlsplit drops these and a browser may too, so what is checked would
+        # not be the link that is served.
+        if " " in url or not url.isprintable():
+            raise ValueError("tasks_url must not hold spaces or control characters")
         parts = split_url(url, "tasks_url")
         host = (parts.hostname or "").lower()
         if parts.scheme.lower() != "https" and not (
@@ -75,7 +80,8 @@ def load_mission(path: str) -> Mission:
     """The brief in *path*. Raises ``ValueError``, so a bad file stops startup."""
     target = Path(path)
     try:
-        raw = target.read_bytes()
+        with target.open("rb") as file:
+            raw = file.read(MAX_MISSION_BYTES + 1)
     except OSError as exc:
         raise ValueError(f"{MISSION_FILE_ENV}: can't read {path}: {exc.strerror}") from exc
     if len(raw) > MAX_MISSION_BYTES:

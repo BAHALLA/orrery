@@ -74,6 +74,10 @@ def test_a_missing_file_stops_startup(tmp_path):
         "http://example.com/x",
         "https://",
         "https://user:s3cret-value@example.com/x",
+        "\x01https://example.com/x",
+        "ht\ttps://example.com/x",
+        "https:\t//example.com/x",
+        "https://exa mple.com/x",
     ],
 )
 def test_a_link_a_browser_should_not_follow_is_refused(tmp_path, url):
@@ -124,6 +128,27 @@ def test_me_carries_the_brief():
     body = _client(Mission.model_validate(BRIEF)).get("/me").json()
     assert body["mission"]["goal"] == "Find the cause."
     assert body["mission"]["starters"] == BRIEF["starters"]
+
+
+def test_me_needs_a_token_when_auth_is_on():
+    config = ServerConfig(
+        auth_enabled=True,
+        jwt=JWTConfig(algorithm="HS256", secret="x" * 32, audience="orrery", issuer="test"),
+        mission=Mission.model_validate(BRIEF),
+    )
+    with patch(
+        "orrery_core.serving.server.create_session_service",
+        return_value=InMemorySessionService(),
+    ):
+        app = create_app(
+            root_agent=LlmAgent(name="root", model="gemini-2.5-flash"),
+            app_name="t",
+            plugins=[],
+            config=config,
+        )
+    refused = TestClient(app).get("/me")
+    assert refused.status_code == 401
+    assert BRIEF["goal"] not in refused.text
 
 
 def test_me_says_null_without_one():

@@ -14,7 +14,7 @@ interface Props {
   specialists: readonly SpecialistInfo[];
   /** From `/me`; null until it answers. */
   me: Posture | null;
-  /** False until `/me` answers: the stock cards can answer a lab's task, so none yet. */
+  /** False until `/me` answers, even if it fails: the stock cards can answer a lab's task. */
   meLoaded?: boolean | undefined;
 }
 
@@ -126,9 +126,9 @@ export function Welcome({ onSuggest, onSweep, specialists, me, meLoaded = true }
         </p>
 
         <div className="mt-8 grid w-full gap-3 sm:grid-cols-2">
-          {suggestions.map(({ title, prompt, icon: Icon }) => (
+          {suggestions.map(({ title, prompt, icon: Icon }, index) => (
             <button
-              key={title}
+              key={index}
               type="button"
               onClick={() => onSuggest(prompt)}
               className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
