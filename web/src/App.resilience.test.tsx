@@ -122,10 +122,11 @@ describe("resilience and safety posture", () => {
     // A triage sweep can run for a minute with no partial output; without a
     // stop control the only escape was reloading the page.
     stubApi(
-      (input?: unknown) =>
+      (init) =>
         new Promise<Response>((_resolve, reject) => {
-          void input;
-          setTimeout(() => reject(new DOMException("aborted", "AbortError")), 50);
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
         }),
     );
     localStorage.setItem(storageKeys.token, token);

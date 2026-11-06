@@ -52,12 +52,15 @@ export function sseResponse(frames: string[]): Response {
  * Route each endpoint to a canned response; /chat is caller-controlled.
  * `me` replaces the default operator's `/me` (autonomy L3, self-test on).
  */
-export function stubApi(chat: () => Promise<Response>, me?: Record<string, unknown>) {
+export function stubApi(
+  chat: (init?: RequestInit) => Promise<Response>,
+  me?: Record<string, unknown>,
+) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes("/chat")) return chat();
+      if (url.includes("/chat")) return chat(init);
       if (url.endsWith("/me")) {
         return jsonResponse(
           me ?? {
