@@ -70,6 +70,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..observability.audit import audit_event
 from ..plugins.safety_plugin import screen_text
+from ..reliability.resilience import CREDENTIAL_REJECTED_ERROR
 from ..safe_url import split_url
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
@@ -449,10 +450,11 @@ class GuardedMcpToolset(McpToolset):
         # Orrery MCP server's TLS comes from its config (``client_cert_file``).
         self._mcp_session_manager._get_mtls_transport = _no_google_mtls  # ty: ignore[invalid-assignment]
         self._reported_missing = False
-        #: Digests of tokens the server rejected on a call, so that call's bare
-        #: error can be answered as what it was. Bounded; a miss only costs the
-        #: more generic message.
-        self._rejected: OrderedDict[str, None] = OrderedDict()
+        #: Token digest -> how many times the server rejected it. A count, so a
+        #: call can tell whether a rejection happened *during* it: one 401 must
+        #: not label that token's later failures, say a real outage, as 401s.
+        #: Bounded; a miss only costs the more generic message.
+        self._rejections: OrderedDict[str, int] = OrderedDict()
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
         self._pinned: dict[str, str] = pin_store if pin_store is not None else {}
         #: Tool name -> the description and input schema of the text that was
@@ -484,14 +486,16 @@ class GuardedMcpToolset(McpToolset):
         assert self._broker is not None  # only wired with auth
         if method == "POST" or (method == "GET" and self.server_config.transport == "sse"):
             self._broker.invalidate(token)
+            digest = _digest(token)
+            self._rejections[digest] = self._rejections.get(digest, 0) + 1
+            self._rejections.move_to_end(digest)
+            while len(self._rejections) > _MAX_REJECTED_TOKENS:
+                self._rejections.popitem(last=False)
         if method == "POST":
-            self._rejected[_digest(token)] = None
-            while len(self._rejected) > _MAX_REJECTED_TOKENS:
-                self._rejected.popitem(last=False)
             self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
 
-    def _was_rejected(self, token: str) -> bool:
-        return _digest(token) in self._rejected
+    def _rejection_count(self, token: str) -> int:
+        return self._rejections.get(_digest(token), 0)
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._credential()}"}
@@ -536,7 +540,7 @@ class GuardedMcpToolset(McpToolset):
                 tool,
                 self.server_config,
                 credential=self._credential if self.server_config.auth else None,
-                was_rejected=self._was_rejected,
+                rejection_count=self._rejection_count,
             )
             exposed.append(tool)
         if not self._reported_missing:
@@ -665,7 +669,7 @@ def _with_deadline(
     config: McpServerConfig,
     *,
     credential: Callable[[], Awaitable[str]] | None = None,
-    was_rejected: Callable[[str], bool] = lambda _token: False,
+    rejection_count: Callable[[str], int] = lambda _token: 0,
 ) -> None:
     """Bound every call of *tool* by ``call_timeout_seconds``, once per object.
 
@@ -690,19 +694,21 @@ def _with_deadline(
                 # turns an exception from its header provider into a bare
                 # error. The provider then reads the broker's cache.
                 token = await credential()
+                rejections = rejection_count(token)
                 result = await run(args=args, tool_context=tool_context)
                 if not _is_bare_error(result):
                     return result
-                # The token may have gone during the call, and the provider's
-                # exchange refused: asking again answers that as a refusal.
-                await credential()
-                if not was_rejected(token):
+                if rejection_count(token) == rejections:
+                    # The token may have gone just before the call, and the
+                    # provider's exchange refused: asking again answers that as
+                    # the refusal it is.
+                    await credential()
                     return result
-                # About this user's token, so not a failure of the server that
-                # should open the circuit everyone shares.
+                # It reached the server, so a failure to the run guards, but
+                # one the circuit breaker leaves out (see the constant).
                 return {
-                    "status": "access_denied",
-                    "error_type": "credential_rejected",
+                    "status": "error",
+                    "error_type": CREDENTIAL_REJECTED_ERROR,
                     "message": (
                         f"{name}: the server rejected this user's token (HTTP 401). The "
                         "call may have been cut off partway: check its effect before "
@@ -710,7 +716,7 @@ def _with_deadline(
                     ),
                 }
         except CredentialUnavailable as exc:
-            # A refusal is an answer (the tool never ran), so the breaker
+            # A refusal is an answer (the call never went out), so the breaker
             # ignores it; an unreachable IdP is a failure it counts.
             return {
                 "status": "access_denied" if exc.is_refusal else "error",

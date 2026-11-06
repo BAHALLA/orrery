@@ -312,6 +312,24 @@ def test_a_plugin_toolset_declaring_adk_auth_is_warned_about(monkeypatch, caplog
     assert "declares ADK authentication" in caplog.text
 
 
+def test_a_toolset_whose_auth_config_raises_does_not_stop_startup(monkeypatch):
+    from google.adk.tools.base_toolset import BaseToolset
+
+    class _Broken(BaseToolset):
+        async def get_tools(self, readonly_context=None):  # type: ignore[override]
+            return []
+
+        async def close(self):
+            return None
+
+        def get_auth_config(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
+    agent = _gated("redis_agent", [get_status, _Broken()])
+    discover_specialists(loader=_eps(("redis", agent), dist="acme-redis-agent"))
+
+
 def test_a_plugin_tool_named_as_a_mutation_must_be_guarded(monkeypatch):
     monkeypatch.setenv("ORRERY_SPECIALISTS", "redis")
     agent = _gated("redis_agent", [get_status, purge_cache])

@@ -223,14 +223,19 @@ Orrery, and a server holding it could replay it against Orrery.
   people's tokens.
 - **Cache:** exchanged tokens stay in memory, per caller token, audience and
   scope, until 30 s before they expire (a token living a minute or less, for
-  half its life). A token the server answers 401 to is dropped, so the next
-  call exchanges again, unless it is under 30 s old: a new token rarely helps
-  then, and a server rejecting everything shouldn't multiply IdP calls. A 403
-  keeps the token, since it is about permissions. A 401 on a POST also closes
-  that token's MCP session, so an SSE session the rejection killed isn't reused. Concurrent calls share one
-  exchange. Failures are remembered per key too: a refusal for 30 s, an IdP outage with a backoff from 5 s to
+  half its life). Concurrent calls share one exchange. Failures are remembered
+  per key too: a refusal for 30 s, an IdP outage with a backoff from 5 s to
   60 s. Exchanges run on four threads of their own, so an IdP brownout can't
   starve the tools that share the default executor.
+- **A token the server rejects:** a 401 on a call (or on opening an SSE session)
+  drops the token, so the next call exchanges again, unless it is under 30 s old:
+  a new token rarely helps then, and a server rejecting everything shouldn't
+  multiply IdP calls. A 401 on a call also closes that token's MCP session, so an
+  SSE session the rejection killed isn't reused. A 401 on the optional GET stream
+  of streamable HTTP or on closing a session changes nothing, and neither does a
+  403, which is about permissions. The call answers `credential_rejected` and warns
+  that it may have partly run. The run budgets count it, the shared circuit breaker
+  doesn't.
 - **One tool text for everyone:** the allowlist screen and fingerprint pins
   are per server, not per user. A server that tailors a tool's description or
   schema to each user would see the first user's text pinned and everyone

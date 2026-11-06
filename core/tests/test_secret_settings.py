@@ -19,8 +19,8 @@ SECRET_NAME = re.compile(
     r"|db_url|pg_url)$",
     re.IGNORECASE,
 )
-#: What such a field may be annotated as: a flag about a secret holds none.
-ALLOWED = {"SecretStr", "SecretStr | None", "bool"}
+#: What such a field may be annotated as: a flag or a number holds no secret.
+ALLOWED = {"SecretStr", "SecretStr | None", "bool", "int", "float"}
 
 
 def _classes() -> Iterator[tuple[Path, ast.ClassDef]]:

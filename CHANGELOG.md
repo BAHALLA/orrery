@@ -37,10 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docker_agent/tools.py`.
 - The inbound `tracestate` limit is now always installed, not only with
   `OTEL_TRACING_ENABLED`, so a tracer provider set up another way is covered too.
-- `SLACK_DB_URL`, `KNOWLEDGE_PG_URL` and the HTTP server's `DATABASE_URL` setting no
-  longer appear in a `repr`.
-- An MCP call cut off by a 401 now says the token was rejected and that the call may
-  have partly run. It no longer counts toward the circuit breaker all users share.
+- `SLACK_DB_URL`, `KNOWLEDGE_PG_URL` and the HTTP server's `DATABASE_URL` and rate-limit
+  storage settings no longer appear in a `repr`.
+- An MCP call failing on a 401 now answers `credential_rejected` and says the call may
+  have partly run. It still counts toward the run budgets, but not toward the circuit
+  breaker all users share.
 
 ## [0.18.0] - 2026-11-05
 

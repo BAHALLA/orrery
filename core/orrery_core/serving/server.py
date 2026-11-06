@@ -170,7 +170,8 @@ class ServerConfig:
     hint_rate_limit: str = "3/minute"
     selftest_rate_limit: str = "10/minute"
     docs_enabled: bool | None = None
-    rate_limit_storage_uri: str = "memory://"
+    #: May hold a password (``redis://:pw@host``), so it stays out of a repr.
+    rate_limit_storage_uri: str = field(default="memory://", repr=False)
     csp_extra_origins: tuple[str, ...] = ()
     #: Let admins change the agent catalog from the console (PUT /admin/catalog).
     #: Off by default: reading the inventory is harmless, rewiring a running
