@@ -79,7 +79,7 @@ async def update_kafka_partitions(topic_name: str, new_total_partitions: int) ->
     new_parts = [NewPartitions(topic_name, new_total_partitions)]
     try:
         futures = admin.create_partitions(new_parts)
-        for _topic, future in futures.items():
+        for future in futures.values():
             try:
                 await _run_sync(future.result)
                 return {
@@ -90,14 +90,14 @@ async def update_kafka_partitions(topic_name: str, new_total_partitions: int) ->
                 logger.exception("Failed to update partitions for topic '%s'", topic_name)
                 return {
                     "status": "error",
-                    "message": f"Failed to update partitions for '{topic_name}': {str(e)}",
+                    "message": f"Failed to update partitions for '{topic_name}': {e!s}",
                 }
         return {"status": "error", "message": "Kafka returned no results for partition update."}
     except Exception as e:
         logger.exception("Unexpected error while updating partitions for '%s'", topic_name)
         return {
             "status": "error",
-            "message": f"Unexpected error while updating partitions: {str(e)}",
+            "message": f"Unexpected error while updating partitions: {e!s}",
         }
 
 
@@ -128,7 +128,7 @@ async def get_kafka_cluster_health() -> dict[str, Any]:
         }
     except KafkaException as e:
         logger.exception("Failed to connect to Kafka")
-        return {"status": "error", "message": f"Failed to connect to Kafka: {str(e)}"}
+        return {"status": "error", "message": f"Failed to connect to Kafka: {e!s}"}
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
@@ -145,7 +145,7 @@ async def list_kafka_topics() -> dict[str, Any]:
         return {"status": "success", "topics": topics, "count": len(topics)}
     except KafkaException as e:
         logger.exception("Failed to list topics")
-        return {"status": "error", "message": f"Failed to list topics: {str(e)}"}
+        return {"status": "error", "message": f"Failed to list topics: {e!s}"}
 
 
 @confirm("creates a new topic on the cluster")
@@ -177,7 +177,7 @@ async def create_kafka_topic(
     )
     try:
         futures = admin.create_topics([new_topic])
-        for _topic, future in futures.items():
+        for future in futures.values():
             try:
                 await _run_sync(future.result)
                 return {
@@ -188,7 +188,7 @@ async def create_kafka_topic(
                 logger.exception("Failed to create topic '%s'", topic_name)
                 return {
                     "status": "error",
-                    "message": f"Failed to create topic '{topic_name}': {str(e)}",
+                    "message": f"Failed to create topic '{topic_name}': {e!s}",
                 }
         # Fallback if futures is empty
         return {"status": "error", "message": "Kafka returned no results for topic creation."}
@@ -196,7 +196,7 @@ async def create_kafka_topic(
         logger.exception("Unexpected error while creating topic '%s'", topic_name)
         return {
             "status": "error",
-            "message": f"Unexpected error while creating topic: {str(e)}",
+            "message": f"Unexpected error while creating topic: {e!s}",
         }
 
 
@@ -216,7 +216,7 @@ async def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
     admin = _get_admin_client()
     try:
         futures = admin.delete_topics([topic_name])
-        for _topic, future in futures.items():
+        for future in futures.values():
             try:
                 await _run_sync(future.result)
                 return {
@@ -227,7 +227,7 @@ async def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
                 logger.exception("Failed to delete topic '%s'", topic_name)
                 return {
                     "status": "error",
-                    "message": f"Failed to delete topic '{topic_name}': {str(e)}",
+                    "message": f"Failed to delete topic '{topic_name}': {e!s}",
                 }
         # Fallback if futures is empty
         return {"status": "error", "message": "Kafka returned no results for topic deletion."}
@@ -235,7 +235,7 @@ async def delete_kafka_topic(topic_name: str) -> dict[str, Any]:
         logger.exception("Unexpected error while deleting topic '%s'", topic_name)
         return {
             "status": "error",
-            "message": f"Unexpected error while deleting topic: {str(e)}",
+            "message": f"Unexpected error while deleting topic: {e!s}",
         }
 
 
@@ -280,7 +280,7 @@ async def get_topic_metadata(topic_name: str) -> dict[str, Any]:
         logger.exception("Failed to get metadata for topic '%s'", topic_name)
         return {
             "status": "error",
-            "message": f"Failed to get metadata for topic '{topic_name}': {str(e)}",
+            "message": f"Failed to get metadata for topic '{topic_name}': {e!s}",
         }
 
 
@@ -299,7 +299,7 @@ async def list_consumer_groups() -> dict[str, Any]:
         return {"status": "success", "groups": groups, "count": len(groups)}
     except Exception as e:
         logger.exception("Failed to list consumer groups")
-        return {"status": "error", "message": f"Failed to list consumer groups: {str(e)}"}
+        return {"status": "error", "message": f"Failed to list consumer groups: {e!s}"}
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
@@ -359,7 +359,7 @@ async def describe_consumer_groups(group_ids: list[str]) -> dict[str, Any]:
         return {"status": "success", "groups": results}
     except Exception as e:
         logger.exception("Failed to describe consumer groups")
-        return {"status": "error", "message": f"Failed to describe consumer groups: {str(e)}"}
+        return {"status": "error", "message": f"Failed to describe consumer groups: {e!s}"}
 
 
 @with_retry(max_retries=3, retryable=(KafkaException, ConnectionError, TimeoutError))
@@ -459,7 +459,7 @@ async def get_consumer_lag(group_id: str, topic_name: str | None = None) -> dict
         }
     except Exception as e:
         logger.exception("Failed to calculate lag for group '%s'", group_id)
-        return {"status": "error", "message": f"Failed to calculate lag: {str(e)}"}
+        return {"status": "error", "message": f"Failed to calculate lag: {e!s}"}
 
 
 # ── Topic configuration ────────────────────────────────────────────────
@@ -496,7 +496,7 @@ async def get_topic_config(topic_name: str) -> dict[str, Any]:
         }
     except Exception as e:
         logger.exception("Failed to describe config for topic '%s'", topic_name)
-        return {"status": "error", "message": f"Failed to read topic config: {str(e)}"}
+        return {"status": "error", "message": f"Failed to read topic config: {e!s}"}
 
 
 #: Topic config keys whose new value can delete retained data. Lowering
@@ -600,7 +600,7 @@ async def _set_topic_config(topic_name: str, config_name: str, config_value: str
         }
     except Exception as e:
         logger.exception("Failed to alter config for topic '%s'", topic_name)
-        return {"status": "error", "message": f"Failed to alter topic config: {str(e)}"}
+        return {"status": "error", "message": f"Failed to alter topic config: {e!s}"}
 
 
 # ── Consumer group remediation ─────────────────────────────────────────
@@ -660,7 +660,7 @@ async def reset_consumer_group_offsets(
         }
     except Exception as e:
         logger.exception("Failed to reset offsets for group '%s'", group_id)
-        return {"status": "error", "message": f"Failed to reset offsets: {str(e)}"}
+        return {"status": "error", "message": f"Failed to reset offsets: {e!s}"}
 
 
 @destructive("permanently deletes a consumer group and its committed offsets")
@@ -686,4 +686,4 @@ async def delete_consumer_group(group_id: str) -> dict[str, Any]:
         return {"status": "success", "message": f"Deleted consumer group '{group_id}'."}
     except Exception as e:
         logger.exception("Failed to delete consumer group '%s'", group_id)
-        return {"status": "error", "message": f"Failed to delete consumer group: {str(e)}"}
+        return {"status": "error", "message": f"Failed to delete consumer group: {e!s}"}

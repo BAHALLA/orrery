@@ -122,7 +122,6 @@ class IdentityStateGuardPlugin(BasePlugin):
         self._snapshots[self._call_key(tool_context)] = snapshot
         while len(self._snapshots) > MAX_TRACKED_CALLS:
             self._snapshots.popitem(last=False)
-        return None
 
     async def after_tool_callback(
         self,
@@ -133,7 +132,6 @@ class IdentityStateGuardPlugin(BasePlugin):
         result: Any,
     ) -> None:
         self._enforce(tool, tool_context)
-        return None
 
     async def on_tool_error_callback(
         self,
@@ -145,7 +143,6 @@ class IdentityStateGuardPlugin(BasePlugin):
     ) -> None:
         # A tool can write state and then raise; the write persists either way.
         self._enforce(tool, tool_context)
-        return None
 
     def _enforce(self, tool: BaseTool, tool_context: ToolContext) -> None:
         snapshot = self._snapshots.pop(self._call_key(tool_context), None)

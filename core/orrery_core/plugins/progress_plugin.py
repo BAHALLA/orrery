@@ -173,14 +173,14 @@ class ProgressPlugin(BasePlugin):
     ) -> None:
         sink = _SINK.get()
         if sink is None:
-            return None
+            return
         step = self._step(tool, tool_context, "start")
         if len(self._started) >= _MAX_TRACKED_CALLS:
             # Insertion-ordered: the first key is the oldest start.
             del self._started[next(iter(self._started))]
         self._started[step.call_id] = time.monotonic()
         self._emit(sink, step)
-        return None
+        return
 
     async def after_tool_callback(
         self,
@@ -192,7 +192,7 @@ class ProgressPlugin(BasePlugin):
     ) -> None:
         sink = _SINK.get()
         if sink is None:
-            return None
+            return
         base = self._step(tool, tool_context, "end")
         started = self._started.pop(base.call_id, None)
         elapsed = int((time.monotonic() - started) * 1000) if started is not None else None
@@ -205,4 +205,4 @@ class ProgressPlugin(BasePlugin):
                 elapsed_ms=elapsed,
             ),
         )
-        return None
+        return

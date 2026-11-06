@@ -550,7 +550,7 @@ class AuthPlugin(BasePlugin):
                     AUTH_STATE_KEY,
                 )
                 set_user_role(state, "viewer")
-            return None
+            return
 
         role = auth.get("role") if isinstance(auth, dict) else None
         if not isinstance(role, str):
@@ -560,7 +560,7 @@ class AuthPlugin(BasePlugin):
                 role,
             )
             set_user_role(state, "viewer")
-            return None
+            return
 
         set_user_role(state, role)
         # A service principal has no human behind it, so nobody could approve
@@ -571,4 +571,4 @@ class AuthPlugin(BasePlugin):
             from ..plugins.autonomy_plugin import set_autonomy_level
 
             set_autonomy_level(state, "L2")
-        return None
+        return

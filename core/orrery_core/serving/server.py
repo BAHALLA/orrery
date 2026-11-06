@@ -623,7 +623,7 @@ def _check_learning_server(cfg: ServerConfig) -> None:
         raise ValueError("ORRERY_LEARNING_MODE cannot start: " + "; ".join(unmet))
 
 
-def create_app(
+def create_app(  # noqa: C901
     *,
     root_agent: Agent | Workflow,
     app_name: str,

@@ -105,7 +105,7 @@ def _is_sensitive_key(key: str) -> bool:
     return normalized not in KEY_ALLOWLIST and bool(SENSITIVE_KEY_PATTERN.search(normalized))
 
 
-def redact_structure(
+def redact_structure(  # noqa: C901
     obj: Any, *, redact_ips: bool = False, redact_emails: bool = False, _depth: int = 0
 ) -> int:
     """Redact secrets in *obj* **in place**; return replacements made.

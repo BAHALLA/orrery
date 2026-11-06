@@ -63,7 +63,6 @@ class GuardrailsPlugin(BasePlugin):
     ) -> None:
         """Ensure default viewer role if not server-set."""
         self._ensure_role(callback_context)
-        return None
 
     async def before_tool_callback(
         self,

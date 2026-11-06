@@ -451,7 +451,7 @@ class StudioRunPlugin(BasePlugin):
     async def before_agent_callback(self, *, agent: Any, callback_context: Any) -> None:
         info = self._compiled.nodes.get(agent.name)
         if info is None:
-            return None
+            return
         key = _entry_key(agent.name, callback_context)
         self._entered[key] = time.monotonic()
         self._tokens[key] = TokenCount()
@@ -459,7 +459,7 @@ class StudioRunPlugin(BasePlugin):
         self._run.emit(
             NodeEnter(node_id=info.node_id, kind=info.kind, model=info.model, parent=info.parent)
         )
-        return None
+        return
 
     async def after_agent_callback(self, *, agent: Any, callback_context: Any) -> None:
         task = asyncio.current_task()
@@ -467,7 +467,7 @@ class StudioRunPlugin(BasePlugin):
             # ADK runs this hook while a cancel (or the deadline) unwinds the
             # node: leave it open, and the run's ``finally`` closes it with the
             # real outcome instead of "ok".
-            return None
+            return
         failed = self.failure is not None and self.failure[0] == agent.name
         info = self._compiled.nodes.get(agent.name)
         key = _entry_key(agent.name, callback_context)
@@ -481,7 +481,7 @@ class StudioRunPlugin(BasePlugin):
             self._output = text
             self._answers[info.node_id] = text
         self._exit(key, "failed" if failed else "ok")
-        return None
+        return
 
     def _exit(self, key: tuple[str, str], outcome: NodeOutcome) -> None:
         info = self._compiled.nodes.get(key[0])
@@ -515,7 +515,7 @@ class StudioRunPlugin(BasePlugin):
     # ── models ──
     async def after_model_callback(self, *, callback_context: Any, llm_response: Any) -> None:
         if getattr(llm_response, "partial", None) is True:
-            return None  # a streamed chunk repeats in the final response
+            return  # a streamed chunk repeats in the final response
         name = str(getattr(callback_context, "agent_name", "") or "")
         info = self._compiled.nodes.get(name)
         usage = getattr(llm_response, "usage_metadata", None)
@@ -535,7 +535,7 @@ class StudioRunPlugin(BasePlugin):
             text = "".join(p.text for p in content.parts if p.text and p.thought is not True)
             if text:
                 self._last_text[_entry_key(name, callback_context)] = text
-        return None
+        return
 
     async def on_model_error_callback(
         self, *, callback_context: Any, llm_request: Any, error: Exception
@@ -543,7 +543,7 @@ class StudioRunPlugin(BasePlugin):
         if self.failure is None:
             name = str(getattr(callback_context, "agent_name", "") or "")
             self.failure = (name, type(error).__name__)
-        return None  # ErrorHandlerPlugin still answers; the run ends on the next event
+        # ErrorHandlerPlugin still answers; the run ends on the next event
 
     # ── tools ──
     async def before_tool_callback(
@@ -579,10 +579,10 @@ class StudioRunPlugin(BasePlugin):
                     _function_call_id(tool_context),
                     reply if isinstance(reply, str) else None,
                 )
-            return None
+            return
         info = self._mcp_info(tool, tool_context)
         if info is None:
-            return None
+            return
         started = self._tool_started.pop(_call_key(tool, tool_context), None)
         outcome = classify_tool_outcome(result)
         status = result.get("status") if isinstance(result, dict) else None
@@ -601,7 +601,7 @@ class StudioRunPlugin(BasePlugin):
                 elapsed_ms=int((time.monotonic() - started) * 1000) if started else None,
             )
         )
-        return None
+        return
 
     def _mcp_info(self, tool: Any, tool_context: Any) -> Any:
         agent = str(getattr(tool_context, "agent_name", "") or "")
@@ -1353,7 +1353,7 @@ class StudioService:
         else:
             run.emit(event)
 
-    async def _execute(self, run: StudioRun, auth: AuthContext) -> None:
+    async def _execute(self, run: StudioRun, auth: AuthContext) -> None:  # noqa: C901
         spec = run.spec
         budgets = spec.budgets.resolved(self.config.ceilings)
         ledger = CompositionLedger(budgets)

@@ -250,21 +250,33 @@ class _ByteCap:
 
 
 class _McpCappedStream(httpx.AsyncByteStream):  # ty: ignore[unsupported-base]
-    def __init__(self, inner: Any, counter: _ByteCap, request: Any) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        counter: _ByteCap,
+        request: Any,
+        on_error: Callable[[], Any] = lambda: None,
+    ) -> None:
         self._inner = inner
         self._counter = counter
         self._request = request
+        self._on_error = on_error
 
     async def __aiter__(self) -> Any:
-        async for chunk in self._inner:
-            if not self._counter.add(chunk):
-                unit = "an event of " if self._counter.per_event else ""
-                raise McpResponseTooLarge(
-                    f"{unit}the response from MCP server {self._request.url.host} exceeds "
-                    f"{self._counter.cap} bytes ({MCP_MAX_RESPONSE_BYTES_ENV})",
-                    request=self._request,
-                )
-            yield chunk
+        try:
+            async for chunk in self._inner:
+                if not self._counter.add(chunk):
+                    unit = "an event of " if self._counter.per_event else ""
+                    raise McpResponseTooLarge(
+                        f"{unit}the response from MCP server {self._request.url.host} exceeds "
+                        f"{self._counter.cap} bytes ({MCP_MAX_RESPONSE_BYTES_ENV})",
+                        request=self._request,
+                    )
+                yield chunk
+        except Exception:
+            # The transport has returned by now, so it can't see this failure.
+            self._on_error()
+            raise
 
     async def aclose(self) -> None:
         await self._inner.aclose()
@@ -509,6 +521,10 @@ async def check_destination(
     )
 
 
+#: The status given to ``on_http_error`` when a request got no response.
+NO_RESPONSE = 0
+
+
 class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base]
     """An HTTP transport pinned to one origin, refusing non-public addresses.
 
@@ -527,12 +543,12 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         private_allow: PrivateAllowlist | None = None,
         max_response_bytes: int | None = None,
         egress_proxy: str | None = None,
-        on_rejected_token: Callable[[str, str], Any] | None = None,
+        on_http_error: Callable[[int, str, str | None], Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._origin = origin_of(url)
-        self._on_rejected_token = on_rejected_token
+        self._on_http_error = on_http_error
         self._allow_private = allow_private_network
         self._private_allow = private_allow
         self._max_bytes = (
@@ -545,6 +561,45 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         )
 
     async def handle_async_request(self, request: Any) -> Any:
+        try:
+            return await self._send(request)
+        except Exception:
+            # No response at all (reset, timeout, refused destination) fails a
+            # POST like an error status does. A cancel is not an Exception: it
+            # means the session is already closing.
+            self._report_http_error(NO_RESPONSE, request)
+            raise
+
+    def _sdk_follows(self, response: Any, request: Any) -> bool:
+        """Whether this redirect is one the MCP SDK follows, so not yet a failure.
+
+        It follows 307/308 within the origin, unless the Location brings userinfo;
+        any other 3xx fails its request. If
+        the follow-up fails, that is reported in its turn. A redirect off this
+        origin the SDK either refuses or sends here to be blocked, a failure both
+        ways.
+        """
+        if response.status_code not in (307, 308):
+            return False
+        location = response.headers.get("location")
+        if not location:
+            return False
+        try:
+            target = request.url.join(location)
+            return not target.userinfo and origin_of(str(target)) == self._origin
+        except ValueError:
+            return False
+
+    def _report_http_error(self, status: int, request: Any) -> None:
+        if self._on_http_error is None:
+            return
+        authorization = request.headers.get("authorization", "")
+        bearer = (
+            authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else None
+        )
+        self._on_http_error(status, request.method, bearer)
+
+    async def _send(self, request: Any) -> Any:
         proxied = self._via_proxy is not None and not goes_direct(
             request.url.host or "", self._private_allow, allow_private=self._allow_private
         )
@@ -576,10 +631,8 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 raise McpProxyRefused(proxy_refusal_message(exc, request.url)) from exc
         else:
             response = await super().handle_async_request(request)
-        if response.status_code == 401 and self._on_rejected_token is not None:
-            authorization = request.headers.get("authorization", "")
-            if authorization.startswith("Bearer "):
-                self._on_rejected_token(authorization.removeprefix("Bearer "), request.method)
+        if response.status_code >= 300 and not self._sdk_follows(response, request):
+            self._report_http_error(response.status_code, request)
         host = request.url.host
         encoding = response.headers.get("content-encoding", "").strip().lower()
         if encoding not in ("", "identity"):
@@ -599,7 +652,10 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 request=request,
             )
         response.stream = _McpCappedStream(
-            response.stream, _ByteCap(self._max_bytes, per_event=sse), request
+            response.stream,
+            _ByteCap(self._max_bytes, per_event=sse),
+            request,
+            on_error=lambda: self._report_http_error(NO_RESPONSE, request),
         )
         return response
 
@@ -632,14 +688,14 @@ def client_factory(
     private_allow: PrivateAllowlist | None = None,
     max_response_bytes: int | None = None,
     egress_proxy: str | None = None,
-    on_rejected_token: Callable[[str, str], Any] | None = None,
+    on_http_error: Callable[[int, str, str | None], Any] | None = None,
 ) -> Callable[..., Any]:
     """An ``httpx_client_factory`` for ADK's MCP connection params.
 
     *max_response_bytes* defaults to ``ORRERY_MCP_MAX_RESPONSE_BYTES`` (8 MiB),
     read here, so a bad value fails when the server is configured.
-    *on_rejected_token* is told the bearer token and method of a request
-    answered 401.
+    *on_http_error* is told the status, method and bearer token of a request
+    that failed: answered 3xx, 4xx or 5xx, or with no response (``NO_RESPONSE``).
 
     Same signature as the SDK's default factory. Redirects stay off: the SDK
     follows the ones within the origin itself, and the transport refuses the
@@ -659,7 +715,7 @@ def client_factory(
                 private_allow=private_allow,
                 max_response_bytes=cap,
                 egress_proxy=egress_proxy,
-                on_rejected_token=on_rejected_token,
+                on_http_error=on_http_error,
                 verify=verify,
             ),
             "follow_redirects": False,

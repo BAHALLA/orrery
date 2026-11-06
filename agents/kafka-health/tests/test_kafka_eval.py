@@ -164,7 +164,7 @@ def _make_admin_client() -> MagicMock:
     # future.result() yields an object with .offset (the latest offset).
     def _list_latest_offsets_side_effect(request):
         result = {}
-        for tp, _spec in request.items():
+        for tp in request:
             latest = MagicMock()
             latest.offset = tp.offset + 75 if hasattr(tp, "offset") else 1000
             future = MagicMock()

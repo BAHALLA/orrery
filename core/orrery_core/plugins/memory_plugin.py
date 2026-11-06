@@ -36,11 +36,11 @@ class MemoryPlugin(BasePlugin):
         # Only fire for the root agent. In ADK 2.0 inv.agent is typed
         # BaseNode | None, so guard before comparing names.
         if inv.agent is None or agent.name != inv.agent.name:
-            return None
+            return
 
         memory_service = inv.memory_service
         if memory_service is None:
-            return None
+            return
 
         session = inv.session
         if len(session.events) < self._min_events:
@@ -50,7 +50,7 @@ class MemoryPlugin(BasePlugin):
                 len(session.events),
                 self._min_events,
             )
-            return None
+            return
 
         await memory_service.add_session_to_memory(session)
         logger.debug(
@@ -58,4 +58,4 @@ class MemoryPlugin(BasePlugin):
             session.id,
             len(session.events),
         )
-        return None
+        return

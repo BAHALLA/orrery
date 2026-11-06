@@ -30,6 +30,10 @@ possible. So after a refusal the entry goes *half-open*, like a circuit breaker:
 the next identical attempt runs as a probe. A probe that succeeds clears the
 entry; one that fails the same way closes it for the rest of the session.
 
+A rejected token never closes: ``credential_rejected`` is one failure that does
+come good on its own, once the token is replaced or the server accepts it again.
+It keeps alternating a refusal and a probe, which the call budget bounds per run.
+
 **Scope: the session**, not the run. The failure being caught spans turns — the
 user says "try again", the model sends the identical call — and the arguments
 are part of the key, so a session that genuinely changes something is never
@@ -49,7 +53,12 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-from ..reliability.resilience import ToolOutcome, classify_tool_outcome
+from ..reliability.resilience import (
+    CREDENTIAL_REJECTED_ERROR,
+    ToolOutcome,
+    _response_field,
+    classify_tool_outcome,
+)
 from .run_scope import RunLedger, session_id
 
 logger = logging.getLogger("orrery.plugins.repeat_guard")
@@ -163,17 +172,17 @@ class RepeatGuardPlugin(BasePlugin):
         result: Any,
     ) -> None:
         if self._max <= 0:
-            return None
+            return
         outcome = classify_tool_outcome(result)
         if outcome is ToolOutcome.IGNORE:
-            return None  # a gate answered, including this plugin: nothing ran
+            return  # a gate answered, including this plugin: nothing ran
         failing = self._failures(tool_context)
         if failing is None:
-            return None
+            return
         key = fingerprint(tool.name, tool_args)
         if outcome is ToolOutcome.SUCCESS:
             failing.pop(key, None)
-            return None
+            return
         entry = failing.setdefault(key, _Entry())
         signature = error_signature(result)
         if entry.failures and signature != entry.signature:
@@ -183,6 +192,6 @@ class RepeatGuardPlugin(BasePlugin):
         was_probe = entry.failures >= self._max
         entry.signature = signature
         entry.failures += 1
-        if was_probe:
+        if was_probe and _response_field(result, "error_type") != CREDENTIAL_REJECTED_ERROR:
             entry.closed = True
-        return None
+        return
