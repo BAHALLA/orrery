@@ -430,7 +430,7 @@ class GuardedMcpToolset(McpToolset):
                 private_allow=private_allow,
                 verify=verify,
                 egress_proxy=egress_proxy,
-                on_rejected_token=self._broker.invalidate if self._broker else None,
+                on_rejected_token=self._on_rejected_token if config.auth else None,
             ),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
@@ -461,6 +461,19 @@ class GuardedMcpToolset(McpToolset):
         auth, broker = self.server_config.auth, self._broker
         assert auth is not None and broker is not None  # only used with auth
         return await broker.token_for(auth.audience, auth.scope)
+
+    def _on_rejected_token(self, token: str) -> None:
+        """The server answered 401: stop using *token* and its pooled session.
+
+        The session goes on every 401, even when the broker keeps a token too
+        young to replace. Over SSE a rejected POST kills the session while the
+        pool keeps handing it back, and those later calls fail without sending
+        a request, so no further 401 would ever arrive. The pool is keyed by
+        these headers, so a newer token's session is not touched.
+        """
+        assert self._broker is not None  # only wired with auth
+        self._broker.invalidate(token)
+        self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._credential()}"}

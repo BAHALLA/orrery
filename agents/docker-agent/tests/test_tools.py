@@ -953,6 +953,7 @@ async def test_a_pinned_container_keeps_an_auxiliary_project_in_the_platform(moc
 @pytest.mark.asyncio
 async def test_the_docker_cli_gets_its_settings_but_not_the_process_secrets(monkeypatch):
     monkeypatch.setenv("DOCKER_HOST", "tcp://docker:2375")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/run/agent.sock")
     monkeypatch.setenv("JWT_SECRET", "hunter2")
     proc = AsyncMock(returncode=0)
     proc.communicate.return_value = (b"", b"")
@@ -962,4 +963,5 @@ async def test_the_docker_cli_gets_its_settings_but_not_the_process_secrets(monk
 
     env = spawn.call_args.kwargs["env"]
     assert env["DOCKER_HOST"] == "tcp://docker:2375"
+    assert env["SSH_AUTH_SOCK"] == "/run/agent.sock"
     assert "JWT_SECRET" not in env

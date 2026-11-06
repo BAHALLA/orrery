@@ -39,6 +39,8 @@ class Recorder:
         self.by_session: dict[str, set[str]] = defaultdict(set)
         self.unauthenticated = 0
         self.rejected: set[str] = set()
+        #: Rejected on POST only, the shape that kills an SSE session.
+        self.rejected_posts: set[str] = set()
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -47,7 +49,7 @@ class Recorder:
         auth = headers.get("authorization")
         if auth is None:
             self.unauthenticated += 1
-        if auth in self.rejected:
+        if auth in self.rejected or (scope["method"] == "POST" and auth in self.rejected_posts):
             await send({"type": "http.response.start", "status": 401, "headers": []})
             return await send({"type": "http.response.body", "body": b""})
 
@@ -302,9 +304,66 @@ async def test_a_token_the_server_rejects_is_replaced_on_the_next_call(http_serv
 
             # Evicted by the 401: this call exchanges again and gets through.
             result = await tool.run_async(args={}, tool_context=ctx)
+            # The rejected token's session went with it.
+            pooled = len(toolset._mcp_session_manager._sessions)
     finally:
         recorder.rejected.clear()
         await toolset.close()
 
     assert idp.calls == 2
+    assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
+    assert pooled == 1
+
+
+@pytest.fixture(scope="module")
+def sse_server() -> Iterator[tuple[str, Recorder]]:
+    server = MCPServer("inventory")
+
+    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
+    def list_items() -> list[str]:
+        """List inventory items."""
+        return ["widget"]
+
+    recorder = Recorder(server.sse_app())
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    runner = uvicorn.Server(uvicorn.Config(recorder, log_level="warning"))
+    thread = threading.Thread(target=runner.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not runner.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert runner.started, "MCP test server did not start"
+    yield f"http://127.0.0.1:{port}/sse", recorder
+    runner.should_exit = True
+    runner.force_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_young_token_rejected_over_sse_does_not_wedge_the_user(sse_server):
+    """The pool must not keep handing back the session that the 401 killed."""
+    url, recorder = sse_server
+    idp = RotatingIdP()
+    toolset = GuardedMcpToolset(
+        _config(transport="sse", url=url, call_timeout_seconds=2), broker=_broker(idp)
+    )
+    ctx = MagicMock()
+    try:
+        with _as("console-dave", "dave"):
+            (tool,) = await toolset.get_tools(ctx)
+            recorder.rejected_posts.add("Bearer rotated-1")
+            with contextlib.suppress(Exception):
+                await tool.run_async(args={}, tool_context=ctx)
+
+            # The server accepts the token again (clock skew passed, say). It is
+            # still cached, being young, and a new session carries it.
+            recorder.rejected_posts.clear()
+            result = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.rejected_posts.clear()
+        await toolset.close()
+
+    assert idp.calls == 1
     assert classify_tool_outcome(result) is ToolOutcome.SUCCESS

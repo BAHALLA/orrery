@@ -13,7 +13,10 @@ from orrery_core.knowledge.config import KnowledgeConfig
 from orrery_core.security.secrets import subprocess_env
 
 ROOT = Path(__file__).resolve().parents[2]
-SECRET_NAME = re.compile(r"(api_key|apikey|password|passwd|secret|private_key|_token)$")
+SECRET_NAME = re.compile(
+    r"(api_key|apikey|password|passwd|passphrase|secret|secret_key|secret_access_key|access_key"
+    r"|private_key|signing_key|credentials|(^|_)token)$"
+)
 
 
 def _classes() -> Iterator[tuple[Path, ast.ClassDef]]:
@@ -35,7 +38,8 @@ def _secret_settings_fields() -> dict[str, str]:
         grew = False
         for _, node in classes:
             if node.name not in settings and any(
-                isinstance(base, ast.Name) and base.id in settings for base in node.bases
+                (base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")) in settings
+                for base in node.bases
             ):
                 settings.add(node.name)
                 grew = True

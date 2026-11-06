@@ -611,3 +611,4 @@ async def test_a_rejection_only_drops_that_token(caplog):
     written = JSONFormatter().format(audit)
     assert '"audience": "mcp-a"' in written
     assert '"invalidated": true' in written
+    assert '"subject": "alice"' in written

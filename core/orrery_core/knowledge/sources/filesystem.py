@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 from collections.abc import AsyncIterator, Iterable, Mapping
 from datetime import UTC, datetime
@@ -103,8 +104,8 @@ class FilesystemSource:
         )
 
 
-#: Where git finds its configuration, for a deployment that moves it.
-_GIT_ENV = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
+#: Where git looks for a repository, beyond its configuration (``GIT_CONFIG*``).
+_GIT_ENV = ("GIT_CEILING_DIRECTORIES",)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -113,7 +114,9 @@ def _git(root: Path, *args: str) -> str:
         capture_output=True,
         text=True,
         check=True,
-        env=subprocess_env(*_GIT_ENV),
+        # All of GIT_CONFIG*, numbered pairs included: without a safe.directory
+        # set that way, git refuses the repository and we'd only see "untracked".
+        env=subprocess_env(*_GIT_ENV, *(n for n in os.environ if n.startswith("GIT_CONFIG"))),
     )
     return result.stdout.strip()
 

@@ -70,12 +70,13 @@ def _redact_env_vars(env_list: list[str]) -> list[str]:
     return redacted
 
 
-#: Read by the docker CLI, including the registry credentials it exists to use.
+#: Read by the docker CLI. ``SSH_AUTH_SOCK`` is for ``DOCKER_HOST=ssh://``. No
+#: tool here talks to a registry, so ``DOCKER_AUTH_CONFIG`` stays behind.
 _DOCKER_ENV = (
     "DOCKER_HOST",
     "DOCKER_CONTEXT",
     "DOCKER_CONFIG",
-    "DOCKER_AUTH_CONFIG",
+    "SSH_AUTH_SOCK",
     "DOCKER_TLS",
     "DOCKER_TLS_VERIFY",
     "DOCKER_CERT_PATH",

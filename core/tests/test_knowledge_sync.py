@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -222,3 +223,17 @@ async def test_git_source_falls_back_for_untracked_files(tmp_path):
     assert len(documents) == 1
     assert documents[0].uri == "git://a.md"
     assert documents[0].revision.startswith("untracked:")
+
+
+def test_git_gets_its_env_config_but_not_the_process_secrets(tmp_path, monkeypatch):
+    from orrery_core.knowledge.sources import filesystem
+
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "safe.directory")
+    monkeypatch.setenv("JWT_SECRET", "hunter2")
+    with patch.object(filesystem.subprocess, "run") as run:
+        run.return_value.stdout = ""
+        filesystem._git(tmp_path, "log")
+    env = run.call_args.kwargs["env"]
+    assert env["GIT_CONFIG_KEY_0"] == "safe.directory"
+    assert "JWT_SECRET" not in env

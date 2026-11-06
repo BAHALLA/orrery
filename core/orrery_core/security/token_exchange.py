@@ -151,6 +151,8 @@ class _Cached:
     token: str = field(repr=False)
     expires_at: float  # monotonic
     issued_at: float  # monotonic
+    #: Whose token, for the audit trail: a rejection can arrive with no caller set.
+    subject: str | None = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +245,7 @@ class TokenBroker:
             )
             audit_event(
                 "token_rejected_by_target",
+                subject=cached.subject,
                 audience=key[1],
                 scope=key[2] or None,
                 invalidated=dropped,
@@ -305,7 +308,8 @@ class TokenBroker:
             lifetime - EXPIRY_SKEW_SECONDS if lifetime > 2 * EXPIRY_SKEW_SECONDS else lifetime / 2
         )
         now = self._clock()
-        self._cache[key] = _Cached(token, now + usable, now)
+        caller = current_caller()
+        self._cache[key] = _Cached(token, now + usable, now, caller.subject if caller else None)
         self._cache.move_to_end(key)
         while len(self._cache) > self._max_entries:
             self._cache.popitem(last=False)
