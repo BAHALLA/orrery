@@ -87,6 +87,26 @@ const ariaLabels = {
   "handle.ariaLabel": "Connection point",
 };
 
+/** Longer than the console rail's 200 ms animation. */
+const DIRECTION_SETTLE_MS = 250;
+
+/**
+ * Report the direction the pane suits, once its shape has lasted. The rail
+ * animates as the Studio comes back, so for a moment the pane can be taller than
+ * wide; acting on that would lay the graph out twice and refit over the person's
+ * zoom.
+ */
+export function useSettledDirection(
+  tall: boolean | null,
+  onDirection: (direction: Direction) => void,
+) {
+  useEffect(() => {
+    if (tall === null) return;
+    const timer = setTimeout(() => onDirection(tall ? "TB" : "LR"), DIRECTION_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [tall, onDirection]);
+}
+
 /**
  * The composition canvas (React Flow).
  *
@@ -115,9 +135,7 @@ export function Canvas({
 
   // React Flow measures its pane; a canvas taller than wide lays out top to bottom.
   const tall = useStore((s) => (s.width && s.height ? s.height > s.width : null));
-  useEffect(() => {
-    if (tall !== null) onDirection(tall ? "TB" : "LR");
-  }, [tall, onDirection]);
+  useSettledDirection(tall, onDirection);
 
   // A new direction moves every node's handles (top/bottom ↔ left/right).
   // React Flow caches handle positions when it measures a node, so without

@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- A refused tool call now stays open in the chat instead of folding into a summary line.
+- A refused tool call now starts open in the chat instead of folded into a summary line.
+  A conversation reloaded from the server still shows no tool trace.
 - The learning sandbox's badge, hint level and hint cost sit in a strip of their own, so
   they stay visible at any width. The cost used to reach screen readers only.
 - Studio gives the canvas more room: the console rail folds while you're there (and

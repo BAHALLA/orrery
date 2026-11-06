@@ -428,7 +428,8 @@ export function CompositionInspector({
       budgets: { ...(meta.budgets ?? {}), [name]: n !== null && Number.isFinite(n) ? n : null },
     });
   };
-  // Closed until asked for, but never over a problem it holds.
+  // Closed until asked for, and opens by itself over a problem in a field it
+  // holds. The person can still close it again.
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const showAdvanced =
     advancedOpen ||
