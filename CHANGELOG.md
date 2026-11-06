@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `oauthlib` 4.0.1 (GHSA-3jp2-3mrg-2vxc). Orrery only reaches it through the Kubernetes
+  client's kubeconfig OIDC refresh, not the device-flow token endpoint the advisory covers.
+- Web console build tools: `minimatch` 11.0.5 (GHSA-g3hv-75wg-m249), forced with an npm
+  override because `eslint` still asks for 10.x, and `zod` 4.6.7 (GHSA-mrhx-c7xc-m3w5).
+  Neither ships in the console bundle.
+- `opentelemetry-api` stays at 1.44.0, still below the fix for GHSA-xcq7-p3pf-p88h,
+  because `google-adk` 2.13.0 requires `<=1.44`. The inbound `tracestate` limit added
+  earlier still covers the HTTP route. Bump it once ADK allows 1.45.1.
+
 ## [0.18.0] - 2026-11-05
 
 **OAuth hardening, with settings to check before you upgrade.** With auth on, the
