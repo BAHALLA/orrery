@@ -86,9 +86,14 @@ class ElasticsearchKnowledgeBackend:
         cfg = self._config
         session = requests.Session()
         if cfg.knowledge_es_api_key:
-            session.headers["Authorization"] = f"ApiKey {cfg.knowledge_es_api_key}"
+            session.headers["Authorization"] = (
+                f"ApiKey {cfg.knowledge_es_api_key.get_secret_value()}"
+            )
         elif cfg.knowledge_es_username and cfg.knowledge_es_password:
-            session.auth = (cfg.knowledge_es_username, cfg.knowledge_es_password)
+            session.auth = (
+                cfg.knowledge_es_username,
+                cfg.knowledge_es_password.get_secret_value(),
+            )
         # A str value is a CA bundle path; a bool toggles verification.
         session.verify = cfg.knowledge_es_ca_certs or cfg.knowledge_es_verify_certs
         session.headers.setdefault("Accept", "application/json")

@@ -51,7 +51,7 @@ session_map = SessionMap()
 
 def _create_bolt_app() -> tuple[AsyncApp, dict[str, SlackAgentHandler | None]]:
     """Create and configure the Slack Bolt app with all event handlers."""
-    bolt_app = AsyncApp(token=config.slack_bot_token)
+    bolt_app = AsyncApp(token=config.slack_bot_token.get_secret_value())
 
     _handler_ref: dict[str, SlackAgentHandler | None] = {"handler": None}
 
@@ -225,7 +225,7 @@ async def main() -> None:
     )
 
     logger.info("Starting Slack bot in Socket Mode...")
-    socket_handler = AsyncSocketModeHandler(bolt_app, config.slack_app_token)
+    socket_handler = AsyncSocketModeHandler(bolt_app, config.slack_app_token.get_secret_value())
     await socket_handler.start_async()
 
 

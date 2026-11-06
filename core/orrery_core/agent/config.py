@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: The model used when neither MODEL_NAME nor GEMINI_MODEL_VERSION is set.
@@ -89,7 +89,7 @@ class AgentConfig(BaseSettings):
     )
     google_cloud_project: str | None = None
     google_cloud_location: str | None = None
-    google_api_key: str | None = None
+    google_api_key: SecretStr | None = None
 
     # Kept for backward compatibility — overrides model_name when set.
     gemini_model_version: str | None = None

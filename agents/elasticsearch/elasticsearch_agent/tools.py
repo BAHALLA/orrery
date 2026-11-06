@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 import requests
+from pydantic import SecretStr
 
 from orrery_core import AgentConfig, ToolResult
 from orrery_core.security.identity import ImpersonationRequired, elasticsearch_headers
@@ -33,9 +34,9 @@ class ElasticsearchConfig(AgentConfig):
     """Elasticsearch REST configuration."""
 
     elasticsearch_url: str = "http://localhost:9200"
-    elasticsearch_api_key: str | None = None
+    elasticsearch_api_key: SecretStr | None = None
     elasticsearch_username: str | None = None
-    elasticsearch_password: str | None = None
+    elasticsearch_password: SecretStr | None = None
     elasticsearch_verify_certs: bool = True
     elasticsearch_ca_certs: str | None = None
     elasticsearch_http_timeout: int = 15
@@ -57,9 +58,12 @@ _session: requests.Session | None = None
 def _build_session() -> requests.Session:
     s = requests.Session()
     if _config.elasticsearch_api_key:
-        s.headers["Authorization"] = f"ApiKey {_config.elasticsearch_api_key}"
+        s.headers["Authorization"] = f"ApiKey {_config.elasticsearch_api_key.get_secret_value()}"
     elif _config.elasticsearch_username and _config.elasticsearch_password:
-        s.auth = (_config.elasticsearch_username, _config.elasticsearch_password)
+        s.auth = (
+            _config.elasticsearch_username,
+            _config.elasticsearch_password.get_secret_value(),
+        )
     # A str value is treated as a CA bundle path; bool toggles verification.
     s.verify = _config.elasticsearch_ca_certs or _config.elasticsearch_verify_certs
     s.headers.setdefault("Accept", "application/json")

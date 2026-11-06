@@ -426,7 +426,11 @@ class GuardedMcpToolset(McpToolset):
         self._broker = (broker or default_broker()) if config.auth else None
         super().__init__(
             connection_params=_connection_params(
-                config, private_allow=private_allow, verify=verify, egress_proxy=egress_proxy
+                config,
+                private_allow=private_allow,
+                verify=verify,
+                egress_proxy=egress_proxy,
+                on_rejected_token=self._on_rejected_token if config.auth else None,
             ),
             tool_filter=list(config.tools),
             tool_name_prefix=config.name,
@@ -457,6 +461,24 @@ class GuardedMcpToolset(McpToolset):
         auth, broker = self.server_config.auth, self._broker
         assert auth is not None and broker is not None  # only used with auth
         return await broker.token_for(auth.audience, auth.scope)
+
+    def _on_rejected_token(self, token: str, method: str) -> None:
+        """The server answered 401: stop using *token*, and on a POST its session.
+
+        The session goes on every rejected POST, even when the broker keeps a
+        token too young to replace. Over SSE that 401 kills the session while
+        the pool keeps handing it back, and those later calls fail without
+        sending a request, so no further 401 would ever arrive.
+
+        Only a POST carries a call. A 401 on the GET stream is one the SDK treats
+        as optional, on a session that may work fine, and one on a teardown
+        DELETE comes from the old session while a replacement sits under the
+        same key: discarding on either kills a session that is in use.
+        """
+        assert self._broker is not None  # only wired with auth
+        self._broker.invalidate(token)
+        if method == "POST":
+            self._mcp_session_manager._discard_session(headers={"Authorization": f"Bearer {token}"})
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
         return {"Authorization": f"Bearer {await self._credential()}"}
@@ -564,6 +586,7 @@ def _connection_params(
     private_allow: PrivateAllowlist | None = None,
     verify: ssl.SSLContext | bool | None = None,
     egress_proxy: str | None = None,
+    on_rejected_token: Callable[[str, str], Any] | None = None,
 ) -> StdioConnectionParams | SseConnectionParams | StreamableHTTPConnectionParams:
     if config.transport == "stdio":
         env = {
@@ -590,6 +613,7 @@ def _connection_params(
         else ssl_context(config.ca_file, config.client_cert_file, config.client_key_file),
         private_allow=private_allow,
         egress_proxy=egress_proxy,
+        on_rejected_token=on_rejected_token,
     )
     if config.transport == "sse":
         # The SSE stream idles between calls, so its read timeout cannot be the

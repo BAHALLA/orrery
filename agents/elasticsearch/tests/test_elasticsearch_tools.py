@@ -466,3 +466,23 @@ async def test_list_snapshots_success(mock_get):
     assert result["status"] == "success"
     assert result["snapshots"][0]["indices_count"] == 2
     assert result["snapshots"][0]["state"] == "SUCCESS"
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        ({"elasticsearch_api_key": "k"}, ("ApiKey k", None)),
+        (
+            {"elasticsearch_username": "u", "elasticsearch_password": "p"},
+            (None, ("u", "p")),
+        ),
+    ],
+)
+def test_credentials_reach_the_session_but_not_a_repr(monkeypatch, settings, expected):
+    config = _tools_mod.ElasticsearchConfig(**settings)
+    monkeypatch.setattr(_tools_mod, "_config", config)
+
+    session = _tools_mod._build_session()
+
+    assert (session.headers.get("Authorization"), session.auth) == expected
+    assert "SecretStr('**********')" in repr(config)

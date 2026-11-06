@@ -28,6 +28,41 @@ from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger("orrery.secrets")
 
+#: What a CLI needs from the environment to run at all. Everything else stays
+#: behind, since ``load_secrets_into_environment`` puts credentials there.
+_SUBPROCESS_ENV = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LANGUAGE",
+        "TZ",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "XDG_CONFIG_HOME",
+        "XDG_RUNTIME_DIR",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    }
+)
+
+
+def subprocess_env(*extra: str) -> dict[str, str]:
+    """An environment for a child process, without this process's secrets.
+
+    An allowlist rather than a list of secret names, so a credential added
+    later stays behind by default. *extra* names what this CLI also reads.
+    """
+    allowed = _SUBPROCESS_ENV.union(extra)
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name in allowed or name.startswith("LC_")
+    }
+
 
 @runtime_checkable
 class SecretsBackend(Protocol):

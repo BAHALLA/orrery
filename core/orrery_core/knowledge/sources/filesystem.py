@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 from collections.abc import AsyncIterator, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ...security.secrets import subprocess_env
 from ..models import Document
 
 logger = logging.getLogger("orrery.knowledge.sources")
@@ -102,12 +104,19 @@ class FilesystemSource:
         )
 
 
+#: Where git looks for a repository, beyond its configuration (``GIT_CONFIG*``).
+_GIT_ENV = ("GIT_CEILING_DIRECTORIES",)
+
+
 def _git(root: Path, *args: str) -> str:
     result = subprocess.run(  # noqa: S603 — fixed executable, no shell
         ["git", "-C", str(root), *args],
         capture_output=True,
         text=True,
         check=True,
+        # All of GIT_CONFIG*, numbered pairs included: without a safe.directory
+        # set that way, git refuses the repository and we'd only see "untracked".
+        env=subprocess_env(*_GIT_ENV, *(n for n in os.environ if n.startswith("GIT_CONFIG"))),
     )
     return result.stdout.strip()
 

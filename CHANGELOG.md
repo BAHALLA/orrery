@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `opentelemetry-api` stays at 1.44.0, still below the fix for GHSA-xcq7-p3pf-p88h,
   because `google-adk` 2.13.0 requires `<=1.44`. The inbound `tracestate` limit added
   earlier still covers the HTTP route. Bump it once ADK allows 1.45.1.
+- MCP per-user tokens: a token the server answers 401 to is dropped from the cache and,
+  on a rejected call, its MCP session closed, so the next call starts again instead of failing until the
+  token expires. A token under 30 s old is kept, so a server that rejects everything
+  can't drive up IdP calls.
+- Elasticsearch, knowledge Elasticsearch, Slack and Google API credentials are now
+  `SecretStr`, so a `repr` of their settings can't print them. A new test fails on any
+  secret-named setting typed as a plain `str`. A third-party specialist reading one of
+  these as a `str` must now call `.get_secret_value()`.
+- The `docker` and `git` child processes get an allowlisted environment instead of
+  inheriting every secret. If you rely on another variable reaching `docker`, such as
+  `DOCKER_AUTH_CONFIG`, it no longer does: the list is `_DOCKER_ENV` in
+  `docker_agent/tools.py`.
 
 ## [0.18.0] - 2026-11-05
 
