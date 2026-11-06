@@ -509,6 +509,10 @@ async def check_destination(
     )
 
 
+#: The status given to ``on_http_error`` when a request got no response.
+NO_RESPONSE = 0
+
+
 class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base]
     """An HTTP transport pinned to one origin, refusing non-public addresses.
 
@@ -545,6 +549,25 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
         )
 
     async def handle_async_request(self, request: Any) -> Any:
+        try:
+            return await self._send(request)
+        except Exception:
+            # No response at all (reset, timeout, refused destination) fails a
+            # POST like an error status does. A cancel is not an Exception: it
+            # means the session is already closing.
+            self._report_http_error(NO_RESPONSE, request)
+            raise
+
+    def _report_http_error(self, status: int, request: Any) -> None:
+        if self._on_http_error is None:
+            return
+        authorization = request.headers.get("authorization", "")
+        bearer = (
+            authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else None
+        )
+        self._on_http_error(status, request.method, bearer)
+
+    async def _send(self, request: Any) -> Any:
         proxied = self._via_proxy is not None and not goes_direct(
             request.url.host or "", self._private_allow, allow_private=self._allow_private
         )
@@ -576,14 +599,8 @@ class GuardedTransport(httpx.AsyncHTTPTransport):  # ty: ignore[unsupported-base
                 raise McpProxyRefused(proxy_refusal_message(exc, request.url)) from exc
         else:
             response = await super().handle_async_request(request)
-        if response.status_code >= 400 and self._on_http_error is not None:
-            authorization = request.headers.get("authorization", "")
-            bearer = (
-                authorization.removeprefix("Bearer ")
-                if authorization.startswith("Bearer ")
-                else None
-            )
-            self._on_http_error(response.status_code, request.method, bearer)
+        if response.status_code >= 300:  # redirects are off, so a 3xx is a failure too
+            self._report_http_error(response.status_code, request)
         host = request.url.host
         encoding = response.headers.get("content-encoding", "").strip().lower()
         if encoding not in ("", "identity"):
@@ -643,7 +660,7 @@ def client_factory(
     *max_response_bytes* defaults to ``ORRERY_MCP_MAX_RESPONSE_BYTES`` (8 MiB),
     read here, so a bad value fails when the server is configured.
     *on_http_error* is told the status, method and bearer token of a request
-    answered 4xx or 5xx.
+    that failed: answered 3xx, 4xx or 5xx, or with no response (``NO_RESPONSE``).
 
     Same signature as the SDK's default factory. Redirects stay off: the SDK
     follows the ones within the origin itself, and the transport refuses the

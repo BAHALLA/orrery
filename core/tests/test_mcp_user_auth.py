@@ -11,7 +11,7 @@ import time
 from collections import defaultdict
 from collections.abc import Iterator
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,6 +34,7 @@ from orrery_core.security.token_exchange import (  # noqa: E402
     TokenBroker,
 )
 from orrery_core.tools.mcp import GuardedMcpToolset, McpServerConfig, _with_deadline  # noqa: E402
+from orrery_core.tools.mcp_network import GuardedTransport, httpx  # noqa: E402
 
 
 class Recorder:
@@ -50,6 +51,8 @@ class Recorder:
         self.rejected_gets: set[str] = set()
         #: Answer every POST with 500, as during an outage.
         self.outage = False
+        #: The status an outage answers with.
+        self.outage_status = 500
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -60,7 +63,7 @@ class Recorder:
             self.unauthenticated += 1
         method = scope["method"]
         if self.outage and method == "POST":
-            await send({"type": "http.response.start", "status": 500, "headers": []})
+            await send({"type": "http.response.start", "status": self.outage_status, "headers": []})
             return await send({"type": "http.response.body", "body": b""})
         if (
             auth in self.rejected
@@ -554,15 +557,95 @@ async def test_a_failure_with_no_closed_session_keeps_the_error():
     assert await tool.run_async(args={}, tool_context=MagicMock()) == bare
 
 
-@pytest.mark.asyncio
-async def test_a_closed_session_is_counted_for_its_own_user():
+def test_a_closed_session_is_counted_for_its_own_user():
     toolset = GuardedMcpToolset(_config(transport="sse"), broker=_broker())
+    manager = MagicMock(_sessions={"ann": object()})
+    manager._discard_session.side_effect = lambda headers: manager._sessions.clear()
+    toolset._mcp_session_manager = manager
 
     toolset._on_http_error(500, "POST", "ann")
 
     assert toolset._closed_session_count("ann") == 1
     assert toolset._closed_session_count("bob") == 0
     assert toolset._closed_session_count(None) == 0
+
+
+def test_a_session_that_never_opened_is_not_counted_as_closed():
+    """A POST failing during initialize: no call was cut off, so its error stands."""
+    toolset = GuardedMcpToolset(_config(transport="sse"), broker=_broker())
+
+    toolset._on_http_error(500, "POST", "ann")
+
+    assert toolset._closed_session_count("ann") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_redirected_post_closes_an_sse_session(sse_server):
+    url, recorder = sse_server
+    toolset = GuardedMcpToolset(
+        _config(auth=None, transport="sse", url=url, call_timeout_seconds=2)
+    )
+    ctx = MagicMock()
+    try:
+        (tool,) = await toolset.get_tools(ctx)
+        recorder.outage, recorder.outage_status = True, 302
+        failed = await tool.run_async(args={}, tool_context=ctx)
+        recorder.outage = False
+        after = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        recorder.outage, recorder.outage_status = False, 500
+        await toolset.close()
+
+    assert failed["error_type"] == "session_closed"
+    assert classify_tool_outcome(after) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_post_with_no_response_closes_an_sse_session(sse_server, monkeypatch):
+    url, _recorder = sse_server
+    toolset = GuardedMcpToolset(
+        _config(auth=None, transport="sse", url=url, call_timeout_seconds=2)
+    )
+    ctx = MagicMock()
+    send = GuardedTransport._send
+    resets = []
+
+    async def resets_one_call(self: Any, request: Any) -> Any:
+        if b"tools/call" in request.content and not resets:
+            resets.append(request)
+            raise httpx.ReadError("connection reset", request=request)
+        return await send(self, request)
+
+    monkeypatch.setattr(GuardedTransport, "_send", resets_one_call)
+    try:
+        (tool,) = await toolset.get_tools(ctx)
+        failed = await tool.run_async(args={}, tool_context=ctx)
+        after = await tool.run_async(args={}, tool_context=ctx)
+    finally:
+        await toolset.close()
+
+    assert resets
+    assert failed["error_type"] == "session_closed"
+    assert classify_tool_outcome(after) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_post_reports_nothing():
+    """Closing a session cancels its POST; that must not close its replacement."""
+    errors = []
+    transport = GuardedTransport(
+        url="http://127.0.0.1:1/sse",
+        allow_private_network=True,
+        on_http_error=lambda *error: errors.append(error),
+    )
+
+    with (
+        patch.object(GuardedTransport, "_send", AsyncMock(side_effect=asyncio.CancelledError)),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await transport.handle_async_request(MagicMock())
+
+    assert errors == []
 
 
 def test_a_rejected_token_stays_out_of_the_shared_circuit():

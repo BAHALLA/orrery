@@ -474,7 +474,9 @@ class GuardedMcpToolset(McpToolset):
         return await broker.token_for(auth.audience, auth.scope)
 
     def _on_http_error(self, status: int, method: str, bearer: str | None) -> None:
-        """The server answered an error. See :meth:`_on_rejected_token` for a 401.
+        """A request failed (*status* is ``NO_RESPONSE`` if nothing came back).
+
+        See :meth:`_on_rejected_token` for a 401.
 
         Any failed POST kills an SSE session while ADK's pool keeps handing it
         back, and later calls fail with no request. On a server with static
@@ -486,8 +488,13 @@ class GuardedMcpToolset(McpToolset):
             self._on_rejected_token(bearer, method)
         elif method == "POST" and self.server_config.transport == "sse":
             headers = {"Authorization": f"Bearer {bearer}"} if bearer and self._broker else None
+            pool = self._mcp_session_manager._sessions
+            pooled = len(pool)
             self._mcp_session_manager._discard_session(headers=headers)
-            _bump(self._closed_sessions, _digest(bearer) if bearer and self._broker else "")
+            # Nothing pooled means no call was cut off: a session failing to
+            # open keeps its own error.
+            if len(pool) < pooled:
+                _bump(self._closed_sessions, _digest(bearer) if bearer and self._broker else "")
 
     def _on_rejected_token(self, token: str, method: str) -> None:
         """The server answered 401: stop using *token*, and on a POST its session.
