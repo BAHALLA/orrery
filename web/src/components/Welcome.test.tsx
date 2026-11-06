@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Role } from "../api/types";
 import { Welcome } from "./Welcome";
@@ -64,5 +64,69 @@ describe("Welcome", () => {
     const text = copy({ role, autonomy_level: level });
     expect(text).toMatch(PROMISE);
     expect(text).toMatch(expected);
+  });
+
+  const specialists = [{ key: "kafka", name: "kafka_health_agent" }];
+  const brief = {
+    title: "Consumer lag on orders",
+    situation: "An alert just fired.",
+    goal: "Find the cause.",
+    tasks_url: "https://example.com/labs/lag",
+    tasks_label: "Open the tasks",
+    starters: [{ title: "Broker health", prompt: "Is the broker healthy?" }],
+  };
+
+  it("shows no suggestions until /me has answered", () => {
+    render(
+      <Welcome
+        onSuggest={vi.fn()}
+        onSweep={vi.fn()}
+        specialists={specialists}
+        me={null}
+        meLoaded={false}
+      />,
+    );
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("puts a lab's brief and starting points in place of the stock ones", () => {
+    const onSuggest = vi.fn();
+    render(
+      <Welcome
+        onSuggest={onSuggest}
+        onSweep={vi.fn()}
+        specialists={specialists}
+        me={{ role: "viewer", autonomy_level: "L2", mission: brief }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: brief.title })).toBeInTheDocument();
+    expect(screen.getByText("An alert just fired.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /open the tasks/i })).toHaveAttribute(
+      "rel",
+      "noopener noreferrer",
+    );
+    expect(screen.queryByText("Kafka consumer lag")).not.toBeInTheDocument();
+    expect(screen.queryByText("Full health sweep")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /broker health/i }));
+    expect(onSuggest).toHaveBeenCalledWith("Is the broker healthy?");
+  });
+
+  it("never links anywhere but the web", () => {
+    render(
+      <Welcome
+        onSuggest={vi.fn()}
+        onSweep={vi.fn()}
+        specialists={[]}
+        // eslint-disable-next-line no-script-url
+        me={{
+          role: "viewer",
+          autonomy_level: "L2",
+          mission: { ...brief, tasks_url: "javascript:alert(1)" },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 });

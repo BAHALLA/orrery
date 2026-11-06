@@ -104,6 +104,7 @@ from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage, TurnTimedOut
 from .inventory import agent_inventory, model_label, package_version, specialist_entries
+from .mission import Mission, mission_from_env
 from .onboarding import (
     IntegrationProbe,
     check_model_connectivity,
@@ -168,6 +169,8 @@ class ServerConfig:
     #: ``POST /learning/hint`` per learner (AEP-032): a lab charges for hints,
     #: and a held-down button should not climb the whole ladder at once.
     hint_rate_limit: str = "3/minute"
+    #: A lab's brief for the console (``ORRERY_CONSOLE_MISSION_FILE``). Display only.
+    mission: Mission | None = None
     selftest_rate_limit: str = "10/minute"
     docs_enabled: bool | None = None
     #: May hold a password (``redis://:pw@host``), so it stays out of a repr.
@@ -259,6 +262,7 @@ class ServerConfig:
             chat_rate_limit=os.getenv("ORRERY_CHAT_RATE_LIMIT", "30/minute"),
             selftest_rate_limit=os.getenv("ORRERY_SELFTEST_RATE_LIMIT", "10/minute"),
             hint_rate_limit=os.getenv("ORRERY_LEARNING_HINT_RATE_LIMIT", "3/minute"),
+            mission=mission_from_env(),
             docs_enabled=env_flag("ORRERY_DOCS_ENABLED", default=False) if docs else None,
             rate_limit_storage_uri=os.getenv("ORRERY_RATE_LIMIT_STORAGE_URI", "").strip()
             or "memory://",
@@ -512,6 +516,8 @@ class MeResponse(BaseModel):
     studio_available: bool = False
     #: The learning sandbox's state for this caller, or ``null`` outside it.
     learning: LearningInfo | None = None
+    #: What visitors to this console are here to do, or ``null``. Display only.
+    mission: Mission | None = None
 
 
 class CheckResultModel(BaseModel):
@@ -1428,6 +1434,7 @@ def create_app(  # noqa: C901
             and auth.role == "admin"
             and auth.principal_kind == PrincipalKind.HUMAN,
             learning=_learning_info(auth),
+            mission=cfg.mission,
         )
 
     def _learning_info(auth: AuthContext) -> LearningInfo | None:

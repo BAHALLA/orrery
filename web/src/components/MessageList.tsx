@@ -21,6 +21,7 @@ interface Props {
   /** For the empty state's copy and suggestions. */
   specialists: readonly SpecialistInfo[];
   me: Posture | null;
+  meLoaded?: boolean | undefined;
 }
 
 function formatTime(at: number): string {
@@ -150,7 +151,15 @@ const AssistantMessage = memo(function AssistantMessage({ m }: { m: ChatMessage 
  * they are reports with tables and code, and a bubble squeezed them into a
  * column too narrow to read either.
  */
-export function MessageList({ messages, isSending, onSuggest, onSweep, specialists, me }: Props) {
+export function MessageList({
+  messages,
+  isSending,
+  onSuggest,
+  onSweep,
+  specialists,
+  me,
+  meLoaded,
+}: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
 
@@ -169,7 +178,15 @@ export function MessageList({ messages, isSending, onSuggest, onSweep, specialis
   }, [messages, isSending, streaming]);
 
   if (messages.length === 0 && !isSending) {
-    return <Welcome onSuggest={onSuggest} onSweep={onSweep} specialists={specialists} me={me} />;
+    return (
+      <Welcome
+        onSuggest={onSuggest}
+        onSweep={onSweep}
+        specialists={specialists}
+        me={me}
+        meLoaded={meLoaded}
+      />
+    );
   }
 
   return (

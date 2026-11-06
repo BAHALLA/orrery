@@ -155,6 +155,24 @@ export interface MeResponse {
   studio_available?: boolean;
   /** The learning sandbox's hint ladder for this caller; null outside it (AEP-032). */
   learning?: LearningInfo | null;
+  /** What visitors to this console are here to do, set by a lab's operator. Display only. */
+  mission?: Mission | null;
+}
+
+/** A card that sends `prompt` as the visitor's own message. */
+export interface MissionStarter {
+  title: string;
+  prompt: string;
+}
+
+/** A lab's brief (`ORRERY_CONSOLE_MISSION_FILE`). Plain text, never markup. */
+export interface Mission {
+  title: string;
+  situation: string;
+  goal: string;
+  tasks_url: string | null;
+  tasks_label: string;
+  starters: MissionStarter[];
 }
 
 /** A learner's place on the hint ladder. Never an exercise value. */

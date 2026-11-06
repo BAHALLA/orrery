@@ -1,10 +1,11 @@
-import { ActivityIcon, GaugeIcon, RadarIcon, ShieldIcon } from "./icons";
+import { ActivityIcon, FlagIcon, GaugeIcon, RadarIcon, ShieldIcon } from "./icons";
 import type { MeResponse, SpecialistInfo } from "../api/types";
 import { joinLabels, specialistLabel, systemSpecialists } from "../specialists";
+import { MissionBrief } from "./MissionBrief";
 import { OrreryMark } from "./OrreryMark";
 
 /** The part of `/me` that says what the caller can do here. */
-export type Posture = Pick<MeResponse, "role" | "autonomy_level">;
+export type Posture = Pick<MeResponse, "role" | "autonomy_level" | "mission">;
 
 interface Props {
   onSuggest: (prompt: string) => void;
@@ -13,6 +14,8 @@ interface Props {
   specialists: readonly SpecialistInfo[];
   /** From `/me`; null until it answers. */
   me: Posture | null;
+  /** False until `/me` answers, even if it fails: the stock cards can answer a lab's task. */
+  meLoaded?: boolean | undefined;
 }
 
 /** Starting points that exercise each specialist with a read-only question. */
@@ -95,27 +98,37 @@ function postureLine(me: Posture | null): string {
  * points — an operator usually arrives with a symptom, so the suggestions are
  * symptoms, each a read-only question a specialist can answer straight away.
  */
-export function Welcome({ onSuggest, onSweep, specialists, me }: Props) {
+export function Welcome({ onSuggest, onSweep, specialists, me, meLoaded = true }: Props) {
   const enabled = new Set(specialists.map((s) => s.key));
-  const suggestions = SUGGESTIONS.filter((s) => enabled.has(s.specialist));
+  const mission = me?.mission ?? null;
+  // A lab's own starting points replace the stock ones, which may give it away.
+  const suggestions = !meLoaded
+    ? []
+    : mission
+      ? mission.starters.map((s) => ({ ...s, icon: FlagIcon }))
+      : SUGGESTIONS.filter((s) => enabled.has(s.specialist));
   return (
     <div className="orrery-scroll relative flex flex-1 overflow-y-auto">
       <div className="m-auto flex w-full max-w-3xl flex-col items-center px-4 py-10 sm:px-6">
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-lg shadow-brand-900/20 dark:bg-slate-800">
           <OrreryMark className="h-9 w-9" />
         </div>
-        <h2 className="text-center text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-          What would you like to check?
-        </h2>
+        {mission ? (
+          <MissionBrief mission={mission} />
+        ) : (
+          <h2 className="text-center text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+            What would you like to check?
+          </h2>
+        )}
         {/* Room for the longest line, so the page doesn't move when /me answers. */}
         <p className="mt-2 min-h-20 max-w-lg text-center text-sm text-slate-500 sm:min-h-15 dark:text-slate-400">
           {askAbout(specialists)} {postureLine(me)}
         </p>
 
         <div className="mt-8 grid w-full gap-3 sm:grid-cols-2">
-          {suggestions.map(({ title, prompt, icon: Icon }) => (
+          {suggestions.map(({ title, prompt, icon: Icon }, index) => (
             <button
-              key={title}
+              key={index}
               type="button"
               onClick={() => onSuggest(prompt)}
               className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-700"
@@ -127,28 +140,32 @@ export function Welcome({ onSuggest, onSweep, specialists, me }: Props) {
                 <span className="block text-sm font-medium text-slate-900 dark:text-slate-100">
                   {title}
                 </span>
-                <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
-                  {prompt}
-                </span>
+                {prompt !== title ? (
+                  <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
+                    {prompt}
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}
         </div>
 
-        <button
-          type="button"
-          onClick={onSweep}
-          className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-left text-sm text-slate-600 transition hover:border-brand-400 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-slate-700 dark:text-slate-300 dark:hover:text-white"
-        >
-          <span>
-            <span className="font-medium">Full health sweep</span>
-            <span className="text-slate-500 dark:text-slate-400">
-              {" "}
-              — every specialist in parallel, one verdict
+        {meLoaded && !mission ? (
+          <button
+            type="button"
+            onClick={onSweep}
+            className="mt-4 flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-left text-sm text-slate-600 transition hover:border-brand-400 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:outline-none dark:border-slate-700 dark:text-slate-300 dark:hover:text-white"
+          >
+            <span>
+              <span className="font-medium">Full health sweep</span>
+              <span className="text-slate-500 dark:text-slate-400">
+                {" "}
+                — every specialist in parallel, one verdict
+              </span>
             </span>
-          </span>
-          <span aria-hidden="true">→</span>
-        </button>
+            <span aria-hidden="true">→</span>
+          </button>
+        ) : null}
       </div>
     </div>
   );

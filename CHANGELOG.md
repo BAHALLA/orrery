@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under **Advanced**, which opens by itself over a problem. Budgets read "default" rather
   than "ceiling", and nodes no longer repeat "deployment model".
 - Each Studio template offers an example input in the Run tab. It only fills the box.
+- The empty chat shows no suggestion cards until `/me` has answered, and none while it
+  is failing (it retries a 5xx or an unreachable server), so a lab's learner never gets the stock cards. A failed
+  refetch keeps what the console already knew. A server without `/me` still gets them.
+
+### Added
+
+- `ORRERY_CONSOLE_MISSION_FILE`: a lab's brief in the console. The empty chat shows the
+  situation, the goal, a link to the tasks and your own starting points instead of the
+  stock suggestions and the health sweep card, and a **Mission** panel keeps it to hand.
+  Display only: the brief never reaches the model (a starter the learner clicks is sent
+  as their message), and grading stays with the lab.
 
 ## [0.19.0] - 2026-11-06
 

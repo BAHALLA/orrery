@@ -11,7 +11,15 @@ import { ConfirmationPanel } from "./ConfirmationPanel";
 import { EnvironmentBadge, EnvironmentBanner } from "./EnvironmentBadge";
 import { LearningHint } from "./LearningHint";
 import { pendingPlacement } from "../chat/pending";
-import { ActivityIcon, CloseIcon, MenuIcon, OrbitSpinner, RadarIcon, ShieldIcon } from "./icons";
+import {
+  ActivityIcon,
+  CloseIcon,
+  FlagIcon,
+  MenuIcon,
+  OrbitSpinner,
+  RadarIcon,
+  ShieldIcon,
+} from "./icons";
 import { InspectorPanel, type InspectorTab } from "./InspectorPanel";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
@@ -233,6 +241,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
   }, []);
 
   const specialists = useMemo(() => resolveSpecialists(system.me?.specialists), [system.me]);
+  const mission = system.me?.mission ?? null;
   const announcement = useTurnAnnouncement(chat.isSending, chat.error !== null);
 
   // The reply being written, if any — drives the live status in the header.
@@ -331,6 +340,16 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
           ) : null}
           {view === "chat" ? (
             <>
+              {mission ? (
+                <button
+                  type="button"
+                  className={headerButton(inspectorOpen && inspectorTab === "mission")}
+                  onClick={() => toggleInspector("mission")}
+                >
+                  <FlagIcon />
+                  <span className="sr-only sm:not-sr-only">Mission</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={headerButton(inspectorOpen && inspectorTab === "tools")}
@@ -400,6 +419,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                   onSweep={onSweep}
                   specialists={specialists}
                   me={system.me}
+                  meLoaded={system.meLoaded}
                 />
               </ShowApprovalContext.Provider>
 
@@ -501,6 +521,7 @@ export function ChatConsole({ token, identity, onSignOut }: Props) {
                   activity={chat.activity}
                   triage={chat.triage}
                   system={system}
+                  mission={mission}
                 />
               </>
             ) : null}
