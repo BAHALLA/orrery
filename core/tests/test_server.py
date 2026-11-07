@@ -996,7 +996,7 @@ def test_selftest_reports_each_integration(patched_runner):
     client = TestClient(app)
 
     with patch(
-        "orrery_core.serving.server.check_model_connectivity",
+        "orrery_core.serving.routes.system.check_model_connectivity",
         new=AsyncMock(
             return_value=_check_result("model", "gemini", ok=True, detail="Reached gemini.")
         ),
@@ -1023,7 +1023,7 @@ def test_selftest_survives_a_probe_that_raises(patched_runner):
     app = _probe_app(patched_runner, [IntegrationProbe("k8s", "Kubernetes", "Add one.", boom)])
 
     with patch(
-        "orrery_core.serving.server.check_model_connectivity",
+        "orrery_core.serving.routes.system.check_model_connectivity",
         new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
     ):
         r = TestClient(app).post("/onboarding/selftest", headers=_bearer())
@@ -1047,7 +1047,7 @@ def test_selftest_probes_run_as_the_caller(patched_runner):
 
     app = _probe_app(patched_runner, [IntegrationProbe("k8s", "Kubernetes", "-", who)])
     with patch(
-        "orrery_core.serving.server.check_model_connectivity",
+        "orrery_core.serving.routes.system.check_model_connectivity",
         new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
     ):
         TestClient(app).post("/onboarding/selftest", headers=_bearer())
