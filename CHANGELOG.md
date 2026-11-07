@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An MCP call over SSE now answers its `call_timeout_seconds` on time. While the server held
+  a request, the timeout came back up to 5 s late: the SDK's cancel notice waited behind
+  that request, and the call waited for the notice. The cancelled call now finishes in
+  the background.
 - The self-test and chat rate limits no longer share a counter when they are set to the
   same rate (`ORRERY_CHAT_RATE_LIMIT` = `ORRERY_SELFTEST_RATE_LIMIT`), where a self-test
   used to spend a chat turn.

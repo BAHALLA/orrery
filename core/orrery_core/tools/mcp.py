@@ -679,6 +679,25 @@ def _connection_params(
 
 
 _DEADLINE_MARK = "_orrery_deadline"
+
+#: Calls abandoned at their deadline, still unwinding (see :func:`_abandon`).
+#: Strong references, so a cancelled call isn't collected mid-cleanup.
+_ABANDONED: set[asyncio.Future[Any]] = set()
+
+
+def _abandon(call: asyncio.Future[Any]) -> None:
+    """Cancel *call* and let it finish on its own, without waiting for it."""
+    call.cancel()
+    _ABANDONED.add(call)
+    call.add_done_callback(_forget_abandoned)
+
+
+def _forget_abandoned(call: asyncio.Future[Any]) -> None:
+    _ABANDONED.discard(call)
+    if not call.cancelled() and (exc := call.exception()) is not None:
+        logger.debug("An abandoned MCP call ended with %s", type(exc).__name__)
+
+
 SESSION_CLOSED_ERROR = "session_closed"
 _MAX_COUNTED_KEYS = 256
 
@@ -724,47 +743,63 @@ def _with_deadline(
     # The name the model knows: ADK prefixes a copy, after this wrap.
     name = f"{config.name}_{tool.name}"
 
+    async def attempt(args: dict[str, Any], tool_context: Any) -> Any:
+        # Resolved here, where a refusal can be answered as one: ADK
+        # turns an exception from its header provider into a bare
+        # error. The provider then reads the broker's cache.
+        token = await credential() if credential else None
+        rejections = rejection_count(token) if token else 0
+        closed_sessions = closed_session_count(token)
+        result = await run(args=args, tool_context=tool_context)
+        if not _is_bare_error(result):
+            return result
+        if closed_session_count(token) != closed_sessions:
+            return {
+                "status": "error",
+                "error_type": SESSION_CLOSED_ERROR,
+                "message": (
+                    f"{name}: the MCP session closed during this call, after a "
+                    "request on it failed. The call may have run on the server: "
+                    "check its effect before calling it again."
+                ),
+            }
+        if credential is None or token is None:
+            return result
+        if rejection_count(token) == rejections:
+            # The token may have gone just before the call, and the
+            # provider's exchange refused: asking again answers that as
+            # the refusal it is.
+            await credential()
+            return result
+        # It reached the server, so a failure to the run guards, but
+        # one the circuit breaker leaves out (see the constant).
+        return {
+            "status": "error",
+            "error_type": CREDENTIAL_REJECTED_ERROR,
+            "message": (
+                f"{name}: the server rejected this user's token (HTTP 401). The "
+                "call may have been cut off partway: check its effect before "
+                "calling it again."
+            ),
+        }
+
     async def run_with_deadline(*, args: dict[str, Any], tool_context: Any) -> Any:
+        # The call runs in a task of its own, so the deadline answers on time.
+        # Cancelling an MCP call is not instant: over SSE the SDK sends its
+        # courtesy notifications/cancelled through a writer that holds one POST
+        # at a time, shielded for up to 5 s, and ADK waits for that to drain.
+        # The cancelled call finishes in the background (_abandon).
+        call = asyncio.ensure_future(attempt(args, tool_context))
         try:
-            async with asyncio.timeout(seconds):
-                # Resolved here, where a refusal can be answered as one: ADK
-                # turns an exception from its header provider into a bare
-                # error. The provider then reads the broker's cache.
-                token = await credential() if credential else None
-                rejections = rejection_count(token) if token else 0
-                closed_sessions = closed_session_count(token)
-                result = await run(args=args, tool_context=tool_context)
-                if not _is_bare_error(result):
-                    return result
-                if closed_session_count(token) != closed_sessions:
-                    return {
-                        "status": "error",
-                        "error_type": SESSION_CLOSED_ERROR,
-                        "message": (
-                            f"{name}: the MCP session closed during this call, after a "
-                            "request on it failed. The call may have run on the server: "
-                            "check its effect before calling it again."
-                        ),
-                    }
-                if credential is None or token is None:
-                    return result
-                if rejection_count(token) == rejections:
-                    # The token may have gone just before the call, and the
-                    # provider's exchange refused: asking again answers that as
-                    # the refusal it is.
-                    await credential()
-                    return result
-                # It reached the server, so a failure to the run guards, but
-                # one the circuit breaker leaves out (see the constant).
-                return {
-                    "status": "error",
-                    "error_type": CREDENTIAL_REJECTED_ERROR,
-                    "message": (
-                        f"{name}: the server rejected this user's token (HTTP 401). The "
-                        "call may have been cut off partway: check its effect before "
-                        "calling it again."
-                    ),
-                }
+            done, _ = await asyncio.wait({call}, timeout=seconds)
+        except BaseException:
+            _abandon(call)
+            raise
+        if not done:
+            _abandon(call)
+            return timed_out()
+        try:
+            return call.result()
         except CredentialUnavailable as exc:
             # A refusal is an answer (the call never went out), so the breaker
             # ignores it; an unreachable IdP is a failure it counts.
@@ -774,15 +809,19 @@ def _with_deadline(
                 "message": f"{name}: {exc}",
             }
         except TimeoutError:
-            logger.warning("MCP tool %s timed out after %ss", name, seconds)
-            return {
-                "status": "error",
-                "error_type": "timeout",
-                "message": (
-                    f"{name} did not answer within {seconds:g}s. It may still "
-                    "complete on the server: check before calling it again."
-                ),
-            }
+            # Raised by the call itself, not the deadline: still a timeout.
+            return timed_out()
+
+    def timed_out() -> dict[str, Any]:
+        logger.warning("MCP tool %s timed out after %ss", name, seconds)
+        return {
+            "status": "error",
+            "error_type": "timeout",
+            "message": (
+                f"{name} did not answer within {seconds:g}s. It may still "
+                "complete on the server: check before calling it again."
+            ),
+        }
 
     object.__setattr__(tool, "run_async", run_with_deadline)
     object.__setattr__(tool, _DEADLINE_MARK, True)

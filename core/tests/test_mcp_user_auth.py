@@ -60,6 +60,8 @@ class Recorder:
         self.outage_status = 500
         #: Answer this many POSTs with a same-origin 307 to the same URL.
         self.redirects = 0
+        #: Hold each POST this many seconds before answering, as a slow server.
+        self.hold_posts = 0.0
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -69,6 +71,8 @@ class Recorder:
         if auth is None:
             self.unauthenticated += 1
         method = scope["method"]
+        if self.hold_posts and method == "POST":
+            await asyncio.sleep(self.hold_posts)
         if self.redirects and method == "POST":
             self.redirects -= 1
             path = scope["path"].encode() + b"?" + scope["query_string"]
@@ -751,3 +755,26 @@ async def test_a_static_sse_server_recovers_from_a_failed_post(sse_server):
         await toolset.close()
 
     assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_the_deadline_answers_on_time_over_sse_while_a_post_is_held(sse_server):
+    """Over SSE the SDK's courtesy cancel waits behind the held POST (up to 5 s,
+    shielded), and ADK drains the cancelled call: the deadline must not."""
+    url, recorder = sse_server
+    toolset = GuardedMcpToolset(
+        _config(auth=None, transport="sse", url=url, call_timeout_seconds=1)
+    )
+    ctx = MagicMock()
+    try:
+        tool = next(t for t in await toolset.get_tools(ctx) if t.name.endswith("list_items"))
+        recorder.hold_posts = 3.0
+        started = time.monotonic()
+        result = await tool.run_async(args={}, tool_context=ctx)
+        elapsed = time.monotonic() - started
+    finally:
+        recorder.hold_posts = 0.0
+        await toolset.close()
+
+    assert result["error_type"] == "timeout"
+    assert elapsed < 2.0, elapsed
