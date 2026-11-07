@@ -34,7 +34,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import platform
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
@@ -59,14 +58,13 @@ except ImportError as exc:  # pragma: no cover — covered by the install-extra 
     ) from exc
 
 from .. import learning_gate
-from ..agent.catalog_store import AgentCatalog, CatalogConflict, CatalogStore, create_catalog_store
+from ..agent.catalog_store import CatalogStore, create_catalog_store
 from ..concurrency import configure_default_executor
 from ..env import env_flag
-from ..observability.audit import audit_event
 from ..observability.metrics import start_metrics_server_if_enabled
 from ..persistence.db import create_session_service
 from ..plugins import _resolve_autonomy_level
-from ..registry import DISABLED_ENV, ENABLED_ENV, key_of
+from ..registry import key_of
 from ..security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
@@ -85,17 +83,9 @@ from ..studio.config import StudioConfig
 from .a2a_config import A2A_ENABLED_ENV, A2AConfig
 from .agent_admin import AgentAdmin
 from .api_models import (
-    AgentsResponse,
     AttachmentsInfo,
-    CatalogResponse,
-    CatalogSpecialist,
-    CatalogTool,
-    CatalogUpdate,
     ChatResponse,
     CheckResultModel,
-    DeploymentInfo,
-    InventoryAgent,
-    InventoryTool,
     LearningInfo,
     MeResponse,
     SelfTestResponse,
@@ -112,7 +102,7 @@ from .console_config import ConsoleConfig, render_script
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage, TurnTimedOut
 from .http_auth import caller_identity as identity_for_caller
 from .http_auth import make_auth_dependency
-from .inventory import agent_inventory, model_label, package_version, specialist_entries
+from .inventory import specialist_entries
 from .mission import Mission, mission_from_env
 from .onboarding import (
     IntegrationProbe,
@@ -121,6 +111,7 @@ from .onboarding import (
 )
 from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
+from .routes.admin import admin_router
 from .routes.confirmations import confirmations_router
 from .routes.context import CONVERSATION_TITLE_KEY, HttpContext, owns_session
 from .routes.sessions import sessions_router
@@ -934,132 +925,15 @@ def create_app(  # noqa: C901
             assert info is not None  # active, checked at registration
             return info
 
-    @api.get("/admin/agents", response_model=AgentsResponse)
-    async def admin_agents(
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> AgentsResponse:
-        """Every specialist the coordinator can reach, with each tool's guard level.
-
-        Admin only: it maps exactly which tools are unguarded, which is a
-        reconnaissance aid for anyone probing what a lower role can still do.
-        """
-        if auth.role != "admin":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
-        # The tree being served now — an admin edit swaps it.
-        root = gateway.root_agent
-        return AgentsResponse(
-            agents=[
-                InventoryAgent(
-                    name=a.name,
-                    description=a.description,
-                    source=a.source,
-                    tools=[
-                        InventoryTool(name=t.name, guard=t.guard, reason=t.reason) for t in a.tools
-                    ],
-                    key=a.key,
-                    package=a.package,
-                    version=a.version,
-                    model=a.model,
-                    gated=a.gated,
-                )
-                for a in agent_inventory(root)
-            ],
-            deployment=DeploymentInfo(
-                app_name=app_name,
-                orrery_version=package_version("orrery-core"),
-                adk_version=package_version("google-adk"),
-                python_version=platform.python_version(),
-                model=model_label(getattr(root, "model", None)),
-                model_provider=os.getenv("MODEL_PROVIDER", "gemini"),
-                autonomy_level=_resolve_autonomy_level(None),
-                admin_editing=cfg.admin_editing,
-                enabled_specialists=os.getenv(ENABLED_ENV, "").strip(),
-                disabled_specialists=os.getenv(DISABLED_ENV, "").strip(),
-                started_at=started_at,
-            ),
+    api.include_router(
+        admin_router(
+            ctx,
+            admin_editing=cfg.admin_editing,
+            started_at=started_at,
+            agent_admin=agent_admin,
+            catalog=catalog,
         )
-
-    def require_admin(auth: AuthContext) -> None:
-        if auth.role != "admin":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
-
-    async def catalog_response(current: AgentCatalog) -> CatalogResponse:
-        assert agent_admin is not None and catalog is not None  # nosec B101 — guarded by caller
-        options = await asyncio.to_thread(agent_admin.options)
-        return CatalogResponse(
-            editing_enabled=cfg.admin_editing,
-            catalog=current,
-            applied_version=catalog.applied_version,
-            specialists=[CatalogSpecialist(**vars(o)) for o in options.specialists],
-            tools=[CatalogTool(**vars(o)) for o in options.tools],
-            file_agents=options.file_agents,
-            reserved_names=options.reserved_names,
-        )
-
-    @api.get("/admin/catalog", response_model=CatalogResponse)
-    async def get_catalog(
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> CatalogResponse:
-        """What an admin can switch and compose, and the catalog in force."""
-        require_admin(auth)
-        if catalog is None:
-            raise HTTPException(
-                status_code=404, detail="This deployment has no editable agent catalog"
-            )
-        return await catalog_response(await catalog.current())
-
-    @api.put("/admin/catalog", response_model=CatalogResponse)
-    async def put_catalog(
-        body: CatalogUpdate,
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> CatalogResponse:
-        """Replace the catalog. 409 if it changed since ``version``; 422 if it
-        cannot be built — in both cases nothing changes.
-
-        Every refusal is audited, not only successes: an attempt to change
-        which agents run is worth a record whether or not it landed.
-        """
-
-        def refuse(code: int, reason: str, detail: str) -> HTTPException:
-            audit_event(
-                "agent_catalog_update_refused",
-                actor=auth.subject,
-                role=auth.role,
-                reason=reason,
-                expected_version=body.version,
-            )
-            return HTTPException(status_code=code, detail=detail)
-
-        if auth.role != "admin":
-            raise refuse(status.HTTP_403_FORBIDDEN, "not_admin", "Admin role required")
-        if catalog is None:
-            raise HTTPException(
-                status_code=404, detail="This deployment has no editable agent catalog"
-            )
-        if not cfg.admin_editing:
-            raise refuse(
-                status.HTTP_403_FORBIDDEN,
-                "editing_disabled",
-                "Agent editing is disabled on this deployment (ORRERY_ADMIN_EDITING)",
-            )
-        try:
-            # Inside the try: the model's own validators (e.g. duplicate agent
-            # names) raise a ValidationError, a ValueError, which is a 422.
-            proposed = AgentCatalog(
-                disabled_specialists=body.disabled_specialists, agents=body.agents
-            )
-            stored = await catalog.update(
-                proposed, expected_version=body.version, actor=auth.subject
-            )
-        except CatalogConflict as exc:
-            raise refuse(
-                status.HTTP_409_CONFLICT,
-                "stale_version",
-                f"The catalog changed since you loaded it (now version {exc.current.version}). Reload and reapply your edit.",
-            ) from exc
-        except ValueError as exc:
-            raise refuse(422, "invalid", str(exc)) from exc
-        return await catalog_response(stored)
+    )
 
     @api.post(
         "/onboarding/selftest",
