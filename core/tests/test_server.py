@@ -133,7 +133,7 @@ def test_unreachable_idp_returns_503_not_401_or_500(app_with_auth):
 
     client = TestClient(app_with_auth)
     with patch(
-        "orrery_core.serving.server.verify_token_async",
+        "orrery_core.serving.http_auth.verify_token_async",
         AsyncMock(side_effect=AuthUnavailableError("JWKS endpoint unreachable")),
     ):
         r = client.get("/me", headers={"Authorization": "Bearer a.b.c"})
