@@ -50,7 +50,7 @@ class _EchoLlm(BaseLlm):
         )
 
 
-def _make_client():
+def _make_client(**config: Any):
     with patch(
         "orrery_core.serving.server.create_session_service",
         return_value=InMemorySessionService(),
@@ -63,6 +63,7 @@ def _make_client():
                 auth_enabled=True,
                 allow_unbound_tokens=True,
                 jwt=JWTConfig(algorithm="HS256", secret=SECRET),
+                **config,
             ),
         )
     return TestClient(app)
@@ -90,6 +91,7 @@ def _bearer(claims: dict) -> dict:
 
 
 ALICE = _bearer({"azp": "orrery-console"})
+BOB = _bearer({"sub": "bob", "azp": "orrery-console"})
 AGENT_X = _bearer({"azp": "partner", "act": {"sub": "agent-x"}})
 AGENT_Y = _bearer({"azp": "partner", "act": {"sub": "agent-y"}})
 #: Not a listed human client and no ``act``: a service sharing alice's subject.
@@ -339,3 +341,126 @@ def test_required_roles_need_auth(monkeypatch):
             plugins=[],
             config=ServerConfig(auth_enabled=False),
         )
+
+
+# ── Every session route, for every principal (the routes moved out of server.py) ──
+
+_READS = ("/session/{sid}", "/session/{sid}/activity", "/session/{sid}/triage")
+
+
+def _all_refused(client: TestClient, headers: dict, sid: str) -> None:
+    for path in _READS:
+        assert client.get(path.format(sid=sid), headers=headers).status_code == 404, path
+    assert client.delete(f"/session/{sid}", headers=headers).status_code == 404
+
+
+def test_an_agent_cannot_reach_another_agents_session_by_any_route(client):
+    x_sid = _say(client, AGENT_X, "x one")["session_id"]
+
+    _all_refused(client, AGENT_Y, x_sid)
+    assert client.get(f"/session/{x_sid}", headers=AGENT_X).status_code == 200
+
+
+def test_a_service_cannot_reach_its_users_session_by_any_route(client):
+    sid = _say(client, ALICE, "secret plan")["session_id"]
+
+    _all_refused(client, SERVICE, sid)
+    assert client.get(f"/session/{sid}", headers=ALICE).status_code == 200
+
+
+def test_an_agent_reaches_and_deletes_its_own_session(client):
+    x_sid = _say(client, AGENT_X, "x one")["session_id"]
+
+    for path in _READS:
+        assert client.get(path.format(sid=x_sid), headers=AGENT_X).status_code == 200, path
+    assert client.delete(f"/session/{x_sid}", headers=AGENT_X).status_code == 204
+    assert client.get(f"/session/{x_sid}", headers=AGENT_X).status_code == 404
+
+
+def test_the_user_reads_activity_and_triage_of_their_agents_session(client):
+    x_sid = _say(client, AGENT_X, "x one")["session_id"]
+
+    for path in _READS:
+        assert client.get(path.format(sid=x_sid), headers=ALICE).status_code == 200, path
+
+
+def test_two_people_never_see_each_others_sessions(client):
+    sid = _say(client, ALICE, "secret plan")["session_id"]
+
+    assert sid not in _listed(client, BOB)
+    _all_refused(client, BOB, sid)
+    assert _say(client, BOB, "and?", sid)["response"] == "and?"
+    assert client.get(f"/session/{sid}", headers=ALICE).status_code == 200
+
+
+def test_someone_elses_session_and_a_missing_one_answer_alike(client):
+    sid = _say(client, ALICE, "secret plan")["session_id"]
+
+    for path in _READS:
+        theirs = client.get(path.format(sid=sid), headers=AGENT_X)
+        missing = client.get(path.format(sid="no-such-session"), headers=AGENT_X)
+        assert theirs.status_code == missing.status_code == 404, path
+        assert theirs.json() == missing.json(), path
+
+
+def test_a_chat_turn_verifies_the_token_once(client):
+    from orrery_core.serving import http_auth
+
+    with patch.object(
+        http_auth, "verify_token_async", wraps=http_auth.verify_token_async
+    ) as verify:
+        _say(client, ALICE, "hello")
+
+    # The rate limit, the body dependency and the route all depend on auth.
+    assert verify.await_count == 1
+
+
+def test_a_delegated_agent_cannot_decide_its_users_action(client):
+    from orrery_core.security.confirmation_store import ConfirmationStore, PendingConfirmation
+    from orrery_core.security.guardrails import _pending_confirmations
+
+    store = ConfirmationStore()
+    _pending_confirmations.configure(store)
+    try:
+        store.add(
+            PendingConfirmation(
+                action_id="act-1",
+                tool_name="scale_deployment",
+                requester="alice",
+                scope_key="alice",
+            )
+        )
+        for decision in ("approve", "deny"):
+            res = client.post(
+                "/confirmations/act-1/decision", headers=AGENT_X, json={"decision": decision}
+            )
+            assert res.status_code == 403, decision
+        untouched = store.get("act-1")
+        assert untouched is not None and not untouched.approved
+    finally:
+        _pending_confirmations.configure(None)
+
+
+def test_deciding_shares_the_chat_limit_and_polling_is_not_limited(monkeypatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+    with _make_client(chat_rate_limit="2/minute") as client:
+        for _ in range(5):
+            assert client.get("/confirmations/pending", headers=ALICE).status_code == 200
+        _say(client, ALICE, "one")
+        first = client.post("/confirmations/zz/decision", headers=ALICE, json={"decision": "deny"})
+        assert first.status_code == 404  # one bucket: the turn above spent the other
+        limited = client.post(
+            "/confirmations/zz/decision", headers=ALICE, json={"decision": "deny"}
+        )
+        assert limited.status_code == 429
+        assert client.get("/confirmations/pending", headers=ALICE).status_code == 200
+
+
+def test_a_streamed_turn_spends_the_same_bucket_as_a_plain_one(monkeypatch):
+    monkeypatch.setenv("ORRERY_HUMAN_CLIENTS", "orrery-console")
+    with _make_client(chat_rate_limit="1/minute") as client:
+        _say(client, ALICE, "one")
+        res = client.post("/chat/stream", headers=ALICE, json={"message": "two"})
+        assert res.status_code == 429
+        # Per caller: bob still has his.
+        assert client.post("/chat/stream", headers=BOB, json={"message": "hi"}).status_code == 200
