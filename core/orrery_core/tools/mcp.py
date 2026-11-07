@@ -768,7 +768,8 @@ def _with_deadline(
         result = await run(args=args, tool_context=tool_context)
         if not _is_bare_error(result):
             return result
-        if (closed := last_session_close(token)) != closed_before:
+        # Stamps only grow: a smaller one (0) is an entry the bounded map dropped.
+        if (closed := last_session_close(token)) > closed_before:
             return {
                 "status": "error",
                 "error_type": SESSION_CLOSED_ERROR,

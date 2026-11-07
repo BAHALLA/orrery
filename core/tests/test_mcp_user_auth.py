@@ -792,7 +792,7 @@ def test_calls_cut_off_by_one_session_close_count_once_toward_the_circuit():
         after(tool, {}, MagicMock(), dict(cut_off))
     assert breaker.state(tool.name).value == "closed"
 
-    # Separate closes, as from a server that is really down, still open it.
+    # Separate closes (intermittent failures on a pooled session) still count.
     for n in (2, 3):
         after(tool, {}, MagicMock(), {**cut_off, "failure_id": f"c-{n}"})
     assert breaker.state(tool.name).value == "open"
@@ -829,3 +829,17 @@ async def test_calls_cut_off_together_share_one_failure_id(sse_server):
     results = [failed, *cut_off]
     assert {r.get("error_type") for r in results} == {"session_closed"}
     assert len({r["failure_id"] for r in results}) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_close_stamp_the_map_dropped_is_not_a_close():
+    """The map is bounded: an entry evicted mid-call reads as 0, not as a new close."""
+    tool = MagicMock(spec=["name", "run_async"])
+    tool.name = "list_items"
+    bare = {"error": "MCP tool execution failed: boom"}
+    tool.run_async = AsyncMock(return_value=bare)
+    stamps = iter([7, 0])
+
+    _with_deadline(tool, _config(auth=None), last_session_close=lambda _token: next(stamps))
+
+    assert await tool.run_async(args={}, tool_context=MagicMock()) == bare
