@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The self-test and chat rate limits no longer share a counter when they are set to the
+  same rate (`ORRERY_CHAT_RATE_LIMIT` = `ORRERY_SELFTEST_RATE_LIMIT`), where a self-test
+  used to spend a chat turn.
+
 ## [0.20.0] - 2026-11-07
 
 **A lab's brief in the console, and a Studio that gives the canvas more room.** Nothing to
