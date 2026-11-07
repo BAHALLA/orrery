@@ -583,9 +583,9 @@ def test_a_closed_session_is_counted_for_its_own_user():
 
     toolset._on_http_error(500, "POST", "ann")
 
-    assert toolset._closed_session_count("ann") == 1
-    assert toolset._closed_session_count("bob") == 0
-    assert toolset._closed_session_count(None) == 0
+    assert toolset._last_session_close("ann") > 0
+    assert toolset._last_session_close("bob") == 0
+    assert toolset._last_session_close(None) == 0
 
 
 def test_a_session_that_never_opened_is_not_counted_as_closed():
@@ -594,7 +594,7 @@ def test_a_session_that_never_opened_is_not_counted_as_closed():
 
     toolset._on_http_error(500, "POST", "ann")
 
-    assert toolset._closed_session_count("ann") == 0
+    assert toolset._last_session_close("ann") == 0
 
 
 @pytest.mark.asyncio
@@ -629,7 +629,7 @@ async def test_a_redirect_the_sdk_follows_keeps_the_session(sse_server):
         result = await tool.run_async(args={}, tool_context=ctx)
     finally:
         recorder.redirects = 0
-        closed = toolset._closed_session_count(None)
+        closed = toolset._last_session_close(None)
         await toolset.close()
 
     assert classify_tool_outcome(result) is ToolOutcome.SUCCESS
@@ -778,3 +778,68 @@ async def test_the_deadline_answers_on_time_over_sse_while_a_post_is_held(sse_se
 
     assert result["error_type"] == "timeout"
     assert elapsed < 2.0, elapsed
+
+
+def test_calls_cut_off_by_one_session_close_count_once_toward_the_circuit():
+    """One dead SSE session cuts off every call waiting on it: one failure."""
+    breaker = CircuitBreaker(failure_threshold=3)
+    after = breaker.after_tool_callback()
+    tool = MagicMock()
+    tool.name = "inv_list_items"
+    cut_off = {"status": "error", "error_type": "session_closed", "failure_id": "c-1"}
+
+    for _ in range(6):
+        after(tool, {}, MagicMock(), dict(cut_off))
+    assert breaker.state(tool.name).value == "closed"
+
+    # Separate closes (intermittent failures on a pooled session) still count.
+    for n in (2, 3):
+        after(tool, {}, MagicMock(), {**cut_off, "failure_id": f"c-{n}"})
+    assert breaker.state(tool.name).value == "open"
+
+
+@pytest.mark.asyncio
+async def test_calls_cut_off_together_share_one_failure_id(sse_server):
+    url, recorder = sse_server
+    toolset = GuardedMcpToolset(
+        _config(
+            auth=None,
+            transport="sse",
+            url=url,
+            tools=["list_items", "slow_item"],
+            read_only=["list_items", "slow_item"],
+            call_timeout_seconds=5,
+        )
+    )
+    ctx = MagicMock()
+    try:
+        tools = {t.name.removeprefix("inv_"): t for t in await toolset.get_tools(ctx)}
+        slow = [
+            asyncio.create_task(tools["slow_item"].run_async(args={}, tool_context=ctx))
+            for _ in range(3)
+        ]
+        await asyncio.sleep(0.3)  # in flight, waiting on the session's stream
+        recorder.outage = True
+        failed = await tools["list_items"].run_async(args={}, tool_context=ctx)
+        cut_off = await asyncio.gather(*slow)
+    finally:
+        recorder.outage = False
+        await toolset.close()
+
+    results = [failed, *cut_off]
+    assert {r.get("error_type") for r in results} == {"session_closed"}
+    assert len({r["failure_id"] for r in results}) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_close_stamp_the_map_dropped_is_not_a_close():
+    """The map is bounded: an entry evicted mid-call reads as 0, not as a new close."""
+    tool = MagicMock(spec=["name", "run_async"])
+    tool.name = "list_items"
+    bare = {"error": "MCP tool execution failed: boom"}
+    tool.run_async = AsyncMock(return_value=bare)
+    stamps = iter([7, 0])
+
+    _with_deadline(tool, _config(auth=None), last_session_close=lambda _token: next(stamps))
+
+    assert await tool.run_async(args={}, tool_context=MagicMock()) == bare
