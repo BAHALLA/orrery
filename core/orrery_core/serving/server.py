@@ -54,7 +54,6 @@ try:
     from fastapi import Depends, FastAPI, HTTPException, Request, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, StreamingResponse
-    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 except ImportError as exc:  # pragma: no cover — covered by the install-extra path
     raise ImportError(
         "orrery_core.server requires FastAPI. Install with: uv sync --extra server"
@@ -72,19 +71,14 @@ from ..registry import DISABLED_ENV, ENABLED_ENV, key_of
 from ..security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
-    AuthError,
-    AuthUnavailableError,
     JWTConfig,
-    verify_token_async,
 )
-from ..security.identity import CallerIdentity, caller_scope, identity_from_claims
+from ..security.identity import CallerIdentity, caller_scope
 from ..security.principal import (
-    ACCESS_DENIED,
     REJECT_UNLISTED_ENV,
     REQUIRED_ROLES_ENV,
     PrincipalKind,
     PrincipalPolicy,
-    as_principal,
     machine_session_prefix,
     warn_if_unclassified,
 )
@@ -129,6 +123,8 @@ from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
 from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage, TurnTimedOut
+from .http_auth import caller_identity as identity_for_caller
+from .http_auth import make_auth_dependency
 from .inventory import agent_inventory, model_label, package_version, specialist_entries
 from .mission import Mission, mission_from_env
 from .onboarding import (
@@ -400,6 +396,45 @@ def _check_learning_server(cfg: ServerConfig) -> None:
         raise ValueError("ORRERY_LEARNING_MODE cannot start: " + "; ".join(unmet))
 
 
+def _validate_startup(cfg: ServerConfig) -> PrincipalPolicy:
+    """Refuse a configuration that can't be served safely, before anything starts.
+
+    Returns the principal policy, which the auth dependency applies to every token.
+    """
+    # Validate JWT config eagerly when auth is on — fail fast at startup
+    # rather than on the first request.
+    principal_policy = PrincipalPolicy.from_env()  # a malformed policy fails startup
+    if learning_gate.is_active():
+        _check_learning_server(cfg)
+    if cfg.auth_enabled:
+        cfg.jwt.validate()
+        _require_token_binding(cfg)
+        logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)
+        warn_if_unclassified(principal_policy)
+    else:
+        if principal_policy.reject_unlisted:
+            logger.warning("%s has no effect with auth disabled", REJECT_UNLISTED_ENV)
+        if principal_policy.required_roles:
+            # An access rule the operator believes is on, with no identity to
+            # check it against: refuse rather than admit everyone.
+            raise ValueError(f"{REQUIRED_ROLES_ENV} needs AUTH_ENABLED=true")
+        logger.warning(
+            "Auth DISABLED. Do not run this configuration in production — "
+            "RBAC is meaningless without verified identity."
+        )
+
+    _require_shared_state_when_replicated(cfg)
+    if cfg.a2a.enabled:
+        cfg.a2a.validate(auth_enabled=cfg.auth_enabled)
+    if cfg.studio.enabled:
+        cfg.studio.validate(
+            auth_enabled=cfg.auth_enabled,
+            human_clients_configured=principal_policy.human_clients is not None,
+        )
+    cfg.console.validate(cfg.jwt.issuer if cfg.auth_enabled else None)
+    return principal_policy
+
+
 def create_app(  # noqa: C901
     *,
     root_agent: Agent | Workflow,
@@ -469,39 +504,9 @@ def create_app(  # noqa: C901
     probes = list(integration_probes or [])
     cfg = config or ServerConfig.from_env()
 
-    # Validate JWT config eagerly when auth is on — fail fast at startup
-    # rather than on the first request.
-    principal_policy = PrincipalPolicy.from_env()  # a malformed policy fails startup
-    if learning_gate.is_active():
-        _check_learning_server(cfg)
-    if cfg.auth_enabled:
-        cfg.jwt.validate()
-        _require_token_binding(cfg)
-        logger.info("Auth enabled (algorithm=%s)", cfg.jwt.algorithm)
-        warn_if_unclassified(principal_policy)
-    else:
-        if principal_policy.reject_unlisted:
-            logger.warning("%s has no effect with auth disabled", REJECT_UNLISTED_ENV)
-        if principal_policy.required_roles:
-            # An access rule the operator believes is on, with no identity to
-            # check it against: refuse rather than admit everyone.
-            raise ValueError(f"{REQUIRED_ROLES_ENV} needs AUTH_ENABLED=true")
-        logger.warning(
-            "Auth DISABLED. Do not run this configuration in production — "
-            "RBAC is meaningless without verified identity."
-        )
-
-    _require_shared_state_when_replicated(cfg)
-    if cfg.a2a.enabled:
-        cfg.a2a.validate(auth_enabled=cfg.auth_enabled)
-    if cfg.studio.enabled:
-        cfg.studio.validate(
-            auth_enabled=cfg.auth_enabled,
-            human_clients_configured=principal_policy.human_clients is not None,
-        )
+    principal_policy = _validate_startup(cfg)
     # Set once the Studio is mounted (below); the lifespan cancels its runs.
     studio_service: Any = None
-    cfg.console.validate(cfg.jwt.issuer if cfg.auth_enabled else None)
 
     # The gateway owns the shared turn pipeline (runner, session mapping, run
     # loop, reply extraction). This HTTP surface is one ChannelAdapter over it.
@@ -628,73 +633,12 @@ def create_app(  # noqa: C901
             allow_headers=["Authorization", "Content-Type"],
         )
 
-    bearer_scheme = HTTPBearer(auto_error=False)
-
-    async def auth_dependency(
-        request: Request,
-        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008 — FastAPI dependency pattern
-    ) -> AuthContext:
-        """Resolve the bearer token into an ``AuthContext`` or raise 401."""
-        if not cfg.auth_enabled:
-            # Anonymous mode — pin to viewer so RBAC still gates writes.
-            host = request.client.host if request.client else "unknown"
-            return AuthContext(subject=f"anonymous:{host}", role="viewer", claims={})
-
-        if credentials is None or credentials.scheme.lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing bearer token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        try:
-            verified = await verify_token_async(credentials.credentials, cfg.jwt)
-        except AuthUnavailableError as exc:
-            # The IdP's key set is unreachable. Not the caller's fault and not
-            # something a new token fixes — say "try again", not "bad token",
-            # and never let it escape as a 500 with a traceback.
-            logger.error("JWKS endpoint unreachable, cannot verify tokens: %s", exc)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Authentication temporarily unavailable",
-                headers={"Retry-After": "5"},
-            ) from exc
-        except AuthError as exc:
-            logger.info("Auth rejected for client %s: %s", request.client, exc)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            ) from exc
-        if not principal_policy.admits(verified.claims):
-            # Same answer as a bad token: a caller learns nothing about the lists.
-            logger.info(
-                "Auth rejected: client %r is not listed (%s)",
-                verified.claims.get("azp") or verified.claims.get("client_id"),
-                REJECT_UNLISTED_ENV,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        if not principal_policy.has_required_role(verified.claims, cfg.jwt.role_claim):
-            # Authenticated, so not a 401 (a new token would not help): the
-            # console shows its "no access to this deployment" page on this.
-            logger.info("Access denied: %r has none of %s", verified.subject, REQUIRED_ROLES_ENV)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ACCESS_DENIED)
-        return as_principal(verified, principal_policy)
+    auth_dependency = make_auth_dependency(
+        auth_enabled=cfg.auth_enabled, jwt=cfg.jwt, policy=principal_policy
+    )
 
     def caller_identity(auth: AuthContext) -> CallerIdentity | None:
-        """Who downstream systems should see: the person, never a service.
-
-        Anonymous mode has no person behind it, and a service principal acts for
-        no one, so impersonating systems refuse both (fail-closed). A delegated
-        principal acts for the user its token names.
-        """
-        if not cfg.auth_enabled or auth.principal_kind == PrincipalKind.SERVICE:
-            return None
-        return identity_from_claims(auth.subject, auth.claims, subject_token=auth.token)
+        return identity_for_caller(auth, auth_enabled=cfg.auth_enabled)
 
     # Rate limit per *caller*, not per IP: behind an ingress every user shares a
     # source address, so an IP key would let one noisy client throttle everyone.
