@@ -1,7 +1,8 @@
 /**
  * Wire types for the Orrery HTTP front door.
  *
- * These mirror `core/orrery_core/serving/server.py` (ChatRequest / ChatResponse).
+ * These mirror `core/orrery_core/serving/api_models.py` and, for ChatRequest,
+ * `core/orrery_core/serving/uploads.py`.
  * Until AEP-019's typed-boundary work generates these from the FastAPI OpenAPI
  * schema (`openapi-typescript`), they are hand-maintained — keep them in sync
  * with the server models.

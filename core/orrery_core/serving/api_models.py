@@ -108,7 +108,7 @@ class SessionSummary(BaseModel):
     """One of the caller's conversations, as the history list needs it."""
 
     session_id: str
-    #: Empty when nothing labelled the session (see ``_CONVERSATION_TITLE_KEY``);
+    #: Empty when nothing labelled the session (see ``routes.context.CONVERSATION_TITLE_KEY``);
     #: the client supplies its own placeholder rather than the server inventing one.
     title: str
     #: Unix seconds of the last write, for ordering and "3h ago" labels.
