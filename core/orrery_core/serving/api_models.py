@@ -1,8 +1,7 @@
-"""Request and response models of the HTTP front door (``server.py``).
+"""Request and response models of the HTTP front door (the routes in ``serving/routes/``).
 
 They are the API's wire format, so the console's types in ``web/src/api/types.ts``
-follow them. ``server`` imports every one, so ``from orrery_core.serving.server
-import MeResponse`` keeps working.
+follow them.
 """
 
 from __future__ import annotations
