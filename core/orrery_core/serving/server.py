@@ -47,7 +47,6 @@ from google.adk.agents import Agent
 from google.adk.agents.context_cache_config import ContextCacheConfig
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.plugins.base_plugin import BasePlugin
-from google.adk.sessions import Session
 from google.adk.workflow import Workflow
 
 try:
@@ -86,8 +85,6 @@ from ..studio.config import StudioConfig
 from .a2a_config import A2A_ENABLED_ENV, A2AConfig
 from .agent_admin import AgentAdmin
 from .api_models import (
-    ActivityEntry,
-    ActivityResponse,
     AgentsResponse,
     AttachmentsInfo,
     CatalogResponse,
@@ -106,12 +103,7 @@ from .api_models import (
     PendingConfirmationInfo,
     PendingResponse,
     SelfTestResponse,
-    SessionMessage,
-    SessionResponse,
-    SessionsResponse,
-    SessionSummary,
     SpecialistInfo,
-    TriageResponse,
 )
 from .attachments import (
     AttachmentError,
@@ -121,7 +113,6 @@ from .attachments import (
 )
 from .catalog_service import CatalogService
 from .console_config import ConsoleConfig, render_script
-from .events import build_transcript
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage, TurnTimedOut
 from .http_auth import caller_identity as identity_for_caller
 from .http_auth import make_auth_dependency
@@ -134,6 +125,8 @@ from .onboarding import (
 )
 from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
+from .routes.context import CONVERSATION_TITLE_KEY, HttpContext, owns_session
+from .routes.sessions import sessions_router
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
 from .sse import TURN_TIMED_OUT_MESSAGE, drain_turns, stream_turn
@@ -143,21 +136,10 @@ logger = logging.getLogger("orrery.server")
 
 ALLOW_UNBOUND_TOKENS_ENV = "ORRERY_ALLOW_UNBOUND_TOKENS"
 
-#: Session-state key holding the conversation's sidebar label, written on the
-#: first turn of a new conversation. The title lives in *state* rather than being
-#: derived from the transcript because ``list_sessions`` returns state but never
-#: events — deriving it would cost one extra query per listed session, on every
-#: load of the history list. Sessions opened by another transport (Slack, CLI)
-#: leave it unset; the console falls back to its own placeholder.
-_CONVERSATION_TITLE_KEY = "conversation_title"
+_CONVERSATION_TITLE_KEY = CONVERSATION_TITLE_KEY
 
 #: Longest title kept, in characters. Beyond this the first line is elided.
 _TITLE_MAX_CHARS = 48
-
-#: How many conversations ``GET /sessions`` returns, newest first. ADK's
-#: ``list_sessions`` has no limit parameter, so the cap is applied after the
-#: query — it bounds the response and the sidebar, not the database read.
-_SESSION_LIST_LIMIT = 50
 
 
 def _conversation_title(message: str) -> str:
@@ -640,6 +622,8 @@ def create_app(  # noqa: C901
     def caller_identity(auth: AuthContext) -> CallerIdentity | None:
         return identity_for_caller(auth, auth_enabled=cfg.auth_enabled)
 
+    ctx = HttpContext(app_name=app_name, gateway=gateway, auth=auth_dependency)
+
     # Rate limit per *caller*, not per IP: behind an ingress every user shares a
     # source address, so an IP key would let one noisy client throttle everyone.
     # A `/chat` turn buys LLM tokens and can fan out to every specialist plus a
@@ -752,32 +736,6 @@ def create_app(  # noqa: C901
             return body
         finally:
             upload_slots.release()
-
-    def owns_session(auth: AuthContext, session_id: str) -> bool:
-        """Whether *auth* may see or continue *session_id* under its subject.
-
-        A person sees every conversation stored under their subject, including
-        those their delegated agents held. A machine principal shares that
-        subject but sees only the sessions minted for it (its prefix), so one
-        agent acting for alice can neither read alice's threads nor another
-        agent's, nor spend an approval raised in one of them.
-        """
-        if auth.principal_kind == PrincipalKind.HUMAN:
-            return True
-        return session_id.startswith(machine_session_prefix(auth))
-
-    async def caller_session(auth: AuthContext, session_id: str) -> Session:
-        """One of the caller's sessions, else a 404 that reveals nothing."""
-        session = (
-            await gateway.sessions.get_session(
-                app_name=app_name, user_id=auth.subject, session_id=session_id
-            )
-            if owns_session(auth, session_id)
-            else None
-        )
-        if session is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-        return session
 
     async def conversation_key(body: ChatInput, auth: AuthContext) -> str:
         """The session id a turn runs in: the caller's, or a fresh one.
@@ -897,140 +855,7 @@ def create_app(  # noqa: C901
             },
         )
 
-    @api.get("/sessions", response_model=SessionsResponse)
-    async def list_sessions(
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> SessionsResponse:
-        """The caller's conversations, newest first.
-
-        This is what lets a console rebuild its history list on any browser:
-        before it existed the sidebar was the only index of which sessions
-        belonged to whom, kept in ``localStorage``, so a different machine (or
-        cleared site data) left the transcripts stranded in the store with no
-        way to reach them.
-
-        Scoped to the verified subject — ADK keys sessions by
-        ``(app_name, user_id, session_id)``, so this can only ever enumerate
-        the caller's own. ``list_sessions`` returns state but not events, so
-        the transcript costs a second call (``GET /session/{id}``) and is only
-        paid for the conversation actually opened.
-        """
-        listed = await gateway.sessions.list_sessions(app_name=app_name, user_id=auth.subject)
-        newest_first = sorted(
-            (s for s in listed.sessions if owns_session(auth, s.id)),
-            key=lambda s: s.last_update_time or 0.0,
-            reverse=True,
-        )
-        return SessionsResponse(
-            sessions=[
-                SessionSummary(
-                    session_id=session.id,
-                    title=str((session.state or {}).get(_CONVERSATION_TITLE_KEY) or ""),
-                    last_update_time=session.last_update_time or 0.0,
-                )
-                for session in newest_first[:_SESSION_LIST_LIMIT]
-            ]
-        )
-
-    @api.get("/session/{session_id}", response_model=SessionResponse)
-    async def get_session(
-        session_id: str,
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> SessionResponse:
-        """One of the caller's conversations, transcript included.
-
-        The transcript is rebuilt from the stored events by
-        :func:`build_transcript`, which drops tool traffic, planner thoughts and
-        compaction digests and merges each turn's text the way ``POST /chat``
-        concatenates it — so a reopened conversation reads as it did live.
-
-        Same owner scoping as the activity endpoint: another user's session id
-        is a plain 404, indistinguishable from one that never existed.
-        """
-        session = await caller_session(auth, session_id)
-        state = session.state or {}
-        return SessionResponse(
-            session_id=session.id,
-            title=str(state.get(_CONVERSATION_TITLE_KEY) or ""),
-            messages=[
-                SessionMessage(role=turn.role, text=turn.text, at=turn.at)
-                for turn in build_transcript(session.events or [])
-            ],
-            last_update_time=session.last_update_time or 0.0,
-        )
-
-    @api.delete("/session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def delete_session(
-        session_id: str,
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> None:
-        """Delete one of the caller's conversations.
-
-        The console's history list is now the store's, so its delete control has
-        to reach the store — otherwise removing a conversation would hide it in
-        one browser and leave it in every other. The existence check makes a
-        missing id a 404 rather than a silent success; the delete itself is
-        user-scoped in ADK, so it could never touch another user's session.
-        """
-        await caller_session(auth, session_id)
-        await gateway.sessions.delete_session(
-            app_name=app_name, user_id=auth.subject, session_id=session_id
-        )
-        logger.info("Session %s deleted by %s", session_id, auth.subject)
-
-    @api.get("/session/{session_id}/activity", response_model=ActivityResponse)
-    async def session_activity(
-        session_id: str,
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> ActivityResponse:
-        """Tool-call timeline for one of the caller's sessions (AEP-019).
-
-        Sessions are keyed by ``(app_name, user_id, session_id)`` and the
-        lookup pins ``user_id`` to the verified subject, so another user's
-        session id resolves to nothing — a plain 404, indistinguishable from
-        a session that never existed.
-        """
-        session = await caller_session(auth, session_id)
-        raw = session.state.get("session_log", []) if session.state else []
-        # In the learning sandbox a call's arguments can carry an answer the
-        # model passed along, and nothing guards this path: names only.
-        learning = learning_gate.is_active()
-        entries = [
-            ActivityEntry(
-                operation=str(e.get("operation", "")),
-                details="" if learning else str(e.get("details", "")),
-                timestamp=str(e.get("timestamp", "")),
-            )
-            for e in raw
-            if isinstance(e, dict)
-        ]
-        return ActivityResponse(session_id=session_id, entries=entries)
-
-    @api.get("/session/{session_id}/triage", response_model=TriageResponse)
-    async def session_triage(
-        session_id: str,
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> TriageResponse:
-        """Latest triage verdict for one of the caller's sessions (AEP-019).
-
-        ``record_triage_verdict`` writes ``incident_severity`` and
-        ``triage_report`` to session state; ADK's ``AgentTool`` forwards the
-        sub-session's state delta to the parent, so a chat-root triage run
-        lands here. Same owner scoping as the activity endpoint: the lookup
-        pins ``user_id`` to the verified subject, so another user's session
-        id is a plain 404.
-        """
-        session = await caller_session(auth, session_id)
-        state = session.state or {}
-        severity = state.get("incident_severity")
-        # The report is a specialist's prose, written straight to state: the
-        # answer guard never sees it, so the learning sandbox keeps it back.
-        report = None if learning_gate.is_active() else state.get("triage_report")
-        return TriageResponse(
-            session_id=session_id,
-            severity=str(severity) if severity else None,
-            report=str(report) if report else None,
-        )
+    api.include_router(sessions_router(ctx))
 
     @api.get("/confirmations/pending", response_model=PendingResponse)
     async def pending_confirmation(
