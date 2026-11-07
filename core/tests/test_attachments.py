@@ -548,7 +548,7 @@ def test_uploads_wait_for_a_slot_then_get_a_503(chat_app):
         await asyncio.sleep(0.5)  # a body still arriving
         raise HTTPException(status_code=408)
 
-    with patch("orrery_core.serving.server.read_chat_input", side_effect=hold_slot):
+    with patch("orrery_core.serving.routes.chat.read_chat_input", side_effect=hold_slot):
         first = threading.Thread(
             target=client.post,
             args=("/chat",),
@@ -576,7 +576,7 @@ def test_one_caller_cannot_hold_more_than_its_upload_share(chat_app):
         await asyncio.sleep(0.5)
         raise HTTPException(status_code=408)
 
-    with patch("orrery_core.serving.server.read_chat_input", side_effect=hold_slot):
+    with patch("orrery_core.serving.routes.chat.read_chat_input", side_effect=hold_slot):
         first = threading.Thread(
             target=client.post,
             args=("/chat",),
