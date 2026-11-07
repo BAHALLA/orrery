@@ -31,7 +31,6 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import time
@@ -63,14 +62,12 @@ from ..concurrency import configure_default_executor
 from ..env import env_flag
 from ..observability.metrics import start_metrics_server_if_enabled
 from ..persistence.db import create_session_service
-from ..plugins import _resolve_autonomy_level
-from ..registry import key_of
 from ..security.auth import (
     AUTH_STATE_KEY,
     AuthContext,
     JWTConfig,
 )
-from ..security.identity import CallerIdentity, caller_scope
+from ..security.identity import CallerIdentity
 from ..security.principal import (
     REJECT_UNLISTED_ENV,
     REQUIRED_ROLES_ENV,
@@ -83,13 +80,7 @@ from ..studio.config import StudioConfig
 from .a2a_config import A2A_ENABLED_ENV, A2AConfig
 from .agent_admin import AgentAdmin
 from .api_models import (
-    AttachmentsInfo,
     ChatResponse,
-    CheckResultModel,
-    LearningInfo,
-    MeResponse,
-    SelfTestResponse,
-    SpecialistInfo,
 )
 from .attachments import (
     AttachmentError,
@@ -102,12 +93,9 @@ from .console_config import ConsoleConfig, render_script
 from .gateway import AgentGateway, ExplicitSessionResolver, InboundMessage, TurnTimedOut
 from .http_auth import caller_identity as identity_for_caller
 from .http_auth import make_auth_dependency
-from .inventory import specialist_entries
 from .mission import Mission, mission_from_env
 from .onboarding import (
     IntegrationProbe,
-    check_model_connectivity,
-    run_probes,
 )
 from .rate_limit import RateLimiter, install_rate_limit_handler, parse_rate
 from .readiness import ReadinessCheck
@@ -115,6 +103,7 @@ from .routes.admin import admin_router
 from .routes.confirmations import confirmations_router
 from .routes.context import CONVERSATION_TITLE_KEY, HttpContext, owns_session
 from .routes.sessions import sessions_router
+from .routes.system import me_router, selftest_router
 from .runner import UNSET, MaybeCompactionConfig, resolve_compaction_config
 from .security_headers import SecurityHeadersMiddleware, build_csp, trusted_origins
 from .sse import TURN_TIMED_OUT_MESSAGE, drain_turns, stream_turn
@@ -849,81 +838,17 @@ def create_app(  # noqa: C901
         confirmations_router(ctx, auth_enabled=cfg.auth_enabled, rate_limit=chat_rate_limit)
     )
 
-    @api.get("/me", response_model=MeResponse)
-    async def me(
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> MeResponse:
-        """The caller's identity and this deployment's safety posture.
-
-        The console decodes the JWT locally to render a badge, but that reading
-        is advisory. This returns the role the *server* resolved and the autonomy
-        level actually in force, so a viewer can see up front why mutating tools
-        are unavailable — rather than discovering it when a tool is refused.
-        """
-        # Read per request: an admin catalog edit swaps the root agent.
-        reachable = specialist_entries(gateway.root_agent)
-        return MeResponse(
-            specialists=[
-                SpecialistInfo(key=key_of(entry.name) or entry.name, name=entry.name)
-                for entry in reachable
-            ],
-            subject=auth.subject,
-            role=auth.role,
-            autonomy_level=_resolve_autonomy_level(None),
-            model_provider=os.getenv("MODEL_PROVIDER", "gemini"),
-            model_name=os.getenv("MODEL_NAME", ""),
-            self_test_available=bool(probes),
-            attachments=AttachmentsInfo(
-                max_files=cfg.attachments.max_files,
-                max_file_bytes=cfg.attachments.max_file_bytes,
-                max_total_bytes=cfg.attachments.max_total_bytes,
-                images=cfg.attachments.images,
-                image_types=["image/png", "image/jpeg", "image/gif", "image/webp"]
-                if cfg.attachments.images
-                else [],
-            )
-            if cfg.attachments.active
-            else None,
-            studio_available=cfg.studio.enabled
-            and auth.role == "admin"
-            and auth.principal_kind == PrincipalKind.HUMAN,
-            learning=_learning_info(auth),
+    api.include_router(
+        me_router(
+            ctx,
+            attachments=cfg.attachments,
+            studio_enabled=cfg.studio.enabled,
             mission=cfg.mission,
+            self_test_available=bool(probes),
+            limiter=limiter,
+            hint_limit=hint_limit,
         )
-
-    def _learning_info(auth: AuthContext) -> LearningInfo | None:
-        if (learning := learning_gate.runtime()) is None:
-            return None
-        from ..learning.guard import REVEAL_LEVEL
-
-        return LearningInfo(
-            scenario_id=learning.scenario_id(),
-            level=learning.level_for(auth.subject),
-            max_level=REVEAL_LEVEL,
-            can_take_hint=auth.principal_kind == PrincipalKind.HUMAN,
-        )
-
-    if learning_gate.is_active():
-
-        @api.post("/learning/hint", response_model=LearningInfo)
-        async def take_hint(
-            auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-        ) -> LearningInfo:
-            """Raise the caller's hint level by one step (AEP-032 §3).
-
-            Only a verified person: a delegated agent or a service could be
-            talked into spending a learner's hints. Writes the per-process hint
-            store, never a session, so a turn already running is untouched and
-            the new level applies from the next turn.
-            """
-            if auth.principal_kind != PrincipalKind.HUMAN:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="human_only")
-            limiter.hit(hint_limit, f"hint:{auth.subject}")
-            learning = learning_gate.runtime()
-            learning.take_hint(auth.subject)
-            info = _learning_info(auth)
-            assert info is not None  # active, checked at registration
-            return info
+    )
 
     api.include_router(
         admin_router(
@@ -935,42 +860,11 @@ def create_app(  # noqa: C901
         )
     )
 
-    @api.post(
-        "/onboarding/selftest",
-        response_model=SelfTestResponse,
-        dependencies=[Depends(selftest_rate_limit)],
+    api.include_router(
+        selftest_router(
+            ctx, probes=probes, caller_identity=caller_identity, rate_limit=selftest_rate_limit
+        )
     )
-    async def selftest(
-        auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
-    ) -> SelfTestResponse:
-        """Check the model provider and every wired integration (AEP-019 M3).
-
-        Read-only and model-free apart from a single one-token round-trip, so a
-        new user can tell "nothing is configured" from "the agent is wrong"
-        without reading a stack trace. Rate limited separately from chat: the
-        checks are cheap but they do reach out to real infrastructure.
-        """
-        # As the caller, like a chat turn: with ORRERY_IMPERSONATION on, a probe
-        # with no caller is refused (fail-closed) and would read as "Kubernetes
-        # unreachable". Never service_scope(): a viewer must not probe with the
-        # service account's reach. The tasks copy the context when created.
-        identity = caller_identity(auth)
-        scope = caller_scope(identity) if identity is not None else contextlib.nullcontext()
-        with scope:
-            model_check, probe_results = await asyncio.gather(
-                check_model_connectivity(), run_probes(probes)
-            )
-        results = [model_check, *probe_results]
-        logger.info(
-            "Self-test run by %s: %d/%d checks passed",
-            auth.subject,
-            sum(1 for r in results if r.ok),
-            len(results),
-        )
-        return SelfTestResponse(
-            ok=all(r.ok for r in results),
-            checks=[CheckResultModel(**r.as_dict()) for r in results],
-        )
 
     if cfg.a2a.enabled:
         # Imported only here: the a2a-sdk is the optional `[a2a]` extra.
