@@ -577,6 +577,8 @@ def create_app(  # noqa: C901
     # cached). Keying on the raw token instead would hand out a fresh quota on
     # every refresh, and keying on an unverified `sub` would let a caller mint
     # buckets at will. In anonymous mode the subject embeds the client address.
+    # Each limit has its own key prefix: `limits` keys a counter by the key and
+    # the rate, so two limits set to the same rate under one key share a count.
     async def chat_rate_limit(
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> None:
@@ -585,7 +587,7 @@ def create_app(  # noqa: C901
     async def selftest_rate_limit(
         auth: AuthContext = Depends(auth_dependency),  # noqa: B008 — FastAPI dependency pattern
     ) -> None:
-        limiter.hit(selftest_limit, f"sub:{auth.subject}")
+        limiter.hit(selftest_limit, f"selftest:{auth.subject}")
 
     @api.get("/healthz")
     async def healthz() -> dict[str, str]:

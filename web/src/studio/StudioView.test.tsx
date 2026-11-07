@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Profiler } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { stubReactFlowDom, stubWideScreen } from "../test/reactflow";
 import { releaseNotesRun } from "./fixtures/events";
@@ -106,6 +106,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount before the stubs go: hooks run in reverse, so the setup file's
+  // cleanup comes last, and a fetch landing in between would mount the canvas
+  // without them ("ResizeObserver is not defined").
+  cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

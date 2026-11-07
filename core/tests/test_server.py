@@ -1373,3 +1373,26 @@ def test_a_decision_must_be_approve_or_deny(app_with_auth, pending_store):
         "/confirmations/a1/decision", headers=_token("alice"), json={"decision": "yes"}
     )
     assert r.status_code == 422
+
+
+def test_the_selftest_and_chat_limits_count_apart_even_at_one_rate(patched_runner):
+    """`limits` keys a counter by key and rate: one key would merge equal limits."""
+    app = create_app(
+        root_agent=MagicMock(name="root"),
+        app_name="test",
+        plugins=[],
+        config=ServerConfig(
+            auth_enabled=True,
+            allow_unbound_tokens=True,
+            jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+            chat_rate_limit="1/minute",
+            selftest_rate_limit="1/minute",
+        ),
+    )
+    client = TestClient(app)
+    with patch(
+        "orrery_core.serving.routes.system.check_model_connectivity",
+        new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
+    ):
+        assert client.post("/onboarding/selftest", headers=_bearer()).status_code == 200
+    assert client.post("/chat", headers=_bearer(), json={"message": "hi"}).status_code == 200
