@@ -2,6 +2,7 @@
  * Shared setup for the App-level tests (`App.*.test.tsx`): canned responses,
  * SSE frames, a display-only JWT and a fetch stub routing each endpoint.
  */
+import { cleanup } from "@testing-library/react";
 import { vi } from "vitest";
 
 /** A minimal unsigned JWT for the given claims (display decoding only). */
@@ -122,8 +123,12 @@ export function stubApi(
   );
 }
 
-/** Undo a test's fetch stub and spies, and forget its token. */
+/** Unmount, then undo a test's fetch stub and spies, and forget its token. */
 export function restoreGlobals() {
+  // Unmount first. Vitest runs after-hooks in reverse, so the setup file's
+  // cleanup would come after the stubs are gone, and a request landing in
+  // between would reach the real fetch.
+  cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   localStorage.clear();
