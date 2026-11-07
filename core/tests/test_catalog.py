@@ -456,7 +456,7 @@ def test_refused_edits_are_audited():
     from unittest.mock import patch
 
     with (
-        patch("orrery_core.serving.server.audit_event") as audit,
+        patch("orrery_core.serving.routes.admin.audit_event") as audit,
         _client(editing=False) as client,
     ):
         client.put("/admin/catalog", headers=_bearer("operator"), json={"version": 0})
