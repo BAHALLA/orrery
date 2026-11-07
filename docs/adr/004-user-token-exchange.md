@@ -84,6 +84,11 @@ supports it), on demand, per user and per target:
 - **Store per-user long-lived credentials.** Rejected: that's a credential vault
   Orrery would have to secure, rotate and audit.
 - **ADK's tool authentication (`AuthConfig`).** It suits interactive OAuth
-  consent per tool, and stores tokens in session state. Rejected for platform
-  integrations for that reason. It may still fit user-consented third-party
+  consent per tool: a consent screen per integration, and tokens held by
+  whichever credential service the runner is given (none by default; in
+  memory under `adk web`; ADK's `SessionStateCredentialService` keeps them in
+  session state, in clear text). Its built-in OAuth2 exchanger handles the
+  authorization-code and client-credentials grants, not token exchange, so it
+  can't act as a user who is already signed in. Rejected for platform
+  integrations for those reasons. It may still fit user-consented third-party
   tools later.
