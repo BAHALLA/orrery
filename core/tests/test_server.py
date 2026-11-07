@@ -893,11 +893,12 @@ def test_startup_starts_the_metrics_server(patched_runner):
 # ── /me and the onboarding self-test (AEP-019 M3) ───────────────────
 
 
-def _probe_app(patched_runner, probes):
+def _probe_app(patched_runner, probes, **extra):
     config = ServerConfig(
         auth_enabled=True,
         allow_unbound_tokens=True,
         jwt=JWTConfig(algorithm="HS256", secret=_TEST_SECRET, audience="orrery"),
+        **extra,
     )
     return create_app(
         root_agent=MagicMock(name="root"),
@@ -906,6 +907,13 @@ def _probe_app(patched_runner, probes):
         config=config,
         integration_probes=probes,
     )
+
+
+def test_a_scheme_other_than_bearer_is_unauthenticated(app_with_auth):
+    client = TestClient(app_with_auth)
+    token = _bearer()["Authorization"].split(" ", 1)[1]
+    for header in (f"Basic {token}", f"Token {token}", token):
+        assert client.get("/me", headers={"Authorization": header}).status_code == 401, header
 
 
 def test_me_reports_the_server_resolved_role(app_with_auth):
@@ -1064,6 +1072,42 @@ def test_selftest_requires_auth(patched_runner):
 def test_me_reports_whether_a_selftest_is_possible(patched_runner):
     without = TestClient(_probe_app(patched_runner, []))
     assert without.get("/me", headers=_bearer()).json()["self_test_available"] is False
+
+
+def test_me_offers_a_selftest_when_probes_are_wired(patched_runner):
+    from orrery_core.serving.onboarding import IntegrationProbe
+
+    async def healthy():
+        return {"status": "success"}
+
+    app = _probe_app(patched_runner, [IntegrationProbe("k8s", "Kubernetes", "-", healthy)])
+    assert TestClient(app).get("/me", headers=_bearer()).json()["self_test_available"] is True
+
+
+def test_selftest_fails_overall_when_the_model_is_unreachable(patched_runner):
+    app = _probe_app(patched_runner, [])
+    with patch(
+        "orrery_core.serving.routes.system.check_model_connectivity",
+        new=AsyncMock(return_value=_check_result("model", "gemini", ok=False, detail="401")),
+    ):
+        r = TestClient(app).post("/onboarding/selftest", headers=_bearer())
+
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    assert [c["name"] for c in r.json()["checks"]] == ["model"]
+
+
+def test_selftest_is_rate_limited_per_caller(patched_runner):
+    app = _probe_app(patched_runner, [], selftest_rate_limit="1/minute")
+    client = TestClient(app)
+    with patch(
+        "orrery_core.serving.routes.system.check_model_connectivity",
+        new=AsyncMock(return_value=_check_result("model", "gemini", ok=True, detail="ok")),
+    ):
+        assert client.post("/onboarding/selftest", headers=_bearer()).status_code == 200
+        assert client.post("/onboarding/selftest", headers=_bearer()).status_code == 429
+        # Another caller has a bucket of their own.
+        assert client.post("/onboarding/selftest", headers=_bearer("bob")).status_code == 200
 
 
 # ── Interactive docs exposure ────────────────────────────────────────
@@ -1359,6 +1403,42 @@ def test_a_machine_token_is_capped_to_its_ceiling(monkeypatch, patched_runner):
     app = _app_with_principals(monkeypatch, patched_runner, ORRERY_HUMAN_CLIENTS="orrery-console")
     me = TestClient(app).get("/me", headers=_token("ci", azp="ci-bot", roles=("admin",)))
     assert me.json()["role"] == "viewer"
+
+
+def test_the_requester_denies_out_of_band(app_with_auth, pending_store):
+    _alice_pending(pending_store)
+    r = TestClient(app_with_auth).post(
+        "/confirmations/a1/decision", headers=_token("alice"), json={"decision": "deny"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"action_id": "a1", "decision": "deny"}
+    assert pending_store.get("a1") is None
+
+
+def test_anyone_signed_in_may_deny(app_with_auth, pending_store):
+    _alice_pending(pending_store)
+    r = TestClient(app_with_auth).post(
+        "/confirmations/a1/decision", headers=_token("bob"), json={"decision": "deny"}
+    )
+    assert r.status_code == 200, r.text
+    assert pending_store.get("a1") is None
+
+
+def test_anonymous_mode_cannot_decide_even_with_a_token(app_no_auth, pending_store):
+    _alice_pending(pending_store)
+    r = TestClient(app_no_auth).post(
+        "/confirmations/a1/decision", headers=_token("alice"), json={"decision": "approve"}
+    )
+    assert r.status_code == 403
+    untouched = pending_store.get("a1")
+    assert untouched is not None and not untouched.approved
+
+
+def test_no_editable_catalog_is_a_404(app_with_auth):
+    client = TestClient(app_with_auth)
+    admin = _token("alice", roles=("admin",))
+    assert client.get("/admin/catalog", headers=admin).status_code == 404
+    assert client.put("/admin/catalog", headers=admin, json={"version": 0}).status_code == 404
 
 
 def test_anonymous_mode_cannot_decide(app_no_auth, pending_store):

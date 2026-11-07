@@ -311,6 +311,12 @@ def _client(*, editing: bool = True) -> TestClient:
     return TestClient(app)
 
 
+def _subject_of(headers: dict) -> str:
+    """The subject a ``_bearer`` header was minted for."""
+    token = headers["Authorization"].removeprefix("Bearer ")
+    return jwt.decode(token, options={"verify_signature": False})["sub"]
+
+
 def _bearer(role: str) -> dict:
     token = jwt.encode(
         {"sub": f"{role}-{uuid.uuid4().hex[:4]}", "roles": [role], "exp": time.time() + 60},
@@ -339,7 +345,9 @@ def test_admin_edits_and_the_live_inventory_follows():
 
 
 def test_stale_and_unbuildable_edits_are_refused():
-    with _client() as client:
+    from unittest.mock import patch
+
+    with patch("orrery_core.serving.routes.admin.audit_event") as audit, _client() as client:
         admin = _bearer("admin")
         client.put("/admin/catalog", headers=admin, json={"version": 0})
 
@@ -362,6 +370,14 @@ def test_stale_and_unbuildable_edits_are_refused():
             },
         )
         assert bad.status_code == 422
+
+    refusals = [
+        c.kwargs for c in audit.call_args_list if c.args == ("agent_catalog_update_refused",)
+    ]
+    # The bad name never reaches the route: request validation refuses it.
+    assert [r["reason"] for r in refusals] == ["stale_version"]
+    assert refusals[0]["expected_version"] == 0
+    assert refusals[0]["actor"] == _subject_of(admin)
 
 
 def test_only_admins_and_only_when_enabled():
@@ -443,13 +459,21 @@ def test_duplicate_agent_names_are_a_422_not_a_500():
         "instruction": "Check events.",
         "tools": ["t"],
     }
-    with _client() as client:
+    from unittest.mock import patch
+
+    admin = _bearer("admin")
+    with patch("orrery_core.serving.routes.admin.audit_event") as audit, _client() as client:
         dup = client.put(
-            "/admin/catalog",
-            headers=_bearer("admin"),
-            json={"version": 0, "agents": [agent, agent]},
+            "/admin/catalog", headers=admin, json={"version": 0, "agents": [agent, agent]}
         )
         assert dup.status_code == 422
+
+    (refusal,) = [
+        c.kwargs for c in audit.call_args_list if c.args == ("agent_catalog_update_refused",)
+    ]
+    assert refusal["reason"] == "invalid"
+    assert refusal["actor"] == _subject_of(admin)
+    assert refusal["expected_version"] == 0
 
 
 def test_refused_edits_are_audited():
