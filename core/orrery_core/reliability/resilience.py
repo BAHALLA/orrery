@@ -38,6 +38,7 @@ import logging
 import random
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from enum import Enum
 from typing import Any, TypeVar
@@ -82,6 +83,12 @@ CIRCUIT_HALF_OPEN_ERROR = "CircuitHalfOpen"
 #: failure to the run guards, but it says nothing about the server's health, so
 #: it doesn't count toward the circuit every user of the tool shares.
 CREDENTIAL_REJECTED_ERROR = "credential_rejected"
+#: Set on failures that share one cause, such as every call cut off when one
+#: MCP session closes. The circuit counts each value once: one dead session is
+#: one failure, however many calls were waiting on it.
+FAILURE_ID_FIELD = "failure_id"
+#: How many recent failure ids the breaker remembers.
+_MAX_FAILURE_IDS = 1024
 _BREAKER_ERROR_TYPES = frozenset({CIRCUIT_OPEN_ERROR, CIRCUIT_HALF_OPEN_ERROR})
 
 #: The repo-wide convention for "this tool call failed" (``validate_string`` and
@@ -196,6 +203,8 @@ class CircuitBreaker:
         self._failures: dict[str, int] = {}
         self._opened_at: dict[str, float] = {}
         self._half_open: dict[str, bool] = {}
+        #: (tool, failure id) already counted, most recent last.
+        self._counted_ids: OrderedDict[tuple[str, str], None] = OrderedDict()
         self._lock = threading.Lock()
 
     def state(self, tool_name: str) -> CircuitState:
@@ -223,6 +232,17 @@ class CircuitBreaker:
                     tool_name,
                     count,
                 )
+
+    def _first_report(self, tool_name: str, failure_id: str) -> bool:
+        """Whether *failure_id* is new for *tool_name* (and remember it)."""
+        key = (tool_name, failure_id)
+        with self._lock:
+            if key in self._counted_ids:
+                return False
+            self._counted_ids[key] = None
+            while len(self._counted_ids) > _MAX_FAILURE_IDS:
+                self._counted_ids.popitem(last=False)
+            return True
 
     def _record_success(self, tool_name: str) -> None:
         with self._lock:
@@ -325,6 +345,14 @@ class CircuitBreaker:
             outcome = classify_tool_outcome(tool_response)
             if _response_field(tool_response, "error_type") == CREDENTIAL_REJECTED_ERROR:
                 outcome = ToolOutcome.IGNORE
+            failure_id = _response_field(tool_response, FAILURE_ID_FIELD)
+            if (
+                outcome is ToolOutcome.FAILURE
+                and isinstance(failure_id, str)
+                and not breaker._first_report(tool.name, failure_id)
+            ):
+                # Another call with the same cause was already counted.
+                outcome = ToolOutcome.IGNORE
             if outcome is ToolOutcome.SUCCESS:
                 breaker._record_success(tool.name)
             elif outcome is ToolOutcome.FAILURE:
@@ -335,7 +363,8 @@ class CircuitBreaker:
                 breaker._record_failure(tool.name)
             else:
                 # No evidence about the tool: a policy gate or this breaker
-                # answered, or the server rejected one user's token.
+                # answered, the server rejected one user's token, or this
+                # failure's cause was already counted.
                 breaker._clear_half_open_probe(tool.name)
             return None
 

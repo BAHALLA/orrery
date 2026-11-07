@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -70,7 +71,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ..observability.audit import audit_event
 from ..plugins.safety_plugin import screen_text
-from ..reliability.resilience import CREDENTIAL_REJECTED_ERROR
+from ..reliability.resilience import CREDENTIAL_REJECTED_ERROR, FAILURE_ID_FIELD
 from ..safe_url import split_url
 from ..security.classify import looks_mutating
 from ..security.guardrails import LEVEL_CONFIRM, LEVEL_DESTRUCTIVE, set_guard
@@ -455,9 +456,11 @@ class GuardedMcpToolset(McpToolset):
         #: not label that token's later failures, say a real outage, as 401s.
         #: Bounded; a miss only costs the more generic message.
         self._rejections: OrderedDict[str, int] = OrderedDict()
-        #: The same for SSE sessions closed after a failed POST, by token digest
-        #: ("" for the session a static server's callers share). A close cuts off
-        #: every call in flight on that session, and those may have run.
+        #: The last SSE session closed after a failed POST, by token digest ("" for
+        #: the session a static server's callers share), as a process-wide
+        #: sequence number. A close cuts off every call in flight on that
+        #: session, and those may have run; they share its number, so the
+        #: circuit breaker counts the close once.
         self._closed_sessions: OrderedDict[str, int] = OrderedDict()
         #: Tool name -> fingerprint of the text first seen (see the module docstring).
         self._pinned: dict[str, str] = pin_store if pin_store is not None else {}
@@ -494,7 +497,7 @@ class GuardedMcpToolset(McpToolset):
             # Nothing pooled means no call was cut off: a session failing to
             # open keeps its own error.
             if len(pool) < pooled:
-                _bump(self._closed_sessions, _digest(bearer) if bearer and self._broker else "")
+                _stamp(self._closed_sessions, _digest(bearer) if bearer and self._broker else "")
 
     def _on_rejected_token(self, token: str, method: str) -> None:
         """The server answered 401: stop using *token*, and on a POST its session.
@@ -520,7 +523,7 @@ class GuardedMcpToolset(McpToolset):
     def _rejection_count(self, token: str) -> int:
         return self._rejections.get(_digest(token), 0)
 
-    def _closed_session_count(self, token: str | None) -> int:
+    def _last_session_close(self, token: str | None) -> int:
         return self._closed_sessions.get(_digest(token) if token else "", 0)
 
     async def _user_headers(self, readonly_context: ReadonlyContext) -> dict[str, str]:
@@ -567,7 +570,7 @@ class GuardedMcpToolset(McpToolset):
                 self.server_config,
                 credential=self._credential if self.server_config.auth else None,
                 rejection_count=self._rejection_count,
-                closed_session_count=self._closed_session_count,
+                last_session_close=self._last_session_close,
             )
             exposed.append(tool)
         if not self._reported_missing:
@@ -714,6 +717,18 @@ def _bump(counts: OrderedDict[str, int], key: str) -> None:
         counts.popitem(last=False)
 
 
+#: Numbers each SSE session close in this process (see ``_closed_sessions``).
+_SESSION_CLOSES = itertools.count(1)
+
+
+def _stamp(closes: OrderedDict[str, int], key: str) -> None:
+    """Record a new session close for *key*, keeping the most recent keys."""
+    closes[key] = next(_SESSION_CLOSES)
+    closes.move_to_end(key)
+    while len(closes) > _MAX_COUNTED_KEYS:
+        closes.popitem(last=False)
+
+
 def _is_bare_error(result: Any) -> bool:
     """ADK's shape for an exception inside an MCP call."""
     return isinstance(result, dict) and set(result) == {"error"}
@@ -725,7 +740,7 @@ def _with_deadline(
     *,
     credential: Callable[[], Awaitable[str]] | None = None,
     rejection_count: Callable[[str], int] = lambda _token: 0,
-    closed_session_count: Callable[[str | None], int] = lambda _token: 0,
+    last_session_close: Callable[[str | None], int] = lambda _token: 0,
 ) -> None:
     """Bound every call of *tool* by ``call_timeout_seconds``, once per object.
 
@@ -749,14 +764,15 @@ def _with_deadline(
         # error. The provider then reads the broker's cache.
         token = await credential() if credential else None
         rejections = rejection_count(token) if token else 0
-        closed_sessions = closed_session_count(token)
+        closed_before = last_session_close(token)
         result = await run(args=args, tool_context=tool_context)
         if not _is_bare_error(result):
             return result
-        if closed_session_count(token) != closed_sessions:
+        if (closed := last_session_close(token)) != closed_before:
             return {
                 "status": "error",
                 "error_type": SESSION_CLOSED_ERROR,
+                FAILURE_ID_FIELD: f"mcp-session-close-{closed}",
                 "message": (
                     f"{name}: the MCP session closed during this call, after a "
                     "request on it failed. The call may have run on the server: "

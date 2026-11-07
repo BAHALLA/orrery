@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- One failed request on a shared MCP SSE session no longer opens that tool's circuit for
+  every user. The calls it cut off count as one failure.
 - An MCP call over SSE now answers its `call_timeout_seconds` on time. While the server held
   a request, the timeout came back up to 5 s late: the SDK's cancel notice waited behind
   that request, and the call waited for the notice. The cancelled call now finishes in
