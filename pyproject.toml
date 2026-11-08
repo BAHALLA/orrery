@@ -17,7 +17,7 @@ dependencies = [
     "slack-bot",
     "google-chat-bot",
     "google-adk>=2.12.0",
-    "litellm>=1.106.6",
+    "litellm>=1.108.0",
 ]
 
 [project.urls]
@@ -76,14 +76,14 @@ dev = [
     "pytest>=9.2.0",
     "pytest-asyncio>=1.4.1.post1",
     "pytest-cov>=7.1.0",
-    "hypothesis>=6.170.13",
+    "hypothesis>=6.170.14",
     "ruff>=0.17.3",
-    "ty>=0.0.94",
+    "ty>=0.0.97",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.8.0",
     "mkdocstrings[python]>=1.0.8",
     "mkdocs-minify-plugin>=0.8.0",
-    "mkdocs-git-revision-date-localized-plugin>=1.6.2",
+    "mkdocs-git-revision-date-localized-plugin>=1.6.3",
     "mkdocs-gen-files>=0.6.1",
     "pymdown-extensions>=12.3",
 ]
