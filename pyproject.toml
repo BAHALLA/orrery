@@ -74,7 +74,7 @@ dev = [
     # need: orrery-core does not depend on it.
     "google-adk[eval]>=2.13.0",
     "pytest>=9.2.0",
-    "pytest-asyncio>=1.4.1",
+    "pytest-asyncio>=1.4.1.post1",
     "pytest-cov>=7.1.0",
     "hypothesis>=6.170.13",
     "ruff>=0.17.3",
