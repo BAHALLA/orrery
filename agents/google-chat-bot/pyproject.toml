@@ -9,7 +9,7 @@ dependencies = [
     # sessions. No DATABASE_URL → in-memory.
     "orrery-core[postgres]",
     "orrery-assistant",
-    "fastapi>=0.141.1",
+    "fastapi>=0.162.5",
     "uvicorn>=0.54.0",
     "google-auth>=2.62.1",
     "google-cloud-pubsub>=2.40.0",
