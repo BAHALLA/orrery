@@ -16,7 +16,7 @@ dependencies = [
     "ops-journal",
     "slack-bot",
     "google-chat-bot",
-    "google-adk>=2.12.0",
+    "google-adk>=2.14.1",
     "litellm>=1.108.0",
 ]
 
